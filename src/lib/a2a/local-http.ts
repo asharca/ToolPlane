@@ -257,13 +257,7 @@ export async function handleLocalA2A(
           },
         });
         if (!agent) throw new A2AHttpError(404, "Agent unavailable.");
-        if (
-          agent.runtimeKind !== "pi-sdk" &&
-          agent.runtimeKind !== "omp" &&
-          (parsed.value.inboundEnabled ||
-            parsed.value.outboundEnabled ||
-            parsed.value.policy)
-        )
+        if (agent.runtimeKind !== "pi-sdk")
           throw new A2AHttpError(409, "Retired Agent execution is read-only.");
         const changed = await tx.agent.updateMany({
           where: {
@@ -283,7 +277,7 @@ export async function handleLocalA2A(
         });
         if (!changed.count) throw new A2AHttpError(404, "Agent unavailable.");
         if (
-          (agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp") &&
+          agent.runtimeKind === "pi-sdk" &&
           agent.currentRevisionVersion > 0 &&
           (parsed.value.inboundEnabled !== undefined ||
             parsed.value.outboundEnabled !== undefined ||

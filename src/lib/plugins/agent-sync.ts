@@ -35,7 +35,7 @@ async function followDraftPlugin(
       where: {
         id: agentId,
         workspaceId,
-        runtimeKind: { in: ["pi-sdk", "omp"] },
+        runtimeKind: "pi-sdk",
         retiredAt: null,
         publicRuntimeAllocation: null,
       },

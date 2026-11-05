@@ -27,6 +27,10 @@ import type {
 import type { AgentModelOverride } from "@/lib/agents/chat-body";
 import { resolveAgentModelOverride } from "@/lib/agents/turn-model";
 import { AGENT_TURN_MODEL_PART } from "@/lib/agents/turn-model";
+import {
+  runtimeFailureText,
+  taskRuntimeFailure,
+} from "@/lib/agents/runtime-failure";
 import { db } from "@/lib/db";
 import { requireAgentRevision } from "@/lib/agents/revisions";
 import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
@@ -417,8 +421,19 @@ export function agentEntryResult(task: Task, path: string) {
   if (task.status?.state === TaskState.TASK_STATE_INPUT_REQUIRED)
     return detail || `More input is required: ${path}`;
   // Never let an error/cancelled task look like a successful legacy response.
+  // Only the fixed failure token is surfaced; free status text stays in the ledger.
+  const failure = taskRuntimeFailure(task);
+  if (failure) throw new UnsupportedOperationError(runtimeFailureText(failure));
+  const outcome =
+    task.status?.state === TaskState.TASK_STATE_CANCELED
+      ? "was cancelled"
+      : task.status?.state === TaskState.TASK_STATE_REJECTED
+        ? "was rejected"
+        : task.status?.state === TaskState.TASK_STATE_AUTH_REQUIRED
+          ? "requires authorization"
+          : "failed";
   throw new UnsupportedOperationError(
-    `Agent execution did not complete (${task.status?.state ?? "unknown"}). Inspect ${path}`,
+    `Agent execution ${outcome}. Inspect ${path}`,
   );
 }
 

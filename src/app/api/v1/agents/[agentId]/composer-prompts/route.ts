@@ -44,10 +44,7 @@ export const POST = withRequestLogging(
   async function POST(req: Request, { params }: Params) {
     const agent = await authorized(req, params);
     if (!agent) return Response.json({ error: "Not found" }, { status: 404 });
-    if (
-      (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp") ||
-      agent.retiredAt
-    )
+    if (agent.runtimeKind !== "pi-sdk" || agent.retiredAt)
       return Response.json(
         { error: "Historical Agents are read-only." },
         { status: 410 },

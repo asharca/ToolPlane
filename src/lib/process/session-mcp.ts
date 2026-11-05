@@ -78,7 +78,7 @@ async function authorizeSession(context: SessionMcpContext, stopping = false) {
         ? {}
         : {
             retiredAt: null,
-            runtimeKind: { in: ["pi-sdk", "omp"] },
+            runtimeKind: { in: ["pi-sdk"] },
             workspace: { status: "active" },
           }),
     },

@@ -13,7 +13,6 @@ import {
   handleAnthropicMessages,
 } from "@/lib/agents/anthropic-gateway";
 import { db } from "@/lib/db";
-import { agentRuntimeSupportsProviderFormat } from "@/lib/agents/runtime-kind";
 
 export const runtime = "nodejs";
 
@@ -71,15 +70,6 @@ function downstreamResponseHeaders(upstream: Response): Headers {
   return headers;
 }
 
-const OMP_MODEL_ENDPOINTS: Record<string, true> = {
-  "v1/messages": true,
-  "v1/messages/count_tokens": true,
-  "v1/chat/completions": true,
-  "chat/completions": true,
-  "v1/responses": true,
-  responses: true,
-};
-
 async function proxyProviderRequest(
   req: Request,
   { params }: { params: Promise<{ providerId: string; path?: string[] }> },
@@ -90,58 +80,19 @@ async function proxyProviderRequest(
 
   const { providerId, path = [] } = await params;
   const routePath = path.join("/");
-  let requestedModel: string | undefined;
-  if (req.method === "POST" && Object.hasOwn(OMP_MODEL_ENDPOINTS, routePath)) {
-    try {
-      const body: unknown = await req.clone().json();
-      if (
-        body &&
-        typeof body === "object" &&
-        "model" in body &&
-        typeof body.model === "string"
-      )
-        requestedModel = body.model;
-    } catch {
-      return NextResponse.json(
-        { error: "invalid model request" },
-        { status: 400 },
-      );
-    }
-  }
-  const grant = await resolveAgentRuntimeGrant(
-    token,
-    requestedModel === undefined
-      ? undefined
-      : { providerId, model: requestedModel },
-  );
+  const grant = await resolveAgentRuntimeGrant(token);
   if (!grant) {
     return NextResponse.json(
       { error: "runtime grant is no longer valid" },
       { status: 403 },
     );
   }
-  if (
-    providerId !== token.providerId &&
-    (grant.runtimeKind !== "omp" || requestedModel === undefined)
-  )
+  if (providerId !== token.providerId)
     return NextResponse.json(
       { error: "provider is outside the runtime grant" },
       { status: 403 },
     );
 
-  if (grant.runtimeKind === "omp") {
-    // Auxiliary and child models must be pinned and remain authorized live.
-    if (req.method !== "POST" || !Object.hasOwn(OMP_MODEL_ENDPOINTS, routePath))
-      return NextResponse.json(
-        { error: "model endpoint is outside the runtime grant" },
-        { status: 403 },
-      );
-    if (requestedModel === undefined || requestedModel !== grant.model)
-      return NextResponse.json(
-        { error: "model is outside the runtime grant" },
-        { status: 403 },
-      );
-  }
   const provider = await db.modelProvider.findFirst({
     where: { id: providerId, workspaceId: token.workspaceId },
     select: {
@@ -154,16 +105,6 @@ async function proxyProviderRequest(
   });
   if (!provider)
     return NextResponse.json({ error: "provider not found" }, { status: 404 });
-  if (
-    grant.runtimeKind === "omp" &&
-    (!requestedModel ||
-      !provider.models.includes(requestedModel) ||
-      !agentRuntimeSupportsProviderFormat("omp", provider.format))
-  )
-    return NextResponse.json(
-      { error: "model is no longer authorized" },
-      { status: 403 },
-    );
   bindRuntimeLogContext(token);
   enrichLogContext({ secrets: [provider.apiKey] });
 

@@ -274,7 +274,7 @@ export async function removePlugin(
       const agents = await tx.agent.findMany({
         where: {
           workspaceId,
-          runtimeKind: { in: ["pi-sdk", "omp"] },
+          runtimeKind: { in: ["pi-sdk"] },
           retiredAt: null,
           currentRevisionVersion: { gt: 0 },
         },

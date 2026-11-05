@@ -1623,4 +1623,34 @@ describe("official Pi SDK headless session host", () => {
       ),
     ).toMatchObject({ success: true });
   }, 60000);
+  it("reports model failures as fixed reasons without provider text", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    f.behavior.streamCompletion = async (response) => {
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({ error: { message: "upstream-secret unavailable" } }),
+      );
+    };
+    const host = await f.launch();
+    const unavailable = await host.request("prompt", "Provider outage");
+    expect(unavailable).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "HTTP_503" },
+    });
+    expect(JSON.stringify(unavailable)).not.toContain("upstream-secret");
+    const closed = createServer();
+    await once(closed.listen(0, "127.0.0.1"), "listening");
+    const { port } = closed.address() as { port: number };
+    await once(closed.close(), "close");
+    expect(
+      await host.request("prompt", "Wrong runtime origin", {
+        ...f.context,
+        model: { ...f.config.model, baseUrl: `http://127.0.0.1:${port}/v1` },
+      }),
+    ).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "UNREACHABLE" },
+    });
+  }, 60000);
 });

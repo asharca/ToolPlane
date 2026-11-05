@@ -55,7 +55,6 @@ import { parseOmpConfigSnapshot } from "./omp-config-server";
 import { agentRuntimeSupportsProviderFormat } from "./runtime-kind";
 import type { PrivatePluginInput } from "./capability-contracts";
 import { PrivatePluginInputSchema } from "./capability-contracts";
-import { preflightOmpCapabilities } from "./omp-preflight";
 
 export class OmpImportError extends Error {
   constructor(
@@ -172,18 +171,9 @@ function mappedPlugin(
   input: OmpImportRequest,
   resource: OmpImportRequest["bundle"]["plugins"][number],
 ) {
-  // Bundle bytes and source hints cannot supply workspace authorization.
+  // Source bytes and model hints never supply workspace authorization.
   const { nativeRoleModels: _unreviewed, ...plugin } = resource.plugin;
-  const mappings = input.roleModels?.[resource.id];
-  return targetPlugin(
-    {
-      ...plugin,
-      ...(mappings && Object.keys(mappings).length
-        ? { nativeRoleModels: mappings }
-        : {}),
-    },
-    input.runtimeKind,
-  );
+  return targetPlugin(plugin, input.runtimeKind);
 }
 function parseSkill(skill: OmpImportRequest["bundle"]["skills"][number]) {
   const files: SkillBundleFile[] = [
@@ -398,7 +388,6 @@ async function inspect(scope: Scope, input: OmpImportRequest) {
   }));
   const mcps: PreparedMcp[] = [];
   const nativeRoles: NonNullable<OmpImportPreview["nativeRoles"]> = [];
-  const roleNames = new Set<string>();
   const add = async (
     id: string,
     kind: OmpImportPreview["resources"][number]["kind"],
@@ -446,10 +435,7 @@ async function inspect(scope: Scope, input: OmpImportRequest) {
     return resource;
   };
   await add("settings", "settings", "OMP settings", () => {
-    if (
-      input.runtimeKind === "pi-sdk" &&
-      Object.keys(input.bundle.settings).length
-    )
+    if (Object.keys(input.bundle.settings).length)
       throw new OmpImportError("OMP_IMPORT_PI_SETTINGS_INCOMPATIBLE");
     parseOmpConfigSnapshot({
       ...emptyOmpConfig(),
@@ -484,52 +470,25 @@ async function inspect(scope: Scope, input: OmpImportRequest) {
       "plugin",
       plugin.plugin.name,
       async () => {
-        const manifest = buildPrivatePluginManifest(
-          mappedPlugin(input, plugin),
+        // Inspect source roles before conversion rejects them, so the preview
+        // explains which capabilities require explicit exclusion/re-authoring.
+        const { nativeRoleModels: _unreviewed, ...source } = plugin.plugin;
+        const roles = readPluginSubagentMembers(
+          buildPrivatePluginManifest(source).package,
         );
-        const roles = readPluginSubagentMembers(manifest.package);
-        let invalidModel = false;
-        for (const role of roles) {
-          const mapping = role.modelMapping;
-          const modelHint =
-            input.bundle.taskModelOverrides?.[role.name] ?? role.modelHint;
+        for (const role of roles)
           nativeRoles.push({
             resourceId: plugin.id,
             path: role.path.slice("package/".length),
             name: role.name,
-            modelHint,
-            mapping,
+            modelHint:
+              input.bundle.taskModelOverrides?.[role.name] ?? role.modelHint,
           });
-          if (roleNames.has(role.name))
-            throw new OmpImportError("OMP_IMPORT_ROLE_NAME_CONFLICT");
-          roleNames.add(role.name);
-          if (!/^[A-Za-z0-9_-]{1,100}$/.test(role.name))
-            throw new OmpImportError("OMP_IMPORT_ROLE_NAME_INVALID");
-          if ((modelHint || role.definition.model) && !mapping)
-            invalidModel = true;
-          if (mapping) {
-            const provider = await db.modelProvider.findFirst({
-              where: { id: mapping.providerId, workspaceId: scope.workspaceId },
-              select: { format: true, models: true },
-            });
-            if (
-              !provider?.models.includes(mapping.model) ||
-              !agentRuntimeSupportsProviderFormat(
-                input.runtimeKind,
-                provider.format,
-              )
-            )
-              invalidModel = true;
-          }
-          if (
-            role.definition.permissions.mcpTools.length ||
-            role.definition.permissions.skillIds.length ||
-            role.definition.permissions.pluginInstallIds?.length
-          )
-            throw new OmpImportError("OMP_IMPORT_ROLE_GRANTS_UNRESOLVED");
-        }
-        if (invalidModel)
-          throw new OmpImportError("OMP_IMPORT_ROLE_MODEL_REQUIRED");
+        if (roles.length || Object.keys(_unreviewed ?? {}).length)
+          throw new OmpImportError("OMP_IMPORT_PI_NATIVE_ROLES_INCOMPATIBLE");
+        const manifest = buildPrivatePluginManifest(
+          mappedPlugin(input, plugin),
+        );
         validated.manifest = manifest;
       },
     );
@@ -538,16 +497,6 @@ async function inspect(scope: Scope, input: OmpImportRequest) {
       for (const [kind, paths] of Object.entries(manifest.package.resources))
         if (paths?.length)
           resource.messages.push(`${kind}: ${paths.join(", ")}`);
-      if (manifest.package.resources.subagents?.length)
-        issues.push({
-          id: `${plugin.id}:roles`,
-          path: plugin.id,
-          resourceId: plugin.id,
-          code: "OMP_IMPORT_ROLE_SCOPE",
-          message:
-            "Native role prompts retain explicitly mapped workspace models, or inherit the parent model when no source model is declared. Tools stay within the current Agent intersection. Platform native-task context, nesting and concurrency policy replaces local role policy; task model overrides are forbidden.",
-          severity: "warning",
-        });
       if (plugin.plugin.runtimeKind !== input.runtimeKind)
         resource.messages.push(
           "Explicit Pi extension declaration selected; the real Pi loader must pass before publication.",
@@ -589,18 +538,12 @@ async function inspect(scope: Scope, input: OmpImportRequest) {
     )
   )
     throw new OmpImportError("OMP_IMPORT_SELECTION_INVALID");
-  if (
-    Object.keys(input.roleModels ?? {}).some(
-      (id) => !input.bundle.plugins.some((plugin) => plugin.id === id),
-    )
-  )
-    throw new OmpImportError("OMP_IMPORT_SELECTION_INVALID");
   if (input.bundle.ompVersion !== OMP_VERSION)
     issues.push({
       id: "runtime-version",
       path: "ompVersion",
       code: "OMP_IMPORT_VERSION_DIFFERENT",
-      message: `Source OMP version differs from pinned ${OMP_VERSION}; compatibility is not guaranteed.`,
+      message: `Source OMP version differs from supported export format ${OMP_VERSION}; Pi conversion compatibility is not guaranteed.`,
       severity: "warning",
     });
   const provider = input.providerId
@@ -713,32 +656,6 @@ export async function commitOmpImport(scope: Scope, value: unknown) {
       .filter((resource) => resource.status === "ready")
       .map((resource) => resource.id),
   );
-  const selectedPlugins = input.bundle.plugins
-    .filter((plugin) => selected.has(plugin.id))
-    .map((plugin) => {
-      const manifest = buildPrivatePluginManifest(mappedPlugin(input, plugin));
-      return {
-        marketInstallId: plugin.id,
-        releaseId: plugin.id,
-        manifest,
-        checksum: marketReleaseChecksum(manifest),
-      };
-    });
-  if (input.runtimeKind === "omp")
-    await preflightOmpCapabilities({
-      piPackages: selectedPlugins,
-      skills: input.bundle.skills
-        .filter((skill) => selected.has(skill.id))
-        .map((skill) => ({
-          skillId: null,
-          skill: null,
-          name: skill.name,
-          slug: slugify(skill.name),
-          content: skill.content,
-          files: skill.files,
-        })),
-      toolNames: plan.mcps.flatMap((mcp) => mcp.tools.map((tool) => tool.name)),
-    });
   const ownedSkills: string[] = [],
     ownedDeployments: string[] = [],
     ownedListings: string[] = [],
@@ -840,11 +757,6 @@ export async function commitOmpImport(scope: Scope, value: unknown) {
     ownedDeployments.push(...prepared.deploymentIds);
     ownedListings.push(...prepared.listingIds);
     ownedInstalls.push(...prepared.installIds);
-    const snapshot = parseOmpConfigSnapshot({
-      ...emptyOmpConfig(),
-      settings: selected.has("settings") ? input.bundle.settings : {},
-      files: selected.has("instructions") ? input.bundle.instructions : [],
-    });
     const agent = await createConfiguredAgent(
       scope.workspaceId,
       {
@@ -865,11 +777,7 @@ export async function commitOmpImport(scope: Scope, value: unknown) {
       {
         runtime: input.runtimeKind,
         piPackages: prepared.packages,
-        ompConfig: snapshot,
         enable: true,
-        nativeSubagents: selectedPlugins.some(
-          (plugin) => plugin.manifest.package.resources.subagents?.length,
-        ),
         authorize: async (tx) => {
           const authority = await authorize(scope, tx);
           if (canonicalJson(authority) !== canonicalJson(plan.authority))

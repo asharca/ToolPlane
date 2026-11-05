@@ -43,15 +43,14 @@ import { ensureWorkspaceMcpDeploymentPinned } from "@/lib/process/mcp-pinning";
 import { prepareSessionMcpDefinition } from "@/lib/process/mcp-definition";
 import { catalogToolNames } from "@/lib/process/mcp-grant-sync";
 import { isExecutableAgentRuntimeKind } from "./runtime-kind";
-import { emptyOmpConfig } from "./omp-config";
-import type { OmpConfigSnapshot } from "./omp-config";
-import { prepareOmpRuntime } from "./omp-runtime";
 import { preparePiRuntime } from "./pi-runtime";
+import { parseOmpConfigSnapshot } from "./omp-config-server";
+import { isOmpInstructionPath } from "./omp-config";
 
 function assertNativeAgent(runtimeKind: string, retiredAt: Date | null): void {
   if (!isExecutableAgentRuntimeKind(runtimeKind) || retiredAt !== null) {
     throw new AgentConfigurationError(
-      "Historical Agents are read-only; copy configuration to a native Pi or OMP Agent.",
+      "Historical Agents are read-only; copy configuration to a native Pi Agent.",
     );
   }
 }
@@ -251,9 +250,7 @@ export async function createAgentRecords(
 ) {
   const runtime = options.runtime ?? "pi-sdk";
   if (!isExecutableAgentRuntimeKind(runtime)) {
-    throw new AgentConfigurationError(
-      "Only native Pi and OMP Agents can be created.",
-    );
+    throw new AgentConfigurationError("Only native Pi Agents can be created.");
   }
   const agent = await tx.agent.create({
     data: {
@@ -261,11 +258,6 @@ export async function createAgentRecords(
       name,
       slug,
       runtimeKind: runtime,
-      ...(runtime === "omp"
-        ? {
-            ompConfig: emptyOmpConfig() as Prisma.InputJsonValue,
-          }
-        : {}),
     },
   });
   const templateSlug =
@@ -327,6 +319,8 @@ export async function cloneAgent(
           name: true,
           description: true,
           systemPrompt: true,
+          runtimeKind: true,
+          ompConfig: true,
           disabledBuiltinTools: true,
           maxSteps: true,
         },
@@ -340,8 +334,21 @@ export async function cloneAgent(
         where: { id: cloned.id },
         data: {
           description: source.description,
-          systemPrompt: source.systemPrompt,
-          disabledBuiltinTools: source.disabledBuiltinTools,
+          systemPrompt:
+            [
+              source.systemPrompt,
+              ...(source.runtimeKind === "omp" && source.ompConfig
+                ? parseOmpConfigSnapshot(source.ompConfig)
+                    .files.filter((file) => isOmpInstructionPath(file.path))
+                    .map((file) => file.content)
+                : []),
+            ]
+              .filter(Boolean)
+              .join("\n\n") || null,
+          disabledBuiltinTools: normalizeDisabledBuiltinTools(
+            "pi-sdk",
+            source.disabledBuiltinTools,
+          ),
           maxSteps: source.maxSteps,
         },
       });
@@ -488,7 +495,7 @@ async function validateAndWritePiPackages(
   piPackages: AgentConfig["piPackages"],
 ) {
   if (piPackages === undefined) return; // undefined = no change
-  if (runtimeKind !== "pi-sdk" && runtimeKind !== "omp")
+  if (runtimeKind !== "pi-sdk")
     throw new AgentConfigurationError("pi_packages_runtime_unsupported");
   if (
     !Array.isArray(piPackages) ||
@@ -651,7 +658,7 @@ export async function setAgentPiPackages(
         where: {
           id: agentId,
           workspaceId,
-          runtimeKind: { in: ["pi-sdk", "omp"] },
+          runtimeKind: "pi-sdk",
           publicRuntimeAllocation: null,
           workspace: { status: "active" },
         },
@@ -680,7 +687,7 @@ async function requireAgentWorkspaceResource(
     where: {
       id: agentId,
       workspaceId,
-      runtimeKind: { in: ["pi-sdk", "omp"] },
+      runtimeKind: "pi-sdk",
       publicRuntimeAllocation: null,
       workspace: { status: "active" },
     },
@@ -847,16 +854,12 @@ export async function createConfiguredAgent(
   tools: AgentToolSelection,
   options: CreateAgentOptions & {
     enable?: boolean;
-    ompConfig?: OmpConfigSnapshot;
-    nativeSubagents?: boolean;
     authorize?: (tx: Prisma.TransactionClient) => Promise<void>;
   },
 ) {
   const runtime = options.runtime ?? "pi-sdk";
   if (!isExecutableAgentRuntimeKind(runtime)) {
-    throw new AgentConfigurationError(
-      "Only native Pi and OMP Agents can be created.",
-    );
+    throw new AgentConfigurationError("Only native Pi Agents can be created.");
   }
   const cleanName = cfg.name.trim() || "New agent";
   const deploymentIds = uniqueIds(tools.deploymentIds);
@@ -880,7 +883,6 @@ export async function createConfiguredAgent(
     if (options.enable) await prepareSessionMcpDefinition(deployment);
   }
   // Finish network preparation before taking transactional locks or exposing a usable Agent.
-  if (options.enable && runtime === "omp") await prepareOmpRuntime();
   if (options.enable && runtime === "pi-sdk") await preparePiRuntime();
   return await db.$transaction(
     async (tx) => {
@@ -961,12 +963,6 @@ export async function createConfiguredAgent(
             cfg.disabledBuiltinTools,
           ),
           maxSteps: cfg.maxSteps,
-          ...(runtime === "omp" && options.nativeSubagents
-            ? { subagentMode: "native" }
-            : {}),
-          ...(runtime === "omp" && options.ompConfig
-            ? { ompConfig: options.ompConfig as Prisma.InputJsonValue }
-            : {}),
         },
       });
       await tx.agentServer.createMany({

@@ -97,11 +97,6 @@ const resourceReviewPublicErrors: Record<string, true> = {
   PI_EXTENSION_LOAD_FAILED: true,
   PI_CAPABILITY_PREFLIGHT_FAILED: true,
   PI_CAPABILITY_PREFLIGHT_TIMEOUT: true,
-  OMP_PLATFORM_UNSUPPORTED: true,
-  OMP_INSTALL_TIMEOUT: true,
-  OMP_ARTIFACT_DOWNLOAD_FAILED: true,
-  OMP_ARTIFACT_DIGEST_MISMATCH: true,
-  OMP_ARTIFACT_TOO_LARGE: true,
   MCP_CONNECTION_NOT_AUTHORIZED: true,
   AGENT_EXECUTION_RETIRED: true,
   AGENT_REVISION_CONFLICT: true,
@@ -681,11 +676,9 @@ export async function createAgentAction(
   let agentId: string;
   try {
     const rawRuntime = formData.get("runtime");
-    if (rawRuntime && rawRuntime !== "pi-sdk" && rawRuntime !== "omp")
-      throw new Error(
-        "Only native Pi and OMP Agents are available for creation.",
-      );
-    const runtime = rawRuntime === "omp" ? "omp" : "pi-sdk";
+    if (rawRuntime && rawRuntime !== "pi-sdk")
+      throw new Error("Only native Pi Agents are available for creation.");
+    const runtime = "pi-sdk";
     const providerId = String(formData.get("providerId") ?? "").trim() || null;
     const model = String(formData.get("model") ?? "") || null;
     const provider = providerId

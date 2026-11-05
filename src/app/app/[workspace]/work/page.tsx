@@ -20,7 +20,7 @@ import { WorkspaceWork } from "@/components/dashboard/work/WorkspaceWork";
 import { WorkspaceWelcome } from "@/components/dashboard/WorkspaceWelcome";
 import { effectiveStatus } from "@/lib/process/supervisor";
 import { resolveModelContext } from "@/lib/agents/model";
-import { isWorkRuntimeKind } from "@/lib/agents/runtime-kind";
+import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
 import { normalizeReasoningEffort } from "@/lib/agents/constants";
 import { isWorkSessionTitlePending } from "@/lib/work/coordinator";
 import {
@@ -288,7 +288,7 @@ export default async function WorkspaceWorkPage({
         }))}
         agents={agents.map((agent) => {
           const supportsWork =
-            isWorkRuntimeKind(agent.runtimeKind) && !agent.retiredAt;
+            isExecutableAgentRuntimeKind(agent.runtimeKind) && !agent.retiredAt;
           const modelProvider = agent.providerId
             ? providersById.get(agent.providerId)
             : null;
@@ -304,7 +304,7 @@ export default async function WorkspaceWorkPage({
             supportsWork,
             ready:
               supportsWork &&
-              (agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp") &&
+              agent.runtimeKind === "pi-sdk" &&
               agent.currentRevisionVersion > 0,
             runtimeKind: agent.runtimeKind,
             currentRevisionVersion: agent.currentRevisionVersion,

@@ -223,7 +223,7 @@ export async function recordLocalPromptInvocation(
   await db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
     if (
-      (row.executionBackend !== "pi-sdk" && row.executionBackend !== "omp") ||
+      row.executionBackend !== "pi-sdk" ||
       row.leaseToken !== leaseToken ||
       row.state !== TaskState.TASK_STATE_WORKING
     )

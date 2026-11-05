@@ -4,6 +4,7 @@ import { withSandboxExecutionLease } from "./sandbox-execution-gate";
 import { findAgentConversationSandbox } from "./conversation-sandbox";
 import { PiRuntimeInterruptedError } from "./pi-harness";
 import { hasNativeConversationHistory } from "./conversation-context";
+import { parseRuntimeFailure, runtimeFailureText } from "./runtime-failure";
 import {
   assertRuntimeOwner,
   trackRuntimeOperation,
@@ -45,16 +46,7 @@ import { HOST_ONLY_COMMAND_NAMES } from "./runtime-commands";
 import type { RuntimeCommandResult } from "./runtime-commands";
 import { z } from "zod";
 import type { ReasoningEffort } from "./constants";
-import {
-  OMP_VERSION,
-  OmpConfigSnapshotSchema,
-  emptyOmpConfig,
-  type OmpConfigSnapshot,
-} from "./omp-config";
-import { prepareOmpRuntime } from "./omp-runtime";
 import { preparePiRuntime } from "./pi-runtime";
-import type { SubagentDefinition } from "./capability-contracts";
-import type { ResolvedNativeRoleModel } from "./native-role-models";
 import {
   agentSessionWorkingDirectory,
   agentSessionWorkspaceRoot,
@@ -135,7 +127,7 @@ export type AgentPromptInvocation = {
 };
 
 export type RunSandboxAgentTurnOptions = {
-  runtimeKind: SandboxAgentRuntimeKind;
+  runtimeKind: "pi-sdk";
   workspaceId: string;
   agentId: string;
   agentRevisionId?: string;
@@ -154,22 +146,6 @@ export type RunSandboxAgentTurnOptions = {
   nativeUiUrl?: string;
   systemPrompt?: string | null;
   piVersion?: string;
-  ompVersion?: string;
-  ompConfig?: OmpConfigSnapshot;
-  ompCapabilities?: {
-    mode?: "platform" | "native";
-    plugins: NonNullable<RunSandboxAgentTurnOptions["piPackages"]>;
-    nativeRoleModels?: readonly ResolvedNativeRoleModel[];
-    subagents: readonly {
-      subagentId: string;
-      versionId: string;
-      checksum: string;
-      name: string;
-      definition: SubagentDefinition;
-      provider: SandboxRuntimeProvider | null;
-    }[];
-    policy: { maxDepth: number; maxConcurrency: number };
-  };
   disabledBuiltinTools?: readonly string[];
   messages: readonly SandboxRuntimeMessage[];
   skills?: readonly SkillForPrompt[];
@@ -1775,13 +1751,6 @@ function write(file) {
     // The installer lives at a runtime-selected conversation workspace path.
     const installer = await import(pathToFileURL(input.runtime.installerPath).href);
     runtimeReady = await installer.verifyPiSdkRuntime(input.runtime.directory);
-  } else if (input.runtime?.kind === "omp") {
-    try {
-      if (!fs.lstatSync(input.runtime.binary).isFile()) throw Error("OMP_STATE_SCOPE");
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-      runtimeReady = false;
-    }
   }
   process.stdout.write(JSON.stringify({ runtimeReady }));
 })().catch(error => { console.error(error); process.exitCode = 1; });
@@ -1793,9 +1762,7 @@ type SandboxTurnPreparation = {
   skills: readonly SkillForPrompt[];
   packages: unknown[];
   verifierPath: string;
-  runtime:
-    | { kind: "pi-sdk"; directory: string; installerPath: string }
-    | { kind: "omp"; binary: string };
+  runtime: { kind: "pi-sdk"; directory: string; installerPath: string };
 };
 
 async function prepareSandboxTurn(
@@ -2182,14 +2149,12 @@ async function runNativeSessionExec(
   const driverPath = `${temporaryRoot}/${id}-session.mjs`;
   const inputPath = `${temporaryRoot}/${id}-session.json`;
   try {
+    const brokerSource = await readFile(
+      `${process.cwd()}/scripts/native-runtime-session.mjs`,
+      "utf8",
+    );
     preparation.files.push(
-      {
-        path: driverPath,
-        content: await readFile(
-          `${process.cwd()}/scripts/native-runtime-session.mjs`,
-          "utf8",
-        ),
-      },
+      { path: driverPath, content: brokerSource },
       {
         path: inputPath,
         content: JSON.stringify({
@@ -2207,6 +2172,9 @@ async function runNativeSessionExec(
                 // Reload resident hosts when the trusted adapter or path contract changes.
                 hostProtocol: "session-workspaces-v1",
                 hostSourceChecksum: sdk.hostSourceChecksum,
+                brokerSourceChecksum: createHash("sha256")
+                  .update(brokerSource)
+                  .digest("hex"),
                 packageSetChecksum: sdk.packageSetChecksum,
                 agentRevisionId: options.agentRevisionId,
                 nativeUi: Boolean(options.nativeUiUrl),
@@ -2534,7 +2502,10 @@ async function runPiSdk(
     if (event.type === "toolplane_sdk_response") {
       terminal = true;
       if (!event.success) {
-        error = String(event.error?.code ?? "PI_SDK_FAILED");
+        const failure = parseRuntimeFailure(
+          `${String(event.error?.code ?? "")}: ${String(event.error?.reason ?? "")}`,
+        );
+        error = failure ? runtimeFailureText(failure) : "PI_SDK_FAILED";
         return;
       }
       text = redact(String(event.result?.text ?? ""), [
@@ -2646,433 +2617,10 @@ async function runPiSdk(
   return text;
 }
 
-async function runOmp(
-  options: RunSandboxAgentTurnOptions,
-  container: string,
-  workdir: string,
-  workspaceRoot: string,
-  mcpServers: readonly SandboxRuntimeMcpServer[],
-): Promise<string> {
-  if (!options.runtimeSessionId || !options.agentRevisionId)
-    throw new Error("OMP_SESSION_MISSING");
-  const snapshot = OmpConfigSnapshotSchema.parse(
-    options.ompConfig ?? emptyOmpConfig(),
-  );
-  const root = sandboxRuntimeStateRoot("omp", options.agentId, workspaceRoot);
-  const hostRoot = `${root}/host`;
-  const runRoot = `${root}/turns/${randomUUID()}`;
-  const configPath = `${runRoot}/turn.json`;
-  const mcpFactoryPath = `${hostRoot}/omp-mcp.mjs`;
-  const binary = `/workspace/.toolplane/runtime-packages/omp-${OMP_VERSION}/omp`;
-  const hostFiles: { path: string; content: string }[] = [];
-  for (const source of [
-    "omp-install.mjs",
-    "omp-install-cli.mjs",
-    "omp-rpc.mjs",
-    "omp-ui.mjs",
-    "omp-policy.mjs",
-    "omp-hooks.mjs",
-    "omp-capabilities.mjs",
-    "pi-sdk-package-files.mjs",
-    "native-session-paths.mjs",
-    "omp-session.mjs",
-    "a2a-sandbox-files.mjs",
-  ]) {
-    hostFiles.push({
-      path: `${hostRoot}/${source}`,
-      content: await readFile(`${process.cwd()}/scripts/${source}`, "utf8"),
-    });
-  }
-  // The existing adapter invokes the real scoped POST tools/list + tools/call
-  // gateway. OMP's native Streamable HTTP assumptions are not imposed on it.
-  hostFiles.push({
-    path: mcpFactoryPath,
-    content: piMcpExtensionSource({ workspaceRoot }),
-  });
-  if (options.nativeUiUrl) httpUrl(options.nativeUiUrl, "native UI URL");
-  const disabledTools = normalizeDisabledBuiltinTools(
-    "omp",
-    options.disabledBuiltinTools,
-  );
-  const tools = agentRuntimeBuiltinToolGroups("omp")
-    .flatMap((group) => group.tools)
-    .filter(
-      (name) =>
-        !disabledTools.includes(name) &&
-        !(
-          options.ompCapabilities?.mode === "platform" &&
-          ["task", "wait"].includes(name)
-        ),
-    );
-  const base = JSON.parse(buildPiModelsConfig(options)).providers.toolplane;
-  const model = {
-    ...base.models[0],
-    api: base.api,
-    baseUrl: base.baseUrl,
-    contextWindow: options.contextWindow,
-    maxTokens: Math.min(
-      options.maxOutputTokens ?? 16_384,
-      options.contextWindow,
-    ),
-    input: options.modelInput ?? ["text"],
-    reasoning: Boolean(
-      options.reasoningEffort && options.reasoningEffort !== "default",
-    ),
-  };
-  const plugins = (options.ompCapabilities?.plugins ?? []).map((item) => ({
-    ...item,
-    manifest: parsePiPackageReleaseManifest(item.manifest, item.checksum),
-    root: `${root}/packages/${item.checksum}/snapshot`,
-    manifestPath: `${root}/packages/${item.checksum}/manifest.json`,
-  }));
-  const nativeRoleModels = (
-    options.ompCapabilities?.nativeRoleModels ?? []
-  ).map((role, index) => {
-    const proxy = new URL(options.modelProxyBase);
-    proxy.pathname = `/api/v1/agent-runtime/model/${encodeURIComponent(role.providerId)}`;
-    const catalog = JSON.parse(
-      buildPiModelsConfig({
-        provider: role.provider,
-        modelId: role.model,
-        modelProxyBase: proxy.toString(),
-      }),
-    ).providers.toolplane;
-    const contextWindow =
-      role.metadata?.contextWindow ?? catalog.models[0].contextWindow;
-    return {
-      marketInstallId: role.marketInstallId,
-      releaseId: role.releaseId,
-      path: role.path,
-      name: role.name,
-      modelSelector: `toolplane_role_${index}/${role.model}`,
-      modelProvider: `toolplane_role_${index}`,
-      model: {
-        ...catalog.models[0],
-        api: catalog.api,
-        baseUrl: catalog.baseUrl,
-        contextWindow,
-        maxTokens: Math.min(
-          role.metadata?.maxOutputTokens ?? catalog.models[0].maxTokens,
-          contextWindow,
-        ),
-        input: role.metadata?.inputModalities.length
-          ? role.metadata.inputModalities.filter(
-              (value) => value === "text" || value === "image",
-            )
-          : ["text"],
-        reasoning: role.metadata?.capabilities.includes("reasoning") ?? false,
-      },
-    };
-  });
-  const subagents = (
-    options.ompCapabilities?.mode === undefined
-      ? options.ompCapabilities?.subagents
-      : []
-  )?.map((child, index) => {
-    const provider = child.provider ?? options.provider;
-    const childModelId = child.definition.model?.model ?? options.modelId;
-    const proxy = new URL(options.modelProxyBase);
-    proxy.pathname = `/api/v1/agent-runtime/model/${encodeURIComponent(provider.id)}`;
-    return {
-      subagentId: child.subagentId,
-      versionId: child.versionId,
-      checksum: child.checksum,
-      name: child.name,
-      nativeName: `tp-${child.subagentId.toLowerCase().replace(/[^a-z0-9_-]/g, "-")}`,
-      definition: child.definition,
-      tools: child.definition.permissions.builtinTools.filter((name) =>
-        tools.includes(name),
-      ),
-      modelSelector: `toolplane_child_${index}/${childModelId}`,
-      modelProvider: `toolplane_child_${index}`,
-      model: {
-        ...model,
-        id: childModelId,
-        name: childModelId,
-        api: piProviderProtocol(provider.format),
-        baseUrl: proxy.toString().replace(/\/$/, ""),
-      },
-    };
-  });
-  const authorizeBase = new URL(
-    "/api/v1/agent-runtime/subagents",
-    options.modelProxyBase,
-  ).toString();
-  let buffer = "",
-    text = "",
-    terminal = false,
-    error = "";
-  const observeStage = options.onExecutionStage
-    ? observeAgentExecutionStage(options.onExecutionStage)
-    : undefined;
-  const consume = async (line: string) => {
-    const event = JSON.parse(line);
-    if (event.type === "toolplane_omp_response") {
-      terminal = true;
-      if (!event.success)
-        error = /^OMP_[A-Z_]+$/.test(event.error?.code)
-          ? event.error.code
-          : "OMP_RUNTIME_FAILED";
-      text = redact(String(event.result?.text ?? ""), [
-        options.runtimeAccessToken,
-      ]);
-      const commands = RuntimeCommandsSchema.safeParse(event.result?.commands);
-      if (commands.success) await options.onCommands?.(commands.data);
-      const usage = parseRuntimeUsage(event.result?.usage);
-      if (usage) await options.onUsage?.(usage);
-      if (event.result?.commandResult)
-        await options.onCommandResult?.({
-          command: options.command ?? "",
-          text: redact(String(event.result.commandResult.text ?? ""), [
-            options.runtimeAccessToken,
-          ]),
-          status:
-            event.result.commandResult.status === "completed"
-              ? "completed"
-              : "failed",
-        });
-      return;
-    }
-    if (event.type === "omp_commands") {
-      const commands = RuntimeCommandsSchema.safeParse(event.commands);
-      if (commands.success) await options.onCommands?.(commands.data);
-      return;
-    }
-    if (event.type === "omp_context") {
-      await reportContextUsage(options, event.tokens, false);
-      return;
-    }
-    if (event.type === "omp_subagent") {
-      await reportActivities(options, [
-        {
-          type: "tool",
-          toolName: "task",
-          toolCallId: `omp-child:${event.subagentId}`,
-          source: event.source,
-          status: ["completed", "failed", "aborted", "cancelled"].includes(
-            event.status,
-          )
-            ? event.status === "completed"
-              ? "completed"
-              : "failed"
-            : "running",
-        },
-      ]);
-      return;
-    }
-    if (event.type === "omp_child_event" && event.source?.subagentId) {
-      const nested = event.event;
-      if (nested?.type === "thinking_delta") {
-        await reportActivities(options, [
-          {
-            type: "reasoning",
-            status: "running",
-            delta: nested.delta,
-            source: event.source,
-          },
-        ]);
-      } else if (nested?.type === "message_end") {
-        await reportActivities(options, [
-          {
-            type: "tool",
-            status: nested.isError ? "failed" : "completed",
-            toolName: "task",
-            toolCallId: `omp-child:${event.source.subagentId}:result`,
-            output: nested.text,
-            source: event.source,
-          },
-        ]);
-      } else if (
-        nested &&
-        [
-          "tool_execution_start",
-          "tool_execution_update",
-          "tool_execution_end",
-        ].includes(nested.type)
-      ) {
-        await reportActivities(
-          options,
-          [
-            {
-              type: "tool",
-              status:
-                nested.type === "tool_execution_end"
-                  ? nested.isError
-                    ? "failed"
-                    : "completed"
-                  : "running",
-              toolCallId: `${event.source.subagentId}:${nested.toolCallId}`,
-              toolName: nested.toolName,
-              input: nested.args,
-              output: nested.result,
-              isError: nested.isError,
-              source: event.source,
-            },
-          ],
-          mcpServers,
-        );
-      }
-      return;
-    }
-    await observeStage?.(event);
-    const parsed = parsePiStreamLine(line);
-    if (parsed?.delta)
-      await options.onTextDelta?.(
-        redact(parsed.delta, [options.runtimeAccessToken]),
-      );
-    if (parsed?.activities)
-      await reportActivities(options, parsed.activities, mcpServers);
-  };
-  try {
-    hostFiles.push({
-      path: configPath,
-      content: JSON.stringify({
-        ompVersion: OMP_VERSION,
-        binary,
-        agentRevisionId: options.agentRevisionId,
-        cwd: workdir,
-        workspaceRoot,
-        skillsRoot: sandboxRuntimeSkillRoot(
-          "omp",
-          options.agentId,
-          workspaceRoot,
-          options.agentRevisionId,
-        ),
-        runRoot,
-        sessionDir: `${root}/sessions/${safeSegment(options.runtimeSessionId, "runtime session")}`,
-        nativesDir: `${root}/native-cache`,
-        snapshot,
-        model,
-        tools,
-        disabledTools,
-        subagentMode: options.ompCapabilities?.mode,
-        ...(options.ompCapabilities
-          ? {
-              capabilities: {
-                plugins,
-                subagents,
-                nativeRoleModels,
-                policy: options.ompCapabilities.policy,
-              },
-              authorizeBase,
-            }
-          : {}),
-        skillIdentities: buildSandboxSkillBundles(options.skills ?? []).map(
-          (bundle, index) => ({
-            name: skillLabel({
-              skillId: options.skills?.[index]?.skillId ?? null,
-              skill: options.skills?.[index]?.skill ?? null,
-              name: options.skills?.[index]?.name ?? null,
-              slug: options.skills?.[index]?.slug ?? null,
-              source: options.skills?.[index]?.source ?? null,
-            }).slug,
-            directory: bundle.directory,
-            installedSkillId: options.skills?.[index]?.installedSkillId,
-            path: `${sandboxRuntimeSkillRoot("omp", options.agentId, workspaceRoot, options.agentRevisionId)}/${bundle.directory}`,
-          }),
-        ),
-        token: options.runtimeAccessToken,
-        uiUrl: options.nativeUiUrl,
-        policyExtension: `${hostRoot}/omp-policy.mjs`,
-        mcpFactoryPath,
-        mcpConfig: JSON.parse(buildPiMcpConfig(mcpServers)),
-        systemPrompt: options.systemPrompt,
-        reasoningEffort: options.reasoningEffort,
-        hostOnlyCommands: HOST_ONLY_COMMAND_NAMES,
-        historyRequired: Boolean(
-          options.historyRequired ||
-            hasNativeConversationHistory(options.messages),
-        ),
-        command: options.command,
-        message:
-          options.messages
-            .at(-1)
-            ?.parts.map((part) =>
-              messagePartText(
-                part,
-                workspaceRoot !== "/workspace" &&
-                  (options.conversationId || options.a2aContextId)
-                  ? options
-                  : undefined,
-              ),
-            )
-            .filter(Boolean)
-            .join("\n") ?? "",
-      }),
-    });
-    const ready = await prepareSandboxTurn(
-      container,
-      workspaceRoot,
-      workdir,
-      {
-        files: hostFiles,
-        skillRoot: sandboxRuntimeSkillRoot(
-          "omp",
-          options.agentId,
-          workspaceRoot,
-          options.agentRevisionId,
-        ),
-        skills: options.skills ?? [],
-        packages: plugins,
-        verifierPath: `${hostRoot}/pi-sdk-package-files.mjs`,
-        runtime: { kind: "omp", binary },
-      },
-      options.signal,
-    );
-    if (!ready) {
-      // Only old or rebuilt sandboxes need a local transfer; the session host verifies the digest once.
-      const source = await waitForSandboxRuntimeInstall(
-        prepareOmpRuntime(),
-        options.signal,
-      );
-      await runTrackedDockerExec({
-        container,
-        workdir: "/workspace",
-        executable: "node",
-        args: [`${hostRoot}/omp-install-cli.mjs`, "install-runtime", binary],
-        stdinFile: source,
-        signal: options.signal,
-        timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
-      });
-    }
-    await runTrackedDockerExec({
-      container,
-      workdir,
-      executable: "node",
-      args: [`${hostRoot}/omp-session.mjs`, configPath],
-      signal: options.signal,
-      timeoutMs: options.timeoutMs ?? TURN_TIMEOUT_MS,
-      secrets: [options.runtimeAccessToken],
-      onStdout: async (chunk) => {
-        buffer += chunk;
-        for (;;) {
-          const index = buffer.indexOf("\n");
-          if (index < 0) break;
-          const line = buffer.slice(0, index).trim();
-          buffer = buffer.slice(index + 1);
-          if (line) await consume(line);
-        }
-      },
-    });
-    if (buffer.trim()) await consume(buffer.trim());
-    if (!terminal) throw new Error("OMP_RPC_PROTOCOL_FAILED");
-    if (error) throw new Error(error);
-    return text;
-  } finally {
-    await runTrackedDockerExec({
-      container,
-      workdir: "/workspace",
-      executable: "rm",
-      args: ["-rf", "--", runRoot],
-      timeoutMs: 10_000,
-    }).catch(() => undefined);
-  }
-}
-
 export async function runSandboxAgentTurn(
   options: RunSandboxAgentTurnOptions,
 ): Promise<string> {
-  if (options.runtimeKind !== "pi-sdk" && options.runtimeKind !== "omp")
+  if (options.runtimeKind !== "pi-sdk")
     throw new Error("AGENT_RUNTIME_RETIRED");
   try {
     return await withSandboxExecutionLease(options.sandboxId, async () => {
@@ -3147,11 +2695,6 @@ async function runExclusiveSandboxAgentTurn(
     workspaceRoot,
     options.agentRevisionId,
   );
-  if (options.runtimeKind === "omp") {
-    if (options.ompVersion !== OMP_VERSION)
-      throw new Error("OMP_VERSION_MISMATCH");
-    return runOmp(options, container, workdir, workspaceRoot, mcpServers);
-  }
   if (options.piVersion !== undefined && options.piVersion !== "0.87.1")
     throw new Error("PI_SDK_VERSION_MISMATCH");
   return runPiSdk(

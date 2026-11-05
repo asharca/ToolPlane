@@ -16,7 +16,7 @@ import {
 } from "./revision-types";
 import { isExecutableAgentRuntimeKind } from "./runtime-kind";
 
-/** Platform Agent delegation and OMP native tasks are independent; both may be enabled. */
+/** Platform Agent delegation is explicitly reviewed; retired native tasks grant no authority. */
 export const SubagentSettingsSchema = z
   .object({
     native: z.boolean(),
@@ -173,10 +173,10 @@ export async function savePlatformSubagents(
       workspaceId,
       agentId,
     );
-    if (native && parent.runtimeKind !== "omp")
+    if (native)
       throw new PluginError(
         "SUBAGENT_NATIVE_OMP_REQUIRED",
-        "Native subagents require OMP.",
+        "Native OMP subagents are retired.",
       );
     if (new Set(agentIds).size !== agentIds.length)
       throw new PluginError("SUBAGENT_INVALID", "Duplicate platform Agent.");

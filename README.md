@@ -10,7 +10,7 @@ ToolPlane 是一个自托管的 AI 工具与 Agent 平台，以工作区组织�
 
 - **MCP 管理**：从目录或自定义配置部署服务，支持 npm、PyPI、GitHub 和 Docker 来源。
 - **插件中心与客户端**：从 GitHub 同步统一版本的组合插件包，一个包可包含 MCP、Skill、Pi 能力包、Agent 和 Assistant；按需选择成员、审阅更新，保留固定提交与审计。不接受本地上传或站内内容发布。客户端按独立 scope 注册，旧 Toolkit 执行与令牌已退役。
-- **Agent 执行**：支持 Pi SDK（`pi-sdk`）和 OMP（`omp`），审查并应用不可变修订后，每个智能体复用一个持久沙箱，会话分别保留工作目录、原生历史和插件版本。模型、技能、MCP 与插件直接绑定平台资源。平台 Agent 委派可与 OMP 原生动态子任务共存，授权随修订固定；其他旧运行时仅保留只读历史。
+- **Agent 执行**：使用 Pi SDK（`pi-sdk`），审查并应用不可变修订后，每个智能体复用一个持久沙箱，会话分别保留工作目录、原生历史和插件版本。模型、技能、MCP 与插件直接绑定平台资源，子智能体通过平台 A2A 委派。OMP 与其他旧运行时仅保留只读历史；OMP 配置导入只转换为 Pi，专属能力必须明确处理，不能直接恢复执行。
 - **沙箱与设备**：管理 Docker 沙箱，通过 Connector 连接自己的电脑，或通过 ADB 桥接 Android。
 - **观测与集成**：查看调用、延迟和错误，通过 MCP、API 或消息渠道接入。
 
@@ -22,7 +22,7 @@ flowchart TB
   Skills["Skill · Prompt · 文件"] --> Package
   Package -->|审查并应用| Revision["Agent 修订"]
   Package -->|独立授权注册| Clients["外部 AI 客户端"]
-  Revision --> Session["Pi / OMP 会话 · 固定修订"]
+  Revision --> Session["Pi 会话 · 固定修订"]
   Session --> Sandbox["Agent 共享持久沙箱 · 会话独立目录"]
 ```
 

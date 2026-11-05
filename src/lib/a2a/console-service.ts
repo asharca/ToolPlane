@@ -132,8 +132,7 @@ export async function getA2AConsoleView(
   } catch {
     /* Return a safe configuration warning, not Host-derived URLs. */
   }
-  const supported =
-    agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp";
+  const supported = agent.runtimeKind === "pi-sdk";
   const sandbox =
     agent.sandboxes.length === 1 ? agent.sandboxes[0].sandbox : null;
   return {
@@ -209,11 +208,7 @@ export async function mutateA2AConsole(
     });
     if (!agent) throw new A2AHttpError(404, "Agent unavailable.");
     if (input.action === "set-inbound" || input.action === "set-outbound") {
-      if (
-        input.enabled &&
-        agent.runtimeKind !== "pi-sdk" &&
-        agent.runtimeKind !== "omp"
-      )
+      if (agent.runtimeKind !== "pi-sdk")
         throw new A2AHttpError(409, "Retired Agent execution is read-only.");
       const inbound = input.action === "set-inbound";
       await tx.agent.update({
@@ -222,10 +217,7 @@ export async function mutateA2AConsole(
           ? { a2aInboundEnabled: input.enabled }
           : { a2aOutboundEnabled: input.enabled },
       });
-      if (
-        (agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp") &&
-        agent.currentRevisionVersion > 0
-      ) {
+      if (agent.runtimeKind === "pi-sdk" && agent.currentRevisionVersion > 0) {
         const revision = await requireAgentRevision(tx, agent.id);
         // Direction changes cannot apply a pending mode or widen native limits.
         const nativePolicy = revision.config.nativeSubagentPolicy;

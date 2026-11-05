@@ -135,7 +135,7 @@ export async function localTarget(
       subAgents: { orderBy: { childId: "asc" }, select: { childId: true } },
     },
   });
-  if (agent?.runtimeKind !== "pi-sdk" && agent?.runtimeKind !== "omp")
+  if (agent?.runtimeKind !== "pi-sdk")
     throw unavailable("SUBAGENT_RUNTIME_UNAVAILABLE");
   if (!entry && !agent.a2aInboundEnabled)
     throw unavailable("A2A_INBOUND_DISABLED");

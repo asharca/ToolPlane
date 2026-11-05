@@ -307,9 +307,7 @@ export async function ensureAgentConversationSandbox(
           network: environment.network,
           volumeName: sandboxVolumeName(id),
           resourceLimits: environment.resourceLimits,
-          ...("ompVersion" in environment
-            ? { ompVersion: environment.ompVersion }
-            : { piVersion: environment.piVersion }),
+          piVersion: environment.piVersion,
         },
       },
     });

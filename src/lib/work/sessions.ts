@@ -184,7 +184,7 @@ export function workSessionRevisionMetadata(session: {
     agentRevisionVersion: revision?.version ?? null,
     legacyRevisionUnresolved: session.legacyRevisionUnresolved,
     readOnly:
-      (session.runtimeKind !== "pi-sdk" && session.runtimeKind !== "omp") ||
+      session.runtimeKind !== "pi-sdk" ||
       session.legacyRevisionUnresolved ||
       !config ||
       session.agent.runtimeKind !== session.runtimeKind ||
@@ -285,11 +285,7 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
         },
       },
     });
-    if (
-      !agent ||
-      (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp")
-    )
-      return null;
+    if (agent?.runtimeKind !== "pi-sdk") return null;
     if (input.modelOverride)
       await resolveAgentModelOverride(
         input.workspaceId,
@@ -491,7 +487,7 @@ export async function transitionWorkSession(
       status: { in: sources },
       ...(["queued", "running"].includes(status)
         ? {
-            runtimeKind: { in: ["pi-sdk", "omp"] },
+            runtimeKind: { in: ["pi-sdk"] },
             agentRevisionId: { not: null },
             legacyRevisionUnresolved: false,
             conversation: {

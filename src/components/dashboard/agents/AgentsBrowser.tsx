@@ -54,7 +54,6 @@ import {
   isExecutableAgentRuntimeKind,
 } from "@/lib/agents/runtime-kind";
 import { AgentBuiltInTools } from "@/components/dashboard/agents/AgentBuiltInTools";
-import { FormSelect } from "@/components/ui/FormSelect";
 import { SystemPromptEditor } from "@/components/dashboard/SystemPromptEditor";
 import { OmpImport } from "@/components/dashboard/agents/OmpImport";
 
@@ -138,7 +137,7 @@ export function AgentsBrowser({
     createAgentAction,
     {},
   );
-  const [runtime, setRuntime] = useState<"pi-sdk" | "omp">("pi-sdk");
+  const runtime = "pi-sdk";
   const configuredDefaultNativeModel =
     createOptions.defaultModel &&
     createOptions.providers.some(
@@ -180,7 +179,10 @@ export function AgentsBrowser({
   const [disabledBuiltinTools, setDisabledBuiltinTools] = useState<Set<string>>(
     () => new Set(),
   );
-  const setupCount = agents.filter((agent) => !isAgentReady(agent)).length;
+  const setupCount = agents.filter(
+    (agent) =>
+      isExecutableAgentRuntimeKind(agent.runtimeKind) && !isAgentReady(agent),
+  ).length;
   const hasProviders = createOptions.providers.length > 0;
   const compatibleProviders = createOptions.providers.filter((provider) =>
     agentRuntimeSupportsProviderFormat(runtime, provider.format),
@@ -488,37 +490,7 @@ export function AgentsBrowser({
                     }}
                   />
                 </DialogField>
-                <DialogField label={t("runtime")}>
-                  <FormSelect
-                    label={t("runtime")}
-                    name="runtime"
-                    value={runtime}
-                    disabled={createPending}
-                    options={[
-                      { value: "pi-sdk", label: "Pi" },
-                      { value: "omp", label: "OMP" },
-                    ]}
-                    onValueChange={(value) => {
-                      const next = value === "omp" ? "omp" : "pi-sdk";
-                      setRuntime(next);
-                      setDisabledBuiltinTools(new Set());
-                      const compatible = createOptions.providers.filter(
-                        (item) =>
-                          agentRuntimeSupportsProviderFormat(next, item.format),
-                      );
-                      if (
-                        !compatible.some(
-                          (item) =>
-                            item.id === providerId &&
-                            item.models.includes(modelId),
-                        )
-                      ) {
-                        setProviderId(compatible[0]?.id ?? "");
-                        setModelId(compatible[0]?.models[0] ?? "");
-                      }
-                    }}
-                  />
-                </DialogField>
+                <input type="hidden" name="runtime" value={runtime} />
                 <DialogField
                   label={t("model")}
                   dirty={
@@ -580,13 +552,11 @@ export function AgentsBrowser({
                   <Box className="mt-0.5 size-4 shrink-0" />
                   <p>{t("automaticSandboxHelp")}</p>
                 </div>
-                {runtime !== "omp" ? (
-                  <div className="space-y-2 rounded-2xl border border-border/60 bg-muted/20 p-4 text-xs leading-relaxed text-muted-foreground">
-                    <p>{t("piPackageSecurity")}</p>
-                    <p>{t("piPackageHeadless")}</p>
-                    <p>{t("piSdkCreateHelp")}</p>
-                  </div>
-                ) : null}
+                <div className="space-y-2 rounded-2xl border border-border/60 bg-muted/20 p-4 text-xs leading-relaxed text-muted-foreground">
+                  <p>{t("piPackageSecurity")}</p>
+                  <p>{t("piPackageHeadless")}</p>
+                  <p>{t("piSdkCreateHelp")}</p>
+                </div>
                 <DialogField
                   label={t("maxToolSteps")}
                   htmlFor="agent-create-max-steps"
@@ -862,6 +832,9 @@ export function AgentsBrowser({
             <ul className="divide-y divide-border">
               {agents.map((agent) => {
                 const ready = isAgentReady(agent);
+                const retired = !isExecutableAgentRuntimeKind(
+                  agent.runtimeKind,
+                );
                 const agentsHref = `/app/${encodeURIComponent(slug)}/agents`;
                 const detailsHref = `${agentsHref}/${encodeURIComponent(agent.id)}?returnTo=${encodeURIComponent(returnTo)}`;
                 const model = agent.providerName
@@ -898,22 +871,28 @@ export function AgentsBrowser({
                               {agent.name}
                             </Link>
                             <AnimatedBadge
-                              status={ready ? "success" : "warning"}
+                              status={
+                                retired
+                                  ? "neutral"
+                                  : ready
+                                    ? "success"
+                                    : "warning"
+                              }
                             >
                               {ready ? (
                                 <CheckCircle2 className="size-3.5" />
                               ) : (
                                 <CircleAlert className="size-3.5" />
                               )}
-                              {ready
-                                ? t("ready")
-                                : isExecutableAgentRuntimeKind(
-                                      agent.runtimeKind,
-                                    ) && !agent.sandboxReady
-                                  ? t("needsSandbox")
-                                  : !agent.providerName
-                                    ? t("needsProvider")
-                                    : t("needsModel")}
+                              {retired
+                                ? t("retiredRuntime")
+                                : ready
+                                  ? t("ready")
+                                  : !agent.sandboxReady
+                                    ? t("needsSandbox")
+                                    : !agent.providerName
+                                      ? t("needsProvider")
+                                      : t("needsModel")}
                             </AnimatedBadge>
                             <AnimatedBadge status="neutral">
                               <Bot className="size-3.5" />
@@ -942,12 +921,12 @@ export function AgentsBrowser({
                       </div>
 
                       <div className="flex flex-wrap gap-2.5 lg:justify-end">
-                        {ready ? (
+                        {ready || retired ? (
                           <ButtonLink
                             href={`/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(agent.id)}`}
-                            aria-label={t("chat")}
-                            title={t("chat")}
-                            variant="primary"
+                            aria-label={retired ? t("viewHistory") : t("chat")}
+                            title={retired ? t("viewHistory") : t("chat")}
+                            variant={retired ? "secondary" : "primary"}
                             size="icon"
                             className="shrink-0"
                           >

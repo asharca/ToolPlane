@@ -117,7 +117,7 @@ async function genericSandboxMutationAllowed(
       workspaceId: sandbox.workspaceId,
       sandboxes: { some: { sandboxId: sandbox.id } },
       OR: [
-        { runtimeKind: { notIn: ["pi-sdk", "omp"] } },
+        { runtimeKind: { notIn: ["pi-sdk"] } },
         { retiredAt: { not: null } },
       ],
     },

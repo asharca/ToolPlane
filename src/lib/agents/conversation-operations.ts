@@ -120,7 +120,7 @@ export async function rotateChannelConversation(params: {
   const liveAgent = await getAgentForRun(params.agentId, params.workspaceId);
   if (!liveAgent) throw new ConversationOperationError("notFound", 404);
   if (
-    (liveAgent.runtimeKind !== "pi-sdk" && liveAgent.runtimeKind !== "omp") ||
+    liveAgent.runtimeKind !== "pi-sdk" ||
     liveAgent.retiredAt ||
     conversation.legacyRevisionUnresolved ||
     !conversation.agentRevisionId

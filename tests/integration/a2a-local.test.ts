@@ -2,23 +2,19 @@
 import { assertDefined } from "../assert-defined";
 import { createHash, randomUUID } from "node:crypto";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
+import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
+import { emptyOmpConfig } from "@/lib/agents/omp-config";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 import {
   captureAgentRevisionConfig,
   requireAgentRevision,
-  resolvePinnedAgent,
 } from "@/lib/agents/revisions";
-import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 import {
   listPlatformSubagents,
   savePlatformSubagents,
   SubagentSettingsSchema,
 } from "@/lib/agents/platform-subagents";
-import { agentPermissionAdditions } from "@/lib/agents/permission-additions";
-import {
-  diffAgentRevisions,
-  upgradeAgentConversationRevision,
-} from "@/lib/agents/conversation-revisions";
-import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
+import { upgradeAgentConversationRevision } from "@/lib/agents/conversation-revisions";
 import {
   beforeAll,
   beforeEach,
@@ -1398,6 +1394,93 @@ describe("console task tree authorization", () => {
     agentId: agents[0],
     slug: "unused",
   });
+  it("reads retained OMP task messages without minting execution authority or transferring ownership", async () => {
+    const parent = await root();
+    await finishTask(
+      parent.id,
+      assertDefined(parent.leaseToken),
+      TaskState.TASK_STATE_COMPLETED,
+      undefined,
+      textArtifact("Retained result"),
+    );
+    const owner = await db.agent.findUniqueOrThrow({
+      where: { id: agents[0] },
+    });
+    const prior = await requireAgentRevision(
+      db,
+      owner.id,
+      grant.agentRevisionId,
+    );
+    if (prior.config.runtimeKind !== "pi-sdk")
+      throw new Error("Expected native Pi fixture");
+    const { piVersion: _piVersion, ...environment } = prior.config.environment;
+    const ompConfig = emptyOmpConfig();
+    const config = AgentRevisionConfigSchema.parse({
+      ...prior.config,
+      runtimeKind: "omp",
+      environment: { ...environment, ompVersion: "18.14.0" },
+      ompConfig,
+      ompConfigChecksum: marketReleaseChecksum(ompConfig),
+    });
+    // This imports an already-recorded snapshot; no retired runtime is admitted.
+    const archived = await db.agentRevision.create({
+      data: {
+        agentId: owner.id,
+        version: owner.currentRevisionVersion + 1,
+        config: config as Prisma.InputJsonValue,
+      },
+    });
+    const binding = createHash("sha256")
+      .update(JSON.stringify([owner.id, archived.id]))
+      .digest("hex");
+    await db.a2AContext.update({
+      where: { id: parent.contextId },
+      data: { agentRevisionId: archived.id, targetBinding: binding },
+    });
+    await db.a2ATask.update({
+      where: { id: parent.id },
+      data: {
+        executionBackend: "omp",
+        grant: {
+          ...grant,
+          agentRevisionId: archived.id,
+          targetBinding: binding,
+          expiresAt: 1,
+        },
+      },
+    });
+    await db.agent.update({
+      where: { id: owner.id },
+      data: { runtimeKind: "omp", currentRevisionVersion: archived.version },
+    });
+    try {
+      const tree = await getConsoleTaskTree(actor(), parent.id, parent.id, 32);
+      expect(tree.nodes).toEqual([
+        expect.objectContaining({ id: parent.id, executionBackend: "omp" }),
+      ]);
+      expect(
+        Task.fromJSON(tree.selectedTask).history[0].parts[0].content?.value,
+      ).toBe("Do this task");
+      await expect(
+        getConsoleTaskTree({ ...actor(), actorId: otherUser }, parent.id),
+      ).rejects.toBeInstanceOf(TaskNotFoundError);
+      await expect(
+        createLocalRootGrant(ws, owner.id, user),
+      ).rejects.toBeInstanceOf(TaskNotFoundError);
+      expect(
+        await db.agentRevision.findUniqueOrThrow({
+          where: { id: archived.id },
+        }),
+      ).toEqual(archived);
+    } finally {
+      await db.agent.update({
+        where: { id: owner.id },
+        data: {
+          runtimeKind: "pi-sdk",
+        },
+      });
+    }
+  });
   it("shows owned root and descendants without execution grants or private prompts", async () => {
     const parent = await root();
     const delegated = await child(parent);
@@ -2267,7 +2350,7 @@ describe("unified native ingress mappings", () => {
       }
     },
   );
-  it.each(["pi-sdk", "omp"] as const)(
+  it.each(["pi-sdk"] as const)(
     "runs authorized %s Work delegation with its pinned inputs, stream and child projection",
     async (runtimeKind) => {
       const skill = await db.installedSkill.create({
@@ -2284,12 +2367,6 @@ describe("unified native ingress mappings", () => {
         data: { agentId: agents[0], installedSkillId: skill.id },
       });
       try {
-        if (runtimeKind === "omp") {
-          await db.agent.update({
-            where: { id: agents[0] },
-            data: { runtimeKind, subagentMode: "native" },
-          });
-        }
         await publishFixtureAgentRevision(ws, agents[0]);
         grant = await createLocalRootGrant(ws, agents[0], user);
         const input = await entry("work");
@@ -2350,8 +2427,6 @@ describe("unified native ingress mappings", () => {
           expect.objectContaining({ deploymentId: "toolplane-runtime" }),
         ]);
         expect(options.skills).toEqual([]);
-        if (runtimeKind === "omp")
-          expect(options.ompCapabilities?.mode).toBe("native");
         const token = assertDefined(
           await verifyAgentRuntimeToken(options.runtimeAccessToken),
         );
@@ -2493,17 +2568,9 @@ describe("unified native ingress mappings", () => {
     expect(options.runtimeSessionId).toBe(work.conversationId);
   });
 
-  it.each(["pi-sdk", "omp"] as const)(
+  it.each(["pi-sdk"] as const)(
     "binds a new %s Work Context to its existing conversation sandbox before authorizing model and MCP requests",
     async (runtimeKind) => {
-      if (runtimeKind === "omp") {
-        await db.agent.update({
-          where: { id: agents[0] },
-          data: { runtimeKind, subagentMode: "native" },
-        });
-        await publishFixtureAgentRevision(ws, agents[0]);
-        grant = await createLocalRootGrant(ws, agents[0], user);
-      }
       const input = await entry("work");
       await db.workSession.update({
         where: { id: input.sourceId },
@@ -3518,7 +3585,7 @@ describe("independent platform and native subagents", () => {
         workspaceId: ws,
         slug: `draft-${randomUUID()}`,
         name: "Unpublished child",
-        runtimeKind: "omp",
+        runtimeKind: "pi-sdk",
       },
     });
     await db.sandbox.update({
@@ -3638,115 +3705,6 @@ describe("independent platform and native subagents", () => {
     }
   });
 
-  it("enables native tasks and platform delegation together without touching remote authority", async () => {
-    await db.agent.update({
-      where: { id: agents[0] },
-      data: { runtimeKind: "omp" },
-    });
-    const platform = await publishFixtureAgentRevision(ws, agents[0]);
-    const {
-      subagentMode: _mode,
-      nativeSubagentPolicy: _policy,
-      ...legacy
-    } = platform.config;
-    expect(AgentRevisionConfigSchema.parse(legacy)).toEqual(legacy);
-    expect(marketReleaseChecksum(AgentRevisionConfigSchema.parse(legacy))).toBe(
-      marketReleaseChecksum(legacy),
-    );
-    const remote = await db.remoteA2AAgent.create({
-      data: {
-        workspaceId: ws,
-        name: "Remote",
-        cardUrl: "https://remote.test/.well-known/agent-card.json",
-        rpcUrl: "https://remote.test/rpc",
-        card: {},
-        enabled: true,
-        allowedAgentIds: [agents[0], agents[1]],
-      },
-    });
-    expect(await save(true, [agents[1]])).toMatchObject({
-      native: true,
-      nativePolicy,
-    });
-    expect(
-      (await db.remoteA2AAgent.findUniqueOrThrow({ where: { id: remote.id } }))
-        .allowedAgentIds,
-    ).toEqual([agents[0], agents[1]]);
-    const both = await publishFixtureAgentRevision(ws, agents[0]);
-    expect(both.config).toMatchObject({
-      subagentMode: "native",
-      nativeSubagentPolicy: nativePolicy,
-      subagents: [],
-      a2a: { outboundEnabled: true },
-    });
-    expect(both.config.a2a.policy.targets).toEqual([
-      expect.objectContaining({ kind: "local", targetId: agents[1] }),
-    ]);
-    expect(
-      AgentRevisionConfigSchema.safeParse({
-        ...both.config,
-        nativeSubagentPolicy: undefined,
-      }).success,
-    ).toBe(false);
-    expect(
-      AgentRevisionConfigSchema.safeParse({
-        ...both.config,
-        subagentMode: "invalid",
-      }).success,
-    ).toBe(false);
-    grant = await createLocalRootGrant(ws, agents[0], user);
-    const parent = await root();
-    expect(
-      (await childGrant(parent.id, assertDefined(parent.leaseToken), agents[1]))
-        .agentId,
-    ).toBe(agents[1]);
-    const token = await runtimeToken(parent);
-    expect(await executeLocalMcpTool(token, "a2a_list_agents", {})).toEqual({
-      agents: [{ id: agents[1], name: "Agent 1" }],
-    });
-    const signed = await createAgentRuntimeToken(token);
-    const client = new Client({
-      name: "native-and-platform-test",
-      version: "1",
-    });
-    const transport = new StreamableHTTPClientTransport(
-      new URL("https://toolplane.test/runtime-tools"),
-      {
-        requestInit: { headers: { authorization: `Bearer ${signed}` } },
-        fetch: async (input, init) => {
-          const req = new Request(input, init);
-          return req.method === "POST"
-            ? handleRuntimeTools(req, parent.id)
-            : new Response(null, { status: 405 });
-        },
-      },
-    );
-    try {
-      await client.connect(transport);
-      expect(
-        (await client.listTools()).tools.map((tool) => tool.name),
-      ).toContain("pi_a2a_submit");
-    } finally {
-      await client.close();
-    }
-    expect(agentPermissionAdditions(platform.config, both.config)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ kind: "delegation", resourceId: "native" }),
-      ]),
-    );
-    expect(agentPermissionAdditions(both.config, both.config)).toEqual([]);
-    const expanded = AgentRevisionConfigSchema.parse({
-      ...both.config,
-      nativeSubagentPolicy: { maxConcurrency: 8, maxDepth: 4 },
-    });
-    expect(
-      diffAgentRevisions(both, { version: both.version + 1, config: expanded }),
-    ).toMatchObject({ changedFields: ["a2a"], grantsNewPermissions: true });
-    expect(
-      diffAgentRevisions({ version: 1, config: expanded }, both),
-    ).toMatchObject({ changedFields: ["a2a"], grantsNewPermissions: false });
-  });
-
   it("keeps remote-only outbound as configured when saving the selection", async () => {
     const remoteOnly = {
       kind: "remote" as const,
@@ -3778,38 +3736,5 @@ describe("independent platform and native subagents", () => {
       (await db.agent.findUniqueOrThrow({ where: { id: agents[0] } }))
         .a2aOutboundEnabled,
     ).toBe(true);
-  });
-
-  it("keeps sessions on their pinned native setting after the draft changes", async () => {
-    await db.agent.update({
-      where: { id: agents[0] },
-      data: { runtimeKind: "omp" },
-    });
-    await save(true);
-    const native = await publishFixtureAgentRevision(ws, agents[0]);
-    const conversation = await db.conversation.create({
-      data: {
-        agentId: agents[0],
-        agentRevisionId: native.id,
-        legacyRevisionUnresolved: false,
-      },
-    });
-    await save(false, [agents[1]]);
-    const platform = await publishFixtureAgentRevision(ws, agents[0]);
-    const live = await db.agent.findUniqueOrThrow({ where: { id: agents[0] } });
-    expect((await resolvePinnedAgent(live, native.id)).subagentMode).toBe(
-      "native",
-    );
-    expect(
-      (await requireAgentRevision(db, agents[0], platform.id)).config
-        .subagentMode,
-    ).toBe("platform");
-    expect(
-      (
-        await db.conversation.findUniqueOrThrow({
-          where: { id: conversation.id },
-        })
-      ).agentRevisionId,
-    ).toBe(native.id);
   });
 });

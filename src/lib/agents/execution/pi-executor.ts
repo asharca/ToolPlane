@@ -20,7 +20,7 @@ import { workRuntimeObserver } from "@/lib/work/run-control";
 export const executeLocalTask: TaskExecutor = async (row, signal) => {
   if (row.executionBackend === "pi-harness")
     return drainRetiredPiHarnessTask(row, signal);
-  if (row.executionBackend !== "pi-sdk" && row.executionBackend !== "omp")
+  if (row.executionBackend !== "pi-sdk")
     throw new Error("Unknown Agent execution backend.");
   const grant = row.grant as unknown as TaskGrant;
   const observer =
@@ -62,9 +62,9 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
   if (text.length > A2A_LIMITS.outputCharacters)
     throw new Error("Task output limit exceeded.");
   const artifact = textArtifact(text);
-  if (options.runtimeKind === "pi-sdk" || options.runtimeKind === "omp")
+  if (options.runtimeKind === "pi-sdk")
     artifact.metadata = {
-      [options.runtimeKind === "omp" ? "toolplaneOmp" : "toolplanePiSdk"]: {
+      toolplanePiSdk: {
         commands,
         model: { providerId: options.provider.id, model: options.modelId },
         ...(usage ? { usage } : {}),

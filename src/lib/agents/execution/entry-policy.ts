@@ -44,7 +44,7 @@ export async function createEntryPolicy(
     if (
       !work?.agentRevisionId ||
       work.legacyRevisionUnresolved ||
-      (work.runtimeKind !== "pi-sdk" && work.runtimeKind !== "omp") ||
+      work.runtimeKind !== "pi-sdk" ||
       work.cancelRequestedAt ||
       ["archived", "cancelling", "cancelled"].includes(work.status)
     )

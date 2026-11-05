@@ -40,7 +40,7 @@ export type LoadedAgentPiPackages = {
 export function resolveAgentPiPackages(
   agent: LoadedAgentPiPackages,
 ): ResolvedAgentPiPackage[] {
-  if (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp") return [];
+  if (agent.runtimeKind !== "pi-sdk") return [];
   if (!Array.isArray(agent.piPackages) || agent.piPackages.length > 16)
     throw new Error("PI_PACKAGE_UNAVAILABLE");
   const seen = new Set<string>();
@@ -200,7 +200,7 @@ export function resolveAgentTools(
       [...names],
     ]),
   );
-  if (agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp") {
+  if (agent.runtimeKind === "pi-sdk") {
     if (!agent.workspaceId) throw new Error("PI_PACKAGE_UNAVAILABLE");
     const packages = resolveAgentPiPackages({
       runtimeKind: agent.runtimeKind,

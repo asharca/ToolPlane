@@ -19,7 +19,6 @@ import {
   type ModelProviderOption,
   type ModelSelection,
 } from "@/components/dashboard/models/ModelPicker";
-import { FormSelect } from "@/components/ui/FormSelect";
 import { agentRuntimeSupportsProviderFormat } from "@/lib/agents/runtime-kind";
 import {
   OMP_IMPORT_MAX_BYTES,
@@ -63,16 +62,13 @@ export function OmpImport({
   const t = useTranslations("console.agents.ompImport");
   const agentsT = useTranslations("console.agents");
   const [bundle, setBundle] = useState<OmpImportBundle | null>(null);
-  const [runtimeKind, setRuntimeKind] = useState<"omp" | "pi-sdk">("omp");
+  const runtimeKind = "pi-sdk";
   const [name, setName] = useState("");
   const [selection, setSelection] = useState<ModelSelection | null>(null);
   const [excludedIds, setExcludedIds] = useState<string[]>([]);
   const [configs, setConfigs] = useState<Record<string, string>>({});
   const [secrets, setSecrets] = useState<
     NonNullable<OmpImportRequest["mcpSecrets"]>
-  >({});
-  const [roleModels, setRoleModels] = useState<
-    NonNullable<OmpImportRequest["roleModels"]>
   >({});
   const [preview, setPreview] = useState<OmpImportPreview | null>(null);
   const [previewCurrent, setPreviewCurrent] = useState(false);
@@ -223,8 +219,6 @@ export function OmpImport({
     setConfigs({});
     setSecrets({});
     setExcludedIds([]);
-    setRoleModels({});
-    setRuntimeKind("omp");
     setName("");
     setSelection(null);
     try {
@@ -252,7 +246,7 @@ export function OmpImport({
         ),
       );
       const compatible = providers.filter((provider) =>
-        agentRuntimeSupportsProviderFormat("omp", provider.format),
+        agentRuntimeSupportsProviderFormat("pi-sdk", provider.format),
       );
       const sourceProvider = next.model?.provider;
       const sourceModel = next.model?.model;
@@ -313,9 +307,6 @@ export function OmpImport({
       model: selection.model,
       mcpConfigs,
       inspectMcp,
-      roleModels: Object.fromEntries(
-        Object.entries(roleModels).filter(([id]) => !excludedIds.includes(id)),
-      ),
       mcpSecrets: Object.fromEntries(
         Object.entries(secrets).filter(([id]) => !excludedIds.includes(id)),
       ),
@@ -518,36 +509,9 @@ export function OmpImport({
               </DialogField>
               <DialogField
                 label={t("targetRuntime")}
-                description={
-                  runtimeKind === "omp" ? t("preserveHelp") : t("migrateHelp")
-                }
+                description={t("migrateHelp")}
               >
-                <FormSelect
-                  label={t("targetRuntime")}
-                  value={runtimeKind}
-                  options={[
-                    { value: "omp", label: t("preserve") },
-                    { value: "pi-sdk", label: t("migrate") },
-                  ]}
-                  onValueChange={(value) => {
-                    const next = value === "pi-sdk" ? "pi-sdk" : "omp";
-                    setRuntimeKind(next);
-                    if (
-                      selection &&
-                      !providers.some(
-                        (provider) =>
-                          provider.id === selection.providerId &&
-                          agentRuntimeSupportsProviderFormat(
-                            next,
-                            provider.format,
-                          ) &&
-                          provider.models.includes(selection.model),
-                      )
-                    )
-                      setSelection(null);
-                    invalidate();
-                  }}
-                />
+                <p className="text-sm font-medium">{t("migrate")}</p>
               </DialogField>
               <DialogField
                 label={agentsT("model")}
@@ -661,93 +625,18 @@ export function OmpImport({
                           ))}
                         </ul>
                       ) : null}
-                      {!excluded
-                        ? (preview?.nativeRoles ?? [])
-                            .filter((role) => role.resourceId === resource.id)
-                            .map((role) => {
-                              const mapped =
-                                roleModels[resource.id]?.[role.path] ?? null;
-                              const mappedProvider = compatibleProviders.find(
-                                (provider) =>
-                                  provider.id === mapped?.providerId,
-                              );
-                              const hint = role.modelHint;
-                              const aliasHint = hint?.startsWith("@")
-                                ? bundle.modelRoles?.[hint.slice(1)]
-                                : undefined;
-                              return (
-                                <DialogField
-                                  key={role.path}
-                                  label={t("roleModel", { name: role.name })}
-                                  description={
-                                    hint
-                                      ? t("roleModelHint", {
-                                          hint: aliasHint
-                                            ? `${hint} → ${aliasHint}`
-                                            : hint,
-                                        })
-                                      : t("roleModelInherit")
-                                  }
-                                >
-                                  <p className="break-all text-xs text-muted-foreground">
-                                    {role.path}
-                                  </p>
-                                  <ModelPicker
-                                    className="flex w-full"
-                                    providers={compatibleProviders}
-                                    value={mapped}
-                                    pending={Boolean(pending)}
-                                    onSelect={(value) => {
-                                      setRoleModels((current) => ({
-                                        ...current,
-                                        [resource.id]: {
-                                          ...current[resource.id],
-                                          [role.path]: value,
-                                        },
-                                      }));
-                                      invalidate();
-                                    }}
-                                    trigger={
-                                      <ModelPickerTrigger
-                                        disabled={Boolean(pending)}
-                                        aria-label={t("roleModel", {
-                                          name: role.name,
-                                        })}
-                                        label={
-                                          mapped?.model ??
-                                          agentsT("selectModel")
-                                        }
-                                        placeholder={!mapped}
-                                        provider={mappedProvider?.name}
-                                        note={mappedProvider?.name}
-                                      />
-                                    }
-                                  />
-                                  {mapped && !hint ? (
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      onClick={() => {
-                                        setRoleModels((current) => ({
-                                          ...current,
-                                          [resource.id]: Object.fromEntries(
-                                            Object.entries(
-                                              current[resource.id] ?? {},
-                                            ).filter(
-                                              ([path]) => path !== role.path,
-                                            ),
-                                          ),
-                                        }));
-                                        invalidate();
-                                      }}
-                                    >
-                                      {t("roleModelUseParent")}
-                                    </Button>
-                                  ) : null}
-                                </DialogField>
-                              );
-                            })
-                        : null}
+                      {(preview?.nativeRoles ?? [])
+                        .filter((role) => role.resourceId === resource.id)
+                        .map((role) => (
+                          <div
+                            key={role.path}
+                            className="space-y-1 text-xs text-muted-foreground"
+                          >
+                            <p className="font-medium">{role.name}</p>
+                            <p className="break-all">{role.path}</p>
+                            <p>{t("nativeRoleIncompatible")}</p>
+                          </div>
+                        ))}
                       {server && !excluded ? (
                         <>
                           <DialogField
@@ -935,7 +824,7 @@ export function OmpImport({
               checked={approved}
               disabled={Boolean(pending)}
               label={t("approve", {
-                runtime: runtimeKind === "omp" ? "OMP" : "Pi",
+                runtime: "Pi",
                 count: excludedIds.length,
               })}
               onCheckedChange={setApproved}

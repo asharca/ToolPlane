@@ -975,7 +975,7 @@ export function AgentConversation({
   ready: configuredReady,
   reasoningAvailable = false,
   runtimeKind,
-  readOnly = false,
+  readOnly: configuredReadOnly = false,
   agentRevisionVersion,
   currentRevisionVersion,
   mcpToolsUpdated,
@@ -1041,6 +1041,7 @@ export function AgentConversation({
   const work = useTranslations("console.work");
   const chatAssistants = useTranslations("console.chatAssistants");
   const commandsT = useTranslations("console.runtimeCommands");
+  const readOnly = configuredReadOnly || runtimeKind === "omp";
   const ready =
     configuredReady &&
     !readOnly &&

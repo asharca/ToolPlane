@@ -42,7 +42,6 @@ type SettingsData = {
   runtimeKind: string;
   systemPrompt: string;
   disabledBuiltinTools?: string[];
-  ompConfig?: unknown;
   providerId: string | null;
   model: string | null;
   maxSteps: number;
@@ -194,7 +193,6 @@ export function AgentSettings({
                 description={settings.description}
                 systemPrompt={settings.systemPrompt}
                 disabledBuiltinTools={settings.disabledBuiltinTools}
-                ompConfig={settings.ompConfig}
                 providerId={settings.providerId}
                 model={settings.model}
                 maxSteps={settings.maxSteps}

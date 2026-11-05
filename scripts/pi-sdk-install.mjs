@@ -1,8 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, createReadStream, createWriteStream } from "node:fs";
+import {
+  closeSync,
+  constants,
+  createReadStream,
+  createWriteStream,
+  fchmodSync,
+  openSync,
+  readSync,
+  writeSync,
+} from "node:fs";
 import {
   access,
-  chmod,
   lstat,
   mkdir,
   open,
@@ -102,15 +110,24 @@ async function lock(directory, signal) {
     await delay(100, undefined, { signal });
   }
 }
-async function digest(path, archiveHash) {
+// This module runs in a dedicated installer/capture process. Reuse one bounded
+// buffer instead of creating thousands of streams for the small SDK files.
+const fileBuffer = Buffer.allocUnsafe(256 * 1024);
+function digest(path, archiveHash) {
   const hash = createHash("sha256");
-  for await (const bytes of createReadStream(
-    /* turbopackIgnore: true */ path,
-  )) {
-    hash.update(bytes);
-    archiveHash?.update(bytes);
+  const fd = openSync(/* turbopackIgnore: true */ path, "r");
+  try {
+    for (;;) {
+      const size = readSync(fd, fileBuffer, 0, fileBuffer.length, null);
+      if (!size) break;
+      const bytes = fileBuffer.subarray(0, size);
+      hash.update(bytes);
+      archiveHash?.update(bytes);
+    }
+    return hash.digest("hex");
+  } finally {
+    closeSync(fd);
   }
-  return hash.digest("hex");
 }
 function validateManifest(manifest) {
   if (
@@ -251,7 +268,7 @@ async function entriesFor(root, normalizeLinks = false, archiveHash) {
         type: "file",
         mode: info.mode & 0o777,
         size: info.size,
-        sha256: await digest(absolute, archiveHash),
+        sha256: digest(absolute, archiveHash),
       });
     } else throw scope();
   }
@@ -428,28 +445,40 @@ export async function installPiSdkRuntime(
         else if (entry.type === "symlink")
           await symlink(entry.target, /* turbopackIgnore: true */ path);
         else {
-          const output = await open(
+          const output = openSync(
             /* turbopackIgnore: true */ path,
             "wx",
             0o600,
           );
           try {
-            if (entry.size)
-              await pipeline(
-                createReadStream(/* turbopackIgnore: true */ archive, {
-                  fd: file.fd,
-                  start: position,
-                  end: position + entry.size - 1,
-                  autoClose: false,
-                }),
-                createWriteStream(/* turbopackIgnore: true */ path, {
-                  fd: output.fd,
-                  autoClose: false,
-                }),
+            let remaining = entry.size;
+            let offset = position;
+            while (remaining) {
+              const size = readSync(
+                file.fd,
+                fileBuffer,
+                0,
+                Math.min(remaining, fileBuffer.length),
+                offset,
               );
-            await chmod(/* turbopackIgnore: true */ path, entry.mode);
+              if (!size) throw new Error("PI_SDK_ARTIFACT_TRUNCATED");
+              let written = 0;
+              while (written < size) {
+                const count = writeSync(
+                  output,
+                  fileBuffer,
+                  written,
+                  size - written,
+                );
+                if (!count) throw new Error("PI_SDK_INSTALL_INCOMPLETE");
+                written += count;
+              }
+              remaining -= size;
+              offset += size;
+            }
+            fchmodSync(output, entry.mode);
           } finally {
-            await output.close();
+            closeSync(output);
           }
           position += entry.size;
         }

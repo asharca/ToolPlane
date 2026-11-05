@@ -1,9 +1,7 @@
 import { z } from "zod";
 import {
   PrivatePluginInputSchema,
-  NativeRoleModelsSchema,
   OmpModelHintSchema,
-  NativeRoleModelSchema,
 } from "./capability-contracts";
 
 export const OMP_IMPORT_MAX_BYTES = 96 * 1024 * 1024;
@@ -108,12 +106,11 @@ export const OmpImportBundleSchema = z
 export const OmpImportRequestSchema = z
   .object({
     bundle: OmpImportBundleSchema,
-    runtimeKind: z.enum(["pi-sdk", "omp"]),
+    runtimeKind: z.literal("pi-sdk"),
     excludedIds: z.array(id).max(1024).default([]),
     name: z.string().trim().min(1).max(240).optional(),
     providerId: id.optional(),
     model: id.optional(),
-    roleModels: z.record(id, NativeRoleModelsSchema).optional(),
     inspectMcp: z.boolean().default(false),
     mcpConfigs: z.record(id, jsonRecord).optional(),
     mcpSecrets: z
@@ -167,7 +164,6 @@ export const OmpImportPreviewSchema = z
             path,
             name: id,
             modelHint: OmpModelHintSchema.optional(),
-            mapping: NativeRoleModelSchema.optional(),
           })
           .strict(),
       )

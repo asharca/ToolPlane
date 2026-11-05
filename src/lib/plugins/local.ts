@@ -273,6 +273,12 @@ async function persistPrivatePluginManifest(
   resourceMap: Prisma.InputJsonValue = { kind: "pi-package", mcpBindings: {} },
   preserveExisting = false,
 ) {
+  if (manifest.package.runtime?.kind !== "pi-sdk")
+    throw new PluginError(
+      "AGENT_EXECUTION_RETIRED",
+      "OMP plugins are read-only; explicitly convert compatible resources to Pi.",
+      410,
+    );
   const checksum = marketReleaseChecksum(manifest);
   const slug = `${manifest.package.name.replace(/^@/, "").replace(/\//g, "-").slice(0, 60)}-${checksum.slice(0, 16)}`;
   const namespace = `private-${workspaceId}`;
@@ -538,6 +544,12 @@ export async function appendPrivatePluginVersion(
   if (!parsed.success)
     throw new PluginError("PLUGIN_INVALID", "Invalid private plugin.");
   const manifest = buildPrivatePluginManifest(parsed.data);
+  if (manifest.package.runtime.kind !== "pi-sdk")
+    throw new PluginError(
+      "AGENT_EXECUTION_RETIRED",
+      "OMP plugin versions are read-only.",
+      410,
+    );
   const release = await db.$transaction(
     async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;

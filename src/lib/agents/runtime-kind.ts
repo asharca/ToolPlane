@@ -17,12 +17,12 @@ export type DedicatedSandboxRuntimeKind = Extract<
   "pi" | "pi-sdk" | "omp" | "claude-code" | "dsh"
 >;
 export type WorkRuntimeKind = DedicatedSandboxRuntimeKind;
-export type ExecutableAgentRuntimeKind = "pi-sdk" | "omp";
+export type ExecutableAgentRuntimeKind = "pi-sdk";
 
 export function isExecutableAgentRuntimeKind(
   value: unknown,
 ): value is ExecutableAgentRuntimeKind {
-  return value === "pi-sdk" || value === "omp";
+  return value === "pi-sdk";
 }
 
 // Explicit public capability inventory. Entry-point subsets are intentional:
@@ -56,7 +56,7 @@ export const AGENT_RUNTIME_CAPABILITIES = {
     sandbox: true,
     providerBinding: "single",
     attachments: false,
-    terminal: true,
+    terminal: false,
     publicEndpoint: false,
   },
   "pi-sdk": {
@@ -198,7 +198,7 @@ export function normalizeDisabledBuiltinTools(
 export function agentRuntimeSupportsBuiltinToolSelection(
   value: unknown,
 ): boolean {
-  return isDedicatedSandboxRuntimeKind(value);
+  return isExecutableAgentRuntimeKind(value);
 }
 
 export function isSandboxHarnessRuntimeKind(
@@ -222,7 +222,7 @@ export function agentRuntimeSupportsProviderFormat(
   format: string,
 ): boolean {
   return (
-    isDedicatedSandboxRuntimeKind(runtime) &&
+    isExecutableAgentRuntimeKind(runtime) &&
     GENERIC_PROXY_PROVIDER_FORMATS.has(format)
   );
 }

@@ -131,10 +131,7 @@ export default async function AgentDetailPage({
         initialA2ATaskId={task}
         initialSettingsTab={initialSettingsTab}
         agentName={agent.name}
-        ready={
-          (agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp") &&
-          Boolean(publishedRevision)
-        }
+        ready={agent.runtimeKind === "pi-sdk" && Boolean(publishedRevision)}
         channelSettings={{
           connections: connections.map(toAgentChannelConnectionClientView),
         }}
@@ -143,7 +140,6 @@ export default async function AgentDetailPage({
           name: agent.name,
           description: agent.description ?? "",
           runtimeKind: agent.runtimeKind,
-          ompConfig: agent.ompConfig,
           systemPrompt: agent.systemPrompt ?? "",
           disabledBuiltinTools: agent.disabledBuiltinTools,
           providerId: agent.providerId,

@@ -65,11 +65,6 @@ import {
   agentRuntimeSupportsProviderFormat,
 } from "@/lib/agents/runtime-kind";
 import {
-  OmpConfigSnapshotSchema,
-  emptyOmpConfig,
-  isOmpInstructionPath,
-} from "@/lib/agents/omp-config";
-import {
   SubagentResources,
   type SubagentDraft,
   type SubagentResourcesSnapshot,
@@ -131,7 +126,6 @@ type Props = {
   description?: string;
   systemPrompt: string;
   disabledBuiltinTools?: string[];
-  ompConfig?: unknown;
   providerId: string | null;
   model: string | null;
   maxSteps: number;
@@ -192,14 +186,6 @@ export function AgentSettingsForm(props: Props) {
   const [steps, setSteps] = useState(String(props.maxSteps));
   const [disabledTools, setDisabledTools] = useState(
     new Set(props.disabledBuiltinTools ?? []),
-  );
-  const [ompConfig, setOmpConfig] = useState(() => {
-    const parsed = OmpConfigSnapshotSchema.safeParse(props.ompConfig);
-    return parsed.success ? parsed.data : emptyOmpConfig();
-  });
-  const [instructionFilesDirty, setInstructionFilesDirty] = useState(false);
-  const instructionFiles = ompConfig.files.filter((file) =>
-    isOmpInstructionPath(file.path),
   );
   const [deploymentIds, setDeploymentIds] = useState(() =>
     selected(deployments),
@@ -266,7 +252,6 @@ export function AgentSettingsForm(props: Props) {
   const hasUnsavedChanges =
     dirty ||
     subagentsDirty ||
-    instructionFilesDirty ||
     environment !==
       (appliedConfig ? JSON.stringify(appliedConfig.environment, null, 2) : "");
   const sameSet = (left: Set<string>, right: Set<string>) =>
@@ -276,7 +261,7 @@ export function AgentSettingsForm(props: Props) {
     description: description !== (props.description ?? ""),
     model:
       provider !== (props.providerId ?? "") || model !== (props.model ?? ""),
-    instructions: prompt !== props.systemPrompt || instructionFilesDirty,
+    instructions: prompt !== props.systemPrompt,
     builtInTools: !sameSet(
       disabledTools,
       new Set(props.disabledBuiltinTools ?? []),
@@ -340,18 +325,6 @@ export function AgentSettingsForm(props: Props) {
     setDirty(true);
     setReview(null);
     setMessage("");
-  }
-  function changeInstructionFile(path: string, content: string) {
-    setOmpConfig((current) => ({
-      ...current,
-      files: current.files.some((file) => file.path === path)
-        ? current.files.map((file) =>
-            file.path === path ? { ...file, content } : file,
-          )
-        : [...current.files, { path, content }],
-    }));
-    setInstructionFilesDirty(true);
-    changed();
   }
   function identity() {
     const data = new FormData();
@@ -425,27 +398,6 @@ export function AgentSettingsForm(props: Props) {
         }
         setSubagentSnapshot(result);
         setSubagentDraft(null);
-      }
-      if (runtimeKind === "omp" && instructionFilesDirty) {
-        const response = await fetch(
-          `/api/v1/agents/${encodeURIComponent(agentId)}/instructions`,
-          {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ workspace: slug, files: instructionFiles }),
-          },
-        );
-        const result = (await response.json()) as {
-          saved?: boolean;
-          error?: string;
-        };
-        if (!response.ok || !result.saved)
-          throw new Error(
-            result.error && t.has(`instructionSources.errors.${result.error}`)
-              ? t(`instructionSources.errors.${result.error}`)
-              : t("instructionSources.saveFailed"),
-          );
-        setInstructionFilesDirty(false);
       }
       setDirty(false);
       const preparation = identity();
@@ -648,16 +600,6 @@ export function AgentSettingsForm(props: Props) {
                   hidden={active !== "instructions"}
                   className="flex flex-1 flex-col gap-6"
                 >
-                  {runtimeKind === "omp" ? (
-                    <div className="space-y-1">
-                      <h4 className="text-sm font-medium">
-                        {t("instructionSources.primary")}
-                      </h4>
-                      <p className="text-xs leading-5 text-muted-foreground">
-                        {t("instructionSources.primaryHelp")}
-                      </p>
-                    </div>
-                  ) : null}
                   <SystemPromptEditor
                     workspaceId={workspaceId}
                     name={name}
@@ -672,69 +614,7 @@ export function AgentSettingsForm(props: Props) {
                     maxLength={100_000}
                     placeholder={t("youAreAHelpfulAssistant")}
                     dirty={prompt !== props.systemPrompt}
-                    className={runtimeKind === "omp" ? "min-h-72" : undefined}
                   />
-                  {runtimeKind === "omp" ? (
-                    <section
-                      className="shrink-0 space-y-4"
-                      aria-label={t("instructionSources.additional")}
-                    >
-                      <header className="space-y-1">
-                        <h4 className="text-sm font-medium">
-                          {t("instructionSources.additional")}
-                        </h4>
-                        <p className="text-xs leading-5 text-muted-foreground">
-                          {t("instructionSources.appendHelp")}
-                        </p>
-                      </header>
-                      <label className="grid gap-2 text-sm">
-                        <span>
-                          {t("instructionSources.append")} ·{" "}
-                          <code>APPEND_SYSTEM.md</code>
-                        </span>
-                        <textarea
-                          rows={8}
-                          className={textareaClass}
-                          value={
-                            instructionFiles.find(
-                              (file) => file.path === "APPEND_SYSTEM.md",
-                            )?.content ?? ""
-                          }
-                          placeholder={t("instructionSources.placeholder")}
-                          onChange={(event) =>
-                            changeInstructionFile(
-                              "APPEND_SYSTEM.md",
-                              event.target.value,
-                            )
-                          }
-                        />
-                      </label>
-                      {instructionFiles
-                        .filter((file) => file.path !== "APPEND_SYSTEM.md")
-                        .map((file) => (
-                          <label key={file.path} className="grid gap-2 text-sm">
-                            <span>
-                              {t("instructionSources.importedAppend")} ·{" "}
-                              <code>{file.path}</code>
-                            </span>
-                            <textarea
-                              rows={8}
-                              className={textareaClass}
-                              value={file.content}
-                              onChange={(event) =>
-                                changeInstructionFile(
-                                  file.path,
-                                  event.target.value,
-                                )
-                              }
-                            />
-                          </label>
-                        ))}
-                      <p className="text-xs leading-5 text-muted-foreground">
-                        {t("instructionSources.saveHelp")}
-                      </p>
-                    </section>
-                  ) : null}
                 </section>
                 <section hidden={active !== "builtInTools"}>
                   <DialogField
@@ -1129,11 +1009,8 @@ export function AgentSettingsForm(props: Props) {
                     <SubagentResources
                       slug={slug}
                       agentId={agentId}
-                      runtimeKind={runtimeKind}
                       snapshot={subagentSnapshot}
                       draft={subagentDraft}
-                      appliedMode={appliedConfig?.subagentMode}
-                      hasAppliedRevision={Boolean(appliedConfig)}
                       disabled={pending || !canApprovePluginSync}
                       onLoad={setSubagentSnapshot}
                       onChange={(draft) => {

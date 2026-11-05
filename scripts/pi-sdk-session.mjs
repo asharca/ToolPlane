@@ -70,9 +70,27 @@ const { theme } = await import(
 );
 const todoPath = officialTodoPath(sdkEntry);
 let promptInvocation;
-const fail = (code) => {
-  throw Object.assign(new Error(code), { code });
+const fail = (code, reason) => {
+  throw Object.assign(new Error(code), { code, ...(reason ? { reason } : {}) });
 };
+// Provider text may echo credentials or prompts; only a fixed reason leaves the host.
+// The model base URL is always ToolPlane's proxy, so a connection failure means the
+// sandbox cannot reach ToolPlane; upstream outages arrive as proxied HTTP statuses.
+function modelFailureReason(errorMessage) {
+  const message = String(errorMessage ?? "");
+  const status =
+    /^([1-5]\d\d)\b/.exec(message)?.[1] ??
+    /\(([1-5]\d\d)\):/.exec(message)?.[1];
+  if (status) return `HTTP_${status}`;
+  if (/timed? ?out|ETIMEDOUT/i.test(message)) return "TIMEOUT";
+  if (
+    /connection error|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|fetch failed|socket hang up/i.test(
+      message,
+    )
+  )
+    return "UNREACHABLE";
+  return undefined;
+}
 const emit = (event) => writeFileSync(3, `${JSON.stringify(event)}\n`);
 const within = (root, path) => {
   const rel = relative(root, path);
@@ -144,6 +162,7 @@ let texts = [],
   usage,
   turnError,
   modelFailed = false,
+  modelReason,
   aborted = false;
 let lastState;
 const nativeUi = createNativeUi({
@@ -373,6 +392,10 @@ function event(event) {
     if (message.role === "assistant") {
       modelFailed =
         message.stopReason === "error" || message.stopReason === "aborted";
+      modelReason =
+        message.stopReason === "error"
+          ? modelFailureReason(message.errorMessage)
+          : undefined;
       const text = contentText(message.content);
       if (text) texts.push(text);
       if (message.usage) {
@@ -555,12 +578,14 @@ async function refreshContext(next) {
   toolSignature = signature;
 }
 async function handle(request) {
-  const respond = (success, result, code) =>
+  const respond = (success, result, code, reason) =>
     emit({
       type: "toolplane_sdk_response",
       id: request.id,
       success,
-      ...(success ? { result } : { error: { code, message: code } }),
+      ...(success
+        ? { result }
+        : { error: { code, message: code, ...(reason ? { reason } : {}) } }),
     });
   if (!request || typeof request.id !== "string") return;
   if (request.type === "abort") {
@@ -600,6 +625,7 @@ async function handle(request) {
   turnError = undefined;
   aborted = false;
   modelFailed = false;
+  modelReason = undefined;
   let terminal;
   try {
     if (initialError) fail(initialError);
@@ -673,7 +699,7 @@ async function handle(request) {
     } while (current !== runtime.session);
     if (aborted) fail("PI_SDK_ABORTED");
     if (turnError) fail(turnError);
-    if (modelFailed) fail("PI_SDK_MODEL_FAILED");
+    if (modelFailed) fail("PI_SDK_MODEL_FAILED", modelReason);
     diagnostics(runtime.services);
     await nativeUi.projectTodos(runtime.session.sessionManager);
     await nativeUi.drain();
@@ -718,7 +744,11 @@ async function handle(request) {
       } catch {
         /* the original failure stays authoritative */
       }
-    terminal = { success: false, code };
+    terminal = {
+      success: false,
+      code,
+      reason: code === "PI_SDK_MODEL_FAILED" ? error.reason : undefined,
+    };
   } finally {
     nativeUi.cancel();
     await nativeUi.drain();
@@ -728,7 +758,7 @@ async function handle(request) {
     delete process.env.TOOLPLANE_RUNTIME_TOKEN;
     await modelRuntime.removeRuntimeApiKey("toolplane").catch(() => {});
     active = undefined;
-    respond(terminal.success, terminal.result, terminal.code);
+    respond(terminal.success, terminal.result, terminal.code, terminal.reason);
   }
 }
 process.on("unhandledRejection", () => {

@@ -125,10 +125,7 @@ async function start(
     where: { id: row.agentId, workspaceId },
     select: { runtimeKind: true, currentRevisionVersion: true },
   });
-  if (
-    (agent?.runtimeKind !== "pi-sdk" && agent?.runtimeKind !== "omp") ||
-    !agent.currentRevisionVersion
-  )
+  if (agent?.runtimeKind !== "pi-sdk" || !agent.currentRevisionVersion)
     return {
       error:
         "Historical Agents are read-only. Bind a newly authorized Pi Agent.",

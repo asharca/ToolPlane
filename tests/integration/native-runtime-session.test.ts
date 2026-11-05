@@ -399,6 +399,22 @@ export default function(pi) {
     });
     await upgradedHostStopped;
     expect(existsSync(socketPath)).toBe(false);
+    // The resident broker re-serializes host responses; model failure reasons
+    // must survive it as fixed tokens. The fixture model URL is unreachable.
+    await rm(statePath);
+    daemon = spawn(process.execPath, [driver, inputPath, "serve"], {
+      stdio: "ignore",
+    });
+    await until(() => existsSync(socketPath));
+    job.command = "";
+    job.message = "Reach the model";
+    const unreachable = await run();
+    expect(
+      unreachable.find((event) => event.type === "toolplane_sdk_response"),
+    ).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "UNREACHABLE" },
+    });
   } finally {
     // Ask the daemon to stop its detached host process group before removing files.
     if (daemon.exitCode === null && daemon.signalCode === null) {

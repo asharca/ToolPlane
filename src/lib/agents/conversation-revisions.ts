@@ -356,7 +356,7 @@ async function load(tx: Prisma.TransactionClient, input: Scope) {
   if (!owner) throw new AgentConversationRevisionError("notFound", 404);
   const work = conversation.workSession;
   if (
-    (owner.runtimeKind !== "pi-sdk" && owner.runtimeKind !== "omp") ||
+    owner.runtimeKind !== "pi-sdk" ||
     owner.retiredAt ||
     conversation.legacyRevisionUnresolved ||
     !conversation.agentRevisionId ||

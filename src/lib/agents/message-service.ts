@@ -143,7 +143,7 @@ export async function runAgentChannelMessage(params: {
     return { status: 403, body: { error: "Sender or chat is not allowed" } };
   const agent = await getAgent(params.workspaceId, params.agentId);
   if (!agent) return { status: 404, body: { error: "Agent not found" } };
-  if (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp")
+  if (agent.runtimeKind !== "pi-sdk")
     return {
       status: 410,
       body: {
@@ -287,7 +287,7 @@ async function runLoadedAgentMessage(params: {
   signal?: AbortSignal;
 }): Promise<AgentMessageResult> {
   const agent = params.agent;
-  if (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp")
+  if (agent.runtimeKind !== "pi-sdk")
     return {
       status: 410,
       body: {

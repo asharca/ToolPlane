@@ -96,6 +96,7 @@ export function AgentA2APanel({
     }
   }
   async function mutate(action: A2AConsoleAction) {
+    if (!isExecutableAgentRuntimeKind(runtimeKind)) return;
     await operation(async () => {
       const response = await fetch(base, {
         method: "POST",
@@ -118,10 +119,16 @@ export function AgentA2APanel({
     mode === "local" ? connection?.localRpc : connection?.publicRpc;
   const cardUrl =
     mode === "local" ? connection?.localCard : connection?.publicCard;
-  const locked = busy || !view?.canManage;
+  const executable = isExecutableAgentRuntimeKind(runtimeKind);
+  const locked = busy || !view?.canManage || !executable;
 
   return (
     <div className="space-y-6 px-6 py-5">
+      {!executable ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {t("retiredRuntime")}
+        </p>
+      ) : null}
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border/60 pb-5">
         <div>
           <div className="mb-2 flex items-center gap-2">
@@ -276,15 +283,17 @@ export function AgentA2APanel({
                 {t("localNotReady")}
               </div>
             ) : null}
-            <a
-              className="text-sm underline underline-offset-4"
-              href="?settings=subAgents"
-            >
-              {t("configureTargets")}
-            </a>
+            {executable ? (
+              <a
+                className="text-sm underline underline-offset-4"
+                href="?settings=subAgents"
+              >
+                {t("configureTargets")}
+              </a>
+            ) : null}
           </section>
           {view.local.supported ? (
-            <AgentA2ARemotes key={base} base={base} />
+            <AgentA2ARemotes key={base} base={base} readOnly={!executable} />
           ) : null}
           {view.endpoint ? (
             <section className={cardClass} aria-labelledby="a2a-public-heading">
@@ -416,7 +425,7 @@ export function AgentA2APanel({
                           </p>
                         </div>
                         <Button
-                          disabled={busy || !!key.revokedAt}
+                          disabled={locked || !!key.revokedAt}
                           onClick={() => {
                             if (window.confirm(t("revokeConfirm")))
                               void mutate({

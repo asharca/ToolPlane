@@ -69,7 +69,7 @@ export async function executeRuntimeCommand(input: {
   if (!liveAgent || !scope || scope.publicApiConversation)
     throw new RuntimeCommandError("notFound", 404);
   if (
-    (liveAgent.runtimeKind !== "pi-sdk" && liveAgent.runtimeKind !== "omp") ||
+    liveAgent.runtimeKind !== "pi-sdk" ||
     liveAgent.retiredAt ||
     scope.legacyRevisionUnresolved ||
     !scope.agentRevisionId
@@ -86,7 +86,7 @@ export async function executeRuntimeCommand(input: {
       agent.runtimeKind,
     );
   const kind = agent.runtimeKind;
-  if (kind !== "pi-sdk" && kind !== "omp")
+  if (kind !== "pi-sdk")
     throw new RuntimeCommandError(
       "Historical Agent sessions are read-only.",
       409,

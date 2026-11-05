@@ -100,10 +100,7 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
         { error: "Credentials are not task content" },
         { status: 400, headers },
       );
-    if (
-      authority.row.executionBackend !== "pi-sdk" &&
-      authority.row.executionBackend !== "omp"
-    )
+    if (authority.row.executionBackend !== "pi-sdk")
       return Response.json(
         { error: "Retired local execution is read-only." },
         { status: 410, headers },

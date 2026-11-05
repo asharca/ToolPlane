@@ -14,7 +14,6 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import * as sandboxRuntime from "@/lib/sandboxes/runtime";
 import * as agentRuntime from "@/lib/agents/sandbox-runtime";
-import * as ompRuntime from "@/lib/agents/omp-runtime";
 import * as piRuntime from "@/lib/agents/pi-runtime";
 import {
   AgentExecutionBusyError,
@@ -218,7 +217,6 @@ describe("agents mutations", () => {
   it.each([
     { runtime: "pi-sdk", failure: "PI_SDK_ARTIFACT_PREPARE_FAILED" },
     { runtime: "pi-sdk", failure: "PI_CAPABILITY_CONFLICT" },
-    { runtime: "omp", failure: "OMP_ARTIFACT_DOWNLOAD_FAILED" },
   ] as const)(
     "leaves no $runtime creation records when $failure occurs",
     async ({ runtime, failure }) => {
@@ -227,9 +225,6 @@ describe("agents mutations", () => {
       );
       vi.spyOn(agentRuntime, "preflightPiSdkCapabilities").mockRejectedValue(
         new Error("PI_CAPABILITY_CONFLICT"),
-      );
-      vi.spyOn(ompRuntime, "prepareOmpRuntime").mockRejectedValue(
-        new Error("OMP_ARTIFACT_DOWNLOAD_FAILED"),
       );
       if (failure === "PI_SDK_ARTIFACT_PREPARE_FAILED") {
         vi.mocked(piRuntime.preparePiRuntime).mockRejectedValue(
@@ -354,7 +349,7 @@ describe("agents mutations", () => {
     await expect(createConversation(workspaceId, agent.id)).rejects.toThrow(
       "AGENT_REVISION_UNRESOLVED",
     );
-    for (const runtime of ["pi", "claude-code", "dsh"] as const) {
+    for (const runtime of ["pi", "omp", "claude-code", "dsh"] as const) {
       await expect(
         createAgent(workspaceId, `Retired ${runtime}`, { runtime }),
       ).rejects.toThrow("Only native Pi");

@@ -81,7 +81,7 @@ async function inspectionAuthority(
     where: {
       id: input.agentId,
       workspaceId: input.workspaceId,
-      runtimeKind: { in: ["pi-sdk", "omp"] },
+      runtimeKind: { in: ["pi-sdk"] },
       retiredAt: null,
       publicRuntimeAllocation: { is: null },
     },

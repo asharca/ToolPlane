@@ -13,9 +13,7 @@ import {
   isExternalSandboxAccess,
   narrowExternalSandboxAccess,
 } from "@/lib/sandboxes/external";
-import { resolveAuthorizedSubagentModels } from "./subagents";
 import { AgentRevisionConfigSchema } from "./revision-types";
-import { resolveNativeRoleModels } from "./native-role-models";
 
 /** A token identifies a pinned session; it never freezes live authorization. */
 export async function resolveAgentRuntimeGrant(
@@ -23,7 +21,7 @@ export async function resolveAgentRuntimeGrant(
   modelTarget?: { providerId: string; model: string },
 ): Promise<{
   mcpToolPolicy: PiPackageMcpToolPolicy;
-  runtimeKind: "pi-sdk" | "omp";
+  runtimeKind: "pi-sdk";
   model: string | null;
   /** Attached sandbox ID → tools allowed by both the pinned revision and the live attachment. */
   externalSandboxTools: Record<string, SandboxMcpTool[]>;
@@ -41,6 +39,7 @@ export async function resolveAgentRuntimeGrant(
         token.agentId,
         token.agentRevisionId,
       );
+      if (revision.config.runtimeKind !== "pi-sdk") return null;
       const agent = await tx.agent.findFirst({
         where: {
           id: token.agentId,
@@ -198,39 +197,8 @@ export async function resolveAgentRuntimeGrant(
         token.agentId,
         revision.config.environment.credentialReferences,
       );
-      if (
-        modelTarget &&
-        (modelTarget.providerId !== token.providerId ||
-          (revision.config.runtimeKind === "omp" &&
-            modelTarget.model !==
-              (token.modelOverride?.model ?? revision.config.model)))
-      ) {
-        if (revision.config.runtimeKind !== "omp") return null;
-        const models = [
-          ...(revision.config.subagents?.length
-            ? await resolveAuthorizedSubagentModels(
-                tx,
-                token.workspaceId,
-                token.agentId,
-                revision.config,
-              )
-            : []),
-          ...(await resolveNativeRoleModels(
-            tx,
-            token.workspaceId,
-            token.agentId,
-            revision.config,
-          )),
-        ];
-        if (
-          !models.some(
-            (entry) =>
-              entry.providerId === modelTarget.providerId &&
-              entry.model === modelTarget.model,
-          )
-        )
-          return null;
-      }
+      if (modelTarget && modelTarget.providerId !== token.providerId)
+        return null;
       const currentDeployments = new Map<string, string[]>(
         agent.servers.map((server) => [
           server.deploymentId,

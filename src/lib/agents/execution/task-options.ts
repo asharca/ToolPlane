@@ -10,10 +10,7 @@ import {
 } from "@/lib/agents/resolve";
 import { resolveModelContext } from "@/lib/agents/model";
 import { normalizeReasoningEffort } from "@/lib/agents/constants";
-import type {
-  RunSandboxAgentTurnOptions,
-  SandboxAgentRuntimeKind,
-} from "@/lib/agents/sandbox-runtime";
+import type { RunSandboxAgentTurnOptions } from "@/lib/agents/sandbox-runtime";
 import {
   createAgentRuntimeToken,
   runtimeMcpProxyUrl,
@@ -66,7 +63,7 @@ export async function localTaskOptions(
   const grant = row.grant as unknown as TaskGrant;
   if (!isLocalGrant(grant) || !row.leaseToken)
     throw new Error("Not a claimed local task.");
-  if (row.executionBackend !== "pi-sdk" && row.executionBackend !== "omp")
+  if (row.executionBackend !== "pi-sdk")
     throw new Error("Retired local execution cannot mint runtime credentials.");
   signal.throwIfAborted();
   const mapped = await localTaskSandbox(row, false, signal);
@@ -207,19 +204,6 @@ export async function localTaskOptions(
     a2aLeaseToken: row.leaseToken,
   });
   const modelContext = resolveModelContext(provider, model);
-  const runtimeModel =
-    agent.runtimeKind === "omp"
-      ? await db.providerModel.findUnique({
-          where: {
-            providerId_modelId: { providerId: provider.id, modelId: model },
-          },
-          select: {
-            inputModalities: true,
-            maxOutputTokens: true,
-            contextWindow: true,
-          },
-        })
-      : null;
   const chat =
     grant.entryPolicy?.kind === "chat"
       ? await db.conversation.findFirst({
@@ -290,40 +274,20 @@ export async function localTaskOptions(
         state: TaskState.TASK_STATE_COMPLETED,
       },
     })) > 0;
-  const nativePolicy = agent.revisionConfig.nativeSubagentPolicy;
-  if (agent.revisionConfig.subagentMode === "native" && !nativePolicy)
-    throw new Error("OMP_NATIVE_POLICY_REQUIRED");
   return {
-    runtimeKind: agent.runtimeKind as SandboxAgentRuntimeKind,
+    runtimeKind: "pi-sdk",
     workspaceId: grant.workspaceId,
     agentId: agent.id,
     agentRevisionId: agent.agentRevisionId,
-    ...(agent.revisionConfig.runtimeKind === "omp"
-      ? {
-          ompVersion: agent.revisionConfig.environment.ompVersion,
-          ompConfig: agent.revisionConfig.ompConfig,
-        }
-      : { piVersion: agent.revisionConfig.environment.piVersion }),
-    ...(agent.runtimeKind === "omp"
-      ? {
-          modelInput: runtimeModel?.inputModalities.includes("image")
-            ? (["text", "image"] as const)
-            : (["text"] as const),
-          ...(runtimeModel?.maxOutputTokens
-            ? { maxOutputTokens: runtimeModel.maxOutputTokens }
-            : {}),
-        }
-      : {}),
+    piVersion: agent.revisionConfig.environment.piVersion,
     sandboxId: mapped.sandboxId,
     conversationId: mapped.conversationId,
     a2aContextId: mapped.a2aContextId,
     provider,
     modelId: model,
     maxSteps: agent.maxSteps,
-    contextWindow: runtimeModel?.contextWindow ?? modelContext.maxTokens,
-    contextWindowEstimated: runtimeModel?.contextWindow
-      ? false
-      : modelContext.estimated,
+    contextWindow: modelContext.maxTokens,
+    contextWindowEstimated: modelContext.estimated,
     modelProxyBase: runtimeModelProxyBase(provider.id),
     runtimeAccessToken: token,
     nativeUiUrl: `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/tasks/${row.id}/ui`,
@@ -348,20 +312,7 @@ export async function localTaskOptions(
     skills: resolved.skills,
     runtimeSessionId,
     ...(command ? { command: commandText } : {}),
-    ...(agent.runtimeKind === "pi-sdk" ? { piPackages } : {}),
-    ...(agent.runtimeKind === "omp" &&
-    (agent.revisionConfig.subagents !== undefined ||
-      agent.revisionConfig.subagentMode !== undefined)
-      ? {
-          ompCapabilities: {
-            mode: agent.revisionConfig.subagentMode,
-            plugins: resolveAgentPiPackages(agent),
-            subagents: agent.capabilitySubagents,
-            nativeRoleModels: agent.nativeRoleModels,
-            policy: nativePolicy ?? { maxDepth: 4, maxConcurrency: 4 },
-          },
-        }
-      : {}),
+    piPackages,
     messages,
     mcpServers: [
       ...deploymentIds.map((deploymentId) => ({

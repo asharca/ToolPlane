@@ -220,7 +220,7 @@ export async function resumeMessage(tx: Tx, row: A2ATask): Promise<Message> {
 export async function reconcileLocalWaits() {
   const rows = await db.a2ATask.findMany({
     where: {
-      executionBackend: { in: ["pi-sdk", "omp"] },
+      executionBackend: { in: ["pi-sdk"] },
       state: TaskState.TASK_STATE_WORKING,
       phase: { in: ["waiting", "resumable"] },
       context: { targetKind: "local" },

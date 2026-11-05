@@ -165,7 +165,7 @@ export async function runDedicatedSandboxTurn(
         },
         async () => {
           const runtimeKind = input.agent.runtimeKind;
-          if (runtimeKind !== "pi-sdk" && runtimeKind !== "omp") {
+          if (runtimeKind !== "pi-sdk") {
             throw new Error("Historical Agent sessions are read-only.");
           }
           if (runtimeKind === "pi-sdk" && !input.piPackages)
@@ -175,19 +175,6 @@ export async function runDedicatedSandboxTurn(
           if (!provider?.id || !modelId)
             throw new Error("This Agent has no configured model.");
           const modelContext = resolveModelContext(provider, modelId);
-          const runtimeModel =
-            runtimeKind === "omp"
-              ? await db.providerModel.findUnique({
-                  where: {
-                    providerId_modelId: { providerId: provider.id, modelId },
-                  },
-                  select: {
-                    inputModalities: true,
-                    maxOutputTokens: true,
-                    contextWindow: true,
-                  },
-                })
-              : null;
 
           const link = await ensureAgentConversationSandbox({
             workspaceId: input.agent.workspaceId,
@@ -246,27 +233,9 @@ export async function runDedicatedSandboxTurn(
             string,
             SandboxRuntimeActivity & { startedAt: number }
           >();
-          const nativePolicy = agent.revisionConfig.nativeSubagentPolicy;
-          if (agent.revisionConfig.subagentMode === "native" && !nativePolicy)
-            throw new Error("OMP_NATIVE_POLICY_REQUIRED");
           const options: RunSandboxAgentTurnOptions = {
             runtimeKind,
-            ...(agent.revisionConfig.runtimeKind === "omp"
-              ? {
-                  ompVersion: agent.revisionConfig.environment.ompVersion,
-                  ompConfig: agent.revisionConfig.ompConfig,
-                }
-              : { piVersion: agent.revisionConfig.environment.piVersion }),
-            ...(runtimeKind === "omp"
-              ? {
-                  modelInput: runtimeModel?.inputModalities.includes("image")
-                    ? (["text", "image"] as const)
-                    : (["text"] as const),
-                  ...(runtimeModel?.maxOutputTokens
-                    ? { maxOutputTokens: runtimeModel.maxOutputTokens }
-                    : {}),
-                }
-              : {}),
+            piVersion: agent.revisionConfig.environment.piVersion,
             workspaceId: input.agent.workspaceId,
             agentId: input.agent.id,
             sandboxId: link.sandboxId,
@@ -275,11 +244,8 @@ export async function runDedicatedSandboxTurn(
             provider,
             modelId,
             maxSteps: input.agent.maxSteps,
-            contextWindow:
-              runtimeModel?.contextWindow ?? modelContext.maxTokens,
-            contextWindowEstimated: runtimeModel?.contextWindow
-              ? false
-              : modelContext.estimated,
+            contextWindow: modelContext.maxTokens,
+            contextWindowEstimated: modelContext.estimated,
             modelProxyBase: runtimeModelProxyBase(provider.id),
             runtimeAccessToken,
             nativeUiUrl: `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/sessions/ui`,
@@ -287,22 +253,7 @@ export async function runDedicatedSandboxTurn(
             disabledBuiltinTools: input.agent.disabledBuiltinTools,
             messages: input.messages,
             skills: input.skills,
-            ...(runtimeKind === "pi-sdk"
-              ? { piPackages: piSession?.packages }
-              : {}),
-            ...(runtimeKind === "omp" &&
-            (agent.revisionConfig.subagents !== undefined ||
-              agent.revisionConfig.subagentMode !== undefined)
-              ? {
-                  ompCapabilities: {
-                    mode: agent.revisionConfig.subagentMode,
-                    plugins: resolveAgentPiPackages(agent),
-                    subagents: agent.capabilitySubagents,
-                    nativeRoleModels: agent.nativeRoleModels,
-                    policy: nativePolicy ?? { maxDepth: 4, maxConcurrency: 4 },
-                  },
-                }
-              : {}),
+            piPackages: piSession?.packages,
             mcpServers: [
               ...deploymentIds.map((deploymentId) => ({
                 deploymentId,

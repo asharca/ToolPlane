@@ -39,7 +39,8 @@
 - **同日生产 Pi 迁移补充**：容器内原生预检把私有 `/tmp` 暂存目录交给宿主 Docker daemon bind mount，真实发布报 `PI_CAPABILITY_PREFLIGHT_FAILED` / `bind source path does not exist`；readiness 当时仍为 200。部署增加同绝对路径的专用 `TMPDIR` 挂载并受控重建后，17 个新 Pi 修订均完成真实预检与发布。下次容器化验收须覆盖准备／应用修订，不能只验应用启动。规范：[运行时运维](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS)；实现：[原生预检](src/lib/agents/sandbox-runtime.ts)。
 - **SDK 导出补充（2026-11-05，线上保存失败）**：共享 `TMPDIR` 不能让应用私有 `/app/scripts/pi-sdk-install.mjs` 在 daemon 宿主出现。固定 SDK 镜像改由 stdin 接收应用读取的可信源码，保留禁网、只读根和降权。真实生产容器设置保存越过导出并成功发布修订；下次必须用脚本仅存在于应用容器内、无现成 SDK 缓存的部署路径验证，不能以宿主进程成功导出代替。
 - **发布等待补充（2026-11-04，用户催查）**：`v0.33.3` 发布作业时间戳显示 15:52:16 UTC 已完成、耗时 9 分 39 秒，但 `gh run watch` 的返回累计约 33 分钟，期间仍沿用等待状态，延误线上切换。不能把监视命令尚未返回等同于远端仍在构建；用户报告等待异常时，用 `gh run view --json status,conclusion,jobs` 与 Release／镜像可用性独立核对，再报告实际阻塞点。最终按固定镜像摘要受控重建，核对容器版本 `0.33.3`、新启动时间及公网 readiness，不以 Release 存在代替部署成功。
-- **确认日期**：历史日期未知；初始整理于 2026-10-18；2026-10-30、2026-11-01、2026-11-02、2026-11-03、2026-11-04 实测确认。
+- **本地 :3000 复发（2026-11-05，用户报告 `did not complete (4)`）**：受管启动的 `:3000` 实例未设 `TOOLPLANE_RUNTIME_ORIGIN`，回落到 `.env` 的 `NEXT_PUBLIC_APP_URL`（`:3007`），沙箱模型请求被拒；`nativeFailure` 只给出 `PI_EXECUTION_FAILED`，需从宿主配置的 `baseUrl` 与沙箱内实测连通性定位。重启时继承的 shell 环境还指向另一套 smoke 库和已被占用的 Connector 端口，首次重启 readiness 503；移除这些覆盖、仅追加运行时 Origin 后为 200。修复 Origin 后又暴露上游网关对该 provider 密钥全部模型返回 503，属外部故障。下次本地启动后，从沙箱内实测运行时 Origin，并用一次真实 Work 的原生 `bash` 结果验收，不以 readiness 代替。
+- **确认日期**：历史日期未知；初始整理于 2026-10-18；2026-10-30、2026-11-01、2026-11-02、2026-11-03、2026-11-04、2026-11-05 实测确认。
 
 ### TP-L002：构建成功，不代表最终镜像里的原生依赖能启动
 
@@ -120,7 +121,8 @@
 - **错误与原因**：智能体在设置里绑定 MCP 后没有开放任何工具，修订中的授权为空；会话启动时 Pi MCP 扩展列工具被拒（`MCP_TOOL_FORBIDDEN`，403），整个会话中止，控制台只显示 `PI_SDK_REQUEST_FAILED` 对应的“Pi SDK 执行失败”，要查容器和数据库才能定位。
 - **下次怎么验证**：`tests/integration/pi-sdk-resource-routing.test.ts` 覆盖零工具授权不进入会话；`tests/unit/agent-runtime-proxy.test.ts` 覆盖拒绝响应带 `data.reason`；改动 Pi 扩展源码后，用本地 403 服务直接运行 `piMcpExtensionSource()` 生成的扩展，确认先发出 `toolplane_mcp_unavailable` 事件。
 - **证据**：[会话 MCP 过滤](src/lib/agents/pi-session-packages.ts)、[扩展与宿主事件](src/lib/agents/sandbox-runtime.ts)、[运行时路由](src/app/api/v1/agent-runtime/mcp/[deploymentId]/rpc/route.ts)、[错误文案](src/components/dashboard/useRuntimeErrorText.ts)。
-- **确认日期**：2026-10-31（用户报告）。
+- **2026-11-05 复发（用户要求提示更清晰）**：宿主已产生已翻译的 `PI_SDK_MODEL_FAILED`，但 worker 的错误码白名单把它压成 `PI_EXECUTION_FAILED`，`agentEntryResult` 再改写成 `Agent execution did not complete (4)`；`PI_MCP_TOOLS_UNAVAILABLE` 同样被吞。首次修复后真实 Work 仍缺原因：常驻 broker `native-runtime-session.mjs` 会重新序列化宿主响应并丢掉新字段，而直连宿主的测试绕过了它。现由 [`runtime-failure.ts`](src/lib/agents/runtime-failure.ts) 统一“错误码＋白名单原因”（`HTTP_nnn`／`UNREACHABLE`／`TIMEOUT`），broker 源码纳入常驻会话签名。下次改宿主协议字段，须经真实 broker 回归（[`native-runtime-session.test.ts`](tests/integration/native-runtime-session.test.ts)，修复前失败）并在真实 Work 页面核对文案，不能只测宿主进程。
+- **确认日期**：2026-10-31（用户报告）；2026-11-05（用户报告）。
 
 ### TP-L010：工具失败是工具结果，不是整轮失败
 
@@ -177,6 +179,7 @@
 - **错误与原因**：全站下拉重做后的 390px 浏览器验收发现，模型搜索输入按 Escape 会连同智能体创建弹窗一起关闭；旧处理仅阻止默认行为，按键继续到达外层弹窗的全局监听。即时检查还可能把正在退出的弹窗误判为仍然打开。
 - **下次怎么验证**：实际打开创建弹窗及模型下拉，按 Escape 后等待焦点返回模型按钮，确认下拉关闭而创建表单仍可操作；同时验证搜索、方向键及 Enter 选择。检查浮层内其他可聚焦控件的 Escape，而不只检查搜索输入。
 - **证据**：[模型选择器的根级按键处理](src/components/dashboard/models/ModelPicker.tsx)。本次真实移动浏览器已确认 Escape 后按钮重新获得焦点、创建表单保留，并通过搜索与键盘选择更新未提交的模型字段。
+- **侧栏补充（2026-11-05）**：资源菜单通过 Portal 冒泡的 Escape 会到达移动侧栏的关闭处理；菜单关闭后的无条件异步 focus 还可能抢走新确认弹窗焦点并滚回原行。菜单边界消费 Escape，仅在菜单自身持有焦点时同步恢复原行且 `preventScroll`。390px 实测菜单关闭后侧栏和分组仍展开。依据：[资源菜单事件与焦点边界](src/components/agents/ai-sidebar.tsx)。
 - **确认日期**：2026-11-01。
 
 ### TP-L016：不同日志页签不能复用上一种数据的组件状态
@@ -226,6 +229,8 @@
 - **当时验证**：OMP 创建流程直接显示平台 MCP/技能选择；桌面和移动端高级设置均无独立配置入口，插件勾选可用；当时删除的导入/预览 API 实际返回 404。资源授权与固定历史回归共 48 项通过。这不是禁止后续明确请求的可选迁移入口。
 - **2026-11-02 后续（用户决定）**：用户在评审子智能体体验后明确放开互斥，平台 Agent 与 OMP 原生子任务可同时启用；仍不恢复手工定义库，也不把平台 Agent 复制成 OMP 进程内定义。修订字段 `subagentMode: "native"` 现表示启用原生子任务。依据：[子智能体设置](src/lib/agents/platform-subagents.ts)、[修订约束](src/lib/agents/revision-types.ts)、[约束迁移](prisma/migrations/20261102040000_agent_subagent_modes_coexist/migration.sql)。
 - **2026-11-03 后续（用户决定）**：用户要求保留 Pi 为主，同时支持导入已有 OMP 配置、技能、MCP 和插件。普通创建无需本机配置；可选导入默认保留 OMP，迁移 Pi 必须显式选择并暴露不兼容项。模型和凭据映射到平台授权资源，原生角色作为私有包内容，不创建另一套平台子定义库。
+- **2026-11-05 后续（用户决定）**：用户明确要求退役 OMP；可执行运行时收敛为 Pi，OMP 历史只读，配置导入仅迁往 Pi。保留历史身份与固定快照，不将原生 task、角色模型、hook 或 eval 静默解释为 Pi 能力；不兼容项须明确处理。此前“导入默认保留 OMP”和双原生执行支持不再适用。
+- **同日验收补充**：执行 API 已拒绝 OMP，但 Work 侧栏仍用“可展示历史”的运行时集合计算 `supportsWork`，误显示“新建工作”和“尚未配置”。可展示历史不等于可执行；实际页面须同时检查历史消息、侧栏创建入口和设置提示，不能只验证主输入框及 HTTP 410。修正位于 [Work 页面](src/app/app/[workspace]/work/page.tsx)。
 - **同日导出实测补充**：真实本机目录中的 AppleDouble 元数据和 `config.yml.backup-20261003` 被误列为阻塞项；应不读取这些私有非执行状态、报告警告，而不是阻止有效配置迁移。无法打包的原生资源仍保留可明确排除的阻塞条目，不能让 issue 引用的资源在界面上消失。依据：[离线导出器](scripts/export-omp-config.mjs)、[导出边界回归](tests/unit/export-omp-config.test.ts)。
 - **确认日期**：2026-11-02、2026-11-03（用户纠正及真实导出）。
 
@@ -316,6 +321,7 @@
 - **准备耗时补充（2026-11-04，用户反馈）**：真实热会话暴露逐文件 tracked Docker exec 的固定开销；宿主脚本批量写入后，Pi／OMP 的准备等待下降，但不能省略每轮可信源码覆盖和完整性校验。性能比较须分开冷启动、热轮次与远程发现耗时；本次助手远程 `tools/list` 从约 0.4 秒波动到 1.4 秒，不能把总准备时间变化全部归因于本地并发修改。验收同时执行真实原生工具，不能只观察阶段标签。
 - **创建就绪补充（2026-11-04，用户纠正）**：用户向已创建的 OMP Agent 只发“你好”，首轮沙箱仍在下载 276,244,656 字节二进制，文件写入持续约 539 秒。创建／发布必须在数据库事务外先完成固定运行时制品准备；聊天仅从已校验的服务端缓存本地分发，并在沙箱离线校验，不能把首次网络安装藏在“准备中”。失败回归检查 Agent、沙箱及 Deployment 未残留；验收须使用刚创建 Agent 自己的全新沙箱执行真实原生工具，再检查第二轮二进制未被重写，不能把已有 Agent 热会话或提示词中的哨兵文字当成功结果。依据：`src/lib/agents/omp-runtime.ts`、`scripts/omp-install.mjs`、`tests/integration/agents-mutations.test.ts`。
 - **Pi 冷安装补充（同日实测）**：不能用已有 SDK 的热沙箱证明离线安装正常。全新沙箱暴露合法主目录别名被缓存路径检查拒绝，以及 `FileHandle.createWriteStream({ autoClose: false })` 的流结束后 `FileHandle.close()` 未收尾；流改用显式 fd，主目录先取 canonical path。验收从固定镜像真实导出制品，在禁网、只读根容器完成离线安装并执行版本检查，再由新建 Pi Agent 实际完成首次和第二轮 `bash`，从原生 JSONL 核对成功的 toolResult。测量分开记录：本次 Pi 首轮准备 25.51 秒、热轮 1.35 秒，OMP 热轮 3.80 秒；不能把共享缓存就绪称为首轮无等待，或把供应商 503 算成本地安装耗时。依据：`src/lib/agents/pi-runtime.ts`、`scripts/pi-sdk-install.mjs`、真实 Work 与原生会话记录。
+- **2026-11-05 冷准备优化（用户再次反馈慢）**：固定 SDK 的 14,106 个文件、约 119 MB 在独立禁网容器中安装需 10.05 秒；逐文件流式复制再逐文件流式校验重复创建大量 stream。专用安装进程改用 256 KiB 复用缓冲区做文件复制与摘要，保留归档摘要、路径／链接验证及安装后完整校验，同一制品安装降到 3.22 秒。全新 Pi Agent 真实首轮准备 11.05 秒，闲置后会话重启 2.60 秒、紧接热轮 0.99 秒，三轮均有成功原生 bash 结果。下次须单独测量离线安装与端到端阶段；不能把安装提速比例当成整个首轮比例，也不能把仍需沙箱启动、资源加载和远程发现的首轮称为零准备。依据：`scripts/pi-sdk-install.mjs`、Work `cmw36flzj004h9mmqlccxj02j`。
 
 ### TP-L030：CI 提速要减少默认工作，不只缩短超时
 
@@ -348,5 +354,7 @@
 **规则**：统一侧栏后逐类核对普通聊天、渠道和 Work 的操作权限；自定义菜单不能遗漏既有删除入口或以默认菜单回退暴露无效操作。失败的表单提交不能闪现成功状态。
 
 - **证据（2026-11-04，用户反馈）**：线上普通聊天菜单只返回移动按钮，后端删除 action 仍存在却未接入。实际执行线上发布包的菜单回调，仅得到 Move up/down；恢复删除后，独立数据库中的真实浏览器完成取消、确认删除、正确 Agent 跳转和保留其他会话。运行时未就绪时错误显示在弹窗，另修正 SubmitButton 未传 error 导致短暂显示 Saved 的误导。
+- **Work 删除与长列表补充（2026-11-05，用户反馈）**：原归档后整页跳转会重建侧栏，默认展开状态也随列表重挂载丢失；后端 `take: 100` 另会静默截断历史。改为确认后经既有生命周期真正删除、局部移除和受控展开，仅删除当前项时客户端导航。110 条会话夹具实测尾部可浏览和搜索；删除非当前项保留 URL、文档实例及两个 Agent 展开，滚动只随被删行高度调整；当前项删除切到下一会话，409 保留行与错误弹窗。真实 Docker 回归确认仅清理目标目录／附件，保留共享容器和其他会话。依据：[Work 删除集成回归](tests/integration/work-session-deletion.test.ts)。
+- **首次预览纠正（2026-11-05）**：上一轮把“不反复点更多”误解成初始铺开全部，用户再次明确首次只展开前几项。首次预览与完整历史可访问是两个独立要求；改为每 Agent 前 5 条加当前项、列表尾部一次展开全部，搜索仍查全部历史。28 条夹具实测首次 5 条、一次展开 28 条、收回 5 条，搜索第 28 条后恢复 5 条；验收必须覆盖全新初始状态，不能只证明全部记录能访问。
 - **下次怎么验证**：在独立数据库实际删除一次性聊天、取消另一个聊天，检查渠道无删除入口；拖动排序后刷新核对持久顺序，不能只检查菜单文案或后端函数存在。
 - **依据**：`src/components/dashboard/work/WorkspaceWork.tsx`、`src/components/agents/ai-sidebar.tsx`、`src/lib/agents/actions.ts`。

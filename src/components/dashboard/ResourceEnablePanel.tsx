@@ -20,7 +20,7 @@ export async function ResourceEnablePanel({
   const agents = await db.agent.findMany({
     where: {
       workspaceId,
-      runtimeKind: { in: ["pi-sdk", "omp"] },
+      runtimeKind: "pi-sdk",
       retiredAt: null,
       publicRuntimeAllocation: null,
     },

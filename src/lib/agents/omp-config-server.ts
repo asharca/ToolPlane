@@ -2,10 +2,8 @@ import "server-only";
 import { db } from "@/lib/db";
 import { scanMarketArtifact } from "@/lib/pi-packages/secret-scan";
 import { requirePluginWorkspace } from "@/lib/plugins/catalog";
-import { withAgentDraftLease } from "./agent-execution-gate";
 import {
   OmpConfigSnapshotSchema,
-  OmpInstructionFilesSchema,
   isOmpInstructionPath,
   emptyOmpConfig,
 } from "./omp-config";
@@ -38,7 +36,6 @@ export async function readOmpInstructions(
         id: agentId,
         workspaceId,
         runtimeKind: "omp",
-        retiredAt: null,
         publicRuntimeAllocation: null,
       },
     });
@@ -61,37 +58,15 @@ export async function saveOmpInstructionsDraft(input: {
   agentId: string;
   files: unknown;
 }) {
-  const parsed = OmpInstructionFilesSchema.safeParse(input.files);
-  if (!parsed.success) throw new OmpConfigError("OMP_INSTRUCTIONS_INVALID");
-  return withAgentDraftLease(input.agentId, () =>
-    db.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "Agent" WHERE id=${input.agentId} AND "workspaceId"=${input.workspaceId} FOR UPDATE`;
-      await requirePluginWorkspace(input.workspaceId, input.userId, false, tx);
-      const agent = await tx.agent.findFirst({
-        where: {
-          id: input.agentId,
-          workspaceId: input.workspaceId,
-          runtimeKind: "omp",
-          retiredAt: null,
-          publicRuntimeAllocation: null,
-        },
-      });
-      if (!agent) throw new OmpConfigError("OMP_AGENT_NOT_FOUND", 404);
-      const snapshot = parseOmpConfigSnapshot(
-        agent.ompConfig ?? emptyOmpConfig(),
-      );
-      const config = parseOmpConfigSnapshot({
-        ...snapshot,
-        files: [
-          ...snapshot.files.filter((file) => !isOmpInstructionPath(file.path)),
-          ...parsed.data,
-        ],
-      });
-      await tx.agent.update({
-        where: { id: agent.id },
-        data: { ompConfig: config },
-      });
-      return { saved: true as const };
-    }),
-  );
+  await requirePluginWorkspace(input.workspaceId, input.userId, false);
+  const agent = await db.agent.findFirst({
+    where: {
+      id: input.agentId,
+      workspaceId: input.workspaceId,
+      runtimeKind: "omp",
+    },
+    select: { id: true },
+  });
+  if (!agent) throw new OmpConfigError("OMP_AGENT_NOT_FOUND", 404);
+  throw new OmpConfigError("AGENT_EXECUTION_RETIRED", 410);
 }

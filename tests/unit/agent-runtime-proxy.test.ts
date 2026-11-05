@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   context: vi.fn(),
   sandbox: vi.fn(),
   provider: vi.fn(),
+  grantProvider: vi.fn(),
   revision: vi.fn(),
   credentials: vi.fn(),
   localToken: vi.fn(),
@@ -16,8 +17,6 @@ const mocks = vi.hoisted(() => ({
   callTool: vi.fn(),
   fetch: vi.fn(),
   logRequest: vi.fn(),
-  subagentModels: vi.fn(),
-  nativeModels: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({
   db: {
@@ -36,12 +35,6 @@ vi.mock("@/lib/agents/environment-credentials", () => ({
 }));
 vi.mock("@/lib/a2a/local-runtime", () => ({
   assertLocalRuntimeToken: mocks.localToken,
-}));
-vi.mock("@/lib/agents/subagents", () => ({
-  resolveAuthorizedSubagentModels: mocks.subagentModels,
-}));
-vi.mock("@/lib/agents/native-role-models", () => ({
-  resolveNativeRoleModels: mocks.nativeModels,
 }));
 vi.mock("@/lib/process/session-mcp", () => ({
   listSessionMcpTools: mocks.listTools,
@@ -86,17 +79,17 @@ describe("pinned Agent runtime proxy authorization", () => {
         conversation: { findFirst: mocks.conversation },
         a2AContext: { findFirst: mocks.context },
         sandbox: { findFirst: mocks.sandbox },
+        modelProvider: { findFirst: mocks.grantProvider },
       }),
     );
     mocks.revision.mockResolvedValue(pin);
-    mocks.subagentModels.mockResolvedValue([]);
-    mocks.nativeModels.mockResolvedValue([]);
     mocks.agent.mockResolvedValue({
       servers: [{ deploymentId: "deployment-1", allowedToolNames: ["read"] }],
       externalSandboxes: [],
     });
     mocks.conversation.mockResolvedValue({ id: "conversation-1" });
     mocks.sandbox.mockResolvedValue({ config: {} });
+    mocks.grantProvider.mockResolvedValue({ apiKey: "real-provider-key" });
     mocks.provider.mockResolvedValue({
       name: "OpenAI",
       format: "openai",
@@ -176,7 +169,7 @@ describe("pinned Agent runtime proxy authorization", () => {
     expect(response.headers.get("set-cookie")).toBeNull();
     await expect(response.text()).resolves.toBe("data: chunk\n\n");
   });
-  it("negotiates its own encoding and preserves real SSE bytes for a zstd-capable OMP client", async () => {
+  it("negotiates its own encoding and preserves real SSE bytes for a zstd-capable client", async () => {
     const sse =
       'data: {"choices":[{"delta":{"content":"OMP_OK"}}]}\n\ndata: [DONE]\n\n';
     // Fixed zstd frame: the repository's Node type definitions predate zstd APIs.
@@ -219,10 +212,7 @@ describe("pinned Agent runtime proxy authorization", () => {
         apiKey: "real-provider-key",
         models: ["selected-model"],
       });
-      mocks.revision.mockResolvedValue({
-        ...pin,
-        config: { ...pin.config, runtimeKind: "omp" },
-      });
+      mocks.revision.mockResolvedValue(pin);
       vi.stubGlobal("fetch", nativeFetch);
       const req = await request("model/provider-1/chat/completions", {
         model: "selected-model",
@@ -248,116 +238,15 @@ describe("pinned Agent runtime proxy authorization", () => {
       await closed.promise;
     }
   });
-  it("restricts OMP child and auxiliary model requests to the admitted model", async () => {
+  it("rejects historical OMP model and tool callbacks before reading credentials", async () => {
     mocks.revision.mockResolvedValue({
       ...pin,
       config: { ...pin.config, runtimeKind: "omp" },
     });
-    const invoke = async (body: unknown) =>
-      proxyModel(await request("model/provider-1/chat/completions", body), {
-        params: Promise.resolve({
-          providerId: "provider-1",
-          path: ["chat", "completions"],
-        }),
-      });
-    expect((await invoke({ model: "unapproved-model" })).status).toBe(403);
-    expect((await invoke({})).status).toBe(403);
-    expect(mocks.fetch).not.toHaveBeenCalled();
-    expect(
-      (await invoke({ model: "selected-model", messages: [] })).status,
-    ).toBe(200);
-    expect(
-      new Headers(mocks.fetch.mock.calls[0][1].headers).get("authorization"),
-    ).toBe("Bearer real-provider-key");
-  });
-  it("permits only pinned live child provider/model pairs and stops after revocation", async () => {
-    mocks.revision.mockResolvedValue({
-      ...pin,
-      config: {
-        ...pin.config,
-        runtimeKind: "omp",
-        subagents: [
-          { subagentId: "child", versionId: "child-v1", checksum: "fixed" },
-        ],
-      },
-    });
-    mocks.subagentModels.mockResolvedValue([
-      { providerId: "child-provider", model: "child-model" },
-    ]);
-    const invoke = async (providerId: string, model: string) =>
-      proxyModel(
-        await request(`model/${providerId}/chat/completions`, {
-          model,
-          messages: [],
-        }),
-        {
-          params: Promise.resolve({
-            providerId,
-            path: ["chat", "completions"],
-          }),
-        },
-      );
-    expect((await invoke("child-provider", "unapproved-model")).status).toBe(
-      403,
-    );
-    expect((await invoke("other-provider", "child-model")).status).toBe(403);
+    expect((await model()).status).toBe(403);
+    expect((await mcp("tools/list")).status).toBe(403);
     expect(mocks.provider).not.toHaveBeenCalled();
-    expect(mocks.fetch).not.toHaveBeenCalled();
-    const response = await invoke("child-provider", "child-model");
-    expect(response.status).toBe(200);
-    await expect(response.text()).resolves.toBe("data: chunk\n\n");
-    mocks.subagentModels.mockResolvedValue([]);
-    mocks.fetch.mockClear();
-    expect((await invoke("child-provider", "child-model")).status).toBe(403);
-    expect(mocks.fetch).not.toHaveBeenCalled();
-  });
-  it("permits mapped native role models only while the frozen role and live catalog grants agree", async () => {
-    mocks.revision.mockResolvedValue({
-      ...pin,
-      config: {
-        ...pin.config,
-        runtimeKind: "omp",
-        subagentMode: "native",
-        nativeRoleModels: [
-          { providerId: "role-provider", model: "role-model" },
-        ],
-      },
-    });
-    mocks.nativeModels.mockResolvedValue([
-      { providerId: "role-provider", model: "role-model" },
-    ]);
-    const invoke = async (providerId: string, model: string) =>
-      proxyModel(
-        await request(`model/${providerId}/chat/completions`, {
-          model,
-          messages: [],
-        }),
-        {
-          params: Promise.resolve({
-            providerId,
-            path: ["chat", "completions"],
-          }),
-        },
-      );
-    expect((await invoke("foreign-provider", "role-model")).status).toBe(403);
-    expect((await invoke("role-provider", "unreviewed-model")).status).toBe(
-      403,
-    );
-    expect((await invoke("role-provider", "role-model")).status).toBe(200);
-    mocks.fetch.mockClear();
-    mocks.nativeModels.mockResolvedValue([]);
-    expect((await invoke("role-provider", "role-model")).status).toBe(403);
-    mocks.nativeModels.mockResolvedValue([
-      { providerId: "role-provider", model: "role-model" },
-    ]);
-    mocks.provider.mockResolvedValue({
-      name: "Role",
-      format: "openai",
-      baseUrl: "https://provider.test/v1",
-      apiKey: "key",
-      models: [],
-    });
-    expect((await invoke("role-provider", "role-model")).status).toBe(403);
+    expect(mocks.listTools).not.toHaveBeenCalled();
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
   it.each(["revision", "agent", "session", "credential", "provider"])(

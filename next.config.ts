@@ -185,7 +185,7 @@ const nextConfig: NextConfig = {
       "scraper/**/*",
       "infra/**/*",
       "runtime/**/*",
-      // Dynamic Pi/OMP sandbox hosts are copied (and OMP closure checked) by
+      // Dynamic Pi sandbox hosts and offline migration utilities are copied by
       // scripts/assemble-runtime.mjs, not resolved as application dependencies.
       "scripts/**/*",
       "packages/**/*",

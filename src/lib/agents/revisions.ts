@@ -48,19 +48,8 @@ import {
   narrowExternalSandboxAccess,
 } from "@/lib/sandboxes/external";
 import { isExecutableAgentRuntimeKind } from "./runtime-kind";
-import {
-  OMP_VERSION,
-  emptyOmpConfig,
-  isOmpInstructionPath,
-} from "./omp-config";
-import { parseOmpConfigSnapshot } from "./omp-config-server";
-import { prepareOmpRuntime } from "./omp-runtime";
 import { preparePiRuntime } from "./pi-runtime";
 import { resolveCapabilitySubagents } from "./subagents";
-import {
-  captureNativeRoleModels,
-  resolveNativeRoleModels,
-} from "./native-role-models";
 
 export class AgentRevisionError extends Error {
   constructor(public readonly code: string) {
@@ -105,13 +94,11 @@ export async function requireAgentRevision(
         });
   if (!revision) throw new AgentRevisionError("AGENT_REVISION_UNRESOLVED");
   const config = AgentRevisionConfigSchema.parse(revision.config);
-  if (config.runtimeKind !== agent.runtimeKind)
-    throw new AgentRevisionError("AGENT_RUNTIME_MISMATCH");
   if (
-    config.runtimeKind === "omp" &&
-    config.ompConfigChecksum !== marketReleaseChecksum(config.ompConfig)
+    config.runtimeKind !== "pi-sdk" ||
+    config.runtimeKind !== agent.runtimeKind
   )
-    throw new AgentRevisionError("OMP_CONFIG_CHECKSUM_MISMATCH");
+    throw new AgentRevisionError("AGENT_RUNTIME_MISMATCH");
   await assertMarketReleasesExecutable(
     tx,
     config.packages.map((pkg) => pkg.releaseId),
@@ -175,7 +162,7 @@ export async function prepareAgentRevisionMcpDeployments(
     where: {
       id: agentId,
       workspaceId,
-      runtimeKind: { in: ["pi-sdk", "omp"] },
+      runtimeKind: { in: ["pi-sdk"] },
       retiredAt: null,
       workspace: { status: "active" },
     },
@@ -242,9 +229,7 @@ export async function captureAgentRevisionConfig(
           kind: "docker" as const,
           image: await resolveDockerImageDigest(template.image),
           network: template.network,
-          ...(agent.runtimeKind === "omp"
-            ? { ompVersion: OMP_VERSION }
-            : { piVersion: "0.87.1" }),
+          piVersion: "0.87.1",
           initialSnapshot: null,
           resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
           credentialReferences: [],
@@ -252,31 +237,14 @@ export async function captureAgentRevisionConfig(
       : null);
   if (!frozenEnvironment)
     throw new AgentRevisionError("AGENT_ENVIRONMENT_REQUIRED");
-  const ompConfig =
-    agent.runtimeKind === "omp"
-      ? parseOmpConfigSnapshot(agent.ompConfig ?? emptyOmpConfig())
-      : null;
-  if (ompConfig) {
-    // Legacy executable files remain in frozen history, not in new authority.
-    ompConfig.files = ompConfig.files.filter((file) =>
-      isOmpInstructionPath(file.path),
-    );
-    delete ompConfig.plugins;
-  }
   const packages = resolveAgentPiPackages(agent);
   return AgentRevisionConfigSchema.parse({
     schemaVersion: 1,
     runtimeKind: agent.runtimeKind,
-    ...(ompConfig
-      ? { ompConfig, ompConfigChecksum: marketReleaseChecksum(ompConfig) }
-      : {}),
     systemPrompt: agent.systemPrompt,
     providerId: agent.providerId,
     model: agent.model,
     modelProviderIds: [],
-    ...(agent.runtimeKind === "omp" && agent.subagentMode === "native"
-      ? { nativeRoleModels: captureNativeRoleModels(packages) }
-      : {}),
     maxSteps: agent.maxSteps,
     disabledBuiltinTools: agent.disabledBuiltinTools,
     sandboxTemplateId: template?.id ?? null,
@@ -524,14 +492,8 @@ async function validateRevisionAuthorization(
   );
   if (children.length !== (config.subagents?.length ?? 0))
     throw new AgentRevisionError("SUBAGENT_REVOKED");
-  const nativeModels = await resolveNativeRoleModels(
-    tx,
-    workspaceId,
-    agentId,
-    config,
-  );
-  if (nativeModels.length !== (config.nativeRoleModels?.length ?? 0))
-    throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
+  if (config.nativeRoleModels?.length)
+    throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
   await assertAgentEnvironmentCredentialReferences(
     tx,
     workspaceId,
@@ -577,19 +539,8 @@ export async function publishAgentRevisionInTransaction(
   const config = AgentRevisionConfigSchema.parse(input.config);
   if (config.subagents?.length)
     throw new AgentRevisionError("SUBAGENT_AUTHORING_RETIRED");
-  if (config.runtimeKind === "omp") {
-    parseOmpConfigSnapshot(config.ompConfig);
-    if (config.ompConfigChecksum !== marketReleaseChecksum(config.ompConfig))
-      throw new AgentRevisionError("OMP_CONFIG_CHECKSUM_MISMATCH");
-    if (
-      config.subagents !== undefined &&
-      (config.ompConfig.plugins?.length ||
-        config.ompConfig.files.some((file) =>
-          /^(?:agents|skills|hooks|extensions)\//.test(file.path),
-        ))
-    )
-      throw new AgentRevisionError("OMP_CONFIG_DUPLICATE_CAPABILITY");
-  }
+  if (!isExecutableAgentRuntimeKind(config.runtimeKind))
+    throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
   AgentEnvironmentSnapshotSchema.parse(config.environment);
   if (
     config.runtimeKind === "pi-sdk" &&
@@ -708,7 +659,7 @@ export async function refreshAgentRevisionMcpGrants(
     where: {
       id: agentId,
       workspaceId,
-      runtimeKind: { in: ["pi-sdk", "omp"] },
+      runtimeKind: { in: ["pi-sdk"] },
       retiredAt: null,
     },
     select: {
@@ -824,9 +775,15 @@ export async function removeAgentRevisionPackageInTransaction(
   await tx.$queryRaw`SELECT id FROM "Agent" WHERE id=${agentId} AND "workspaceId"=${workspaceId} FOR UPDATE`;
   const owner = await tx.agent.findFirst({
     where: { id: agentId, workspaceId },
-    select: { currentRevisionVersion: true },
+    select: {
+      currentRevisionVersion: true,
+      runtimeKind: true,
+      retiredAt: true,
+    },
   });
   if (!owner) throw new AgentRevisionError("AGENT_NOT_FOUND");
+  if (!isExecutableAgentRuntimeKind(owner.runtimeKind) || owner.retiredAt)
+    throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
   const current = await tx.agentRevision.findUnique({
     where: {
       agentId_version: { agentId, version: owner.currentRevisionVersion },
@@ -878,7 +835,8 @@ export async function publishAgentRevision(
       ? await captureAgentRevisionConfig(db, agentId, input.environment)
       : input.config;
   const preparedConfig = AgentRevisionConfigSchema.parse(config);
-  if (preparedConfig.runtimeKind === "omp") await prepareOmpRuntime();
+  if (!isExecutableAgentRuntimeKind(preparedConfig.runtimeKind))
+    throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
   if (preparedConfig.runtimeKind === "pi-sdk") await preparePiRuntime();
   return db.$transaction(
     (tx) =>
@@ -1005,12 +963,6 @@ export async function resolvePinnedAgent<
       agent.id,
       config,
     );
-    const nativeRoleModels = await resolveNativeRoleModels(
-      tx,
-      agent.workspaceId,
-      agent.id,
-      config,
-    );
     return {
       ...agent,
       runtimeKind: config.runtimeKind,
@@ -1057,7 +1009,6 @@ export async function resolvePinnedAgent<
       toolkits: [],
       subAgents: [],
       capabilitySubagents,
-      nativeRoleModels,
       knowledgeBases: live.knowledgeBases.filter((entry) =>
         config.knowledgeBaseIds.includes(entry.knowledgeBaseId),
       ),

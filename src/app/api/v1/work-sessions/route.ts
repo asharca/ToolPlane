@@ -130,7 +130,6 @@ export const POST = withRequestLogging(
     if (
       agent &&
       agent.runtimeKind !== "pi-sdk" &&
-      agent.runtimeKind !== "omp" &&
       command &&
       !runtimeCommands(agent.runtimeKind).some(
         (item) => item.name === command.name,
@@ -149,10 +148,7 @@ export const POST = withRequestLogging(
       );
     if (!agent)
       return Response.json({ error: "Agent not found" }, { status: 404 });
-    if (
-      (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp") ||
-      agent.retiredAt
-    )
+    if (agent.runtimeKind !== "pi-sdk" || agent.retiredAt)
       return Response.json(
         { error: "Retired Agent history is read-only." },
         { status: 410 },

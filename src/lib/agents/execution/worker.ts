@@ -34,6 +34,7 @@ import {
   SandboxExecutionBusyError,
 } from "@/lib/agents/sandbox-execution-gate";
 import { PiRuntimeInterruptedError } from "@/lib/agents/pi-harness";
+import { parseRuntimeFailure } from "@/lib/agents/runtime-failure";
 import { reconcileLocalWaits } from "@/lib/a2a/local-continuation";
 import { reconcileRemoteTasks } from "@/lib/a2a/remote-executor";
 import {
@@ -82,14 +83,10 @@ function nativeFailure(error: unknown) {
   // Storage exhaustion is a platform decision, not an opaque Pi crash.
   if (error instanceof A2AQuotaError)
     return "PI_STORAGE_QUOTA_EXCEEDED: The task payload exceeded the configured storage budget; the result was not stored.";
-  // Only fixed codes may escape: native exception text can contain credentials or task content.
-  const code =
-    error instanceof Error
-      ? /^(PI_SESSION_MISSING|PI_SESSION_CORRUPT|PI_MODEL_UNAVAILABLE|PI_INPUT_INVALID|PI_CONFIG_INVALID|PI_PROCESS_STOP_UNCONFIRMED|PI_NODE_UNSUPPORTED|PI_SQLITE_UNAVAILABLE|PI_HARNESS_VERSION_MISMATCH|PI_RECOVERY_CHECK_FAILED|PI_PROTOCOL_ERROR|PI_TARGET_UNAVAILABLE|PI_OUTPUT_TRUNCATED|PI_SDK_REQUEST_FAILED|MCP_UNREACHABLE|MCP_GRANT_REVOKED|MCP_TOOL_FORBIDDEN)(?=:|$)/.exec(
-          error.message,
-        )?.[1]
-      : undefined;
-  return `${code ?? "PI_EXECUTION_FAILED"}: Pi task execution failed. No automatic replay was performed.`;
+  // Only fixed tokens may escape: native exception text can contain credentials or task content.
+  const failure =
+    error instanceof Error ? parseRuntimeFailure(error.message) : undefined;
+  return `${failure?.code ?? "PI_EXECUTION_FAILED"}: ${failure?.reason ? `${failure.reason}. ` : ""}Agent task execution failed. No automatic replay was performed.`;
 }
 export function executeAgentTask(
   id: string,
@@ -537,7 +534,7 @@ export async function tickAgentWorker() {
       [
         { executionBackend: "pi-harness" },
         {
-          executionBackend: { in: ["pi-sdk", "omp"] },
+          executionBackend: { in: ["pi-sdk"] },
           context: { targetKind: "local" },
         },
         {

@@ -17,7 +17,13 @@ const ExecutionResponse = z.object({
   execution: NativeProjectionSchema.extend({
     id: z.string(),
     status: z.string(),
-    error: z.object({ code: z.string(), message: z.string() }).optional(),
+    error: z
+      .object({
+        code: z.string(),
+        reason: z.string().optional(),
+        message: z.string(),
+      })
+      .optional(),
   }).nullable(),
 });
 type Execution = NonNullable<z.infer<typeof ExecutionResponse>["execution"]>;
@@ -291,10 +297,13 @@ export function ConversationExecution({
       // reader's language instead. MCP codes use the runtime's
       // "PI_MCP_TOOLS_UNAVAILABLE: REASON name" form.
       const code = execution.error?.code ?? "";
+      const reason = execution.error?.reason;
       const runtimeError = describeRuntimeError(
         code.startsWith("MCP_")
           ? `PI_MCP_TOOLS_UNAVAILABLE: ${code} MCP`
-          : code,
+          : reason
+            ? `${code}: ${reason}`
+            : code,
       );
       return (
         <div

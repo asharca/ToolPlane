@@ -38,7 +38,7 @@ export async function createAgentEnvironmentCredential(input: {
       where: {
         id: input.agentId,
         workspaceId: input.workspaceId,
-        runtimeKind: { in: ["pi-sdk", "omp"] },
+        runtimeKind: { in: ["pi-sdk"] },
         retiredAt: null,
         workspace: { ownerId: input.actorUserId, status: "active" },
       },

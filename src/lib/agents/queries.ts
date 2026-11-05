@@ -414,8 +414,7 @@ export async function listConversations(
   return conversations.map((conversation) => ({
     ...conversation,
     readOnly:
-      (conversation.agent.runtimeKind !== "pi-sdk" &&
-        conversation.agent.runtimeKind !== "omp") ||
+      conversation.agent.runtimeKind !== "pi-sdk" ||
       Boolean(conversation.agent.retiredAt) ||
       conversation.legacyRevisionUnresolved ||
       !conversation.agentRevisionId ||
@@ -465,8 +464,7 @@ export async function getConversation(
   const config = parsed.success ? parsed.data : null;
   const work = conversation.workSession;
   const readOnly =
-    (conversation.agent.runtimeKind !== "pi-sdk" &&
-      conversation.agent.runtimeKind !== "omp") ||
+    conversation.agent.runtimeKind !== "pi-sdk" ||
     Boolean(conversation.agent.retiredAt) ||
     conversation.legacyRevisionUnresolved ||
     !conversation.agentRevisionId ||
