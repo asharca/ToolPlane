@@ -799,7 +799,7 @@ export async function listWorkSessions(workspaceId: string, agentId?: string) {
       status: { not: "archived" },
       ...(agentId ? { agentId } : {}),
     },
-    orderBy: { updatedAt: "desc" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     include: workSessionSummaryInclude,
   });
   return sessions.map((session) => ({

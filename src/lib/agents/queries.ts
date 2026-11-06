@@ -399,7 +399,7 @@ export async function listConversations(
       agent: { workspaceId },
       workSession: null,
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     include: {
       agent: { select: { runtimeKind: true, retiredAt: true } },
       agentRevision: { select: { agentId: true } },

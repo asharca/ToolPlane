@@ -212,6 +212,37 @@ afterAll(async () => {
 });
 
 describe.sequential("Work conversation deletion", () => {
+  it("keeps creation order when older conversations receive activity or titles", async () => {
+    const older = await workFixture();
+    const newer = await workFixture();
+    const tied = await workFixture();
+    const ids = [older.id, newer.id, tied.id];
+    await db.workSession.update({
+      where: { id: older.id },
+      data: { createdAt: new Date("2026-11-01T00:00:00Z") },
+    });
+    await db.workSession.updateMany({
+      where: { id: { in: [newer.id, tied.id] } },
+      data: { createdAt: new Date("2026-11-02T00:00:00Z") },
+    });
+    const expected = [newer.id, tied.id].sort().reverse().concat(older.id);
+    const listedIds = async () =>
+      (await listWorkSessions(workspaceId, agentId))
+        .filter((item) => ids.includes(item.id))
+        .map((item) => item.id);
+    expect(await listedIds()).toEqual(expected);
+    await db.workSession.update({
+      where: { id: older.id },
+      data: { title: "Updated title", status: "waiting_user" },
+    });
+    expect(await listedIds()).toEqual(expected);
+    await db.workSession.update({
+      where: { id: newer.id },
+      data: { title: "Another title", status: "completed" },
+    });
+    expect(await listedIds()).toEqual(expected);
+  });
+
   it("removes the target Work and message history without deleting other or archived conversations", async () => {
     const target = await workFixture();
     const peer = await workFixture();
