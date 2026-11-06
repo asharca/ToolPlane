@@ -412,6 +412,14 @@
 - **下次怎么验证**：在 `tests/integration/pi-sdk-host.test.ts` 中，对短会话执行原生命令，确认返回成功、没有发出模型请求、会话没有被改写；再在真实 Work 会话中发送一次。
 - **确认日期**：2026-11-06。
 
+### TP-L039：放开同沙箱并发要用真实冷启动并发验收共享资源
+
+**规则**：把串行执行改为并发前，列出同一沙箱内被串行掩盖的共享资源（运行时安装目录、会话绑定事务、容器 pids／内存），给每项明确串行点或扩容，事务沿用 Workspace→Agent 加锁顺序。
+
+- **证据（2026-11-06，用户要求同一沙箱多会话并发）**：单元测试和集成测试都通过了，但同一智能体同时发 2–3 个新会话的真实 Work 依次暴露出四个问题：新会话初始化遇到正在进行的生命周期操作直接报错；两个安装器并发时，后一个发现运行时已装好便提前退出，宿主写 stdin 报 `EPIPE`；会话绑定事务先锁 Agent 再触碰 Workspace 外键，与 Workspace 优先的任务写入发生 `40P01` 死锁；128 个 pids 和 512MB 内存只够约两个 Pi 会话，`pids.events max` 达到 3，出现 `spawn /bin/bash EAGAIN`，还有一轮卡在准备阶段。修复：会话租约、按沙箱串行的准备与绑定、统一加锁顺序、沙箱配额按单智能体并发数倍增、`--v8-pool-size=1`（每个 node 进程从 11 个线程降到 8 个）。之后连续两批、每批 3 个会话在同一容器内并行完成，`pids.peak` 130/384，内存峰值 620MB，没有 OOM。
+- **下次怎么验证**：用伪 OpenAI 上游让 bash 工具 `sleep 15` 并回显时间戳和 `pwd`；在新建的智能体和已有沙箱上各同时发起 N 个会话，比较 START/END 是否重叠，再看 cgroup 的 `pids.peak`、`pids.events`、`memory.events`；调低管理员限额，确认超出的会话排队后成功执行。
+- **依据**：[会话租约](src/lib/agents/sandbox-execution-gate.ts)、[沙箱绑定](src/lib/agents/conversation-sandbox.ts)、[运行时准备](src/lib/agents/sandbox-runtime.ts)、[配额倍增](src/lib/process/supervisor.ts)、[Work 限额](src/lib/work/coordinator.ts)。
+- **确认日期**：2026-11-06。
 ### TP-L040：要在控制台展示的日志属性，不能挂在 Agent 范围的事件上
 
 **规则**：`recordEvent` 遇到带 `agentId`（含继承的日志上下文）的事件，会把 attributes 收窄为数值遥测，防止 Agent 内容进入元数据。需要按属性聚合展示的运维事件（如发送人 ID），要在不带 agentId 的独立上下文中记录；测试 fixture 必须和真实连接一样绑定 Agent。

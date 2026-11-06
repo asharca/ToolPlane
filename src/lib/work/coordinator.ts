@@ -8,6 +8,7 @@ import { withLogContext, enrichLogContext } from "@/lib/observability/context";
 import { recordEvent } from "@/lib/observability/events";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { getAgentConcurrencySettings } from "@/lib/admin/settings";
 import { generateWorkSessionTitle } from "@/lib/agents/conversation-naming";
 import { activeConversationMessages } from "@/lib/agents/conversation-context";
 import { persistAgentPromptInvocation } from "@/lib/agents/prompt-invocation";
@@ -47,7 +48,6 @@ import {
   unregisterWorkRun,
 } from "./run-control";
 
-const MAX_CONCURRENT_WORK = 2;
 const MAX_REASONING_CHARACTERS = 40_000;
 
 type RuntimeSnapshot = {
@@ -114,6 +114,8 @@ type CoordinatorState = {
   draining: boolean;
   stopping?: boolean;
   active: Set<string>;
+  /** Work ID → Agent ID for the per-Agent admin limit. */
+  activeAgents?: Map<string, string>;
   titleGenerations?: Set<string>;
   timer?: ReturnType<typeof setInterval>;
   reconciled: boolean;
@@ -130,6 +132,8 @@ const state = coordinatorGlobal.__workCoordinator ?? {
 coordinatorGlobal.__workCoordinator = state;
 state.titleGenerations ??= new Set<string>();
 const pendingTitles = state.titleGenerations;
+state.activeAgents ??= new Map<string, string>();
+const activeAgents = state.activeAgents;
 
 export function isWorkSessionTitlePending(workSessionId: string) {
   return pendingTitles.has(workSessionId);
@@ -772,11 +776,14 @@ async function runClaimedWork(workSessionId: string) {
     systemLog("error", `[work] ${workSessionId} execution failed`, error);
   } finally {
     state.active.delete(workSessionId);
+    activeAgents.delete(workSessionId);
     kickWorkCoordinator();
   }
 }
 
-async function claimNextWork(): Promise<string | null> {
+async function claimNextWork(
+  saturatedAgentIds: string[],
+): Promise<{ id: string; agentId: string } | null> {
   while (true) {
     const work = await db.workSession.findFirst({
       where: {
@@ -784,13 +791,14 @@ async function claimNextWork(): Promise<string | null> {
         runtimeKind: { in: ["pi-sdk"] },
         agentRevisionId: { not: null },
         legacyRevisionUnresolved: false,
+        agentId: { notIn: saturatedAgentIds },
         conversation: {
           agentRevisionId: { not: null },
           legacyRevisionUnresolved: false,
         },
       },
       orderBy: { createdAt: "asc" },
-      select: { id: true, startedAt: true },
+      select: { id: true, startedAt: true, agentId: true },
     });
     if (!work) return null;
     const claimed = await db.workSession.updateMany({
@@ -802,7 +810,7 @@ async function claimNextWork(): Promise<string | null> {
         ...(!work.startedAt ? { startedAt: new Date() } : {}),
       },
     });
-    if (claimed.count) return work.id;
+    if (claimed.count) return { id: work.id, agentId: work.agentId };
   }
 }
 
@@ -810,20 +818,27 @@ async function drainWorkQueue() {
   if (state.draining || state.stopping || !runtimeCanOperate()) return;
   state.draining = true;
   try {
+    // Work obeys the admin Agent concurrency limits; a saturated Agent's Work
+    // stays queued without blocking other Agents.
+    const limits = await getAgentConcurrencySettings();
     while (
       !state.stopping &&
       runtimeCanOperate() &&
-      state.active.size < MAX_CONCURRENT_WORK
+      state.active.size < limits.maxTotal
     ) {
-      const workSessionId = await claimNextWork();
-      if (!workSessionId) break;
-      state.active.add(workSessionId);
-      void runClaimedWork(workSessionId).catch((error) =>
-        systemLog(
-          "error",
-          `[work] ${workSessionId} finalization failed`,
-          error,
-        ),
+      const perAgent = new Map<string, number>();
+      for (const agentId of activeAgents.values())
+        perAgent.set(agentId, (perAgent.get(agentId) ?? 0) + 1);
+      const work = await claimNextWork(
+        [...perAgent]
+          .filter(([, count]) => count >= limits.maxPerAgent)
+          .map(([agentId]) => agentId),
+      );
+      if (!work) break;
+      state.active.add(work.id);
+      activeAgents.set(work.id, work.agentId);
+      void runClaimedWork(work.id).catch((error) =>
+        systemLog("error", `[work] ${work.id} finalization failed`, error),
       );
     }
   } finally {

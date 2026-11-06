@@ -4080,7 +4080,7 @@
     "agentConcurrencyDescription": "Limit simultaneous Agent task execution. Conversations of the same Agent share a sandbox with separate working directories.",
     "agentMaxConcurrent": "Maximum concurrent turns per Agent",
     "agentMaxTotalConcurrent": "Maximum concurrent sandbox turns platform-wide",
-    "agentConcurrencyBehavior": "Different conversations can run in parallel; the same conversation remains serial. Excess work waits for capacity. Changes apply to new admissions without interrupting running tasks. Defaults: 1 per Agent, 16 platform-wide. Conversations of the same Agent use separate working directories but share the sandbox filesystem.",
+    "agentConcurrencyBehavior": "Different conversations can run in parallel; the same conversation remains serial. Excess work waits for capacity. Changes apply to new admissions without interrupting running tasks. Defaults: 1 per Agent, 16 platform-wide. Conversations of the same Agent use separate working directories but share the sandbox filesystem. Agent sandbox memory and process limits scale with the per-Agent limit (CPU unchanged) from the sandbox's next start.",
     "errorAgentConcurrency": "Enter whole numbers: 1–{perAgent} per Agent and 1–{total} platform-wide. The platform limit must be at least the per-Agent limit.",
     "restoreAgentConcurrencyDefaults": "Restore default limits",
     "agentSandboxAutoStop": "Automatically stop idle Agent sandboxes",
