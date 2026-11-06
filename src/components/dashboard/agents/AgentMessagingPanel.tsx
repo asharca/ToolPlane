@@ -7,16 +7,11 @@ import { displayMessagingUserText } from "@/lib/agents/messaging";
 import { FormSelect } from "@/components/ui/FormSelect";
 import { Switch } from "@/components/motion/switch";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
-import {
-  CenterMorphModal,
-  CenterMorphModalContent,
-} from "@/components/motion/center-morph-modal";
+import { ChannelDetailPanel, ChannelPanelCancel } from "./ChannelDetailPanel";
 import {
   DialogBody,
-  DialogCancel,
   DialogField,
   DialogFooter,
-  DialogHeader,
 } from "@/components/dashboard/dialog";
 
 import Image from "next/image";
@@ -27,7 +22,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import { useTranslations } from "next-intl";
 import {
@@ -156,37 +150,6 @@ function PlatformIcon({ platform }: { platform: string }) {
   );
 }
 
-function ChannelDialog({
-  title,
-  onClose,
-  children,
-  wide = false,
-}: {
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-  wide?: boolean;
-}) {
-  const t = useTranslations("console.agentMessaging");
-  return (
-    <CenterMorphModal
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <CenterMorphModalContent
-        ariaLabel={title}
-        closeButtonLabel={t("close")}
-        className={`flex max-h-[calc(100dvh-4rem)] flex-col ${wide ? "max-w-2xl" : "max-w-lg"}`}
-      >
-        <DialogHeader title={title} />
-        {children}
-      </CenterMorphModalContent>
-    </CenterMorphModal>
-  );
-}
-
 type ChannelHistoryMessage = {
   id: string;
   role: string;
@@ -298,10 +261,9 @@ function ChannelHistory({
     }
   }
   return (
-    <ChannelDialog
+    <ChannelDetailPanel
       title={`${channel.name} · ${t("conversationHistory")}`}
       onClose={onClose}
-      wide
     >
       <p className="px-6 pb-3 text-xs text-muted-foreground">
         {t("historyLiveReadOnly")}
@@ -367,7 +329,7 @@ function ChannelHistory({
           </article>
         ))}
       </div>
-    </ChannelDialog>
+    </ChannelDetailPanel>
   );
 }
 
@@ -472,10 +434,9 @@ function ChannelLogs({
     )
     .join("\n");
   return (
-    <ChannelDialog
+    <ChannelDetailPanel
       title={`${channel.name} · ${t("logs")}`}
       onClose={onClose}
-      wide
     >
       <DialogBody>
         <div className="flex flex-wrap items-end gap-3">
@@ -569,8 +530,7 @@ function ChannelLogs({
           <div ref={tail} />
         </div>
       </DialogBody>
-      <DialogFooter cancel={<DialogCancel>{t("close")}</DialogCancel>} />
-    </ChannelDialog>
+    </ChannelDetailPanel>
   );
 }
 
@@ -768,9 +728,9 @@ function ChannelEditor({
     );
   };
   return (
-    <ChannelDialog title={channel.name} onClose={onClose}>
+    <ChannelDetailPanel title={channel.name} onClose={onClose}>
       <form
-        className="flex min-h-0 flex-col"
+        className="flex min-h-0 flex-1 flex-col"
         onSubmit={async (event) => {
           event.preventDefault();
           if (
@@ -1025,14 +985,14 @@ function ChannelEditor({
             </p>
           )}
         </DialogBody>
-        <DialogFooter cancel={<DialogCancel />}>
+        <DialogFooter cancel={<ChannelPanelCancel onClick={onClose} />}>
           <Button type="submit" aria-busy={pending} variant="primary" size="md">
             {pending && <LoaderCircle className="size-4 animate-spin" />}
             {t("saveCredentials")}
           </Button>
         </DialogFooter>
       </form>
-    </ChannelDialog>
+    </ChannelDetailPanel>
   );
 }
 
@@ -1232,230 +1192,242 @@ export function AgentMessagingPanel({
         await send({ action: "pair", connectionId: created.connectionId });
     }
   }
+  const detailOpen = Boolean(
+    editing ||
+      accessChannel ||
+      logChannel ||
+      historyChannel ||
+      moveChannel ||
+      deleteChannel,
+  );
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
-      <nav
-        aria-label={t("platformNavigation")}
-        className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/60 bg-muted/15 p-3"
-      >
-        {platforms.map((platform) => (
-          <Button
-            key={platform}
-            type="button"
-            aria-current={selected === platform ? "page" : undefined}
-            onClick={() => setSelected(platform)}
-            variant={selected === platform ? "secondary" : "ghost"}
-            size="sm"
-            className="shrink-0 justify-start rounded-xl text-left"
-          >
-            <PlatformIcon platform={platform} />
-            <span className="whitespace-nowrap">{platformName(platform)}</span>
-          </Button>
-        ))}
-      </nav>
-      <section className="min-h-0 w-full min-w-0 flex-1 overflow-y-auto px-6 py-5">
-        <header className="mb-6 flex items-center justify-between gap-3 border-b border-border/60 pb-5">
-          <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold tracking-tight">
-            <PlatformIcon platform={selected} />
-            {platformName(selected)}
-          </h2>
-          <Button
-            type="button"
-            disabled={Boolean(pending) || !PLATFORMS.includes(selected)}
-            onClick={() => void add()}
-            variant={"secondary"}
-            size={"sm"}
-            className="shrink-0"
-          >
-            <Plus className="size-4" />
-            {t("add")}
-          </Button>
-        </header>
-        {!ready && (
-          <p className="py-2 text-xs text-muted-foreground text-muted-foreground">
-            {t(
-              "configureAModelProviderBeforeExternalMessagesCanReceiveAgentReplies",
-            )}
-          </p>
-        )}
-        {error && !editing && (
-          <p role="alert" className="py-2 text-sm text-destructive">
-            {error}
-          </p>
-        )}
-        {!selectedChannels.length && (
-          <div className="flex flex-col items-center gap-3 py-16 text-center text-muted-foreground">
-            <Radio className="size-7 opacity-50" />
-            <p className="text-sm">
-              {t("noInstances", { platform: platformName(selected) })}
+      <div hidden={detailOpen} className={detailOpen ? "hidden" : "contents"}>
+        <nav
+          aria-label={t("platformNavigation")}
+          className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/60 bg-muted/15 p-3"
+        >
+          {platforms.map((platform) => (
+            <Button
+              key={platform}
+              type="button"
+              aria-current={selected === platform ? "page" : undefined}
+              onClick={() => setSelected(platform)}
+              variant={selected === platform ? "secondary" : "ghost"}
+              size="sm"
+              className="shrink-0 justify-start rounded-xl text-left"
+            >
+              <PlatformIcon platform={platform} />
+              <span className="whitespace-nowrap">
+                {platformName(platform)}
+              </span>
+            </Button>
+          ))}
+        </nav>
+        <section className="min-h-0 w-full min-w-0 flex-1 overflow-y-auto px-6 py-5">
+          <header className="mb-6 flex items-center justify-between gap-3 border-b border-border/60 pb-5">
+            <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold tracking-tight">
+              <PlatformIcon platform={selected} />
+              {platformName(selected)}
+            </h2>
+            <Button
+              type="button"
+              disabled={Boolean(pending) || !PLATFORMS.includes(selected)}
+              onClick={() => void add()}
+              variant={"secondary"}
+              size={"sm"}
+              className="shrink-0"
+            >
+              <Plus className="size-4" />
+              {t("add")}
+            </Button>
+          </header>
+          {!ready && (
+            <p className="py-2 text-xs text-muted-foreground text-muted-foreground">
+              {t(
+                "configureAModelProviderBeforeExternalMessagesCanReceiveAgentReplies",
+              )}
             </p>
-          </div>
-        )}
-        <div className="divide-y divide-border/60">
-          {selectedChannels.map((channel) => {
-            const active = ["running", "starting"].includes(channel.status);
-            return (
-              <div
-                key={channel.id}
-                className="flex flex-wrap items-center gap-x-2 gap-y-2 py-3"
-              >
-                <div className="min-w-0 flex-1 basis-32">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="min-w-0 max-w-full break-words text-sm font-medium">
-                      {channel.name}
-                    </span>
-                    <AnimatedBadge
-                      status={
-                        channel.status === "running"
-                          ? "success"
-                          : channel.status === "error"
-                            ? "danger"
-                            : channel.status === "starting"
-                              ? "loading"
-                              : "neutral"
-                      }
-                    >
-                      {statusText(channel.status)}
-                    </AnimatedBadge>
-                    {channel.access.openToAll && (
-                      <AnimatedBadge status="warning">
-                        {t("openToAll")}
+          )}
+          {error && !editing && (
+            <p role="alert" className="py-2 text-sm text-destructive">
+              {error}
+            </p>
+          )}
+          {!selectedChannels.length && (
+            <div className="flex flex-col items-center gap-3 py-16 text-center text-muted-foreground">
+              <Radio className="size-7 opacity-50" />
+              <p className="text-sm">
+                {t("noInstances", { platform: platformName(selected) })}
+              </p>
+            </div>
+          )}
+          <div className="divide-y divide-border/60">
+            {selectedChannels.map((channel) => {
+              const active = ["running", "starting"].includes(channel.status);
+              return (
+                <div
+                  key={channel.id}
+                  className="flex flex-wrap items-center gap-x-2 gap-y-2 py-3"
+                >
+                  <div className="min-w-0 flex-1 basis-32">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="min-w-0 max-w-full break-words text-sm font-medium">
+                        {channel.name}
+                      </span>
+                      <AnimatedBadge
+                        status={
+                          channel.status === "running"
+                            ? "success"
+                            : channel.status === "error"
+                              ? "danger"
+                              : channel.status === "starting"
+                                ? "loading"
+                                : "neutral"
+                        }
+                      >
+                        {statusText(channel.status)}
                       </AnimatedBadge>
+                      {channel.access.openToAll && (
+                        <AnimatedBadge status="warning">
+                          {t("openToAll")}
+                        </AnimatedBadge>
+                      )}
+                      {channel.access.pendingCount > 0 && (
+                        <AnimatedBadge status="info">
+                          {t("pendingPairingCount", {
+                            count: channel.access.pendingCount,
+                          })}
+                        </AnimatedBadge>
+                      )}
+                    </div>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {sandboxes.find(
+                        (sandbox) => sandbox.id === channel.sandboxId,
+                      )?.name ?? t("noSandbox")}{" "}
+                      /{" "}
+                      {agents.find((agent) => agent.id === channel.agentId)
+                        ?.name ?? t("noAgent")}
+                    </p>
+                    {channel.lastError && (
+                      <p className="mt-1 break-words text-xs text-destructive text-destructive">
+                        {channel.lastError}
+                      </p>
                     )}
-                    {channel.access.pendingCount > 0 && (
-                      <AnimatedBadge status="info">
-                        {t("pendingPairingCount", {
-                          count: channel.access.pendingCount,
-                        })}
-                      </AnimatedBadge>
+                    {channel.revisions.outdatedConversations > 0 && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                        <p className="text-muted-foreground">
+                          {t("outdatedConversations", {
+                            count: channel.revisions.outdatedConversations,
+                          })}
+                        </p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={Boolean(pending)}
+                          onClick={async () => {
+                            const result = await send({
+                              action: "upgradeConversations",
+                              connectionId: channel.id,
+                            });
+                            if (
+                              result &&
+                              result.upgraded !== undefined &&
+                              result.skipped !== undefined
+                            )
+                              notify(
+                                t("conversationsUpgraded", {
+                                  upgraded: result.upgraded,
+                                  skipped: result.skipped,
+                                }),
+                              );
+                            else if (!result)
+                              notify(requestFailed, { severity: "error" });
+                          }}
+                        >
+                          {t("upgradeAll")}
+                        </Button>
+                      </div>
                     )}
                   </div>
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {sandboxes.find(
-                      (sandbox) => sandbox.id === channel.sandboxId,
-                    )?.name ?? t("noSandbox")}{" "}
-                    /{" "}
-                    {agents.find((agent) => agent.id === channel.agentId)
-                      ?.name ?? t("noAgent")}
-                  </p>
-                  {channel.lastError && (
-                    <p className="mt-1 break-words text-xs text-destructive text-destructive">
-                      {channel.lastError}
-                    </p>
-                  )}
-                  {channel.revisions.outdatedConversations > 0 && (
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                      <p className="text-muted-foreground">
-                        {t("outdatedConversations", {
-                          count: channel.revisions.outdatedConversations,
-                        })}
-                      </p>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        disabled={Boolean(pending)}
-                        onClick={async () => {
-                          const result = await send({
-                            action: "upgradeConversations",
-                            connectionId: channel.id,
-                          });
-                          if (
-                            result &&
-                            result.upgraded !== undefined &&
-                            result.skipped !== undefined
-                          )
-                            notify(
-                              t("conversationsUpgraded", {
-                                upgraded: result.upgraded,
-                                skipped: result.skipped,
-                              }),
-                            );
-                          else if (!result)
-                            notify(requestFailed, { severity: "error" });
-                        }}
-                      >
-                        {t("upgradeAll")}
-                      </Button>
-                    </div>
-                  )}
+                  <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setError("");
+                        setAccessId(channel.id);
+                      }}
+                      size="icon"
+                      aria-label={t("access")}
+                    >
+                      <ShieldCheck className="size-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => setHistoryId(channel.id)}
+                      size="icon"
+                      aria-label={t("conversationHistory")}
+                    >
+                      <MessagesSquare className="size-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => setLogId(channel.id)}
+                      size="icon"
+                      aria-label={t("logs")}
+                    >
+                      {<FileText className="size-4" />}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setError("");
+                        setEditingId(channel.id);
+                      }}
+                      size="icon"
+                      aria-label={t("edit")}
+                    >
+                      {<Pencil className="size-4" />}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setError("");
+                        setTargetSandboxId("");
+                        setMoveId(channel.id);
+                      }}
+                      size="icon"
+                      aria-label={t("migrate")}
+                    >
+                      {<ArrowRightLeft className="size-4" />}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => setDeleteId(channel.id)}
+                      size="icon"
+                      aria-label={t("delete")}
+                    >
+                      {<Trash2 className="size-4" />}
+                    </Button>
+                    <Switch
+                      checked={active}
+                      disabled={Boolean(pending)}
+                      ariaLabel={`${t(active ? "stop" : "start")} ${channel.name}`}
+                      onCheckedChange={() =>
+                        void send({
+                          action: active ? "stop" : "start",
+                          connectionId: channel.id,
+                        })
+                      }
+                    />
+                  </div>
                 </div>
-                <div className="ml-auto flex shrink-0 items-center gap-0.5">
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setError("");
-                      setAccessId(channel.id);
-                    }}
-                    size="icon"
-                    aria-label={t("access")}
-                  >
-                    <ShieldCheck className="size-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => setHistoryId(channel.id)}
-                    size="icon"
-                    aria-label={t("conversationHistory")}
-                  >
-                    <MessagesSquare className="size-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => setLogId(channel.id)}
-                    size="icon"
-                    aria-label={t("logs")}
-                  >
-                    {<FileText className="size-4" />}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setError("");
-                      setEditingId(channel.id);
-                    }}
-                    size="icon"
-                    aria-label={t("edit")}
-                  >
-                    {<Pencil className="size-4" />}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setError("");
-                      setTargetSandboxId("");
-                      setMoveId(channel.id);
-                    }}
-                    size="icon"
-                    aria-label={t("migrate")}
-                  >
-                    {<ArrowRightLeft className="size-4" />}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => setDeleteId(channel.id)}
-                    size="icon"
-                    aria-label={t("delete")}
-                  >
-                    {<Trash2 className="size-4" />}
-                  </Button>
-                  <Switch
-                    checked={active}
-                    disabled={Boolean(pending)}
-                    ariaLabel={`${t(active ? "stop" : "start")} ${channel.name}`}
-                    onCheckedChange={() =>
-                      void send({
-                        action: active ? "stop" : "start",
-                        connectionId: channel.id,
-                      })
-                    }
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+              );
+            })}
+          </div>
+        </section>
+      </div>
       {editing && (
         <ChannelEditor
           key={editing.id}
@@ -1495,7 +1467,7 @@ export function AgentMessagingPanel({
         />
       )}
       {moveChannel && (
-        <ChannelDialog
+        <ChannelDetailPanel
           title={t("migrateTitle", { name: moveChannel.name })}
           onClose={() => {
             if (!pending) setMoveId(null);
@@ -1545,7 +1517,14 @@ export function AgentMessagingPanel({
               </p>
             )}
           </DialogBody>
-          <DialogFooter cancel={<DialogCancel disabled={Boolean(pending)} />}>
+          <DialogFooter
+            cancel={
+              <ChannelPanelCancel
+                disabled={Boolean(pending)}
+                onClick={() => setMoveId(null)}
+              />
+            }
+          >
             <Button
               type="button"
               disabled={Boolean(pending) || !targetSandbox}
@@ -1566,10 +1545,10 @@ export function AgentMessagingPanel({
               {t("migrate")}
             </Button>
           </DialogFooter>
-        </ChannelDialog>
+        </ChannelDetailPanel>
       )}
       {deleteChannel && (
-        <ChannelDialog
+        <ChannelDetailPanel
           title={t("deleteTitle", { name: deleteChannel.name })}
           onClose={() => setDeleteId(null)}
         >
@@ -1577,8 +1556,20 @@ export function AgentMessagingPanel({
             <p className="text-sm text-muted-foreground">
               {t("deleteConfirmation")}
             </p>
+            {error && (
+              <p role="alert" className="break-words text-sm text-destructive">
+                {error}
+              </p>
+            )}
           </DialogBody>
-          <DialogFooter cancel={<DialogCancel disabled={Boolean(pending)} />}>
+          <DialogFooter
+            cancel={
+              <ChannelPanelCancel
+                disabled={Boolean(pending)}
+                onClick={() => setDeleteId(null)}
+              />
+            }
+          >
             <Button
               type="button"
               disabled={Boolean(pending)}
@@ -1599,7 +1590,7 @@ export function AgentMessagingPanel({
               {t("delete")}
             </Button>
           </DialogFooter>
-        </ChannelDialog>
+        </ChannelDetailPanel>
       )}
     </div>
   );
