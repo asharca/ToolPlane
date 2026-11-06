@@ -23,7 +23,7 @@ import { PersonalSettingsContent } from "./PersonalSettingsContent";
 import {
   CreateWorkspaceForm,
   WorkspaceDeleteForm,
-  WorkspaceMemberAction,
+  WorkspaceLeaveAction,
 } from "./WorkspaceForms";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
@@ -207,10 +207,7 @@ export async function WorkspaceAccountPage({
                               {t("members")}
                             </ButtonLink>
                             {workspace.role !== "owner" ? (
-                              <WorkspaceMemberAction
-                                slug={workspace.slug}
-                                kind="leave"
-                              />
+                              <WorkspaceLeaveAction slug={workspace.slug} />
                             ) : null}
                           </div>
                         ) : (
@@ -232,10 +229,7 @@ export async function WorkspaceAccountPage({
                                 status={workspace.status}
                               />
                             ) : (
-                              <WorkspaceMemberAction
-                                slug={workspace.slug}
-                                kind="leave"
-                              />
+                              <WorkspaceLeaveAction slug={workspace.slug} />
                             )}
                           </div>
                         )}

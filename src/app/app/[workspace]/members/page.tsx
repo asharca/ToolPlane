@@ -1,4 +1,3 @@
-import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { getLocale, getTranslations } from "next-intl/server";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/current-user";
@@ -7,22 +6,21 @@ import {
   getWorkspaceMembers,
 } from "@/lib/workspace/queries";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
-import { WorkspaceInviteForm } from "@/components/dashboard/WorkspaceInviteForm";
+import { DashboardPage } from "@/components/dashboard/DashboardUI";
 import {
-  WorkspaceMemberAction,
-  WorkspaceMemberRoleForm,
-} from "@/components/dashboard/WorkspaceForms";
+  WorkspaceMembers,
+  type WorkspaceRole,
+} from "@/components/dashboard/members/WorkspaceMembers";
 import { db } from "@/lib/db";
-import {
-  DashboardPage,
-  DashboardPanel,
-  DashboardSection,
-  DashboardTable,
-} from "@/components/dashboard/DashboardUI";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
-import { NotificationPublishForm } from "@/components/notifications/NotificationPublishForm";
 
 export const dynamic = "force-dynamic";
+
+const ROLE_ORDER: Record<WorkspaceRole, number> = {
+  owner: 0,
+  admin: 1,
+  member: 2,
+};
 
 function fmt(d: Date, timeZone: string, locale: string) {
   return formatInTimeZone(
@@ -52,152 +50,51 @@ export default async function MembersPage({
   const timeZone = resolveUserTimeZone(user);
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect("/app");
-  const members = await getWorkspaceMembers(ws.id);
-  const canInvite = ws.ownerId === user.id;
-  const canPublish =
-    canInvite ||
-    members.some(
-      (member) => member.userId === user.id && member.role === "admin",
-    );
-  const notifications = await getTranslations("console.notifications");
-  const management = await getTranslations("console.workspaces");
-  const invitations = canInvite
-    ? await db.workspaceInvitation.findMany({
-        where: { workspaceId: ws.id },
-        orderBy: { createdAt: "desc" },
-        select: { id: true, email: true, expiresAt: true },
-      })
-    : [];
+  const isOwner = ws.ownerId === user.id;
+  const [members, invitations] = await Promise.all([
+    getWorkspaceMembers(ws.id),
+    isOwner
+      ? db.workspaceInvitation.findMany({
+          where: { workspaceId: ws.id },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, email: true, expiresAt: true },
+        })
+      : [],
+  ]);
+  const now = new Date();
 
   return (
     <>
       <DashboardHeader title={t("members")} />
-      <DashboardPage className="space-y-6 py-8">
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
-          <div className="space-y-3">
-            <p className="max-w-2xl text-sm text-muted-foreground">
-              {management("sharedHint")}
-            </p>
-            {canInvite ? (
-              <p className="max-w-2xl text-sm text-muted-foreground">
-                {management("adminCapabilities")}
-              </p>
-            ) : null}
-            <DashboardSection
-              title={t("currentMembers")}
-              count={members.length}
-            >
-              <DashboardTable
-                minWidth="34rem"
-                headers={[
-                  { label: t("member") },
-                  { label: t("role") },
-                  { label: t("joined") },
-                  { label: management("actions") },
-                ]}
-                rows={members.map((m) => ({
-                  id: m.id,
-                  cells: [
-                    <div key="member" className="flex items-center gap-2.5">
-                      <span className="flex size-7 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
-                        {(m.user.name ?? m.user.email)
-                          .slice(0, 1)
-                          .toUpperCase()}
-                      </span>
-                      <div>
-                        <div className="font-medium text-foreground">
-                          {m.user.name ?? m.user.email.split("@")[0]}
-                          {m.userId === user.id ? (
-                            <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                              {t("you")}
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {m.user.email}
-                        </div>
-                      </div>
-                    </div>,
-                    <AnimatedBadge
-                      key="role"
-                      status="neutral"
-                      size="sm"
-                      showIcon={false}
-                    >
-                      {m.userId === ws.ownerId
-                        ? t("ownerRole")
-                        : m.role === "admin"
-                          ? t("adminRole")
-                          : t("memberRole")}
-                    </AnimatedBadge>,
-                    fmt(m.createdAt, timeZone, locale),
-                    <div key="actions" className="space-y-3">
-                      {canInvite && m.userId !== ws.ownerId ? (
-                        <WorkspaceMemberRoleForm
-                          slug={slug}
-                          memberId={m.userId}
-                          role={m.role === "admin" ? "admin" : "member"}
-                        />
-                      ) : null}
-                      {m.userId !== ws.ownerId &&
-                      (canInvite || m.userId === user.id) ? (
-                        <WorkspaceMemberAction
-                          slug={slug}
-                          memberId={m.userId}
-                          kind={m.userId === user.id ? "leave" : "remove"}
-                        />
-                      ) : null}
-                    </div>,
-                  ],
-                }))}
-              />
-            </DashboardSection>
-            {canInvite && invitations.length > 0 ? (
-              <DashboardSection
-                title={management("pendingInvitations")}
-                count={invitations.length}
-              >
-                <ul className="divide-y divide-border rounded-lg border border-border">
-                  {invitations.map((invitation) => (
-                    <li
-                      key={invitation.id}
-                      className="flex flex-wrap items-start justify-between gap-3 p-4"
-                    >
-                      <div className="min-w-0">
-                        <p className="break-all text-sm">{invitation.email}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {invitation.expiresAt <= new Date()
-                            ? management("expired")
-                            : management("expires", {
-                                date: fmt(
-                                  invitation.expiresAt,
-                                  timeZone,
-                                  locale,
-                                ),
-                              })}
-                        </p>
-                      </div>
-                      <WorkspaceMemberAction
-                        slug={slug}
-                        invitationId={invitation.id}
-                        kind="revoke"
-                      />
-                    </li>
-                  ))}
-                </ul>
-              </DashboardSection>
-            ) : null}
-          </div>
-
-          <div className="min-w-0 space-y-6">
-            <WorkspaceInviteForm workspaceSlug={slug} canInvite={canInvite} />
-            {canPublish ? (
-              <DashboardPanel title={notifications("publishWorkspaceTitle")}>
-                <NotificationPublishForm workspaceSlug={slug} />
-              </DashboardPanel>
-            ) : null}
-          </div>
-        </div>
+      <DashboardPage className="max-w-4xl py-8">
+        <WorkspaceMembers
+          slug={slug}
+          canManage={isOwner}
+          members={members
+            .map((member) => {
+              const role: WorkspaceRole =
+                member.userId === ws.ownerId
+                  ? "owner"
+                  : member.role === "admin"
+                    ? "admin"
+                    : "member";
+              return {
+                userId: member.userId,
+                name: member.user.name ?? member.user.email.split("@")[0],
+                email: member.user.email,
+                role,
+                joined: fmt(member.createdAt, timeZone, locale),
+                isSelf: member.userId === user.id,
+              };
+            })
+            .sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role])}
+          invitations={invitations.map((invitation) => ({
+            id: invitation.id,
+            email: invitation.email,
+            expires: fmt(invitation.expiresAt, timeZone, locale),
+            expired: invitation.expiresAt <= now,
+          }))}
+        />
       </DashboardPage>
     </>
   );
