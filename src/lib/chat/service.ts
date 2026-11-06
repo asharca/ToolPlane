@@ -30,6 +30,7 @@ import {
   claimWorkspaceAttachments,
 } from "@/lib/attachments/messages";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
+import { conversationTitleFromParts } from "@/lib/agents/conversation-title";
 import { inferModelPrimaryType } from "@/lib/agents/model-catalog";
 import {
   chatBranchNavigation,
@@ -1947,7 +1948,7 @@ export async function beginChatTurn(
           activeMessageId: assistantMessageId,
           updatedAt: new Date(),
           ...(!thread.title && trigger === "submit-message"
-            ? { title: messageTitle(parts) }
+            ? { title: conversationTitleFromParts(parts) }
             : {}),
         },
       });

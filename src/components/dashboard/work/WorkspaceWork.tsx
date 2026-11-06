@@ -140,6 +140,7 @@ import {
   type SidebarGroupPreferences,
 } from "@/lib/sidebar-groups";
 import { usePersistentSidebarGroups } from "@/lib/use-persistent-sidebar-groups";
+import { conversationTitleFromParts } from "@/lib/agents/conversation-title";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import {
   CenterMorphModal,
@@ -2118,7 +2119,7 @@ export function WorkspaceWork({
         {
           id: body.workSessionId as string,
           agentId,
-          title: null,
+          title: conversationTitleFromParts([{ type: "text", text: draft }]),
           titlePending: true,
           optimistic: true,
           task: draft.trim(),
