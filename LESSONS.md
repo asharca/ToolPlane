@@ -420,7 +420,6 @@
 - **下次怎么验证**：用伪 OpenAI 上游让 bash 工具 `sleep 15` 并回显时间戳和 `pwd`；在新建的智能体和已有沙箱上各同时发起 N 个会话，比较 START/END 是否重叠，再看 cgroup 的 `pids.peak`、`pids.events`、`memory.events`；调低管理员限额，确认超出的会话排队后成功执行。
 - **依据**：[会话租约](src/lib/agents/sandbox-execution-gate.ts)、[沙箱绑定](src/lib/agents/conversation-sandbox.ts)、[运行时准备](src/lib/agents/sandbox-runtime.ts)、[配额倍增](src/lib/process/supervisor.ts)、[Work 限额](src/lib/work/coordinator.ts)。
 - **确认日期**：2026-11-06。
-
 ### TP-L040：要在控制台展示的日志属性，不能挂在 Agent 范围的事件上
 
 **规则**：`recordEvent` 遇到带 `agentId`（含继承的日志上下文）的事件，会把 attributes 收窄为数值遥测，防止 Agent 内容进入元数据。需要按属性聚合展示的运维事件（如发送人 ID），要在不带 agentId 的独立上下文中记录；测试 fixture 必须和真实连接一样绑定 Agent。
