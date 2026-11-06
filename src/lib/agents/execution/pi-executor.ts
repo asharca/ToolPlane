@@ -17,6 +17,7 @@ import { isLocalGrant } from "@/lib/a2a/principal";
 import { workRuntimeObserver } from "@/lib/work/run-control";
 import { recordTaskExecutionStage } from "@/lib/a2a/store";
 import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
+import { MeteredExecutionError } from "@/lib/agents/usage";
 
 /** Local runtime port: Task context identity, not a private Conversation or old sub-agent runner. */
 export const executeLocalTask: TaskExecutor = async (row, signal) => {
@@ -44,29 +45,40 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
   let commands: RuntimeCommand[] = [];
   let usage: RuntimeUsage | undefined;
   let commandResult: RuntimeCommandResult | undefined;
-  const text = await runSandboxAgentTurn({
-    ...options,
-    onTextDelta: observer?.onTextDelta,
-    onActivity: observer?.onActivity,
-    onExecutionStage,
-    onContextUsage: observer?.onContextUsage,
-    onCommands: async (value) => {
-      commands = value;
-      await observer?.onCommands?.(value);
-    },
-    onUsage: async (value) => {
-      usage = value;
-      await observer?.onUsage?.(value);
-    },
-    onCommandResult: async (value) => {
-      commandResult = value;
-      await observer?.onCommandResult?.(value);
-    },
-  });
-  signal.throwIfAborted();
-  await assertLiveGrant(grant, "send");
-  if (text.length > A2A_LIMITS.outputCharacters)
-    throw new Error("Task output limit exceeded.");
+  let text: string;
+  try {
+    text = await runSandboxAgentTurn({
+      ...options,
+      onTextDelta: observer?.onTextDelta,
+      onActivity: observer?.onActivity,
+      onExecutionStage,
+      onContextUsage: observer?.onContextUsage,
+      onCommands: async (value) => {
+        commands = value;
+        await observer?.onCommands?.(value);
+      },
+      onUsage: async (value) => {
+        usage = value;
+        await observer?.onUsage?.(value);
+      },
+      onCommandResult: async (value) => {
+        commandResult = value;
+        await observer?.onCommandResult?.(value);
+      },
+    });
+    signal.throwIfAborted();
+    await assertLiveGrant(grant, "send");
+    if (text.length > A2A_LIMITS.outputCharacters)
+      throw new Error("Task output limit exceeded.");
+  } catch (error) {
+    if (usage)
+      throw new MeteredExecutionError(error, {
+        usage,
+        model: options.modelId,
+        providerId: options.provider.id,
+      });
+    throw error;
+  }
   const artifact = textArtifact(text);
   if (options.runtimeKind === "pi-sdk")
     artifact.metadata = {

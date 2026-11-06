@@ -106,6 +106,7 @@ export async function recordA2AEvent(input: A2ALogInput): Promise<void> {
     await withLogContext(
       {
         ...identity,
+        taskId: binding?.taskId,
         requestId: current?.requestId,
         traceId: current?.traceId,
         parentSpanId: current?.spanId,

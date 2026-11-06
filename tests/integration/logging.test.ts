@@ -280,7 +280,7 @@ describe("durable scoped logging", () => {
 
   it("lets workspace members read Agent tool input and output, but not other Agent content", async () => {
     await withLogContext(
-      { workspaceId, agentId: "agent-fixture" },
+      { workspaceId, agentId: "agent-fixture", taskId: "task-fixture" },
       async () => {
         await recordEvent({
           domain: "agent",
@@ -299,6 +299,7 @@ describe("durable scoped logging", () => {
     const tool = await db.logEvent.findFirstOrThrow({
       where: { workspaceId, eventName: "sandbox.tool" },
     });
+    expect(tool.taskId).toBe("task-fixture");
     const visible = await getLogEvent({ userId, workspaceId }, tool.id);
     expect(visible?.detailState).toBe("available");
     expect(JSON.stringify(visible?.detail)).toContain("echo visible");

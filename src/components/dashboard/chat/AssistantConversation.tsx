@@ -66,8 +66,12 @@ import {
   readChatExecutionProgress,
   type ChatExecutionProgress,
 } from "@/lib/chat/execution-stage";
-import { McpPromptPickerButton } from "@/components/dashboard/McpPromptPickerButton";
-import { McpResourcePickerButton } from "@/components/dashboard/McpResourcePickerButton";
+import {
+  ComposerMenu,
+  type ComposerMenuItem,
+  useComposerMenu,
+} from "@/components/dashboard/composer-menu";
+import { useMcpComposerMenu } from "@/components/dashboard/composer-mcp-menu";
 import { ReasoningEffortControl } from "@/components/dashboard/agents/ReasoningEffortControl";
 import type { ReasoningEffort } from "@/lib/agents/constants";
 import { ComposerToolsButton } from "@/components/dashboard/ComposerToolsButton";
@@ -77,11 +81,6 @@ import {
   McpToolsUpdatedNote,
 } from "@/components/dashboard/RevisionUpgradeNotice";
 import type { RevisionMcpToolChange } from "@/lib/revisions/upgrade-diff";
-import {
-  MorphPopover,
-  MorphPopoverContent,
-  MorphPopoverTrigger,
-} from "@/components/motion/popover-morph";
 
 const TOOLBAR_KEY = "toolplane.chat.composer.toolbar";
 const TOOLBAR_EVENT = "toolplane:chat-composer-toolbar";
@@ -301,10 +300,8 @@ export function AssistantConversation({
   const [reasoningEffort, setReasoningEffort] =
     useState<ReasoningEffort>("default");
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
   const [customizing, setCustomizing] = useState(false);
-  const [promptsOpen, setPromptsOpen] = useState(false);
-  const [resourcesOpen, setResourcesOpen] = useState(false);
+  const composerRef = useRef<HTMLDivElement>(null);
   const toolbarValue = useSyncExternalStore(
     subscribeToolbar,
     readToolbar,
@@ -784,6 +781,52 @@ export function AssistantConversation({
         ]
       : []),
   ];
+  const mcpMenu = useMcpComposerMenu({
+    composerPath: `/api/v1/chat/threads/${threadId}/composer`,
+    promptsPath: `/api/v1/chat/threads/${threadId}/prompts`,
+  });
+  const menuItems: ComposerMenuItem[] = [
+    ...(attachmentUploadUrl
+      ? [
+          {
+            id: "attachments",
+            label: uploading
+              ? composerT("uploadingAttachments")
+              : composerT("addAttachment"),
+            icon: Paperclip,
+            disabled: uploading,
+          },
+        ]
+      : []),
+    {
+      id: "web-search",
+      label: webSearchEnabled
+        ? composerT("disableWebSearch")
+        : composerT("enableWebSearch"),
+      icon: Globe,
+      pressed: webSearchEnabled,
+    },
+    ...mcpMenu.rootItems,
+  ];
+  const menu = useComposerMenu({
+    text,
+    setText,
+    textareaRef,
+    containerRef: composerRef,
+    disabled: readOnly || running,
+    rootItems: menuItems,
+    views: mcpMenu.views,
+    onActivate: async (item, view, insertText) => {
+      const handled = await mcpMenu.activate(item, view, (value) =>
+        insertText(value),
+      );
+      if (handled !== null) return handled;
+      if (item.id === "attachments") attachmentInput.current?.click();
+      if (item.id === "web-search") setWebSearchEnabled((value) => !value);
+      return undefined;
+    },
+    onError: setError,
+  });
   let pinnedIds = DEFAULT_TOOLBAR_IDS;
   try {
     const parsed: unknown = JSON.parse(toolbarValue);
@@ -809,13 +852,12 @@ export function AssistantConversation({
   }
 
   function activateToolbarAction(id: string) {
-    setToolsOpen(false);
-    if (id === "mcp-prompts") setPromptsOpen(true);
-    if (id === "resources") setResourcesOpen(true);
+    if (id === "mcp-prompts") menu.openView("mcp-prompts");
+    if (id === "resources") menu.openView("mcp-resources");
     if (id === "attachments") attachmentInput.current?.click();
   }
 
-  function renderToolbarAction(option: ToolbarOption, menu = false) {
+  function renderToolbarAction(option: ToolbarOption) {
     if (option.id === "reasoning")
       return (
         <ReasoningEffortControl
@@ -829,11 +871,9 @@ export function AssistantConversation({
         <Button
           type="button"
           variant="ghost"
-          size={menu ? "sm" : "icon"}
+          size="icon"
           className={cn(
-            menu
-              ? "min-h-9 w-full justify-start gap-2.5 rounded-lg px-2.5 text-sm"
-              : "size-8 rounded-full",
+            "size-8 rounded-full",
             webSearchEnabled &&
               "bg-primary/10 text-primary hover:bg-primary/15",
           )}
@@ -844,7 +884,6 @@ export function AssistantConversation({
           onClick={() => setWebSearchEnabled((value) => !value)}
         >
           <option.icon className="size-4 shrink-0" />
-          {menu ? option.label : null}
         </Button>
       );
     const Icon =
@@ -857,12 +896,8 @@ export function AssistantConversation({
       <Button
         type="button"
         variant="ghost"
-        size={menu ? "sm" : "icon"}
-        className={
-          menu
-            ? "min-h-9 w-full justify-start gap-2.5 rounded-lg px-2.5 text-sm"
-            : "size-8 rounded-full"
-        }
+        size="icon"
+        className="size-8 rounded-full"
         aria-label={label}
         title={option.label}
         disabled={
@@ -876,7 +911,6 @@ export function AssistantConversation({
             option.id === "attachments" && uploading && "animate-spin",
           )}
         />
-        {menu ? option.label : null}
       </Button>
     );
   }
@@ -1288,12 +1322,22 @@ export function AssistantConversation({
           </p>
         )}
       <div
+        ref={composerRef}
         data-ui="chat.composer"
         className={cn(
           conversationComposerDockClassName,
           empty && "mb-[min(20dvh,10rem)] before:hidden",
         )}
       >
+        <ComposerMenu
+          menu={menu}
+          className="left-3 sm:left-4"
+          footer={{
+            label: composerT("customizeToolbar"),
+            icon: SlidersHorizontal,
+            onSelect: () => setCustomizing(true),
+          }}
+        />
         <div
           className={cn(
             "grid grid-cols-[minmax(0,1fr)_auto]",
@@ -1301,45 +1345,14 @@ export function AssistantConversation({
           )}
         >
           <div className="order-3 col-start-1 flex min-w-0 flex-wrap items-center gap-1 px-2.5 pb-2.5 pt-1 text-muted-foreground">
-            <MorphPopover open={toolsOpen} onOpenChange={setToolsOpen}>
-              <MorphPopoverTrigger>
-                <ComposerToolsButton
-                  open={toolsOpen}
-                  disabled={readOnly || running}
-                  aria-label={composerT("openComposerTools")}
-                  title={composerT("openComposerTools")}
-                  onClick={() => setToolsOpen((open) => !open)}
-                />
-              </MorphPopoverTrigger>
-              <MorphPopoverContent
-                side="top"
-                align="start"
-                sideOffset={8}
-                className="z-50 w-64 max-w-[calc(100vw-2rem)] p-1.5"
-              >
-                <div className="max-h-[min(24rem,60dvh)] space-y-0.5 overflow-y-auto">
-                  {toolbarOptions.map((option) => (
-                    <div key={option.id}>
-                      {renderToolbarAction(option, true)}
-                    </div>
-                  ))}
-                </div>
-                <div className="my-1 h-px bg-border" />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="min-h-9 w-full justify-start gap-2.5 rounded-lg px-2.5 text-sm"
-                  onClick={() => {
-                    setToolsOpen(false);
-                    setCustomizing(true);
-                  }}
-                >
-                  <SlidersHorizontal className="size-4 shrink-0" />
-                  {composerT("customizeToolbar")}
-                </Button>
-              </MorphPopoverContent>
-            </MorphPopover>
+            <ComposerToolsButton
+              open={menu.open}
+              disabled={readOnly || running}
+              aria-label={composerT("openComposerTools")}
+              title={composerT("openComposerTools")}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={menu.openFromButton}
+            />
             {pinnedOptions.map((option) => (
               <span
                 key={option.id}
@@ -1399,10 +1412,26 @@ export function AssistantConversation({
               aria-label={t("sendMessage")}
               value={text}
               placeholder={t("sendMessage")}
-              onChange={(event) => setText(event.target.value)}
+              onChange={(event) => {
+                setText(event.target.value);
+                menu.sync(
+                  event.target.value,
+                  event.target.selectionStart,
+                  event.target.selectionEnd,
+                );
+              }}
+              onSelect={(event) =>
+                menu.sync(
+                  event.currentTarget.value,
+                  event.currentTarget.selectionStart,
+                  event.currentTarget.selectionEnd,
+                )
+              }
+              {...menu.comboboxProps}
               disabled={readOnly}
               rows={1}
               onKeyDown={(event) => {
+                if (menu.onKeyDown(event)) return;
                 if (
                   event.key === "Enter" &&
                   !event.shiftKey &&
@@ -1488,28 +1517,6 @@ export function AssistantConversation({
           className="hidden"
         />
       ) : null}
-      <McpPromptPickerButton
-        apiPath={`/api/v1/chat/threads/${threadId}/prompts`}
-        disabled={readOnly || running}
-        open={promptsOpen}
-        onOpenChange={setPromptsOpen}
-        hideTrigger
-        onError={setError}
-        onInsert={(value) =>
-          setText((previous) => (previous ? `${previous}\n${value}` : value))
-        }
-      />
-      <McpResourcePickerButton
-        apiPath={`/api/v1/chat/threads/${threadId}/composer`}
-        disabled={readOnly || running}
-        open={resourcesOpen}
-        onOpenChange={setResourcesOpen}
-        hideTrigger
-        onError={setError}
-        onInsert={(value) =>
-          setText((previous) => (previous ? `${previous}\n${value}` : value))
-        }
-      />
       <ComposerToolbarCustomizer
         open={customizing}
         onOpenChange={(open) => {

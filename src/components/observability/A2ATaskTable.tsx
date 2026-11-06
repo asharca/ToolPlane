@@ -15,11 +15,13 @@ import {
 export function A2ATaskTable({
   items,
   detailBase,
+  runDetailBase,
   showWorkspace = false,
   returnTo,
 }: {
   items: A2ATaskSummary[];
   detailBase: string;
+  runDetailBase: string;
   showWorkspace?: boolean;
   returnTo?: string;
 }) {
@@ -34,6 +36,7 @@ export function A2ATaskTable({
         { label: t("task") },
         { label: t("from") },
         { label: t("to") },
+        { label: t("originRun") },
         { label: t("status") },
         { label: t("duration") },
         { label: t("time") },
@@ -73,6 +76,18 @@ export function A2ATaskTable({
           <span key="to" title={item.to.id ?? undefined}>
             {item.to.name}
           </span>,
+          item.origin ? (
+            <Link
+              key="origin"
+              href={`${runDetailBase}/${encodeURIComponent(item.origin.runTaskId)}${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`}
+              className="text-xs text-primary hover:underline"
+            >
+              {item.origin.agent?.name ?? t("agent")} ·{" "}
+              {t(`entryKinds.${item.origin.entryKind}`)}
+            </Link>
+          ) : (
+            "—"
+          ),
           <StatusBadge key="state" status={item.state} />,
           <Duration key="duration" ms={item.durationMs} />,
           <RelativeTime key="time" value={item.startedAt} />,

@@ -313,7 +313,10 @@ async function start(
           if (!current() || controller.signal.aborted) return;
           if (!result || "error" in result.body) {
             if (result && "error" in result.body)
-              log("error", "Channel execution was rejected.");
+              log(
+                "error",
+                `Channel execution was rejected (${result.status}): ${result.body.error}`,
+              );
             await adapter.sendMessage(
               event.chatId,
               CHANNEL_EXECUTION_FAILURE_MESSAGE,

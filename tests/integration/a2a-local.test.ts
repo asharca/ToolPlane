@@ -79,6 +79,9 @@ import {
   startAgentWorker,
   stopAgentWorker,
 } from "@/lib/agents/execution/worker";
+import { getLogContext } from "@/lib/observability/context";
+import { recordEvent } from "@/lib/observability/events";
+import { getAgentRun } from "@/lib/observability/views/agent-runs";
 import {
   createAgentRuntimeToken,
   verifyAgentRuntimeToken,
@@ -3328,15 +3331,44 @@ describe("unified native ingress mappings", () => {
     try {
       const accepted = await submitAgentEntry(input, vi.fn());
       expect(accepted.row.executionBackend).toBe("pi-sdk");
-      const executor = vi.fn(async () => ({
-        state: TaskState.TASK_STATE_COMPLETED,
-        artifact: textArtifact("Chat reply"),
-      }));
+      const executor = vi.fn(async () => {
+        expect(getLogContext()).toMatchObject({
+          taskId: accepted.row.id,
+          conversationId: input.sourceId,
+        });
+        await recordEvent({
+          domain: "agent",
+          eventName: "sandbox.tool",
+          toolName: "bash",
+          outcome: "success",
+        });
+        return {
+          state: TaskState.TASK_STATE_COMPLETED,
+          artifact: textArtifact("Chat reply"),
+        };
+      });
       await executeAgentTask(accepted.row.id, executor);
       expect(executor).toHaveBeenCalledTimes(1);
       expect(
         (await getTask(accepted.grant, accepted.row.id)).status?.state,
       ).toBe(TaskState.TASK_STATE_COMPLETED);
+      const event = await db.logEvent.findFirstOrThrow({
+        where: { taskId: accepted.row.id, eventName: "sandbox.tool" },
+      });
+      expect(event.taskId).toBe(accepted.row.id);
+      const detail = assertDefined(
+        await getAgentRun(
+          { kind: "workspace", workspaceId: ws, userId: user },
+          accepted.row.id,
+        ),
+      );
+      expect(detail.summary.toolCallCount).toBe(1);
+      expect(detail.toolCalls).toEqual([
+        expect.objectContaining({
+          eventId: event.id,
+          task: { id: accepted.row.id, kind: "run" },
+        }),
+      ]);
     } finally {
       stopAgentWorker();
     }

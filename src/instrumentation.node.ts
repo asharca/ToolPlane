@@ -5,6 +5,10 @@ import { stopIdleAgentConversationSandboxes } from "@/lib/agents/conversation-sa
 import { runPendingGithubResourceSyncJobs } from "@/lib/plugins/indexer";
 import { provisionOfficialPluginSource } from "@/lib/plugins/sources";
 import { runPendingAgentPluginSyncs } from "@/lib/plugins/agent-sync";
+import {
+  startAgentTriggerScheduler,
+  stopAgentTriggerScheduler,
+} from "@/lib/agents/triggers";
 // Next.js startup hook. Runs once when the Node server boots to recover MCP
 // processes, channel runners, and sandbox data operations interrupted by a restart.
 export async function registerNode() {
@@ -26,6 +30,7 @@ async function registerNodeOwned() {
   await provisionOfficialPluginSource();
   g.__mcpReconciled = true;
   g.__toolplaneStopTimers = () => {
+    stopAgentTriggerScheduler();
     for (const timer of [
       g.__logMaintenanceTimer,
       g.__agentConversationMaintenanceTimer,
@@ -186,6 +191,7 @@ async function registerNodeOwned() {
   try {
     const { startAgentWorker } = await import("@/lib/agents/execution/worker");
     await startAgentWorker();
+    startAgentTriggerScheduler();
   } catch {
     failed = true;
     systemLog("error", "[a2a] startup recovery failed");

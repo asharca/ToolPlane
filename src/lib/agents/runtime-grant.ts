@@ -14,6 +14,7 @@ import {
   narrowExternalSandboxAccess,
 } from "@/lib/sandboxes/external";
 import { AgentRevisionConfigSchema } from "./revision-types";
+import { enrichLogContext } from "@/lib/observability/context";
 
 /** A token identifies a pinned session; it never freezes live authorization. */
 export async function resolveAgentRuntimeGrant(
@@ -33,7 +34,8 @@ export async function resolveAgentRuntimeGrant(
     )
       return null;
     if (token.a2aTaskId) await assertLocalRuntimeToken(token);
-    return await db.$transaction(async (tx) => {
+    let verifiedConversationId: string | undefined;
+    const grant = await db.$transaction(async (tx) => {
       const revision = await requireAgentRevision(
         tx,
         token.agentId,
@@ -109,7 +111,7 @@ export async function resolveAgentRuntimeGrant(
         if (!context) return null;
         const conversations = new Set<string>();
         for (const entry of context.entryBindings) {
-          if (["chat", "control", "channel"].includes(entry.kind))
+          if (["chat", "control", "channel", "trigger"].includes(entry.kind))
             conversations.add(entry.sourceId);
           if (entry.kind === "work") {
             const work = await tx.workSession.findFirst({
@@ -227,6 +229,7 @@ export async function resolveAgentRuntimeGrant(
             narrowExternalSandboxAccess(pinned.access, live.access),
           );
       }
+      verifiedConversationId = conversationId;
       return {
         mcpToolPolicy,
         externalSandboxTools: externalTools,
@@ -237,6 +240,14 @@ export async function resolveAgentRuntimeGrant(
           revision.config.model,
       };
     });
+    if (grant)
+      enrichLogContext({
+        ...(token.a2aTaskId ? { taskId: token.a2aTaskId } : {}),
+        ...(verifiedConversationId
+          ? { conversationId: verifiedConversationId }
+          : {}),
+      });
+    return grant;
   } catch {
     return null;
   }

@@ -13,6 +13,7 @@ import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
 import { withLogContext } from "@/lib/observability/context";
 import { recordA2AEvent, taskStateName } from "@/lib/observability/a2a-log";
 import { recordEvent } from "@/lib/observability/events";
+import { isEntryRootGrant } from "@/lib/observability/views/task-origin";
 import { systemLog } from "@/lib/observability/system";
 import { ACTIVE, A2A_LIMITS } from "@/lib/a2a/model";
 import {
@@ -51,6 +52,12 @@ import { deleteAgentContextSandbox } from "@/lib/agents/conversation-sandbox";
 import { stageTaskFileTransfers } from "@/lib/a2a/task-files";
 import { cleanupTaskFiles } from "@/lib/a2a/files";
 import { workRuntimeObserver } from "@/lib/work/run-control";
+import {
+  MeteredExecutionError,
+  recordAgentTaskUsage,
+  type TaskUsage,
+} from "@/lib/agents/usage";
+import { settleAgentTriggerTask } from "@/lib/agents/triggers";
 
 type ActiveExecution = {
   controller: AbortController;
@@ -141,6 +148,18 @@ export function executeAgentTask(
     return withLogContext(
       {
         workspaceId: grant.workspaceId,
+        taskId: row.id,
+        ...(isLocalGrant(grant) &&
+        grant.entryPolicy &&
+        isEntryRootGrant(grant, row.parentTaskId)
+          ? {
+              conversationId:
+                grant.entryPolicy.kind === "work"
+                  ? grant.entryPolicy.conversationId
+                  : (grant.entryPolicy.conversationId ??
+                    grant.entryPolicy.sourceId),
+            }
+          : {}),
         suppressPayload: true,
         ...(isLocalGrant(grant)
           ? { actorId: grant.actorId, agentId: grant.agentId }
@@ -153,11 +172,12 @@ export function executeAgentTask(
         let timeout: NodeJS.Timeout | undefined;
         let watchdog: NodeJS.Timeout | undefined;
         let checking = false;
+        let metering: TaskUsage | undefined;
         try {
           if (
             isLocalGrant(grant) &&
             grant.entryPolicy &&
-            !grant.ancestorTaskIds.length
+            isEntryRootGrant(grant, row.parentTaskId)
           ) {
             await recordEvent({
               domain: "agent",
@@ -167,8 +187,9 @@ export function executeAgentTask(
               actorId: grant.actorId,
               conversationId:
                 grant.entryPolicy.kind === "work"
-                  ? undefined
-                  : grant.entryPolicy.sourceId,
+                  ? grant.entryPolicy.conversationId
+                  : (grant.entryPolicy.conversationId ??
+                    grant.entryPolicy.sourceId),
               attributes: {
                 taskId: row.id,
                 contextId: row.contextId,
@@ -285,7 +306,12 @@ export function executeAgentTask(
               ? { nativeOperationId }
               : undefined,
           );
-        } catch (error) {
+        } catch (cause) {
+          const error =
+            cause instanceof MeteredExecutionError ? cause.cause : cause;
+          if (cause instanceof MeteredExecutionError) {
+            metering = cause.metering;
+          }
           if (
             error &&
             typeof error === "object" &&
@@ -347,6 +373,8 @@ export function executeAgentTask(
           clearTimeout(timeout);
           clearInterval(watchdog);
           release?.();
+          await recordAgentTaskUsage(row, metering);
+          await settleAgentTriggerTask(row);
         }
       },
       true,
@@ -411,7 +439,9 @@ export function executeAgentTask(
           : null;
       const sessionId =
         !grant.ancestorTaskIds.length && grant.entryPolicy
-          ? (work?.conversationId ?? grant.entryPolicy.sourceId)
+          ? (work?.conversationId ??
+            grant.entryPolicy.conversationId ??
+            grant.entryPolicy.sourceId)
           : queued.contextId;
       return await withAgentExecutionLease(
         {

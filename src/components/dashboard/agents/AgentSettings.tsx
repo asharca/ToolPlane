@@ -16,6 +16,8 @@ import type {
 import type { AgentChannelConnectionClientView } from "@/lib/agents/channel-connection-client";
 import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
 import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
+import { AgentTriggersPanel } from "./AgentTriggersPanel";
+import { AgentUsagePanel } from "../AgentUsagePanel";
 
 const AgentMessagingPanel = dynamic(() =>
   import("@/components/dashboard/agents/AgentMessagingPanel").then(
@@ -64,7 +66,13 @@ type ChannelSettingsData = {
   connections: AgentChannelConnectionClientView[];
 };
 
-type SettingsTab = AgentSettingsSection | "channels" | "a2a" | "changelog";
+type SettingsTab =
+  | AgentSettingsSection
+  | "channels"
+  | "a2a"
+  | "changelog"
+  | "triggers"
+  | "usage";
 type InitialSettingsTab = SettingsTab | "agent";
 
 const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
@@ -98,7 +106,13 @@ function resolveSettingsTab({
     initialSettingsTab === "agent"
       ? "general"
       : (initialSettingsTab ?? "general");
-  if (requested === "a2a" || requested === "changelog") return requested;
+  if (
+    requested === "a2a" ||
+    requested === "changelog" ||
+    requested === "triggers" ||
+    requested === "usage"
+  )
+    return requested;
   if (requested === "channels" && supportsChannelSettings) return requested;
   if (isAgentSettingsSection(requested)) return requested;
   return "general";
@@ -124,6 +138,8 @@ export function AgentSettings({
   initialA2ATaskId?: string;
 }) {
   const t = useTranslations("console.agents");
+  const automationT = useTranslations("console.agentAutomation");
+  const usageT = useTranslations("console.agentUsage");
   const supportsChannelSettings = isExecutableAgentRuntimeKind(
     settings.runtimeKind,
   );
@@ -153,6 +169,8 @@ export function AgentSettings({
       ? [{ id: "subAgents" as const, label: t("subAgents") }]
       : []),
     { id: "a2a", label: t("a2a.title") },
+    { id: "triggers", label: automationT("triggers") },
+    { id: "usage", label: usageT("title") },
     { id: "changelog", label: t("changelogTab") },
     ...(supportsChannelSettings
       ? [{ id: "channels" as const, label: t("channelSettingsTab") }]
@@ -215,7 +233,24 @@ export function AgentSettings({
                 className="flex h-full min-h-0 flex-col"
               />
             </div>
-            {settingsTab === "channels" && supportsChannelSettings ? (
+            {settingsTab === "triggers" ? (
+              <div className="h-full overflow-y-auto">
+                <AgentTriggersPanel
+                  key={`${slug}:${agentId}:triggers`}
+                  slug={slug}
+                  agentId={agentId}
+                  canManage={settings.canApprovePluginSync ?? false}
+                />
+              </div>
+            ) : settingsTab === "usage" ? (
+              <div className="h-full overflow-y-auto">
+                <AgentUsagePanel
+                  key={`${slug}:${agentId}:usage`}
+                  agentId={agentId}
+                  canManage={settings.canApprovePluginSync ?? false}
+                />
+              </div>
+            ) : settingsTab === "channels" && supportsChannelSettings ? (
               <div className="h-full w-full overflow-y-auto">
                 <AgentMessagingPanel
                   slug={slug}

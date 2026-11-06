@@ -11,6 +11,16 @@ import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import { resolveAgentModelOverride } from "@/lib/agents/turn-model";
 import { resolvePinnedAgent } from "@/lib/agents/revisions";
 import { parseAgentChatBody } from "@/lib/agents/chat-body";
+import { TaskState } from "@a2a-js/sdk";
+import { submitAgentEntry } from "@/lib/agents/execution/entries";
+import { claimTask, finishTask } from "@/lib/a2a/store";
+import { recordAgentTaskUsage } from "@/lib/agents/usage";
+import {
+  handleAgentAutomation,
+  handleTriggerWebhook,
+} from "@/lib/agents/automation-http";
+import { newTriggerSecret } from "@/lib/agents/triggers";
+import { createApiToken } from "@/lib/auth/tokens";
 
 const stamp = randomUUID();
 let userId = "";
@@ -48,6 +58,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   if (workspaceId) {
+    await db.a2AContext.deleteMany({ where: { workspaceId } });
     await db.conversation.deleteMany({ where: { agent: { workspaceId } } });
     await db.workspace.delete({ where: { id: workspaceId } });
   }
@@ -87,6 +98,147 @@ async function fixture() {
 }
 
 describe.sequential("Agent execution entrance revision boundaries", () => {
+  it("rejects new admission at the monthly budget and meters a settled task only once", async () => {
+    const { agent, conversation } = await fixture();
+    const input = {
+      kind: "chat" as const,
+      sourceId: conversation.id,
+      workspaceId,
+      agentId: agent.id,
+      actorId: userId,
+      messageId: randomUUID(),
+      text: "budget invariant",
+    };
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { monthlyBudgetMicros: BigInt(0) },
+    });
+    await expect(submitAgentEntry(input, () => {})).rejects.toThrow(
+      "AGENT_BUDGET_EXCEEDED",
+    );
+    expect(
+      await db.a2ATask.count({ where: { context: { agentId: agent.id } } }),
+    ).toBe(0);
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { monthlyBudgetMicros: BigInt(1_000_000) },
+    });
+    const admitted = await submitAgentEntry(input, () => {});
+    const claimed = await claimTask(admitted.row.id);
+    if (!claimed?.leaseToken) throw new Error("Missing task lease");
+    await finishTask(
+      claimed.id,
+      claimed.leaseToken,
+      TaskState.TASK_STATE_FAILED,
+      "PI_SDK_MODEL_FAILED",
+    );
+    const metering = {
+      model: "original",
+      providerId,
+      usage: {
+        inputTokens: 100,
+        outputTokens: 5,
+        cacheReadTokens: 20,
+        cacheWriteTokens: 0,
+        costUsd: 0.85,
+      },
+    };
+    await recordAgentTaskUsage(claimed, metering);
+    await recordAgentTaskUsage(claimed, metering);
+    expect(await db.agentUsage.count({ where: { taskId: claimed.id } })).toBe(
+      1,
+    );
+    expect(
+      await db.agentUsage.findUniqueOrThrow({ where: { taskId: claimed.id } }),
+    ).toMatchObject({ costMicros: BigInt(850000), succeeded: false });
+    expect(
+      await db.notification.count({
+        where: { workspaceId, kind: "agent_budget_alert" },
+      }),
+    ).toBe(1);
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { monthlyBudgetMicros: BigInt(850000) },
+    });
+    await expect(
+      submitAgentEntry({ ...input, messageId: randomUUID() }, () => {}),
+    ).rejects.toThrow("AGENT_BUDGET_EXCEEDED");
+  });
+
+  it("denies foreign workspace reads and rejects webhook user, toolkit and wrong secrets", async () => {
+    const { agent } = await fixture();
+    const outsider = await db.user.create({
+      data: {
+        email: `automation-outsider-${stamp}@test.invalid`,
+        passwordHash: "fixture",
+      },
+    });
+    try {
+      const token = (await createApiToken(outsider.id, "Outside workspace"))
+        .token;
+      for (const action of ["triggers", "usage"] as const) {
+        const response = await handleAgentAutomation(
+          new Request("http://localhost/api", {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+          agent.id,
+          action,
+        );
+        expect(response.status).toBe(404);
+      }
+      const deniedWrite = await handleAgentAutomation(
+        new Request("http://localhost/api", {
+          method: "PUT",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ monthlyUsd: 0 }),
+        }),
+        agent.id,
+        "budget",
+      );
+      expect(deniedWrite.status).toBe(404);
+      const secret = newTriggerSecret();
+      const trigger = await db.agentTrigger.create({
+        data: {
+          workspaceId,
+          agentId: agent.id,
+          actorId: userId,
+          kind: "webhook",
+          name: "Webhook",
+          prompt: "{{payload}}",
+          secretHash: secret.secretHash,
+        },
+      });
+      const userToken = (
+        await createApiToken(userId, "User token is not a trigger secret")
+      ).token;
+      const toolkit = await db.toolkit.create({
+        data: { workspaceId, name: "Token scope", slug: `automation-${stamp}` },
+      });
+      const toolkitToken = (
+        await createApiToken(userId, "Toolkit token", { toolkitId: toolkit.id })
+      ).token;
+      for (const bearer of ["wrong-secret", userToken, toolkitToken]) {
+        const response = await handleTriggerWebhook(
+          new Request("http://localhost/api", {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${bearer}`,
+              "content-type": "application/json",
+            },
+            body: "{}",
+          }),
+          trigger.id,
+        );
+        expect(response.status).toBe(401);
+        expect(await response.json()).toEqual({ error: "Unauthorized" });
+      }
+    } finally {
+      await db.user.delete({ where: { id: outsider.id } });
+    }
+  });
   it("uses a workspace override grant without changing the immutable revision or subsequent default", async () => {
     const { agent, sandbox, revision, conversation } = await fixture();
     const alternate = await db.modelProvider.create({

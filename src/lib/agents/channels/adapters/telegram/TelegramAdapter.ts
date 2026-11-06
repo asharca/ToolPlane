@@ -92,6 +92,7 @@ export class TelegramAdapter extends ChannelAdapter {
         chatId: ctx.chat.id.toString(),
         userId: ctx.from?.id?.toString() ?? "",
         userName: ctx.from?.first_name ?? "",
+        messageId: ctx.msg?.message_id.toString(),
         command: "new",
       });
     });
@@ -101,6 +102,7 @@ export class TelegramAdapter extends ChannelAdapter {
         chatId: ctx.chat.id.toString(),
         userId: ctx.from?.id?.toString() ?? "",
         userName: ctx.from?.first_name ?? "",
+        messageId: ctx.msg?.message_id.toString(),
         command: "compact",
       });
     });
@@ -110,6 +112,7 @@ export class TelegramAdapter extends ChannelAdapter {
         chatId: ctx.chat.id.toString(),
         userId: ctx.from?.id?.toString() ?? "",
         userName: ctx.from?.first_name ?? "",
+        messageId: ctx.msg?.message_id.toString(),
         command: "help",
       });
     });
@@ -119,6 +122,7 @@ export class TelegramAdapter extends ChannelAdapter {
         chatId: ctx.chat.id.toString(),
         userId: ctx.from?.id?.toString() ?? "",
         userName: ctx.from?.first_name ?? "",
+        messageId: ctx.msg?.message_id.toString(),
         command: "whoami",
       });
     });
@@ -129,6 +133,7 @@ export class TelegramAdapter extends ChannelAdapter {
         chatId: ctx.chat.id.toString(),
         userId: ctx.from?.id?.toString() ?? "",
         userName: ctx.from?.first_name ?? "",
+        messageId: String(ctx.message.message_id),
         text: ctx.message.text,
       });
     });
@@ -149,6 +154,7 @@ export class TelegramAdapter extends ChannelAdapter {
         chatId: ctx.chat.id.toString(),
         userId: ctx.from?.id?.toString() ?? "",
         userName: ctx.from?.first_name ?? "",
+        messageId: String(ctx.message.message_id),
         text,
         ...(images.length > 0 ? { images } : {}),
       });
@@ -181,6 +187,7 @@ export class TelegramAdapter extends ChannelAdapter {
         chatId: ctx.chat.id.toString(),
         userId: ctx.from?.id?.toString() ?? "",
         userName: ctx.from?.first_name ?? "",
+        messageId: String(ctx.message.message_id),
         text,
         ...(files.length > 0 ? { files } : {}),
       });

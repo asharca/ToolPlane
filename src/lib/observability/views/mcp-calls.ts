@@ -9,6 +9,7 @@ import {
   logFilterSchema,
 } from "../queries";
 import { resolveNames } from "./names";
+import { entryRootSql } from "./task-origin";
 import type {
   BodyState,
   JsonValue,
@@ -162,11 +163,39 @@ const searchableCalls = Prisma.sql`FROM canonical e
   )`;
 
 async function summaries(rows: CallRow[]): Promise<McpCallSummary[]> {
-  const names = await resolveNames(rows);
+  const [names, tasks] = await Promise.all([
+    resolveNames(rows),
+    rows.some((row) => row.taskId && row.workspaceId)
+      ? db.$queryRaw<
+          { id: string; workspaceId: string; entryRoot: boolean }[]
+        >(Prisma.sql`
+          SELECT t.id, c."workspaceId", ${entryRootSql("t")} AS "entryRoot"
+          FROM "A2ATask" t JOIN "A2AContext" c ON c.id = t."contextId"
+          WHERE ${Prisma.join(
+            rows
+              .filter((row) => row.taskId && row.workspaceId)
+              .map(
+                (row) =>
+                  Prisma.sql`(t.id = ${row.taskId} AND c."workspaceId" = ${row.workspaceId})`,
+              ),
+            " OR ",
+          )}`)
+      : Promise.resolve([]),
+  ]);
+  const refs = new Map(
+    tasks.map((task) => [
+      JSON.stringify([task.workspaceId, task.id]),
+      {
+        id: task.id,
+        kind: task.entryRoot ? ("run" as const) : ("a2a" as const),
+      },
+    ]),
+  );
   return rows.map((row) => ({
     id: row.callId ?? row.id,
     callId: row.callId,
     eventId: row.id,
+    task: refs.get(JSON.stringify([row.workspaceId, row.taskId])) ?? null,
     createdAt: row.createdAt.toISOString(),
     workspace: names.entity("workspace", row.workspaceId, row.workspaceId),
     deployment: names.entity("deployment", row.deploymentId, row.workspaceId),
@@ -266,6 +295,25 @@ export async function pollMcpCalls(
     },
   }));
   return { items, nextCursor: items.at(-1)?.cursor ?? after };
+}
+
+/** Internal run-detail lookup: no default time window, bounded and newest first. */
+export async function listTaskMcpCalls(
+  scope: ViewScope,
+  taskId: string,
+  source: "tools" | "calls",
+): Promise<McpCallSummary[]> {
+  await authorizeLogs(
+    scope.kind === "workspace" ? scope : { adminId: scope.userId },
+  );
+  const rows = await db.$queryRaw<CallRow[]>(Prisma.sql`
+    ${canonicalCalls(scope.workspaceId, source)}
+    SELECT e.* FROM canonical e
+    WHERE e."taskId" = ${taskId} AND EXISTS (
+      SELECT 1 FROM "A2ATask" t JOIN "A2AContext" c ON c.id = t."contextId"
+      WHERE t.id = e."taskId" AND c."workspaceId" = e."workspaceId")
+    ORDER BY e."createdAt" DESC, e.id DESC LIMIT 200`);
+  return summaries(rows);
 }
 
 function envelope(value: unknown): {

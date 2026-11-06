@@ -2507,6 +2507,8 @@ async function runPiSdk(
     }
     if (event.type === "toolplane_sdk_response") {
       terminal = true;
+      const usage = parseRuntimeUsage(event.result?.usage);
+      if (usage) await options.onUsage?.(usage);
       if (!event.success) {
         const failure = parseRuntimeFailure(
           `${String(event.error?.code ?? "")}: ${String(event.error?.reason ?? "")}`,
@@ -2519,8 +2521,6 @@ async function runPiSdk(
       ]);
       const commands = RuntimeCommandsSchema.safeParse(event.result?.commands);
       if (commands.success) await options.onCommands?.(commands.data);
-      const usage = parseRuntimeUsage(event.result?.usage);
-      if (usage) await options.onUsage?.(usage);
       const result = event.result?.commandResult;
       if (
         result &&

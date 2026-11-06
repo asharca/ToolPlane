@@ -31,8 +31,9 @@ export type LocalA2AGrant = {
   // Trusted console admission only; never populated from A2A message metadata.
   modelOverride?: AgentModelOverride;
   entryPolicy?: {
-    kind: "chat" | "work" | "channel" | "control";
+    kind: "chat" | "work" | "channel" | "control" | "trigger";
     sourceId: string;
+    conversationId?: string;
     sourceAgentId: string;
     channelId?: string;
     binding: string;

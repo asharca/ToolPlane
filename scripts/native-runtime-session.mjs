@@ -206,6 +206,9 @@ async function serve() {
             ? { result }
             : {
                 error: { code, message: code, ...(reason ? { reason } : {}) },
+                ...(event.result?.usage
+                  ? { result: { usage: event.result.usage } }
+                  : {}),
               }),
         });
         const socket = active;

@@ -402,7 +402,7 @@ export class SlackAdapter extends ChannelAdapter {
         break;
       case "slash_commands":
         if (envelope.payload) {
-          await this.handleSlashCommand(envelope.payload);
+          await this.handleSlashCommand(envelope.payload, envelope.envelope_id);
         }
         break;
     }
@@ -458,7 +458,13 @@ export class SlackAdapter extends ChannelAdapter {
         | "compact"
         | "help"
         | "whoami";
-      this.emit("command", { chatId, userId, userName, command: cmd });
+      this.emit("command", {
+        chatId,
+        userId,
+        userName,
+        messageId: event.ts,
+        command: cmd,
+      });
     } else {
       // Download images (with bot token auth for private files)
       let images: ImageAttachment[] | undefined;
@@ -485,12 +491,21 @@ export class SlackAdapter extends ChannelAdapter {
         if (downloaded.length > 0) files = downloaded;
       }
 
-      this.emit("message", { chatId, userId, userName, text, images, files });
+      this.emit("message", {
+        chatId,
+        userId,
+        userName,
+        messageId: event.ts,
+        text,
+        images,
+        files,
+      });
     }
   }
 
   private async handleSlashCommand(
     payload: NonNullable<SlackSocketEnvelope["payload"]>,
+    envelopeId: string,
   ): Promise<void> {
     const command = payload.command?.replace("/", "") ?? "";
     const chatId = payload.channel_id ?? "";
@@ -505,6 +520,7 @@ export class SlackAdapter extends ChannelAdapter {
         chatId,
         userId,
         userName,
+        messageId: envelopeId,
         command: command as "new" | "compact" | "help",
       });
     }

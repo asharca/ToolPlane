@@ -117,7 +117,7 @@ async function binding(
     throw new Error("Conversation/context does not belong to this Agent.");
   const conversationIds = new Set<string>();
   for (const entry of context?.entryBindings ?? []) {
-    if (["chat", "control", "channel"].includes(entry.kind))
+    if (["chat", "control", "channel", "trigger"].includes(entry.kind))
       conversationIds.add(entry.sourceId);
     if (entry.kind === "work") {
       const work = await tx.workSession.findFirst({
@@ -536,7 +536,9 @@ export async function ensureAgentConversationSandbox(
                     some: {
                       OR: [
                         {
-                          kind: { in: ["chat", "control", "channel"] },
+                          kind: {
+                            in: ["chat", "control", "channel", "trigger"],
+                          },
                           sourceId: latest.conversation.id,
                         },
                         ...(work ? [{ kind: "work", sourceId: work.id }] : []),
@@ -779,7 +781,7 @@ export async function deleteAgentConversationSandboxes(
                 some: {
                   OR: [
                     {
-                      kind: { in: ["chat", "control", "channel"] },
+                      kind: { in: ["chat", "control", "channel", "trigger"] },
                       sourceId: conversation.id,
                     },
                     ...(work ? [{ kind: "work", sourceId: work.id }] : []),

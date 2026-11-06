@@ -545,6 +545,7 @@ export class DiscordAdapter extends ChannelAdapter {
         userId: msg.author.id,
         userName: msg.author.username ?? "",
         roleIds: msg.member?.roles,
+        messageId: msg.id,
         command: cmd,
       });
     } else {
@@ -579,6 +580,7 @@ export class DiscordAdapter extends ChannelAdapter {
         userId: msg.author.id,
         userName: msg.author.username ?? "",
         roleIds: msg.member?.roles,
+        messageId: msg.id,
         text,
         images,
         files,
@@ -672,6 +674,7 @@ export class DiscordAdapter extends ChannelAdapter {
       userId: user?.id ?? "",
       userName: user?.username ?? "",
       roleIds: interaction.member?.roles,
+      messageId: interaction.id,
       command: commandName as "new" | "compact" | "help",
     });
   }

@@ -53,7 +53,7 @@ async function conversationEntryContexts(
         some: {
           OR: [
             {
-              kind: { in: ["chat", "control", "channel"] },
+              kind: { in: ["chat", "control", "channel", "trigger"] },
               sourceId: conversation.id,
             },
             ...(conversation.workSession
@@ -79,7 +79,7 @@ async function conversationEntryContexts(
       context.entryBindings.some(
         (entry) =>
           !(
-            (["chat", "control", "channel"].includes(entry.kind) &&
+            (["chat", "control", "channel", "trigger"].includes(entry.kind) &&
               entry.sourceId === conversation.id) ||
             (entry.kind === "work" &&
               entry.sourceId === conversation.workSession?.id)

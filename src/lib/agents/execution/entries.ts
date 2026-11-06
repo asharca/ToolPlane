@@ -54,6 +54,7 @@ import {
 import { settled, terminal, A2A_LIMITS } from "@/lib/a2a/model";
 import { refreshTaskStorage } from "@/lib/a2a/quotas";
 import { wakeAgentWorker } from "@/lib/agents/execution/worker";
+import { assertAgentBudget } from "@/lib/agents/usage";
 
 export type EntryMessage = { id?: string; role: string; parts: unknown };
 export type AgentEntryInput = EntryIdentity & {
@@ -116,6 +117,7 @@ export async function submitAgentEntry(
       kind: input.kind,
       sourceId: input.sourceId,
       ...(input.channelId ? { channelId: input.channelId } : {}),
+      ...(input.conversationId ? { conversationId: input.conversationId } : {}),
     });
     const grant = await createLocalEntryGrant(
       tx,
@@ -140,7 +142,7 @@ export async function submitAgentEntry(
     const key = {
       ownerKey: grant.ownerKey,
       kind: input.kind,
-      sourceId: input.sourceId,
+      sourceId: input.conversationId ?? input.sourceId,
     };
     const inputHash = hash(
       input.modelOverride ? [input.text, input.modelOverride] : [input.text],
@@ -230,6 +232,7 @@ export async function submitAgentEntry(
         throw new TaskNotFoundError();
       return { row: replay.task, grant, replay: true };
     }
+    await assertAgentBudget(tx, input.agentId);
     const previous = binding?.lastTask;
     if (previous && !settled(previous.state))
       throw new UnsupportedOperationError(
@@ -282,7 +285,10 @@ export async function submitAgentEntry(
     workspaceId: input.workspaceId,
     agentId: input.agentId,
     actorId: input.actorId,
-    conversationId: input.kind === "work" ? undefined : input.sourceId,
+    conversationId:
+      input.kind === "work"
+        ? undefined
+        : (input.conversationId ?? input.sourceId),
     outcome: "success",
     durationMs: performance.now() - started,
     attributes: {
@@ -316,7 +322,10 @@ export async function runAgentEntry(
     select: { slug: true },
   });
   const query = new URLSearchParams({ agent: input.agentId });
-  query.set(input.kind === "work" ? "w" : "c", input.sourceId);
+  query.set(
+    input.kind === "work" ? "w" : "c",
+    input.conversationId ?? input.sourceId,
+  );
   const path = `/app/${encodeURIComponent(workspace.slug)}/work?${query}`;
   await input.onAccepted?.(Task.fromJSON(accepted.row.snapshot), path);
   const observedPrompts = new Set<string>();

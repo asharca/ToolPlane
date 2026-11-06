@@ -117,7 +117,11 @@ export default async function AgentDetailPage({
     "advanced",
   ];
   const initialSettingsTab =
-    settings === "a2a" || settings === "channels" || settings === "changelog"
+    settings === "a2a" ||
+    settings === "channels" ||
+    settings === "changelog" ||
+    settings === "triggers" ||
+    settings === "usage"
       ? settings
       : (allowedSections.find((section) => section === settings) ?? "general");
   return (

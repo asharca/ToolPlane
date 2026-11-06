@@ -44,6 +44,7 @@
 - **捕获修复验收**：重建镜像摘要为 `sha256:9e0f2dab851e85dffa2ae5bb9224d7f706786eec27c86f659224247e28b94242`；既有来源同步任务 `cmw3dqkde00f401o3b6kxvhtk` 随后对固定提交 `34dcae67c6ef3ffda05e925d3406503695a6a52b` 返回 `succeeded`，来源状态 `synced`，索引资源 1 个，无错误。受保护的人工入队未匹配正在同步的来源，未新增重复任务。
 - **提交详情大小补充（2026-11-05，同一私有来源再次失败）**：`resolveCommit()` 请求完整提交详情，却以 256 KiB 限制响应；真实 GitHub 返回 209 个变更文件、307116 字节，导致尚未解析 SHA 就报 `github_response_too_large`。按用户要求仅取消此请求的响应大小限制，保留其他资源限额和鉴权；17 MiB 提交详情回归及来源边界共 34 项通过。受控替换生产镜像后，任务 `commit-repair-935faee9-e7ed-4d46-bf61-aa6e4d9ac1e3` 对提交 `54403f29c85478a9ab44a311a4be066f8eeca3d2` 同步成功，来源 `synced`，活动资源 3 个。下次同步验收须覆盖包含大量文件变更的提交，而不只验证小响应或首次同步。
 - **模型重试接线补充（2026-11-05，线上 `empty_stream` 后新增重试）**：首版把工作区重试次数接在 `sandbox-turn.ts`，宿主回归测试全部通过，但真实 Work 走 A2A `pi-executor` → `task-options` → `runSandboxAgentTurn`，绕过了该入口，伪网关只收到一次请求。改为在 `runNativeSessionExec` 组装每轮 context 时读取工作区设置，真实 Work 观察到一次空流后重试成功，以及重试 2 次后报 `EMPTY_STREAM RETRIED_2`。另外 Pi 的会话初始化会从存储重算 settings，在 `refreshContext` 里应用的覆盖会丢失，须在会话就绪后应用。下次给每轮执行加设置时，接到所有入口共用的宿主调用处，并用一个可控上游跑真实 Work，数实际请求次数。
+- **本地重建迁移遗漏（2026-11-05，用户反馈 Work 页面报错）**：替换 `toolplane-3000` 时复制旧容器的 `Entrypoint=[node]` 与启动命令，绕过镜像的 `docker-entrypoint.sh`；首页及 readiness 均为 200，登录后的 `/app/smoke/work` 却因 `Agent.monthlyBudgetMicros` 缺失报 P2022。核实本地目标库并备份、受控停止应用后，恢复镜像默认入口，成功应用唯一待执行的 `20261105030000_agent_triggers_usage`；smoke 账户实际登录后的 Work 页面 HTTP 200，列表和输入区可见。下次保留部署环境和挂载不等于盲目复制入口覆盖；替换前检查 `prisma migrate status`，并验收带认证的实际业务路由。依据：[镜像入口](docker-entrypoint.sh)、[字段迁移](prisma/migrations/20261105030000_agent_triggers_usage/migration.sql)。
 - **确认日期**：历史日期未知；初始整理于 2026-10-18；2026-10-30、2026-11-01、2026-11-02、2026-11-03、2026-11-04、2026-11-05 实测确认。
 
 ### TP-L002：构建成功，不代表最终镜像里的原生依赖能启动
@@ -177,7 +178,8 @@
 - **下次怎么验证**：真实传输先证明旧 JSON-only 请求为 406，再通过生成的客户端完成工具发现及一次调用；请求必须声明 JSON 和 SSE。真实浏览器在实际服务地址完成一次批准或拒绝，核对保存结果；保留非法 Origin、显式 Authorization、其他操作人和错配会话的拒绝用例。频道正常结果、人工审批通知与安全失败回传分别验证，不把接收回执视为完成证明。
 - **证据**：[原生 MCP 客户端](src/lib/agents/sandbox-runtime.ts)、[官方 SDK 宿主回归](tests/integration/pi-sdk-host.test.ts)、[会话审批入口](src/lib/agents/execution/conversation-http.ts)、[频道权限与持久化回归](tests/integration/agent-channels.test.ts)。2026-11-01 独立 smoke 实测旧请求 406，修复后发现成功、算术工具返回 `42` 且只执行一次；浏览器在 `:3000` 的拒绝决策持久化为 `denied`，390px 页面无横向溢出。
 - **沙箱管理补充（2026-11-01）**：`sandboxManagementUser` 用配置的公开 Origin（`:3007`）比较 Cookie 请求，实际服务在 `:3000` 时 SSH 创建和 MCP 导出令牌管理对同源浏览器一律返回“工作区不存在”。改为复用 `isSameOriginRequest`；同日确认，不增加计数。验证：在实际服务地址用浏览器会话调用一次变更接口，而不是只用 Bearer 或 mock。证据：[管理入口](src/lib/sandboxes/mcp-management.ts)、[OAuth 集成回归](tests/integration/sandbox-mcp-oauth.test.ts)。
-- **确认日期**：2026-11-01。
+- **频道消息 ID 补充（2026-11-05，用户报告 Discord 无法回应）**：线上 Discord 频道每条普通消息都回复“本次执行未能完成”，日志只有 `Channel execution was rejected.`，且该连接从未创建会话。原因是 Discord、Telegram、Slack 适配器发出的入站事件缺少 `messageId`，`runLoadedAgentMessage` 按原生去重要求返回 400；频道集成测试直接构造带 `messageId` 的请求并 mock 了 `channel-runtime`，绕过了适配器。三个适配器改为携带平台消息 ID（Discord 消息/交互 ID、Telegram `message_id`、Slack `ts`／斜杠命令 envelope），拒绝日志附带状态码与固定错误文本。下次新增或修改频道适配器，须从适配器入站处理（[消息 ID 回归](tests/unit/channel-adapter-message-ids.test.ts)，修复前三项失败）驱动到 `runAgentChannelMessage` 的接纳条件，不能只用手工构造的请求体验收。
+- **确认日期**：2026-11-01；2026-11-05（用户报告）。
 
 ### TP-L015：嵌套浮层的 Escape 必须止于当前层
 
@@ -374,3 +376,37 @@
 - **证据（2026-11-05，用户纠正）**：10030 的系统白名单已有 `*.gshbzw.com`，MinIO 解析到 `10.0.10.150`，A2A 文件却只读取独立 JSON 来源映射。初次诊断建议增加环境变量，没有识别已存在的系统授权。文件下载已切换到 `resolvePrivateHostsSettings()`；独立数据库和真实私网 HTTP 下载验证已保存名单放行，清空后在发出下一次请求前拒绝。
 - **下次怎么验证**：覆盖精确主机、子域通配、IP、名单撤销和混合 DNS 答案；确认回环／元数据永不放行，Card／RPC 不随文件策略扩大。检查部署示例和界面说明没有保留第二套配置。
 - **依据**：`src/lib/a2a/remote-network.ts`、`src/lib/admin/settings.ts`、`tests/unit/a2a-remote-network.test.ts`。
+
+### TP-L035：新增执行入口类型须覆盖数据库约束与全部会话绑定白名单；用量费用不能信任沙箱上报
+
+**规则**：给 `submitAgentEntry` 新增 entry kind 时，同步修改 `A2AEntryBinding_kind_check`，并检索所有以会话为来源的入口白名单（运行时 grant、沙箱绑定、修订升级、会话执行接口、日志 `entryKind`）。Agent 用量费用按服务端模型单价计算，不依赖 Pi 上报的 `cost.total`。
+
+- **证据（2026-11-05，触发器验收）**：触发器的集成测试和类型检查都通过了，但真实 webhook 运行先报 `A2AEntryBinding_kind_check` 违反（被统一记成 `TRIGGER_EXECUTION_FAILED`）；补上约束后，沙箱的模型代理又返回 403，原因是 `runtime-grant.ts` 等处只认 `chat/control/channel`，触发器会话因此拿不到 grant。另外 `buildPiModelsConfig` 把模型单价写死为 0，Pi 上报的费用始终为 0，按费用设的预算永远不会触发。修复后，同一 Agent 的定时和 webhook 运行都在真实沙箱中成功；按 ProviderModel 单价算出的费用为 1.2 美元/轮，第二轮越过 80% 告警并达到 100%，之后 REST 返回 402，智能体页面显示预算文案。
+- **下次怎么验证**：新增入口时，用伪 OpenAI 上游跑一次真实沙箱回合，确认模型代理返回 200、会话写入 assistant 消息；为模型配置非零单价，核对 `AgentUsage.costMicros` 非零，并实际越过预算阈值。
+- **依据**：[迁移](prisma/migrations/20261105030000_agent_triggers_usage/migration.sql)、[运行时 grant](src/lib/agents/runtime-grant.ts)、[用量计费](src/lib/agents/usage.ts)、[Pi 模型配置](src/lib/agents/sandbox-runtime.ts)。
+- **确认日期**：2026-11-05。
+
+### TP-L036：输入框工具菜单只用一个面板，+ 与 / 行为一致，子步骤在原面板内进行
+
+**规则**：输入框的工具入口（+ 按钮、`/`、固定在工具栏的快捷按钮）共用 `src/components/dashboard/composer-menu.tsx`。面板贴在输入框外框上方，不遮挡文本区；MCP 资源、提示词（含参数表单）和服务器状态都在同一面板内逐级进入，不额外弹出全屏或居中弹窗。
+
+- **证据（2026-11-06，用户反馈）**：上一版精简后，+ 弹层锚定在按钮上并盖住了输入框；+ 和 `/` 显示的列表不同；点 MCP 先弹出居中的选择窗，再打开另一个大小不同的选择窗。三个输入框各自维护一套菜单和三个 Mcp*PickerButton 弹窗。现在 + 等同于在光标处输入 `/`，取消时连同插入的 `/` 一起删除；解析结果晚于关闭到达时不再写入输入框。
+- **下次怎么验证**：在智能体任务、智能体会话、助手三个输入框里，分别用 + 和 `/` 打开菜单并比较选项；用 `getBoundingClientRect` 确认面板底边在输入框外框之上；走一遍 MCP 提示词→参数表单→插入；按 Esc 和点外部关闭后，检查没有残留的 `/`、没有新开 `role=dialog`；390px 宽度下再看一次。
+- **依据**：[共享菜单](src/components/dashboard/composer-menu.tsx)、[MCP 视图](src/components/dashboard/composer-mcp-menu.ts)、[Work 输入框回归](tests/unit/work-composer.test.tsx)。
+- **确认日期**：2026-11-06。
+
+### TP-L037：统一任务账本上的日志视图必须按来源分类
+
+**规则**：对话、Work、渠道、控制 MCP、触发器与 Agent 间委派共用 `A2ATask` 账本；任何直接读取账本的日志或统计视图都要用 `src/lib/observability/views/task-origin.ts` 的 `entryRootSql` / `isEntryRootGrant` 区分普通运行与真正的 A2A，不能按表名把账本行都当作 A2A。
+
+- **证据（2026-11-06，用户反馈）**：用户问为什么 Agent 对话出现在 A2A 日志里。事件写入已经把入口根任务记为 `agent.execution.*`，但 A2A 列表的 `ledger_tasks` 直接读取全部账本行；本地开发库 150 个任务中 144 个是普通运行，都显示成“内部 用户 → Agent”的 A2A 任务。现在拆出「智能体运行」视图，A2A 只保留入站、出站和委派（委派以运行的直接子任务为根，并链接来源运行）；`LogEvent.taskId` 把工具与 MCP 调用关联到所属任务。
+- **下次怎么验证**：新增或修改读取账本的视图时，在同时有普通运行与委派的真实数据上核对两类行各自出现在哪个视图；回归见 `tests/integration/a2a-logging.test.ts` 的 “Agent runs and genuine A2A separation”。
+- **确认日期**：2026-11-06。
+
+### TP-L038：Pi 原生命令的前置条件提示不是运行失败
+
+**规则**：`scripts/pi-sdk-session.mjs` 会把 SDK 抛出的未知错误统一收敛为 `PI_SDK_REQUEST_FAILED`。Pi 在会话未改变、也未调用模型时抛出的前置条件提示（例如 `/compact` 的 “Nothing to compact (session too small)”），应作为命令的完成结果返回，不能记成运行失败。
+
+- **证据（2026-11-06，用户反馈）**：用户反馈“输入总是报错”。:3000 上短会话里的每一次 `/compact`，都在约 1.2 秒内以 `PI_SDK_REQUEST_FAILED` 失败，期间没有任何模型代理请求；原因是 Pi 的 `compact()` 在 `prepareCompaction` 返回空时直接抛错。修复后，在同一 Work 会话的真实沙箱里发送 `/compact`，任务状态为 COMPLETED，界面显示 Pi 的提示。
+- **下次怎么验证**：在 `tests/integration/pi-sdk-host.test.ts` 中，对短会话执行原生命令，确认返回成功、没有发出模型请求、会话没有被改写；再在真实 Work 会话中发送一次。
+- **确认日期**：2026-11-06。

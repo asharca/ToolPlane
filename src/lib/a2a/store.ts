@@ -72,6 +72,7 @@ import {
   taskStateName,
 } from "@/lib/observability/a2a-log";
 import { logHealth, recordEvent } from "@/lib/observability/events";
+import { isEntryRootGrant } from "@/lib/observability/views/task-origin";
 import { prepareTaskFileParts, retryTaskFileTransfers } from "./task-files";
 
 import { assertCollaborationAdmission } from "./collaboration-policy";
@@ -1168,7 +1169,7 @@ export async function recordTaskSettled(row: A2ATask): Promise<void> {
     if (
       isLocalGrant(grant) &&
       grant.entryPolicy &&
-      !grant.ancestorTaskIds.length
+      isEntryRootGrant(grant, row.parentTaskId)
     ) {
       await recordEvent({
         domain: "agent",
@@ -1176,10 +1177,11 @@ export async function recordTaskSettled(row: A2ATask): Promise<void> {
         workspaceId: grant.workspaceId,
         agentId: grant.agentId,
         actorId: grant.actorId,
+        taskId: row.id,
         conversationId:
           grant.entryPolicy.kind === "work"
-            ? undefined
-            : grant.entryPolicy.sourceId,
+            ? grant.entryPolicy.conversationId
+            : (grant.entryPolicy.conversationId ?? grant.entryPolicy.sourceId),
         outcome: a2aTaskOutcome(taskState),
         durationMs: row.statusAt.getTime() - row.createdAt.getTime(),
         attributes: {

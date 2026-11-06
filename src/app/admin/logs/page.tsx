@@ -62,6 +62,7 @@ export const dynamic = "force-dynamic";
 
 const tabs = [
   { value: "all", icon: ScrollText },
+  { value: "runs", icon: Bot },
   { value: "mcp", icon: Server },
   { value: "tools", icon: Bot },
   { value: "internal", icon: Server },
@@ -82,14 +83,19 @@ export default async function AdminLogsPage({
     getTranslations("admin"),
     getLocale(),
   ]);
+  const viewerT = await getTranslations("console.observability.viewer");
   const raw = Object.fromEntries(
     Object.entries(await searchParams).filter(([, value]) => Boolean(value)),
   );
   const tab = tabs.find(({ value }) => value === raw.tab)?.value ?? "all";
   const protocol =
-    tab === "mcp" || tab === "a2a" || tab === "internal" || tab === "tools";
+    tab === "runs" ||
+    tab === "mcp" ||
+    tab === "a2a" ||
+    tab === "internal" ||
+    tab === "tools";
   const protocolDomain =
-    tab === "a2a" ? "a2a" : tab === "tools" ? "agent" : "mcp";
+    tab === "a2a" ? "a2a" : tab === "tools" || tab === "runs" ? "agent" : "mcp";
   let filters: LogFilterValues;
   try {
     const durations: Record<string, number> = {
@@ -257,7 +263,11 @@ export default async function AdminLogsPage({
           raw.returnTo ? adminReturnHref(raw.returnTo, "/admin") : undefined
         }
         backLabel={t("viewDetails")}
-        meta={<AdminBadge>{t(`logsTab_${tab}`)}</AdminBadge>}
+        meta={
+          <AdminBadge>
+            {tab === "runs" ? viewerT("runs") : t(`logsTab_${tab}`)}
+          </AdminBadge>
+        }
         actions={
           <>
             <ButtonLink
@@ -304,7 +314,7 @@ export default async function AdminLogsPage({
               aria-current={tab === value ? "page" : undefined}
             >
               <Icon className="hidden size-4 sm:block" aria-hidden="true" />
-              {t(`logsTab_${value}`)}
+              {value === "runs" ? viewerT("runs") : t(`logsTab_${value}`)}
             </ButtonLink>
           );
         })}
@@ -426,8 +436,8 @@ export default async function AdminLogsPage({
 
       {protocol ? (
         <LogExplorer
-          key={tab}
-          kind={tab === "a2a" ? "a2a" : "mcp"}
+          key={`${raw.workspaceId ?? "all"}:${tab}`}
+          kind={tab === "a2a" || tab === "runs" ? tab : "mcp"}
           source={tab === "internal" || tab === "tools" ? tab : undefined}
           admin
           params={raw}

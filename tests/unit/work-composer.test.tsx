@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { WorkComposer } from "@/components/dashboard/work/WorkComposer";
-import { McpPromptPickerButton } from "@/components/dashboard/McpPromptPickerButton";
 import {
   ComposerReferencesSchema,
   composerTrigger,
@@ -41,7 +40,6 @@ function Composer({
         workSessionId={workSessionId || undefined}
         conversationId={conversationId || undefined}
         commands={runtimeKind ? runtimeCommands(runtimeKind) : []}
-        runtimeKind={runtimeKind ?? ""}
         draft={draft}
         onDraftChange={setDraft}
         references={references}
@@ -145,7 +143,7 @@ describe("Work composer", () => {
   });
 
   it.each(["pi-sdk"])(
-    "offers only %s commands through /, completes without executing, and keeps + unchanged",
+    "offers %s commands through both / and +, completes without executing",
     async (runtimeKind) => {
       const user = userEvent.setup();
       const onSubmit = vi.fn();
@@ -164,8 +162,10 @@ describe("Work composer", () => {
       await user.clear(input());
       await user.click(screen.getByRole("button", { name: "Open tools" }));
       expect(
-        screen.queryByRole("option", { name: /\/compact/ }),
-      ).not.toBeInTheDocument();
+        screen.getByRole("option", { name: /\/compact/ }),
+      ).toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      expect(input()).toHaveValue("");
     },
   );
 
@@ -257,7 +257,7 @@ describe("Work composer", () => {
     expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
   });
 
-  it("does not insert a late MCP prompt after the picker is canceled", async () => {
+  it("keeps MCP prompts inside the menu and drops a late prompt after dismissal", async () => {
     const user = userEvent.setup();
     let finish!: (response: Response) => void;
     vi.stubGlobal(
@@ -281,21 +281,15 @@ describe("Work composer", () => {
             ),
       ),
     );
-    const onInsert = vi.fn();
-    render(
-      <McpPromptPickerButton
-        apiPath="/prompts"
-        disabled={false}
-        onError={vi.fn()}
-        onInsert={onInsert}
-      />,
-    );
-    await user.click(screen.getByRole("button"));
-    await user.click(await screen.findByRole("button", { name: /Review/ }));
-    await user.click(screen.getByRole("button", { name: "Insert prompt" }));
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    render(<Composer />);
+    await user.type(input(), "Draft");
+    await user.click(screen.getByRole("button", { name: "Open tools" }));
+    await user.click(screen.getByRole("option", { name: "MCP prompts" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("option", { name: /Review/ }));
+    await user.keyboard("{Escape}");
     await act(async () => finish(Response.json({ text: "Stale prompt" })));
-    expect(onInsert).not.toHaveBeenCalled();
+    expect(input()).toHaveValue("Draft");
   });
 
   it("bounds reference payloads and detects only unselected trigger tokens at the caret", () => {

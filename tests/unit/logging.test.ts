@@ -3,12 +3,49 @@ import { assertDefined } from "../assert-defined";
 import { describe, it, expect, vi } from "vitest";
 import { sanitizeLog } from "@/lib/observability/redaction";
 import { getLogContext, withLogContext } from "@/lib/observability/context";
+import { isEntryRootGrant } from "@/lib/observability/views/task-origin";
+import type { LocalA2AGrant, TaskGrant } from "@/lib/a2a/principal";
 
 const records = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/observability/events", () => ({ recordEvent: records }));
 import { withRequestLogging } from "@/lib/observability/http";
 
 describe("structured logging safety", () => {
+  it("classifies only parentless grants with entry policy and no ancestors as runs", () => {
+    const grant: LocalA2AGrant = {
+      kind: "local",
+      workspaceId: "workspace",
+      agentId: "agent",
+      agentRevisionId: "revision",
+      actorId: "user",
+      targetBinding: "binding",
+      ownerKey: "owner",
+      expiresAt: Date.now() + 60_000,
+      scopes: [],
+      maxConcurrent: 1,
+      timeoutSeconds: 60,
+      retentionDays: 1,
+      ancestorTaskIds: [],
+      ancestorAgentIds: [],
+      entryPolicy: {
+        kind: "chat",
+        sourceId: "conversation",
+        sourceAgentId: "agent",
+        binding: "entry",
+      },
+    };
+    expect(isEntryRootGrant(grant, null)).toBe(true);
+    expect(isEntryRootGrant(grant, "parent")).toBe(false);
+    expect(isEntryRootGrant({ ...grant, ancestorTaskIds: ["run"] }, null)).toBe(
+      false,
+    );
+    const ordinary = { ...grant };
+    delete ordinary.entryPolicy;
+    expect(isEntryRootGrant(ordinary, null)).toBe(false);
+    expect(
+      isEntryRootGrant({ workspaceId: "workspace" } as TaskGrant, null),
+    ).toBe(false);
+  });
   it("redacts credentials and Error causes without losing large payloads or usage", () => {
     const error = new Error("Authorization: Bearer fixture-private-value", {
       cause: new Error('password="do-not-record"'),
@@ -131,7 +168,7 @@ describe("structured logging safety", () => {
   it("isolates concurrent roots and links child spans without leaking non-context fields", async () => {
     const contexts = await Promise.all(
       ["a", "b"].map((actorId) =>
-        withLogContext({ actorId }, async () => {
+        withLogContext({ actorId, taskId: `task-${actorId}` }, async () => {
           const root = assertDefined(getLogContext());
           await new Promise((resolve) => setTimeout(resolve, 2));
           return withLogContext({}, () => ({
@@ -144,6 +181,8 @@ describe("structured logging safety", () => {
     expect(contexts[0].root.traceId).not.toBe(contexts[1].root.traceId);
     expect(contexts[0].child.actorId).toBe("a");
     expect(contexts[1].child.actorId).toBe("b");
+    expect(contexts[0].child.taskId).toBe("task-a");
+    expect(contexts[1].child.taskId).toBe("task-b");
     expect(contexts[0].child.parentSpanId).toBe(contexts[0].root.spanId);
     expect(contexts[0].child.spanId).not.toBe(contexts[0].root.spanId);
     expect(getLogContext()).toBeUndefined();

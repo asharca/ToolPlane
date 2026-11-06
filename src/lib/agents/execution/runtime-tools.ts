@@ -12,7 +12,7 @@ import {
 import { db } from "@/lib/db";
 import { agentRuntimeTokenFromRequest } from "@/lib/agents/runtime-access";
 import { parseJson } from "@/lib/agents/public-api/body";
-import { withLogContext } from "@/lib/observability/context";
+import { withLogContext, enrichLogContext } from "@/lib/observability/context";
 import {
   recordA2AEvent,
   a2aTaskOutcome,
@@ -62,6 +62,13 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
         { error: "Task authority expired" },
         { status: 403, headers },
       );
+    enrichLogContext({
+      taskId: authority.row.id,
+      workspaceId: authority.grant.workspaceId,
+      agentId: authority.grant.agentId,
+      conversationId:
+        token.conversationId ?? authority.grant.entryPolicy?.conversationId,
+    });
     if (!admit(taskId))
       return Response.json(
         { error: "Request limit" },

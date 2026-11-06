@@ -75,6 +75,17 @@ let promptInvocation;
 const fail = (code, reason) => {
   throw Object.assign(new Error(code), { code, ...(reason ? { reason } : {}) });
 };
+// Pi rejects manual compaction of a short or freshly compacted session before
+// any model call; the session is unchanged, so report its notice as the result.
+const COMPACTION_NOOPS = new Set([
+  "Nothing to compact (session too small)",
+  "Already compacted",
+]);
+const compact = (session, instructions) =>
+  session.compact(instructions).catch((error) => {
+    if (COMPACTION_NOOPS.has(error?.message)) return { summary: error.message };
+    throw error;
+  });
 // Provider text may echo credentials or prompts; only a fixed reason leaves the host.
 // The model base URL is always ToolPlane's proxy, so a connection failure means the
 // sandbox cannot reach ToolPlane; upstream outages arrive as proxied HTTP statuses.
@@ -629,7 +640,10 @@ async function handle(request) {
       success,
       ...(success
         ? { result }
-        : { error: { code, message: code, ...(reason ? { reason } : {}) } }),
+        : {
+            error: { code, message: code, ...(reason ? { reason } : {}) },
+            ...(result ? { result } : {}),
+          }),
     });
   if (!request || typeof request.id !== "string") return;
   if (request.type === "abort") {
@@ -703,7 +717,7 @@ async function handle(request) {
     let compaction;
     if (request.type === "compact") {
       command = "compact";
-      compaction = await runtime.session.compact(request.customInstructions);
+      compaction = await compact(runtime.session, request.customInstructions);
     } else {
       if (typeof request.message !== "string") fail("PI_SDK_REQUEST_INVALID");
       command = /^\/([^\s]+)(?:\s|$)/.exec(request.message)?.[1];
@@ -732,7 +746,8 @@ async function handle(request) {
       if (command && !commands().some((c) => c.name === command))
         fail("PI_SDK_COMMAND_UNKNOWN");
       if (command === "compact")
-        compaction = await runtime.session.compact(
+        compaction = await compact(
+          runtime.session,
           request.message.slice("/compact".length).trim() || undefined,
         );
       else await runtime.session.prompt(request.message);
@@ -800,6 +815,8 @@ async function handle(request) {
       success: false,
       code,
       reason: code === "PI_SDK_MODEL_FAILED" ? error.reason : undefined,
+      // Tokens already spent on a failed turn still count toward the budget.
+      result: usage ? { usage } : undefined,
     };
   } finally {
     nativeUi.cancel();

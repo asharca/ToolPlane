@@ -14,11 +14,15 @@ import {
 export function McpCallTable({
   items,
   detailBase,
+  runDetailBase,
+  a2aDetailBase,
   showWorkspace = false,
   returnTo,
 }: {
   items: McpCallSummary[];
   detailBase: string;
+  runDetailBase: string;
+  a2aDetailBase: string;
   showWorkspace?: boolean;
   returnTo?: string;
 }) {
@@ -32,6 +36,7 @@ export function McpCallTable({
         { label: t("operation") },
         { label: t("server") },
         { label: t("caller") },
+        { label: t("task") },
         { label: t("status") },
         { label: t("duration") },
         { label: t("time") },
@@ -75,6 +80,18 @@ export function McpCallTable({
               </>
             )}
           </span>,
+          item.task ? (
+            <Link
+              key="task"
+              href={`${item.task.kind === "run" ? runDetailBase : a2aDetailBase}/${encodeURIComponent(item.task.id)}${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`}
+              className="text-xs text-primary hover:underline"
+            >
+              {t(item.task.kind === "run" ? "run" : "task")} ·{" "}
+              {item.task.id.slice(0, 12)}
+            </Link>
+          ) : (
+            "—"
+          ),
           <StatusBadge key="status" status={item.outcome} />,
           <Duration key="duration" ms={item.durationMs} />,
           <RelativeTime key="time" value={item.createdAt} />,

@@ -63,7 +63,9 @@ export async function localTaskSandbox(
       });
       if (!work) throw new Error("Local Work session unavailable.");
       conversationId = work.conversationId;
-    } else conversationId = grant.entryPolicy.sourceId;
+    } else
+      conversationId =
+        grant.entryPolicy.conversationId ?? grant.entryPolicy.sourceId;
   }
   const identity = {
     workspaceId: grant.workspaceId,

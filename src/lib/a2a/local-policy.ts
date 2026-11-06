@@ -49,6 +49,7 @@ export function localEntryOwnerKey(
     actorId,
     entry.kind,
     entry.sourceId,
+    ...(entry.conversationId ? [entry.conversationId] : []),
   );
 }
 export async function assertLocalActor(
@@ -325,7 +326,11 @@ export async function createLocalEntryGrant(
           select: { agentRevisionId: true, legacyRevisionUnresolved: true },
         })
       : await tx.conversation.findFirst({
-          where: { id: entry.sourceId, agentId, agent: { workspaceId } },
+          where: {
+            id: entry.conversationId ?? entry.sourceId,
+            agentId,
+            agent: { workspaceId },
+          },
           select: { agentRevisionId: true, legacyRevisionUnresolved: true },
         });
   if (!owner?.agentRevisionId || owner.legacyRevisionUnresolved)

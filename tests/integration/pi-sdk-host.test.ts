@@ -744,6 +744,30 @@ describe("official Pi SDK headless session host", () => {
       "NATIVE_SUMMARY_FROM_PROVIDER",
     );
   }, 60000);
+  it("settles /compact on a short session as a completed no-op without a model call", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    const host = await f.launch();
+    const first = await host.request("prompt", "hi");
+    expect(first.success).toBe(true);
+    const requests = f.requests.length;
+    const compacted = await host.request("prompt", "/compact");
+    expect(compacted.success).toBe(true);
+    expect(assertDefined(compacted.result).commandResult).toEqual({
+      command: "compact",
+      text: "Nothing to compact (session too small)",
+      status: "completed",
+    });
+    expect(f.requests).toHaveLength(requests);
+    const sessionFile = assertDefined(first.result).state.sessionFile;
+    const entries = (await readFile(sessionFile, "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    expect(entries.some((entry) => entry.type === "compaction")).toBe(false);
+    const continued = await host.request("prompt", "Continue");
+    expect(continued.success).toBe(true);
+  }, 60000);
   it("automatically compacts native session history at the SDK threshold and resumes its persisted projection", async () => {
     const f = await setup();
     f.behavior.tool = "";

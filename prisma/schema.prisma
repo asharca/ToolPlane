@@ -20,6 +20,7 @@ enum NotificationKind {
   workspace_invitation
   site_announcement
   workspace_announcement
+  agent_budget_alert
 }
 
 enum McpToolExposure {
@@ -54,6 +55,7 @@ model User {
   chatToolApprovals ChatToolConfirmation[] @relation("ChatToolApprover")
   nativeWorkSessions WorkSession[] @relation("NativeWorkActor")
   nativeChannelConnections AgentChannelConnection[] @relation("NativeChannelActor")
+  agentTriggers AgentTrigger[]
   toolkitInstallations ToolkitInstallation[]
   id                     String                @id @default(cuid())
   email                  String                @unique
@@ -179,6 +181,8 @@ model Workspace {
   subagentDefinitions WorkspaceSubagent[]
   remoteA2AAgents RemoteA2AAgent[]
   a2aContexts A2AContext[]
+  agentUsage AgentUsage[]
+  agentTriggers AgentTrigger[]
   id                     String                   @id @default(cuid())
   slug                   String                   @unique
   name                   String
@@ -420,6 +424,7 @@ model LogEvent {
   deploymentId   String?
   agentId        String?
   runId          String?
+  taskId         String?
   conversationId String?
   channelId      String?
   providerId     String?
@@ -445,6 +450,7 @@ model LogEvent {
   @@index([domain, level, createdAt])
   @@index([agentId, createdAt])
   @@index([runId, createdAt])
+  @@index([taskId, createdAt])
   @@index([channelId, createdAt])
 }
 
@@ -579,6 +585,10 @@ model ProviderModel {
 }
 
 model Agent {
+  monthlyBudgetMicros BigInt?
+  budgetAlertedMonth String?
+  usage AgentUsage[]
+  triggers AgentTrigger[]
   a2aInboundEnabled Boolean @default(false)
   a2aOutboundEnabled Boolean @default(false)
   a2aPolicy Json?
@@ -629,6 +639,55 @@ model Agent {
 
   @@unique([workspaceId, slug])
   @@unique([id, workspaceId])
+}
+
+model AgentUsage {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId String
+  agent Agent @relation(fields: [agentId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  conversationId String?
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  taskId String @unique
+  entryKind String
+  model String?
+  providerId String?
+  inputTokens Int
+  outputTokens Int
+  cacheReadTokens Int
+  cacheWriteTokens Int
+  costMicros BigInt
+  succeeded Boolean
+  createdAt DateTime @default(now())
+  @@index([agentId, createdAt])
+  @@index([workspaceId, createdAt])
+}
+
+model AgentTrigger {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId String
+  agent Agent @relation(fields: [agentId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  kind String
+  name String
+  enabled Boolean @default(true)
+  cron String?
+  timezone String?
+  prompt String
+  secretHash String?
+  actorId String
+  actor User @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  nextRunAt DateTime?
+  lastRunAt DateTime?
+  lastStatus String?
+  lastError String?
+  lastConversationId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([agentId, createdAt])
+  @@index([enabled, nextRunAt])
 }
 
 // Private encrypted values; revisions contain only credential IDs and names.
@@ -1062,6 +1121,7 @@ model Conversation {
   publicApiConversation AgentPublicConversation?
   workSession           WorkSession?
   piPackageSet PiSessionPackageSet?
+  agentUsage AgentUsage[]
 
   @@index([sandboxId])
 }

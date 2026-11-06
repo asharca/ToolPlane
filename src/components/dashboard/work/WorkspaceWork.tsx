@@ -3206,7 +3206,6 @@ export function WorkspaceWork({
                     workSessionId={selected?.id}
                     conversationId={selected?.conversationId}
                     commands={commands}
-                    runtimeKind={commandRuntimeKind}
                     draft={draft}
                     onDraftChange={setDraft}
                     attachments={attachments}

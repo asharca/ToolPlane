@@ -19,7 +19,9 @@ export const a2aLogMetadataSchema = z.object({
   contextId: logId,
   rootTaskId: logId,
   parentTaskId: logId,
-  entryKind: z.enum(["chat", "work", "channel", "control"]).optional(),
+  entryKind: z
+    .enum(["chat", "work", "channel", "control", "trigger"])
+    .optional(),
   taskState: z
     .string()
     .regex(
@@ -337,6 +339,7 @@ async function persistEvent(entry: LogEntry): Promise<void> {
             message: String(safe.message),
             traceId: String(safe.traceId),
             spanId: String(safe.spanId),
+            taskId: typeof safe.taskId === "string" ? safe.taskId : null,
             occurredAt,
             attributes: safeAttributes as Prisma.InputJsonValue,
             ...(hasDetail

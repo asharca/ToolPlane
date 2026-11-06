@@ -103,7 +103,7 @@ export async function handleConversationExecution(
       const binding = await db.a2AEntryBinding.findFirst({
         where: {
           sourceId: conversation.id,
-          kind: { in: ["chat", "channel", "control"] },
+          kind: { in: ["chat", "channel", "control", "trigger"] },
           context: {
             workspaceId: agent.workspaceId,
             agentId,

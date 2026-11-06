@@ -30,6 +30,19 @@ import {
   getA2ATask,
   pollA2ATasks,
 } from "@/lib/observability/views/a2a-tasks";
+import {
+  listAgentRuns,
+  getAgentRun,
+  pollAgentRuns,
+} from "@/lib/observability/views/agent-runs";
+import { withLogContext } from "@/lib/observability/context";
+import { recordEvent } from "@/lib/observability/events";
+import { listMcpCalls } from "@/lib/observability/views/mcp-calls";
+
+// Route handlers run outside a Next request scope here; model a browser without a session.
+vi.mock("next/headers", () => ({
+  cookies: async () => ({ get: () => undefined }),
+}));
 
 const stamp = randomUUID();
 let userId: string,
@@ -285,7 +298,7 @@ async function retainedHistory(
   });
 }
 
-/** Native entry history exists independently of optional transport LogDetail rows. */
+/** Native task history exists independently of optional transport LogDetail rows. */
 async function nativeLedger(
   input: {
     workspaceId?: string;
@@ -294,6 +307,7 @@ async function nativeLedger(
     request?: Prisma.InputJsonValue;
     snapshot?: Prisma.InputJsonValue;
     events?: Prisma.InputJsonValue[];
+    grant?: Prisma.InputJsonValue;
   } = {},
 ) {
   const id = randomUUID();
@@ -330,7 +344,10 @@ async function nativeLedger(
       phase: "done",
       completedAt: new Date(),
       deadlineAt: new Date(Date.now() + 60_000),
-      grant: { actorId: userId, privateAuthority: "never-disclose-grant" },
+      grant: input.grant ?? {
+        actorId: userId,
+        privateAuthority: "never-disclose-grant",
+      },
       request: input.request ?? {},
       snapshot: input.snapshot ?? {
         id,
@@ -1280,5 +1297,467 @@ describe("A2A query scope and audited disclosure", () => {
         )
       ).items,
     ).toEqual([]);
+  });
+});
+
+describe("Agent runs and genuine A2A separation", () => {
+  async function runHistory(
+    kind: "chat" | "work" | "channel" | "control" | "trigger" = "chat",
+  ) {
+    const conversation = await db.conversation.create({
+      data: { agentId, title: "Run source title" },
+    });
+    const work =
+      kind === "work"
+        ? await db.workSession.create({
+            data: {
+              workspaceId,
+              agentId,
+              conversationId: conversation.id,
+              runtimeKind: "pi-sdk",
+              title: "Work source title",
+            },
+          })
+        : null;
+    const grant = {
+      kind: "local",
+      workspaceId,
+      agentId,
+      actorId: userId,
+      ancestorTaskIds: [],
+      ancestorAgentIds: [],
+      entryPolicy: {
+        kind,
+        sourceId: work?.id ?? conversation.id,
+        conversationId: conversation.id,
+        sourceAgentId: agentId,
+        binding: "logging-fixture",
+      },
+    };
+    const row = await nativeLedger({
+      grant,
+      request: {
+        message: {
+          messageId: randomUUID(),
+          role: "ROLE_USER",
+          parts: [{ text: "Run private input" }],
+        },
+      },
+    });
+    return { row, grant, conversation, work };
+  }
+
+  it.each(["chat", "work", "channel", "control", "trigger"] as const)(
+    "lists %s entry roots only as runs, including list, detail and stream",
+    async (kind) => {
+      const { row, conversation, work } = await runHistory(kind);
+      // Historical transport events must not resurrect entry roots in the A2A projection.
+      await db.logEvent.create({
+        data: {
+          workspaceId,
+          agentId,
+          taskId: row.id,
+          domain: "a2a",
+          eventName: "a2a.task.settled",
+          message: "legacy entry event",
+          traceId: row.id,
+          spanId: row.id,
+          attributes: {
+            data: {
+              a2a: {
+                taskId: row.id,
+                rootTaskId: row.id,
+                direction: "internal",
+                taskState: "TASK_STATE_COMPLETED",
+              },
+            },
+          },
+        },
+      });
+      for (const scope of [
+        { kind: "workspace", workspaceId, userId },
+        { kind: "admin", userId: adminId, workspaceId },
+      ] as const) {
+        const page = await listAgentRuns(scope, {
+          q: row.id,
+          agentId,
+          entryKind: kind,
+          state: "TASK_STATE_COMPLETED",
+        });
+        expect(page.items).toEqual([
+          expect.objectContaining({
+            taskId: row.id,
+            entryKind: kind,
+            actor: expect.objectContaining({ kind: "user", id: userId }),
+            source: {
+              kind: work ? "work" : "conversation",
+              id: work?.id ?? conversation.id,
+              title: work ? "Work source title" : "Run source title",
+            },
+          }),
+        ]);
+        expect(page.stats).toMatchObject({ total: 1, success: 1, error: 0 });
+        expect(JSON.stringify(page)).not.toContain("Run private input");
+        expect((await listA2ATasks(scope, { q: row.id })).items).toEqual([]);
+        expect(await getA2ATask(scope, row.id)).toBeNull();
+        expect(
+          (
+            await pollA2ATasks(
+              scope,
+              { q: row.id },
+              {
+                createdAt: new Date(Date.now() - 60_000).toISOString(),
+                id: "",
+              },
+            )
+          ).items,
+        ).toEqual([]);
+        expect(
+          (
+            await pollAgentRuns(
+              scope,
+              { q: row.id },
+              {
+                createdAt: new Date(Date.now() - 60_000).toISOString(),
+                id: "",
+              },
+            )
+          ).items.length,
+        ).toBeGreaterThan(0);
+        expect(
+          JSON.stringify(
+            assertDefined(await getAgentRun(scope, row.id)).messages,
+          ),
+        ).toContain("Run private input");
+      }
+      await db.conversation.delete({ where: { id: conversation.id } });
+      expect(
+        (
+          await listAgentRuns(
+            { kind: "workspace", workspaceId, userId },
+            { q: row.id },
+          )
+        ).items[0].source,
+      ).toBeNull();
+    },
+  );
+
+  it("re-roots each delegation branch below the run and preserves origin at every depth", async () => {
+    const { row, grant } = await runHistory();
+    const child = await nativeLedger({
+      rootTaskId: row.id,
+      parentTaskId: row.id,
+      grant: {
+        ...grant,
+        ancestorTaskIds: [row.id],
+        ancestorAgentIds: [agentId],
+      },
+    });
+    const descendant = await nativeLedger({
+      rootTaskId: row.id,
+      parentTaskId: child.id,
+      grant: {
+        ...grant,
+        ancestorTaskIds: [row.id, child.id],
+        ancestorAgentIds: [agentId, agentId],
+      },
+    });
+    const other = await nativeLedger({
+      rootTaskId: row.id,
+      parentTaskId: row.id,
+      grant: {
+        ...grant,
+        ancestorTaskIds: [row.id],
+        ancestorAgentIds: [agentId],
+      },
+    });
+    const scope = { kind: "workspace", workspaceId, userId } as const;
+    const page = await listA2ATasks(scope, { q: child.id });
+    expect(page.items).toEqual([
+      expect.objectContaining({
+        taskId: child.id,
+        rootTaskId: child.id,
+        childCount: 1,
+        origin: {
+          runTaskId: row.id,
+          agent: { id: agentId, name: "Logging fixture" },
+          entryKind: "chat",
+        },
+      }),
+    ]);
+    const detail = assertDefined(await getA2ATask(scope, descendant.id));
+    expect(detail.summary.origin?.runTaskId).toBe(row.id);
+    expect(detail.tree.map((task) => task.taskId).sort()).toEqual(
+      [child.id, descendant.id].sort(),
+    );
+    expect(
+      detail.tree.find((task) => task.taskId === child.id)?.parentTaskId,
+    ).toBeNull();
+    const live = await pollA2ATasks(
+      scope,
+      { q: child.id },
+      { createdAt: new Date(Date.now() - 60_000).toISOString(), id: "" },
+    );
+    expect(
+      live.items.every(
+        (entry) =>
+          entry.item.origin?.runTaskId === row.id &&
+          entry.item.rootTaskId === child.id,
+      ),
+    ).toBe(true);
+    const run = assertDefined(await getAgentRun(scope, row.id));
+    expect(run.summary.delegationCount).toBe(2);
+    expect(run.delegations.map((task) => task.taskId).sort()).toEqual(
+      [child.id, other.id].sort(),
+    );
+    expect(
+      run.delegations.every((task) => task.origin?.runTaskId === row.id),
+    ).toBe(true);
+    expect(await getAgentRun(scope, child.id)).toBeNull();
+  });
+
+  it("returns 404 across workspaces and requires audited run body disclosure", async () => {
+    const { row } = await runHistory();
+    const scope = { kind: "workspace", workspaceId, userId } as const;
+    const foreign = {
+      kind: "workspace",
+      workspaceId: foreignWorkspaceId,
+      userId: foreignId,
+    } as const;
+    expect(await getAgentRun(foreign, row.id)).toBeNull();
+    expect(
+      await getAgentRun(
+        { kind: "admin", userId: adminId, workspaceId: foreignWorkspaceId },
+        row.id,
+      ),
+    ).toBeNull();
+    const credential = await createApiToken(foreignId, "Foreign run detail");
+    const response = await handleLogRequest(
+      new Request(`http://localhost/api/logs/agent-runs/${row.id}`, {
+        headers: { authorization: `Bearer ${credential.token}` },
+      }),
+      { slug: `a2a-logs-foreign-${stamp}` },
+      "runs",
+      row.id,
+    );
+    expect(response.status).toBe(404);
+    await expect(
+      getAgentRun({ ...scope, userId: foreignId }, row.id),
+    ).rejects.toBeInstanceOf(LogAccessError);
+    await expect(
+      getAgentRun({ kind: "admin", userId }, row.id),
+    ).rejects.toBeInstanceOf(LogAccessError);
+    const audit = vi
+      .spyOn(db.auditEvent, "create")
+      .mockRejectedValueOnce(new Error("audit unavailable"));
+    try {
+      await expect(getAgentRun(scope, row.id)).rejects.toThrow(
+        "audit unavailable",
+      );
+    } finally {
+      audit.mockRestore();
+    }
+    expect(
+      await db.auditEvent.count({
+        where: { targetType: "agentRun", targetId: row.id },
+      }),
+    ).toBe(0);
+    expect(assertDefined(await getAgentRun(scope, row.id)).summary.taskId).toBe(
+      row.id,
+    );
+    expect(
+      await db.auditEvent.count({
+        where: { targetType: "agentRun", targetId: row.id },
+      }),
+    ).toBe(1);
+  });
+
+  it("links tool, MCP and internal call summaries to visible runs and rejects foreign task identities", async () => {
+    const { row, grant } = await runHistory();
+    const scope = { kind: "workspace", workspaceId, userId } as const;
+    await withLogContext({ workspaceId, agentId, taskId: row.id }, async () => {
+      await recordEvent({
+        domain: "agent",
+        eventName: "sandbox.tool",
+        toolName: "bash",
+        outcome: "success",
+      });
+      await recordEvent({
+        domain: "mcp",
+        eventName: "gateway.request",
+        rpcMethod: "tools/call",
+        toolName: "linked-mcp",
+        outcome: "success",
+      });
+      await recordEvent({
+        domain: "mcp",
+        eventName: "mcp.internal",
+        rpcMethod: "tools/list",
+        outcome: "success",
+      });
+    });
+    const detail = assertDefined(await getAgentRun(scope, row.id));
+    expect(detail.summary.toolCallCount).toBe(1);
+    expect(detail.toolCalls).toEqual([
+      expect.objectContaining({
+        tool: "bash",
+        task: { id: row.id, kind: "run" },
+      }),
+    ]);
+    expect(detail.mcpCalls).toEqual([
+      expect.objectContaining({
+        tool: "linked-mcp",
+        task: { id: row.id, kind: "run" },
+      }),
+    ]);
+    for (const source of ["tools", "calls", "internal"] as const) {
+      // Task-linked events remain visible under their existing source predicates.
+      const linked = (await listMcpCalls(scope, { source })).items.filter(
+        (item) => item.task?.id === row.id,
+      );
+      expect(linked).toHaveLength(1);
+      expect(linked[0].task).toEqual({ id: row.id, kind: "run" });
+    }
+    const foreignTask = await nativeLedger({ workspaceId: foreignWorkspaceId });
+    await withLogContext({ workspaceId, taskId: foreignTask.id }, () =>
+      recordEvent({
+        domain: "agent",
+        eventName: "sandbox.tool",
+        toolName: "foreign-task-ref",
+      }),
+    );
+    expect(
+      (await listMcpCalls(scope, { source: "tools", tool: "foreign-task-ref" }))
+        .items[0].task,
+    ).toBeNull();
+    const child = await nativeLedger({
+      rootTaskId: row.id,
+      parentTaskId: row.id,
+      grant: {
+        ...grant,
+        ancestorTaskIds: [row.id],
+        ancestorAgentIds: [agentId],
+      },
+    });
+    await withLogContext({ workspaceId, taskId: child.id }, () =>
+      recordEvent({
+        domain: "agent",
+        eventName: "sandbox.tool",
+        toolName: "delegated-task-ref",
+      }),
+    );
+    expect(
+      (
+        await listMcpCalls(scope, {
+          source: "tools",
+          tool: "delegated-task-ref",
+        })
+      ).items[0].task,
+    ).toEqual({ id: child.id, kind: "a2a" });
+    expect(
+      assertDefined(await getAgentRun(scope, row.id)).toolCalls,
+    ).toHaveLength(1);
+  });
+
+  it("serves authenticated run lists and SSE summaries without exposing bodies", async () => {
+    const { row } = await runHistory();
+    const member = await createApiToken(userId, "Run logs API");
+    const admin = await createApiToken(adminId, "Admin run logs API");
+    for (const [target, token] of [
+      [{ slug: `a2a-logs-${stamp}` }, member.token],
+      [{ admin: true }, admin.token],
+    ] as const) {
+      const url = `http://localhost/api/logs/agent-runs?q=${row.id}`;
+      const response = await handleLogRequest(
+        new Request(url, { headers: { authorization: `Bearer ${token}` } }),
+        target,
+        "runs",
+      );
+      expect(response.status).toBe(200);
+      expect((await response.json()).items).toEqual([
+        expect.objectContaining({ taskId: row.id }),
+      ]);
+      const denied = await handleLogRequest(new Request(url), target, "runs");
+      expect(denied.status).toBe(401);
+      const abort = new AbortController();
+      const stream = await handleLogRequest(
+        new Request(
+          `http://localhost/api/logs/stream?kind=runs&q=${row.id}&since=${encodeURIComponent(new Date(Date.now() - 60_000).toISOString())}`,
+          {
+            headers: { authorization: `Bearer ${token}` },
+            signal: abort.signal,
+          },
+        ),
+        target,
+        "stream",
+      );
+      expect(stream.status).toBe(200);
+      const reader = assertDefined(stream.body).getReader();
+      let wire = "";
+      try {
+        while (!wire.includes("event: item")) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          wire += new TextDecoder().decode(chunk.value);
+        }
+        expect(wire).toContain("event: item");
+        expect(wire).toContain(row.id);
+        expect(wire).not.toContain("Run private input");
+      } finally {
+        abort.abort();
+        await reader.cancel();
+      }
+    }
+    const forbidden = await handleLogRequest(
+      new Request("http://localhost/api/logs/agent-runs", {
+        headers: { authorization: `Bearer ${member.token}` },
+      }),
+      { admin: true },
+      "runs",
+    );
+    expect(forbidden.status).toBe(403);
+  });
+
+  it("bounds each run call section to the newest 200 without truncating its count", async () => {
+    const { row } = await runHistory();
+    const start = Date.now() - 10_000;
+    await db.logEvent.createMany({
+      data: Array.from({ length: 202 }, (_, index) => [
+        {
+          workspaceId,
+          taskId: row.id,
+          domain: "agent",
+          eventName: "sandbox.tool",
+          toolName: `tool-${index}`,
+          message: "sandbox.tool",
+          traceId: row.id,
+          spanId: `tool-${index}`,
+          createdAt: new Date(start + index),
+        },
+        {
+          workspaceId,
+          taskId: row.id,
+          domain: "mcp",
+          eventName: "gateway.request",
+          toolName: `mcp-${index}`,
+          message: "gateway.request",
+          traceId: row.id,
+          spanId: `mcp-${index}`,
+          createdAt: new Date(start + index),
+        },
+      ]).flat(),
+    });
+    const detail = assertDefined(
+      await getAgentRun({ kind: "workspace", workspaceId, userId }, row.id),
+    );
+    expect(detail.summary.toolCallCount).toBe(202);
+    expect(detail.toolCalls).toHaveLength(200);
+    expect(detail.mcpCalls).toHaveLength(200);
+    expect(detail.toolCalls.map((call) => call.tool)).toEqual(
+      Array.from({ length: 200 }, (_, index) => `tool-${201 - index}`),
+    );
+    expect(detail.mcpCalls.map((call) => call.tool)).toEqual(
+      Array.from({ length: 200 }, (_, index) => `mcp-${201 - index}`),
+    );
   });
 });

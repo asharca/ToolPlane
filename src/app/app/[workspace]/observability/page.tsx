@@ -22,6 +22,7 @@ import {
   DashboardToolbar,
 } from "@/components/dashboard/DashboardUI";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
+import { WorkspaceAgentUsage } from "@/components/dashboard/AgentUsagePanel";
 
 export const dynamic = "force-dynamic";
 
@@ -76,14 +77,16 @@ export default async function ObservabilityPage({
   const { tab, deploymentId, q, cursor, until } = query;
   const selectedDeploymentId = deploymentId?.trim() || undefined;
   const tabs = [
-    { key: "mcp", label: viewerT("mcp") },
+    { key: "runs", label: viewerT("runs") },
     { key: "tools", label: viewerT("tools") },
-    { key: "internal", label: viewerT("internal") },
+    { key: "mcp", label: viewerT("mcp") },
     { key: "a2a", label: viewerT("a2a") },
+    { key: "internal", label: viewerT("internal") },
     { key: "usage", label: t("usage") },
     { key: "plugin", label: t("plugin") },
+    { key: "agent-usage", label: t("agentUsage") },
   ];
-  const current = tabs.find((item) => item.key === tab)?.key ?? "mcp";
+  const current = tabs.find((item) => item.key === tab)?.key ?? "runs";
 
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
@@ -92,6 +95,7 @@ export default async function ObservabilityPage({
   if (!ws) redirect("/app");
   const base = `/app/${slug}/observability`;
   if (
+    current === "runs" ||
     current === "mcp" ||
     current === "internal" ||
     current === "tools" ||
@@ -116,7 +120,7 @@ export default async function ObservabilityPage({
           <TabBar tabs={tabs} current={current} basePath={base} />
           <LogExplorer
             key={`${ws.id}:${current}`}
-            kind={current === "a2a" ? "a2a" : "mcp"}
+            kind={current === "a2a" || current === "runs" ? current : "mcp"}
             source={
               current === "internal" || current === "tools"
                 ? current
@@ -130,6 +134,17 @@ export default async function ObservabilityPage({
             }))}
             agents={agents}
           />
+        </DashboardPage>
+      </>
+    );
+  }
+  if (current === "agent-usage") {
+    return (
+      <>
+        <DashboardHeader title={t("observability")} />
+        <DashboardPage>
+          <TabBar tabs={tabs} current={current} basePath={base} />
+          <WorkspaceAgentUsage key={`${ws.id}:agent-usage`} slug={slug} />
         </DashboardPage>
       </>
     );

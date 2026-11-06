@@ -36,6 +36,7 @@ import {
 } from "./runtime-commands";
 import { AgentRevisionError, resolvePinnedAgent } from "./revisions";
 import { persistAgentPromptInvocation } from "./prompt-invocation";
+import { parseRuntimeFailure } from "./runtime-failure";
 
 export const CHANNEL_EXECUTION_FAILURE_MESSAGE =
   "本次执行未能完成，未自动重试。请在工作区查看会话执行状态，检查模型或工具连接后再发送新消息。";
@@ -525,6 +526,11 @@ async function runLoadedAgentMessage(params: {
     });
     return response(conversation.id, replyText);
   } catch (error) {
+    const failureMessage =
+      error instanceof Error &&
+      parseRuntimeFailure(error.message)?.code === "AGENT_BUDGET_EXCEEDED"
+        ? "AGENT_BUDGET_EXCEEDED"
+        : CHANNEL_EXECUTION_FAILURE_MESSAGE;
     // Aborting a channel observer (including shutdown) is not a failed execution.
     if (params.signal?.aborted) throw error;
     if (persistedConversationId) {
@@ -534,24 +540,24 @@ async function runLoadedAgentMessage(params: {
           conversationId: persistedConversationId,
           role: "assistant",
           parts: [
-            { type: "text", text: CHANNEL_EXECUTION_FAILURE_MESSAGE },
+            { type: "text", text: failureMessage },
             {
               type: "data-agent-execution",
               data: {
                 status: "failed",
                 error: {
-                  code: "AGENT_EXECUTION_FAILED",
-                  message: CHANNEL_EXECUTION_FAILURE_MESSAGE,
+                  code:
+                    failureMessage === "AGENT_BUDGET_EXCEEDED"
+                      ? failureMessage
+                      : "AGENT_EXECUTION_FAILED",
+                  message: failureMessage,
                 },
               },
             },
           ],
         },
       });
-      return response(
-        persistedConversationId,
-        CHANNEL_EXECUTION_FAILURE_MESSAGE,
-      );
+      return response(persistedConversationId, failureMessage);
     }
     if (error instanceof AgentRevisionError)
       return { status: 409, body: { error: error.code } };
