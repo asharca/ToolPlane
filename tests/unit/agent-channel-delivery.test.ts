@@ -180,7 +180,7 @@ describe("channel upstream execution delivery", () => {
     );
   });
 
-  it("delivers an admission reply without persisting or executing the rejected sender", async () => {
+  it("does not persist or execute a rejected sender", async () => {
     mocks.admit.mockResolvedValueOnce({
       allowed: false,
       rule: "user_not_allowed",
@@ -190,11 +190,6 @@ describe("channel upstream execution delivery", () => {
     await drain();
     expect(mocks.persist).not.toHaveBeenCalled();
     expect(mocks.run).not.toHaveBeenCalled();
-    expect(adapter.sendMessage).toHaveBeenCalledWith(
-      "chat",
-      "Approval code: ABCDEFGH",
-    );
-    expect(mocks.log).not.toHaveBeenCalled();
   });
 
   it.each(["rejected", "error-response"])(

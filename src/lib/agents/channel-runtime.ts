@@ -258,7 +258,15 @@ async function start(
       });
       if (!admission.allowed) {
         if (admission.reply)
-          await adapter.sendMessage(event.chatId, admission.reply);
+          await adapter.sendMessage(event.chatId, admission.reply, {
+            replyToMessageId: event.messageId,
+          });
+        else
+          await adapter.sendPendingReply(
+            event.chatId,
+            "This command is not allowed by the channel access policy.",
+            { replyToMessageId: event.messageId },
+          );
         return;
       }
       const replyOptions = {
@@ -267,7 +275,9 @@ async function start(
             ? event.messageId && /^\d+$/.test(event.messageId)
               ? Number(event.messageId)
               : undefined
-            : (event.threadId ?? event.messageId),
+            : row.platform === "discord"
+              ? event.messageId
+              : (event.threadId ?? event.messageId),
         replyInThread: event.replyInThread,
       };
       await adapter
@@ -334,7 +344,14 @@ async function start(
       if (!current() || controller.signal.aborted)
         throw new Error("Channel delivery interrupted.");
       if (!result || "error" in result.body) {
-        if (result?.status === 403) return;
+        if (result?.status === 403) {
+          await adapter.sendPendingReply(
+            event.chatId,
+            "This command is not allowed by the channel access policy.",
+            replyOptions,
+          );
+          return;
+        }
         if (result && "error" in result.body)
           log(
             "error",
@@ -384,7 +401,15 @@ async function start(
         });
         if (!decision.allowed) {
           if (decision.reply)
-            await adapter.sendMessage(event.chatId, decision.reply);
+            await adapter.sendMessage(event.chatId, decision.reply, {
+              replyToMessageId: event.messageId,
+            });
+          else
+            await adapter.sendPendingReply(
+              event.chatId,
+              "This command is not allowed by the channel access policy.",
+              { replyToMessageId: event.messageId },
+            );
           return;
         }
         const bounded: ChannelMessageEvent = {
@@ -426,9 +451,16 @@ async function start(
           ) as Prisma.InputJsonValue,
         });
         await processChannelInboundQueue(connectionId, queueKey);
-      })().catch(() =>
-        log("error", "Channel inbound event could not be queued or delivered."),
-      );
+      })().catch(async () => {
+        log("error", "Channel inbound event could not be queued or delivered.");
+        await adapter
+          .sendPendingReply(event.chatId, CHANNEL_EXECUTION_FAILURE_MESSAGE, {
+            replyToMessageId: event.messageId,
+          })
+          .catch(() =>
+            log("error", "Channel command failure could not be delivered."),
+          );
+      });
     };
     adapter.on("message", enqueue);
     adapter.on("command", (event: ChannelCommandEvent) =>

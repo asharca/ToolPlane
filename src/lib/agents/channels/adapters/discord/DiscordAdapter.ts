@@ -224,6 +224,7 @@ const INTERACTION_CALLBACK_DEFERRED_CHANNEL_MESSAGE = 5;
 
 type DiscordInteraction = {
   id: string;
+  application_id: string;
   type: number;
   token: string;
   channel_id: string;
@@ -243,6 +244,16 @@ export class DiscordAdapter extends ChannelAdapter {
   private readonly botToken: string;
   private readonly allowedChannelIds: string[];
   private readonly channelTypes = new Map<string, number>();
+  // Interaction tokens are short-lived capabilities: never persist or log them.
+  private readonly interactionReplies = new Map<
+    string,
+    {
+      applicationId: string;
+      token: string;
+      chatId: string;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
 
   private sessionId: string | null = null;
   private applicationId: string | null = null;
@@ -289,6 +300,9 @@ export class DiscordAdapter extends ChannelAdapter {
       controller.dispose();
     }
     this.streamingControllers.clear();
+    for (const reply of this.interactionReplies.values())
+      clearTimeout(reply.timer);
+    this.interactionReplies.clear();
     this.cleanup();
     this.log.info("Discord bot stopped");
   }
@@ -745,8 +759,21 @@ export class DiscordAdapter extends ChannelAdapter {
       return;
     }
 
-    // For /new, /compact, /help — ACK with deferred response, then emit command
+    // A deferred acknowledgement must be completed on the original interaction.
     await this.ackInteraction(interaction);
+    const timer = setTimeout(
+      () => this.interactionReplies.delete(interaction.id),
+      15 * 60_000,
+    );
+    timer.unref?.();
+    const previous = this.interactionReplies.get(interaction.id);
+    if (previous) clearTimeout(previous.timer);
+    this.interactionReplies.set(interaction.id, {
+      applicationId: interaction.application_id,
+      token: interaction.token,
+      chatId,
+      timer,
+    });
 
     this.emit("command", {
       chatId,
@@ -773,7 +800,7 @@ export class DiscordAdapter extends ChannelAdapter {
     content: string,
     ephemeral = false,
   ): Promise<void> {
-    await fetch(
+    await this.interactionRequest(
       `${DISCORD_API_BASE}/interactions/${interaction.id}/${interaction.token}/callback`,
       {
         method: "POST",
@@ -790,7 +817,7 @@ export class DiscordAdapter extends ChannelAdapter {
   }
 
   private async ackInteraction(interaction: DiscordInteraction): Promise<void> {
-    await fetch(
+    await this.interactionRequest(
       `${DISCORD_API_BASE}/interactions/${interaction.id}/${interaction.token}/callback`,
       {
         method: "POST",
@@ -805,9 +832,36 @@ export class DiscordAdapter extends ChannelAdapter {
     );
   }
 
+  private async interactionRequest(
+    url: string,
+    init: RequestInit,
+  ): Promise<void> {
+    let response: Response;
+    try {
+      response = await fetch(url, init);
+    } catch {
+      // Fetch errors may include a URL containing the interaction token.
+      throw new Error("Discord interaction request failed.");
+    }
+    await response.body?.cancel();
+    if (!response.ok)
+      throw new Error(
+        `Discord interaction request failed: HTTP ${response.status}`,
+      );
+  }
+
   // ─── Message Sending (REST API) ──────────────────────────────
 
   // Shared adapter signature.
+  override async sendPendingReply(
+    chatId: string,
+    text: string,
+    opts?: SendMessageOptions,
+  ): Promise<void> {
+    if (this.interactionReplies.has(String(opts?.replyToMessageId ?? "")))
+      await this.sendMessage(chatId, text, opts);
+  }
+
   async sendMessage(
     chatId: string,
     text: string,
@@ -815,38 +869,55 @@ export class DiscordAdapter extends ChannelAdapter {
   ): Promise<void> {
     const chunks = splitMessage(text, DISCORD_MAX_LENGTH);
     const channelId = chatId.split(":")[1];
+    const replyId = String(opts?.replyToMessageId ?? "");
+    const interaction = this.interactionReplies.get(replyId);
+    if (interaction && interaction.chatId !== chatId)
+      throw new Error("Discord interaction reply channel mismatch.");
 
     for (let i = 0; i < chunks.length; i++) {
-      await this.apiRequest(
-        `${DISCORD_API_BASE}/channels/${channelId}/messages`,
-        {
-          method: "POST",
-          body: {
-            content: chunks[i],
-            ...(i === 0 && opts?.confirmation
-              ? {
-                  components: [
-                    {
-                      type: 1,
-                      components: [
-                        {
-                          type: 2,
-                          style: 4,
-                          label: "Confirm",
-                          custom_id: `tp:${opts.confirmation.command}:${opts.confirmation.token}`,
-                        },
-                      ],
-                    },
-                  ],
-                }
-              : {}),
+      const components =
+        i === 0 && opts?.confirmation
+          ? [
+              {
+                type: 1,
+                components: [
+                  {
+                    type: 2,
+                    style: 4,
+                    label: "Confirm",
+                    custom_id: `tp:${opts.confirmation.command}:${opts.confirmation.token}`,
+                  },
+                ],
+              },
+            ]
+          : [];
+      const body = { content: chunks[i], components };
+      if (i === 0 && interaction) {
+        await this.interactionRequest(
+          `${DISCORD_API_BASE}/webhooks/${interaction.applicationId}/${interaction.token}/messages/@original`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
           },
-        },
-      );
+        );
+      } else {
+        await this.apiRequest(
+          `${DISCORD_API_BASE}/channels/${channelId}/messages`,
+          {
+            method: "POST",
+            body,
+          },
+        );
+      }
 
       if (i < chunks.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
+    }
+    if (interaction) {
+      clearTimeout(interaction.timer);
+      this.interactionReplies.delete(replyId);
     }
   }
 

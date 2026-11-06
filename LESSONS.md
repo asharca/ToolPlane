@@ -419,3 +419,14 @@
 - **证据（2026-11-06，频道重设计验收）**：`channel.sender_rejected` 的集成测试使用未绑定 Agent 的连接，属性完整，测试通过；在 :3000 上对已绑定 Agent 的真实连接调用准入后，两条拒绝日志的 `attributes.data` 都是 `{}`，控制台“最近被拒绝的发送者”因此始终为空。同一轮验收还发现查询读取的是 `attributes->>'userId'`，实际字段在 `attributes->'data'` 之下。现改为以 `withLogContext({ workspaceId, channelId }, …, true)` 记录、按 `data` 读取，回归 fixture 已绑定 Agent。
 - **下次怎么验证**：新增依赖日志属性的控制台视图时，用绑定 Agent 的真实连接写一条事件，直接查 `LogEvent.attributes`，再在页面确认列表有数据；回归见 `tests/integration/agent-channel-access.test.ts` 的 “denies v2 empty allowlists”。依据：[事件脱敏](src/lib/observability/events.ts)、[准入记录](src/lib/agents/channel-sender-access.ts)。
 - **确认日期**：2026-11-06。
+
+
+### TP-L041：Discord 延迟确认必须完成原交互回复
+
+**规则**：Discord 斜杠指令的 deferred ACK 不是最终回复；成功、权限拒绝和失败结果须按 interaction ID 回填原响应，不能另发频道消息替代。交互令牌只驻留内存、有界过期，不进入持久化事件或错误日志。
+
+- **证据（2026-11-07，线上用户反馈）**：`/status` 和 `/upgrade` 已处理并另发普通回复，但 Discord API 仍保留空的原 interaction 响应，界面一直显示 thinking；`/upgrade` 的实际结果是渠道管理员权限不足，不是模型仍在执行。
+- **修复与验证**：适配器按交互 ID 更新 webhook 的原响应，确认按钮结果清除旧按钮，线程回复保留交互 ID；拒绝准入只结束已有响应，不额外广播。四项新增回归修复前均失败，修复后相关 17 项通过；真实适配器对本地 HTTP 协议模拟服务的烟测确认两个并发响应完成且无重复频道消息，未冒充线上 Discord 端到端验收。
+- **下次怎么验证**：检查原指令的 pending → completed 状态，而非只检查频道里有文字；覆盖同频道并发指令、确认按钮、权限拒绝、ACK/回复 HTTP 失败，以及错误中不泄露交互令牌。建议管理命令前先确认操作人的渠道管理员权限。
+- **依据**：[Discord 适配器](src/lib/agents/channels/adapters/discord/DiscordAdapter.ts)、[交互回归](tests/unit/discord-interaction-replies.test.ts)。
+- **确认日期**：2026-11-07。
