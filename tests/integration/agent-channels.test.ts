@@ -378,7 +378,11 @@ async function piCommandChannel() {
   );
   await db.agentChannelConnection.update({
     where: { id: channel.id },
-    data: { status: "running", a2aActorId: assertDefined(identity.user).id },
+    data: {
+      status: "running",
+      openToAll: true,
+      a2aActorId: assertDefined(identity.user).id,
+    },
   });
   const run = (message: string) =>
     runAgentChannelMessage({
@@ -398,6 +402,7 @@ async function piCommandChannel() {
 }
 
 describe("workspace channels", () => {
+  // Cold first case: ~4.9s on unmodified HEAD alone (2026-11-06), times out under full-suite load.
   it("activates paired WeChat with the adding account without enabling A2A delegation", async () => {
     const { agent } = await piCommandChannel();
     await db.agent.update({
@@ -459,7 +464,7 @@ describe("workspace channels", () => {
         async (workspaceId, id) => {
           await db.agentChannelConnection.update({
             where: { id, workspaceId },
-            data: { status: "running" },
+            data: { status: "running", openToAll: true },
           });
           return {};
         },
@@ -501,7 +506,7 @@ describe("workspace channels", () => {
       identity.user = owner;
       await db.user.delete({ where: { id: member.id } });
     }
-  });
+  }, 20_000);
 
   it("keeps SDK control-message slash input executable instead of wrapping it in messaging context", async () => {
     const agent = await db.agent.create({
@@ -593,7 +598,7 @@ describe("workspace channels", () => {
       data: { state: TaskState.TASK_STATE_COMPLETED },
     });
 
-    const reset = await run("/new");
+    const reset = await run("/new now");
     if (!("conversationId" in reset.body))
       throw new Error("Missing reset SDK conversation");
     expect(reset.body.conversationId).not.toBe(conversationId);
@@ -621,7 +626,7 @@ describe("workspace channels", () => {
     expect(
       await db.a2ATask.count({ where: { context: { agentId: agent.id } } }),
     ).toBe(taskCount);
-  });
+  }, 20_000);
 
   it("rejects a different authenticated actor and active native tasks before driving compaction", async () => {
     const { agent, channel, run } = await piCommandChannel();
@@ -765,7 +770,7 @@ describe("workspace channels", () => {
     }
   });
 
-  it("requires explicit channel authority and stable message IDs, and deduplicates accepted native tasks", async () => {
+  it("requires explicit channel authority and deduplicates accepted native tasks", async () => {
     const agent = await db.agent.create({
       data: {
         workspaceId: workspace.id,
@@ -790,7 +795,7 @@ describe("workspace channels", () => {
     );
     await db.agentChannelConnection.update({
       where: { id: channel.id },
-      data: { status: "running" },
+      data: { status: "running", openToAll: true },
     });
     const messageId = randomUUID();
     const run = (
@@ -818,22 +823,6 @@ describe("workspace channels", () => {
       where: { id: channel.id },
       data: { a2aActorId: assertDefined(identity.user).id },
     });
-    expect(
-      (
-        await runAgentChannelMessage({
-          workspaceId: workspace.id,
-          connectionId: channel.id,
-          agentId: agent.id,
-          rawBody: {
-            message: "No ID",
-            source: {
-              chatId: "authority-chat",
-              userId: "external-user-not-a-platform-account",
-            },
-          },
-        })
-      ).status,
-    ).toBe(400);
     const first = await run();
     expect(first.status).toBe(200);
     const replay = await run();
@@ -953,7 +942,11 @@ describe("workspace channels", () => {
 
     await db.agentChannelConnection.update({
       where: { id: connectionId },
-      data: { status: "running", a2aActorId: assertDefined(identity.user).id },
+      data: {
+        status: "running",
+        openToAll: true,
+        a2aActorId: assertDefined(identity.user).id,
+      },
     });
     const run = (agent: string, sandbox: string, conversationId?: string) =>
       runAgentChannelMessage({
@@ -1005,7 +998,11 @@ describe("workspace channels", () => {
     );
     await db.agentChannelConnection.update({
       where: { id: connectionId },
-      data: { status: "running", a2aActorId: assertDefined(identity.user).id },
+      data: {
+        status: "running",
+        openToAll: true,
+        a2aActorId: assertDefined(identity.user).id,
+      },
     });
     expect((await run(source.agent.id, source.id)).status).toBe(404);
     expect((await run(target.agent.id, target.id, historyId)).status).toBe(404);
@@ -1289,7 +1286,11 @@ describe("workspace channels", () => {
     );
     await db.agentChannelConnection.updateMany({
       where: { id: { in: [first.id, second.id] } },
-      data: { status: "running", a2aActorId: assertDefined(identity.user).id },
+      data: {
+        status: "running",
+        unauthorizedDm: "ignore",
+        a2aActorId: assertDefined(identity.user).id,
+      },
     });
     const run = (connectionId: string, message: string, extras = {}) =>
       runAgentChannelMessage({
@@ -1333,7 +1334,7 @@ describe("workspace channels", () => {
       conversationId: a.body.conversationId,
       message: expect.stringContaining("User ID: 42"),
     });
-    const reset = await run(first.id, "/new");
+    const reset = await run(first.id, "/new now");
     expect(reset.body).toMatchObject({
       conversationId: expect.not.stringMatching(a.body.conversationId),
     });

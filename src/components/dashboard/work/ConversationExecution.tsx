@@ -50,6 +50,7 @@ export function ConversationExecution({
   onChange,
   renderedActivityIds,
   showActivities = true,
+  onBusyChange,
 }: {
   /** Same-origin endpoint returning the native execution projection. */
   endpoint: string;
@@ -67,6 +68,8 @@ export function ConversationExecution({
   renderedActivityIds?: readonly string[];
   /** False when the surrounding Work transcript owns live and persisted activities. */
   showActivities?: boolean;
+  /** Reports whether the execution is active or its initial status is still unknown. */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const t = useTranslations("console.work");
   const tAgents = useTranslations("console.agents");
@@ -100,6 +103,11 @@ export function ConversationExecution({
     setFresh(false);
     setBusyRequestId(null);
   }
+  const executionStatus = execution?.status;
+  useEffect(() => {
+    onBusyChange?.(!fresh || ACTIVE_STATUSES.has(executionStatus ?? ""));
+    return () => onBusyChange?.(false);
+  }, [executionStatus, fresh, onBusyChange]);
   useEffect(() => {
     void url;
     return () => {

@@ -31,7 +31,10 @@ import { resolvePinnedAgent } from "./revisions";
 import { resolveAgentTools, resolveAgentPiPackages } from "./resolve";
 import type { ReasoningEffort } from "./constants";
 import type { AgentModelOverride } from "./chat-body";
-import { resolveAgentModelOverride } from "./turn-model";
+import {
+  resolveAgentModelOverride,
+  resolveConversationModelOverride,
+} from "./turn-model";
 import { resolveSessionExternalSandboxes } from "./external-sandboxes";
 
 import { withWorkUiLease } from "./execution/work-ui";
@@ -122,6 +125,12 @@ export async function runDedicatedSandboxTurn(
     liveAgent,
     (conversation ?? context)?.agentRevisionId,
   );
+  const sessionModel = await resolveConversationModelOverride(
+    agent.workspaceId,
+    conversation?.modelOverride,
+    agent.runtimeKind,
+  );
+  if (sessionModel) input = { ...input, modelOverride: sessionModel.override };
   const effective = input.modelOverride
     ? await resolveAgentModelOverride(
         agent.workspaceId,

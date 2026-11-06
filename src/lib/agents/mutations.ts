@@ -1702,6 +1702,10 @@ export async function createConversation(
   agentId: string,
   title?: string,
   runtimeSession?: Partial<ConversationRuntimeSession>,
+  onCreated?: (
+    tx: Prisma.TransactionClient,
+    conversationId: string,
+  ) => Promise<void>,
 ) {
   return db.$transaction(async (tx) => {
     const agent = await tx.agent.findFirst({
@@ -1718,7 +1722,7 @@ export async function createConversation(
         legacyRevisionUnresolved: false,
       },
     });
-    return tx.conversation.update({
+    const selected = await tx.conversation.update({
       where: { id: conversation.id },
       data: defaultConversationRuntimeSession(
         agent.id,
@@ -1726,6 +1730,8 @@ export async function createConversation(
         runtimeSession,
       ),
     });
+    await onCreated?.(tx, selected.id);
+    return selected;
   });
 }
 

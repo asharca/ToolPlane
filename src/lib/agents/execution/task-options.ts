@@ -30,7 +30,10 @@ import {
 } from "@/lib/a2a/local-sandbox";
 import type { StagedTaskFile } from "@/lib/a2a/local-sandbox";
 import { resolvePiSessionPackages } from "@/lib/agents/pi-session-packages";
-import { resolveAgentModelOverride } from "@/lib/agents/turn-model";
+import {
+  resolveAgentModelOverride,
+  resolveConversationModelOverride,
+} from "@/lib/agents/turn-model";
 import { resolveSessionExternalSandboxes } from "@/lib/agents/external-sandboxes";
 import {
   activeConversationMessages,
@@ -103,6 +106,29 @@ export async function localTaskOptions(
     agent.publicRuntimeAllocation
   )
     throw new Error("Local target unavailable.");
+  const sessionConversation =
+    !grant.ancestorTaskIds.length && grant.entryPolicy
+      ? await db.conversation.findFirst({
+          where: {
+            agentId: grant.agentId,
+            agent: { workspaceId: grant.workspaceId },
+            ...(grant.entryPolicy.kind === "work"
+              ? { workSession: { id: grant.entryPolicy.sourceId } }
+              : {
+                  id:
+                    grant.entryPolicy.conversationId ??
+                    grant.entryPolicy.sourceId,
+                }),
+          },
+          select: { modelOverride: true },
+        })
+      : null;
+  const sessionModel = await resolveConversationModelOverride(
+    grant.workspaceId,
+    sessionConversation?.modelOverride,
+    agent.runtimeKind,
+  );
+  if (sessionModel) grant.modelOverride = sessionModel.override;
   const { provider, model } = grant.modelOverride
     ? await resolveAgentModelOverride(
         grant.workspaceId,

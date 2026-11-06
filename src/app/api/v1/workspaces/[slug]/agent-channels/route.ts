@@ -34,6 +34,14 @@ import {
 } from "@/lib/agents/channel-pairing";
 import { getMessagingPlatform } from "@/lib/agents/platforms";
 import { hostedRunnerSpec } from "@/lib/agents/platform-runner";
+import {
+  listChannelSenderAccess,
+  approveChannelPairing,
+  dismissChannelPairing,
+  allowChannelSender,
+  revokeChannelSender,
+} from "@/lib/agents/channel-sender-access";
+import { upgradeChannelConversations } from "@/lib/agents/conversation-operations";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -53,6 +61,11 @@ const commandSchema = z
       "pair",
       "check",
       "move",
+      "approvePairing",
+      "dismissPairing",
+      "allowSender",
+      "revokeSender",
+      "upgradeConversations",
     ]),
     connectionId: z.string().min(1).max(200).optional(),
     platform: z.string().max(40).optional(),
@@ -60,9 +73,40 @@ const commandSchema = z
     agentId: z.string().min(1).max(200).nullable().optional(),
     sandboxId: z.string().min(1).max(200).optional(),
     credentials: z.record(z.string().max(80), z.string().max(8000)).default({}),
+    requestId: z.string().min(1).max(200).optional(),
+    platformUserId: z.string().trim().min(1).max(200).optional(),
+    userName: z.string().trim().max(200).optional(),
+    access: z
+      .object({
+        openToAll: z.boolean().optional(),
+        unauthorizedDm: z.enum(["pair", "ignore", "decline"]).optional(),
+        adminUserIds: z
+          .array(z.string().trim().min(1).max(200))
+          .max(500)
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    sessions: z
+      .object({
+        groupSessionsPerUser: z.boolean().optional(),
+        threadSessionsPerUser: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
-  .refine((input) => input.action !== "move" || Boolean(input.sandboxId));
+  .refine((input) => input.action !== "move" || Boolean(input.sandboxId))
+  .refine(
+    (input) =>
+      !["approvePairing", "dismissPairing"].includes(input.action) ||
+      Boolean(input.requestId),
+  )
+  .refine(
+    (input) =>
+      !["allowSender", "revokeSender"].includes(input.action) ||
+      Boolean(input.platformUserId),
+  );
 
 async function authorize(req: Request, slug: string, manage = false) {
   const user = await resolveAccountRequestUser(req);
@@ -102,9 +146,24 @@ export const GET = withRequestLogging(
     req: Request,
     { params }: { params: Promise<{ slug: string }> },
   ) {
-    const workspace = await authorize(req, (await params).slug);
-    if (workspace instanceof Response) return workspace;
     const query = new URL(req.url).searchParams;
+    const workspace = await authorize(
+      req,
+      (await params).slug,
+      query.has("access"),
+    );
+    if (workspace instanceof Response) return workspace;
+    if (query.has("access")) {
+      const access = await listChannelSenderAccess(
+        workspace.id,
+        query.get("access") ?? "",
+      );
+      if (!access)
+        return Response.json({ error: "Channel not found" }, { status: 404 });
+      return Response.json(access, {
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
     const sandboxId = query.get("sandboxId") || undefined;
     if (sandboxId && !(await getChannelSandbox(workspace.id, sandboxId))) {
       return Response.json({ error: "Sandbox not found" }, { status: 404 });
@@ -307,7 +366,7 @@ export const POST = withRequestLogging(
       if (existing && !["stop", "delete"].includes(input.action)) {
         await bindOperator(existing.id, input.action === "start");
       }
-      let result: { error?: string } = {};
+      let result: { error?: string; upgraded?: number; skipped?: number } = {};
       if (input.action === "create") {
         const created = await createAgentChannelConnection({
           workspaceId: workspace.id,
@@ -342,6 +401,9 @@ export const POST = withRequestLogging(
               name: input.name,
               agentId: input.agentId,
               credentials: input.credentials,
+              access: input.access,
+              sessions: input.sessions,
+              actorId: workspace.actorId,
             });
             break;
           case "delete":
@@ -401,12 +463,76 @@ export const POST = withRequestLogging(
               input.sandboxId,
             );
             break;
+          case "approvePairing":
+          case "dismissPairing": {
+            const requestId = input.requestId;
+            if (!requestId)
+              return Response.json(
+                { error: "Invalid channel configuration" },
+                { status: 400 },
+              );
+            const decide =
+              input.action === "approvePairing"
+                ? approveChannelPairing
+                : dismissChannelPairing;
+            result = await decide({
+              workspaceId: workspace.id,
+              connectionId: existingConnectionId,
+              actorId: workspace.actorId,
+              requestId,
+            });
+            break;
+          }
+          case "allowSender":
+          case "revokeSender": {
+            const platformUserId = input.platformUserId;
+            if (!platformUserId)
+              return Response.json(
+                { error: "Invalid channel configuration" },
+                { status: 400 },
+              );
+            result =
+              input.action === "allowSender"
+                ? await allowChannelSender({
+                    workspaceId: workspace.id,
+                    connectionId: existingConnectionId,
+                    actorId: workspace.actorId,
+                    platformUserId,
+                    userName: input.userName,
+                  })
+                : await revokeChannelSender({
+                    workspaceId: workspace.id,
+                    connectionId: existingConnectionId,
+                    actorId: workspace.actorId,
+                    platformUserId,
+                  });
+            break;
+          }
+          case "upgradeConversations":
+            result = await upgradeChannelConversations({
+              workspaceId: workspace.id,
+              connectionId: existingConnectionId,
+            });
+            await db.$transaction(async (tx) => {
+              await writeAudit(tx, {
+                actorId: workspace.actorId,
+                workspaceId: workspace.id,
+                action: "agent.channel.conversations.upgrade",
+                targetType: "AgentChannelConnection",
+                targetId: existingConnectionId,
+                changes: { upgraded: result.upgraded, skipped: result.skipped },
+              });
+            });
+            break;
         }
       }
       return Response.json(
         {
           error: result.error,
           connectionId,
+          ...(result.upgraded !== undefined
+            ? { upgraded: result.upgraded, skipped: result.skipped }
+            : {}),
           connections: await channelList(workspace.id),
         },
         {

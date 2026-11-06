@@ -1,4 +1,5 @@
 import type { AgentMessageBody } from "@/lib/agents/chat-body";
+import { normalizeAgentMessageEvent } from "@/lib/agents/messaging";
 
 export type MessagingPlatformSlug =
   | "api"
@@ -233,19 +234,13 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
       {
         name: "TELEGRAM_ALLOWED_USERS",
         label: "Allowed Telegram user IDs",
-        placeholder: "blank means everyone",
-        help: "Optional numeric Telegram IDs. Leave blank to allow everyone.",
+        placeholder: "123456789,987654321",
+        help: "Numeric Telegram user IDs. Other senders follow the channel access policy.",
       },
       {
         name: "TELEGRAM_ALLOWED_CHATS",
         label: "Allowed group or topic IDs",
         placeholder: "-1001234567890",
-      },
-      {
-        name: "TELEGRAM_ALLOW_ALL_USERS",
-        label: "Allow all users",
-        inputType: "boolean",
-        defaultValue: "true",
       },
     ],
     setupSteps: [
@@ -254,7 +249,7 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
       "Start the Telegram hosted runner so it can receive updates and deliver replies.",
     ],
     operatorNotes: [
-      "ToolPlane defaults Telegram to allow everyone when no allowlist is configured.",
+      "Senders outside the allowlist are denied unless the channel is open to everyone or the sender is approved by pairing.",
     ],
     capabilities: {
       voice: true,
@@ -293,12 +288,6 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
         placeholder: "optional role allowlist",
       },
       { name: "DISCORD_ALLOWED_CHANNELS", label: "Allowed channel IDs" },
-      {
-        name: "DISCORD_ALLOW_ALL_USERS",
-        label: "Allow all users",
-        inputType: "boolean",
-        defaultValue: "true",
-      },
       {
         name: "DISCORD_HOME_CHANNEL",
         label: "Home channel ID",
@@ -1662,11 +1651,17 @@ export function normalizePlatformMessageBody(
     message = textFrom(event, ["text", "content"]) ?? message;
     chatId = textFrom(event, ["channel"]) ?? chatId;
     userId = textFrom(event, ["user", "bot_id"]) ?? userId;
-    threadId =
-      textFrom(event, ["thread_ts"]) ?? textFrom(event, ["ts"]) ?? threadId;
+    threadId = textFrom(event, ["thread_ts"]) ?? threadId;
+    if (threadId === textFrom(event, ["ts"])) threadId = undefined;
     messageId = textFrom(event, ["ts", "client_msg_id"]) ?? messageId;
     scopeId = textFrom(input, ["team_id", "teamId"]) ?? scopeId;
-    chatType = "channel";
+    chatType = threadId
+      ? "thread"
+      : event.channel_type === "im"
+        ? "dm"
+        : event.channel_type === "mpim"
+          ? "group"
+          : "channel";
   } else if (platform === "discord") {
     const author = recordValue(input.author);
     message = textFrom(input, ["content"]) ?? message;
@@ -1676,7 +1671,7 @@ export function normalizePlatformMessageBody(
     threadId = textFrom(input, ["thread_id", "threadId"]) ?? threadId;
     messageId = textFrom(input, ["id"]) ?? messageId;
     scopeId = textFrom(input, ["guild_id", "guildId"]) ?? scopeId;
-    chatType = threadId ? "thread" : "channel";
+    chatType = threadId ? "thread" : scopeId ? "channel" : "dm";
   } else if (platform === "telegram") {
     const msg =
       nestedRecord(input, ["message", "edited_message", "channel_post"]) ??
@@ -1689,7 +1684,13 @@ export function normalizePlatformMessageBody(
     threadId = textFrom(msg, ["message_thread_id"]) ?? threadId;
     messageId = textFrom(msg, ["message_id"]) ?? messageId;
     const telegramType = textValue(chat?.type);
-    chatType = telegramType === "private" ? "dm" : "group";
+    chatType = threadId
+      ? "thread"
+      : telegramType === "private"
+        ? "dm"
+        : telegramType === "channel"
+          ? "channel"
+          : "group";
   } else if (platform === "whatsapp_cloud") {
     const {
       message: waMessage,
@@ -1767,4 +1768,45 @@ export function normalizePlatformMessageBody(
       messageId: textValue(existingSource?.messageId) ?? messageId,
     },
   };
+}
+
+/** Lookup-only pre-redesign callback key; never use this to key a new session.
+ * Old callbacks classified Telegram topics as groups and Discord DMs as channels,
+ * and attached Slack's root ts as a thread suffix even on root messages.
+ * Explicit normalized source fields already supplied by callers took precedence.
+ */
+export function legacyPlatformMessageSessionKey(
+  platform: MessagingPlatformSlug,
+  raw: unknown,
+): string {
+  const input = recordValue(raw) ?? {};
+  const explicit = recordValue(input.source);
+  const body = normalizePlatformMessageBody(platform, raw);
+  const source = { ...body.source };
+  if (platform === "slack") {
+    const event = nestedRecord(input, ["event"]) ?? input;
+    source.chatType =
+      (explicit?.chatType as NonNullable<
+        AgentMessageBody["source"]
+      >["chatType"]) ?? "channel";
+    source.threadId =
+      textValue(explicit?.threadId) ??
+      textFrom(event, ["thread_ts", "ts"]) ??
+      textFrom(input, ["threadId", "thread_ts", "threadTs"]);
+  } else if (platform === "discord" && !explicit?.chatType) {
+    source.chatType = source.threadId ? "thread" : "channel";
+  } else if (platform === "telegram" && !explicit?.chatType) {
+    const msg =
+      nestedRecord(input, ["message", "edited_message", "channel_post"]) ??
+      input;
+    source.chatType =
+      textValue(recordValue(msg.chat)?.type) === "private" ? "dm" : "group";
+  }
+  return normalizeAgentMessageEvent({
+    ...body,
+    message: body.message ?? "Platform event",
+    messageType: body.messageType ?? "text",
+    attachments: body.attachments ?? [],
+    source,
+  }).sessionKey;
 }

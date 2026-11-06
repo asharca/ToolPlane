@@ -109,6 +109,7 @@ export function normalizeAgentMessageEvent(
 
 export function buildMessagingSessionKey(
   source: NormalizedMessagingSource,
+  options?: { groupSessionsPerUser: boolean; threadSessionsPerUser: boolean },
 ): string {
   const platform = cleanSegment(source.platform, "external").toLowerCase();
   if (source.chatType === "dm") {
@@ -126,7 +127,13 @@ export function buildMessagingSessionKey(
   ];
   if (source.threadId) {
     parts.push(cleanSegment(source.threadId, "thread"));
-  } else if (source.userId) {
+  }
+  if (
+    source.userId &&
+    (source.threadId
+      ? options?.threadSessionsPerUser === true
+      : options?.groupSessionsPerUser !== false)
+  ) {
     parts.push(cleanSegment(source.userId, "user"));
   }
   return parts.join(":");

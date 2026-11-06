@@ -1,8 +1,14 @@
 import "server-only";
 import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
 import { getAgentForRun } from "@/lib/agents/queries";
 import { createConversation } from "@/lib/agents/mutations";
 import { resolvePinnedAgent } from "./revisions";
+import {
+  upgradeAgentConversationRevision,
+  AgentConversationRevisionError,
+} from "./conversation-revisions";
+import { TERMINAL } from "@/lib/a2a/model";
 
 type ConversationWaiter = {
   operation: string;
@@ -103,6 +109,11 @@ export async function rotateChannelConversation(params: {
   workspaceId: string;
   agentId: string;
   conversationId: string;
+  runtimeSessionKey?: string;
+  onCreated?: (
+    tx: Prisma.TransactionClient,
+    conversationId: string,
+  ) => Promise<void>;
 }) {
   const conversation = await db.conversation.findFirst({
     where: {
@@ -133,6 +144,7 @@ export async function rotateChannelConversation(params: {
   const release = acquireConversationOperation(key, "new");
   if (!release) throw new ConversationOperationError("busy");
   try {
+    await assertChannelConversationIdle(conversation.id, params.workspaceId);
     if (conversation.workSession) {
       const work = await db.workSession.findUnique({
         where: { id: conversation.workSession.id },
@@ -148,15 +160,110 @@ export async function rotateChannelConversation(params: {
       },
     });
     if (!channel) throw new ConversationOperationError("notFound", 404);
+    if (
+      params.runtimeSessionKey &&
+      !params.runtimeSessionKey.startsWith(`channel:${channel.id}:`)
+    )
+      throw new ConversationOperationError("notChannel", 400);
     const created = await createConversation(
       params.workspaceId,
       params.agentId,
       conversation.title ?? undefined,
-      { runtimeSessionKey: key },
+      { runtimeSessionKey: params.runtimeSessionKey ?? key },
+      params.onCreated,
     );
     if (!created) throw new ConversationOperationError("notFound", 404);
     return { conversationId: created.id, compacted: false as const };
   } finally {
     release();
   }
+}
+
+/** Selection time overrides creation time without changing the persisted routing key. */
+export async function channelConversationIds(
+  agentId: string,
+  workspaceId: string,
+  sessionKey: string,
+  limit = 10,
+) {
+  const rows = await db.$queryRaw<
+    { id: string }[]
+  >`SELECT c.id FROM "Conversation" c JOIN "Agent" a ON a.id=c."agentId" WHERE c."agentId"=${agentId} AND a."workspaceId"=${workspaceId} AND c."runtimeSessionKey"=${sessionKey} ORDER BY COALESCE(c."channelSelectedAt", c."createdAt") DESC, c.id DESC LIMIT ${Math.min(limit, 11)}`;
+  return rows.map((row) => row.id);
+}
+
+export async function assertChannelConversationIdle(
+  conversationId: string,
+  workspaceId: string,
+) {
+  const conversation = await db.conversation.findFirst({
+    where: { id: conversationId, agent: { workspaceId } },
+    include: { workSession: true },
+  });
+  if (!conversation) throw new ConversationOperationError("notFound", 404);
+  if (
+    conversation.workSession &&
+    ["queued", "running", "cancelling"].includes(
+      conversation.workSession.status,
+    )
+  )
+    throw new ConversationOperationError("busy");
+  const active = await db.a2ATask.count({
+    where: {
+      state: { notIn: TERMINAL },
+      context: {
+        workspaceId,
+        entryBindings: {
+          some: {
+            sourceId: conversationId,
+            kind: { in: ["channel", "chat", "control"] },
+          },
+        },
+      },
+    },
+  });
+  if (active) throw new ConversationOperationError("busy");
+}
+
+export async function upgradeChannelConversations(input: {
+  workspaceId: string;
+  connectionId: string;
+}): Promise<{ upgraded: number; skipped: number }> {
+  const connection = await db.agentChannelConnection.findFirst({
+    where: { id: input.connectionId, workspaceId: input.workspaceId },
+    include: { agent: true },
+  });
+  if (!connection?.agent) throw new ConversationOperationError("notFound", 404);
+  const rows = await db.conversation.findMany({
+    where: {
+      agentId: connection.agent.id,
+      agent: { workspaceId: input.workspaceId },
+      runtimeSessionKey: { startsWith: `channel:${connection.id}:` },
+      agentRevision: {
+        version: { lt: connection.agent.currentRevisionVersion },
+      },
+    },
+    select: { id: true },
+  });
+  let upgraded = 0,
+    skipped = 0;
+  for (const row of rows) {
+    try {
+      await upgradeAgentConversationRevision({
+        workspaceId: input.workspaceId,
+        agentId: connection.agent.id,
+        conversationId: row.id,
+        targetVersion: connection.agent.currentRevisionVersion,
+      });
+      upgraded += 1;
+    } catch (error) {
+      if (
+        error instanceof AgentConversationRevisionError &&
+        error.code === "busy"
+      )
+        skipped += 1;
+      else throw error;
+    }
+  }
+  return { upgraded, skipped };
 }

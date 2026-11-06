@@ -6,7 +6,10 @@ import type { PiPackageMcpToolPolicy } from "./pi-package-mcp";
 import { requireAgentRevision } from "./revisions";
 import { assertLocalRuntimeToken } from "@/lib/a2a/local-runtime";
 import { assertAgentEnvironmentCredentialReferences } from "./environment-credentials";
-import { resolveAgentModelOverride } from "./turn-model";
+import {
+  resolveAgentModelOverride,
+  conversationModelOverride,
+} from "./turn-model";
 import type { SandboxMcpTool } from "@/lib/sandboxes/mcp-policy";
 import {
   externalSandboxTools,
@@ -62,7 +65,7 @@ export async function resolveAgentRuntimeGrant(
       const provider = revision.config.providerId
         ? await tx.modelProvider.findFirst({
             where: {
-              id: revision.config.providerId,
+              id: token.modelOverride?.providerId ?? revision.config.providerId,
               workspaceId: token.workspaceId,
             },
             select: { apiKey: true },
@@ -201,6 +204,31 @@ export async function resolveAgentRuntimeGrant(
       );
       if (modelTarget && modelTarget.providerId !== token.providerId)
         return null;
+      if (
+        token.modelOverride &&
+        modelTarget &&
+        token.modelOverride.model !== modelTarget.model
+      )
+        return null;
+      if (conversationId && token.modelOverride) {
+        const session = await tx.conversation.findFirst({
+          where: {
+            id: conversationId,
+            agentId: token.agentId,
+            agent: { workspaceId: token.workspaceId },
+          },
+          select: { modelOverride: true, runtimeSessionKey: true },
+        });
+        if (session?.runtimeSessionKey?.startsWith("channel:")) {
+          const current = conversationModelOverride(session.modelOverride);
+          if (
+            !current ||
+            current.providerId !== token.modelOverride.providerId ||
+            current.model !== token.modelOverride.model
+          )
+            return null;
+        }
+      }
       const currentDeployments = new Map<string, string[]>(
         agent.servers.map((server) => [
           server.deploymentId,

@@ -28,7 +28,10 @@ import {
 } from "./conversation-operations";
 import { parseRuntimeCommand } from "./runtime-commands";
 import type { AgentModelOverride } from "./chat-body";
-import { resolveAgentModelOverride } from "./turn-model";
+import {
+  resolveAgentModelOverride,
+  conversationModelOverride,
+} from "./turn-model";
 
 export class RuntimeCommandError extends Error {
   constructor(
@@ -79,6 +82,8 @@ export async function executeRuntimeCommand(input: {
       409,
     );
   const agent = await resolvePinnedAgent(liveAgent, scope.agentRevisionId);
+  const storedOverride = conversationModelOverride(scope.modelOverride);
+  if (storedOverride) input = { ...input, modelOverride: storedOverride };
   if (input.modelOverride)
     await resolveAgentModelOverride(
       input.workspaceId,
@@ -226,7 +231,10 @@ export async function executeRuntimeCommand(input: {
         messageId: input.messageId ?? randomUUID(),
         text: input.line,
         signal: input.signal,
-        modelOverride: input.modelOverride,
+        modelOverride:
+          sdkEntry.kind === "chat" || sdkEntry.kind === "work"
+            ? input.modelOverride
+            : undefined,
         onPromptInvocation: (invocation) =>
           persistAgentPromptInvocation({
             conversationId: conversation.id,

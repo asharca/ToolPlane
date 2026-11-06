@@ -25,7 +25,10 @@ import type {
   SandboxRuntimeActivity,
 } from "@/lib/agents/sandbox-runtime";
 import type { AgentModelOverride } from "@/lib/agents/chat-body";
-import { resolveAgentModelOverride } from "@/lib/agents/turn-model";
+import {
+  resolveAgentModelOverride,
+  resolveConversationModelOverride,
+} from "@/lib/agents/turn-model";
 import { AGENT_TURN_MODEL_PART } from "@/lib/agents/turn-model";
 import {
   runtimeFailureText,
@@ -138,6 +141,26 @@ export async function submitAgentEntry(
         tx,
       );
       grant.modelOverride = input.modelOverride;
+    }
+    const conversation = await tx.conversation.findFirst({
+      where: {
+        ...(input.kind === "work"
+          ? { workSession: { id: input.sourceId } }
+          : { id: input.conversationId ?? input.sourceId }),
+        agentId: input.agentId,
+        agent: { workspaceId: input.workspaceId },
+      },
+      select: { modelOverride: true },
+    });
+    const sessionModel = await resolveConversationModelOverride(
+      input.workspaceId,
+      conversation?.modelOverride,
+      (await requireAgentRevision(tx, grant.agentId, grant.agentRevisionId))
+        .config.runtimeKind,
+      tx,
+    );
+    if (sessionModel) {
+      grant.modelOverride = sessionModel.override;
     }
     const key = {
       ownerKey: grant.ownerKey,

@@ -46,6 +46,7 @@ type SlackMessageEvent = {
   text?: string;
   files?: SlackFile[];
   ts: string;
+  thread_ts?: string;
   channel_type?: string; // 'im' for DMs, 'channel'/'group' for channels
 };
 
@@ -418,11 +419,23 @@ export class SlackAdapter extends ChannelAdapter {
     const chatId = event.channel;
     if (!this.isAllowed(chatId)) return;
 
-    // Add 👀 reaction to acknowledge receipt
-    await this.addReaction(chatId, event.ts);
-
     const userId = event.user ?? "";
     const userName = await this.resolveUserName(userId);
+    const threadId =
+      event.thread_ts && event.thread_ts !== event.ts
+        ? event.thread_ts
+        : undefined;
+    const context = {
+      chatType: threadId
+        ? "thread"
+        : event.channel_type === "im"
+          ? "dm"
+          : event.channel_type === "mpim"
+            ? "group"
+            : "channel",
+      threadId,
+      replyInThread: Boolean(threadId),
+    };
 
     // Strip bot mentions from text
     const rawText = event.text ?? "";
@@ -460,10 +473,12 @@ export class SlackAdapter extends ChannelAdapter {
         | "whoami";
       this.emit("command", {
         chatId,
+        ...context,
         userId,
         userName,
         messageId: event.ts,
         command: cmd,
+        args: text.split(/\s+/).slice(1).join(" "),
       });
     } else {
       // Download images (with bot token auth for private files)
@@ -493,6 +508,7 @@ export class SlackAdapter extends ChannelAdapter {
 
       this.emit("message", {
         chatId,
+        ...context,
         userId,
         userName,
         messageId: event.ts,
@@ -515,13 +531,15 @@ export class SlackAdapter extends ChannelAdapter {
     if (!chatId) return;
     if (!this.isAllowed(chatId)) return;
 
-    if (["new", "compact", "help", "whoami"].includes(command)) {
+    if (command) {
       this.emit("command", {
         chatId,
+        chatType: payload.channel_name === "directmessage" ? "dm" : "channel",
         userId,
         userName,
         messageId: envelopeId,
         command: command as "new" | "compact" | "help",
+        args: payload.text,
       });
     }
   }
@@ -629,9 +647,12 @@ export class SlackAdapter extends ChannelAdapter {
   }
 
   // Shared adapter signature.
-  async sendTypingIndicator(_chatId: string): Promise<void> {
-    // Slack doesn't have a public "typing" API for bots.
-    // Acknowledgment is handled via reactions in handleEvent() instead.
+  async sendTypingIndicator(
+    chatId: string,
+    opts?: SendMessageOptions,
+  ): Promise<void> {
+    if (opts?.replyToMessageId)
+      await this.addReaction(chatId, String(opts.replyToMessageId));
   }
 
   // ─── Streaming ─────────────────────────────────────────────

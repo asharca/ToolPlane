@@ -477,12 +477,33 @@ export async function getConversation(
           work.runtimeKind !== config.runtimeKind ||
           work.agentRevisionId !== conversation.agentRevisionId),
     );
+  const storedOverride = conversation.modelOverride as {
+    providerId?: unknown;
+    model?: unknown;
+  } | null;
+  const overrideProvider =
+    typeof storedOverride?.providerId === "string"
+      ? await db.modelProvider.findFirst({
+          where: { id: storedOverride.providerId, workspaceId },
+          select: { name: true },
+        })
+      : null;
+  const modelOverride =
+    typeof storedOverride?.providerId === "string" &&
+    typeof storedOverride.model === "string"
+      ? {
+          providerId: storedOverride.providerId,
+          model: storedOverride.model,
+          providerName: overrideProvider?.name ?? null,
+        }
+      : null;
   return {
     ...conversation,
+    modelOverride,
     readOnly,
     agentRevisionVersion: conversation.agentRevision?.version ?? null,
     runtimeKind: config?.runtimeKind ?? null,
-    modelName: config?.model ?? null,
+    modelName: modelOverride?.model ?? config?.model ?? null,
     contextWindow: null,
     contextWindowEstimated: null,
     boundSandbox: conversation.sandbox ?? null,

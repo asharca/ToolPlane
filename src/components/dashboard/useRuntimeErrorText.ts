@@ -4,7 +4,7 @@ import { useTranslations } from "next-intl";
 import { useCallback } from "react";
 
 const CODE =
-  /\b(AGENT_BUDGET_EXCEEDED|PI_[A-Z_]+|OMP_[A-Z_]+|modelOverrideInvalid|modelOverrideUnavailable)\b(?::\s*([^\n]*))?/;
+  /\b(AGENT_BUDGET_EXCEEDED|MODEL_OVERRIDE_UNAVAILABLE|PI_[A-Z_]+|OMP_[A-Z_]+|modelOverrideInvalid|modelOverrideUnavailable)\b(?::\s*([^\n]*))?/;
 
 function modelFailureKind(reason: string) {
   if (reason === "UNREACHABLE") return "unreachable";

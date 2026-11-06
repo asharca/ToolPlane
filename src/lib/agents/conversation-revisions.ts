@@ -392,7 +392,13 @@ export async function getAgentConversationRevisionDiff(input: Scope) {
 }
 
 /** Advance the existing session and volume, never fork or replay its transcript. */
-export async function upgradeAgentConversationRevision(input: Scope) {
+export async function upgradeAgentConversationRevision(
+  input: Scope,
+  onUpgraded?: (
+    tx: Prisma.TransactionClient,
+    result: { conversationId: string; version: number },
+  ) => Promise<void>,
+) {
   const initial = await load(db, input);
   const release = acquireConversationOperation(
     conversationOperationKey(initial.conversation),
@@ -476,6 +482,10 @@ export async function upgradeAgentConversationRevision(input: Scope) {
                 contexts,
                 to.id,
               );
+              await onUpgraded?.(tx, {
+                conversationId: conversation.id,
+                version: to.version,
+              });
               return { conversationId: conversation.id, version: to.version };
             }
             const sandbox = conversation.sandbox;
@@ -631,6 +641,10 @@ export async function upgradeAgentConversationRevision(input: Scope) {
               });
             }
             await advanceConversationEntryContexts(tx, input, contexts, to.id);
+            await onUpgraded?.(tx, {
+              conversationId: conversation.id,
+              version: to.version,
+            });
             return { conversationId: conversation.id, version: to.version };
           },
           { timeout: 30_000 },

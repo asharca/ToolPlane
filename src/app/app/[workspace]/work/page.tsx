@@ -245,6 +245,7 @@ export default async function WorkspaceWorkPage({
                 legacyRevisionUnresolved: conversation.legacyRevisionUnresolved,
                 runtimeKind: conversation.runtimeKind ?? undefined,
                 modelName: conversation.modelName,
+                modelOverride: conversation.modelOverride,
                 contextWindow: conversation.contextWindow,
                 contextWindowEstimated:
                   conversation.contextWindowEstimated ?? undefined,

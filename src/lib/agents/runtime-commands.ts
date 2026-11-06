@@ -30,6 +30,10 @@ export const HOST_ONLY_COMMAND_NAMES = [
   "new",
   "help",
   "whoami",
+  "status",
+  "resume",
+  "model",
+  "upgrade",
   "effort",
   "fast",
 ] as const;

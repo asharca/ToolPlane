@@ -7,6 +7,7 @@ import type {
 import { DiscordAdapter } from "@/lib/agents/channels/adapters/discord/DiscordAdapter";
 import { SlackAdapter } from "@/lib/agents/channels/adapters/slack/SlackAdapter";
 import { TelegramAdapter } from "@/lib/agents/channels/adapters/telegram/TelegramAdapter";
+import { normalizePlatformMessageBody } from "@/lib/agents/platforms";
 
 // Native channel execution rejects inbound events without a stable platform message ID.
 type Inbound = ChannelMessageEvent | ChannelCommandEvent;
@@ -72,6 +73,22 @@ describe("channel adapters carry platform message IDs", () => {
       "1002",
       "1003",
     ]);
+    await dispatch("MESSAGE_CREATE", {
+      ...message("1004", "direct"),
+      guild_id: undefined,
+    });
+    await dispatch("MESSAGE_CREATE", {
+      ...message("1005", "topic"),
+      channel: { type: 11 },
+    });
+    expect(events.map((event) => event.chatType)).toEqual([
+      "channel",
+      "channel",
+      "channel",
+      "dm",
+      "thread",
+    ]);
+    expect(events[4].threadId).toBe("42");
   });
 
   it("Slack messages, text commands and slash commands", async () => {
@@ -111,6 +128,37 @@ describe("channel adapters carry platform message IDs", () => {
       "1730764800.000100",
       "1730764800.000200",
       "env-slash",
+    ]);
+    const contextEvent = (
+      ts: string,
+      channel_type: string,
+      thread_ts?: string,
+    ) => ({
+      envelope_id: `context-${ts}`,
+      type: "events_api",
+      payload: {
+        event: {
+          type: "message",
+          channel: "C1",
+          user: "U1",
+          text: "context",
+          ts,
+          channel_type,
+          thread_ts,
+        },
+      },
+    });
+    await receive(contextEvent("1", "im"));
+    await receive(contextEvent("2", "channel", "2"));
+    await receive(contextEvent("3", "channel", "2"));
+    expect(
+      events
+        .slice(3)
+        .map((item) => ({ chatType: item.chatType, threadId: item.threadId })),
+    ).toEqual([
+      { chatType: "dm", threadId: undefined },
+      { chatType: "channel", threadId: undefined },
+      { chatType: "thread", threadId: "2" },
     ]);
   });
 
@@ -160,6 +208,68 @@ describe("channel adapters carry platform message IDs", () => {
     await update(31, "hello");
     await update(32, "/help");
     expect(events.map((event) => event.messageId)).toEqual(["31", "32"]);
+    await bot.handleUpdate({
+      update_id: 33,
+      message: {
+        message_id: 33,
+        date: 0,
+        chat: { id: -9, type: "group", title: "Group" },
+        from: { id: 5, is_bot: false, first_name: "user" },
+        text: "group",
+      },
+    });
+    await bot.handleUpdate({
+      update_id: 34,
+      message: {
+        message_id: 34,
+        date: 0,
+        chat: { id: -9, type: "supergroup", title: "Topics", is_forum: true },
+        from: { id: 5, is_bot: false, first_name: "user" },
+        text: "topic",
+        message_thread_id: 7,
+      },
+    });
+    expect(
+      events.map((event) => ({
+        chatType: event.chatType,
+        threadId: event.threadId,
+      })),
+    ).toEqual([
+      { chatType: "dm", threadId: undefined },
+      { chatType: "dm", threadId: undefined },
+      { chatType: "group", threadId: undefined },
+      { chatType: "thread", threadId: "7" },
+    ]);
     await adapter.disconnect();
   });
+});
+
+it("Slack callback normalization does not treat the root timestamp as a thread", () => {
+  expect(
+    normalizePlatformMessageBody("slack", {
+      event: {
+        text: "root",
+        channel: "C1",
+        channel_type: "channel",
+        ts: "1",
+        thread_ts: "1",
+      },
+    }).source,
+  ).toMatchObject({ chatType: "channel", threadId: undefined });
+  expect(
+    normalizePlatformMessageBody("slack", {
+      event: {
+        text: "reply",
+        channel: "C1",
+        channel_type: "channel",
+        ts: "2",
+        thread_ts: "1",
+      },
+    }).source,
+  ).toMatchObject({ chatType: "thread", threadId: "1" });
+  expect(
+    normalizePlatformMessageBody("slack", {
+      event: { text: "direct", channel: "D1", channel_type: "im", ts: "3" },
+    }).source,
+  ).toMatchObject({ chatType: "dm", threadId: undefined });
 });

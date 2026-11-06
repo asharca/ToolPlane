@@ -42,6 +42,8 @@ export type ChannelAdapterConfig<
 export type ChannelMessageEvent = {
   chatId: string;
   conversationId?: string;
+  chatType?: "dm" | "group" | "channel" | "thread";
+  threadId?: string;
   userId: string;
   userName: string;
   text: string;
@@ -52,13 +54,14 @@ export type ChannelMessageEvent = {
   files?: FileAttachment[];
 };
 export type ChannelCommandEvent = Omit<ChannelMessageEvent, "text"> & {
-  command: "new" | "compact" | "help" | "whoami";
+  command: string;
   args?: string;
 };
 export type SendMessageOptions = {
   parseMode?: "MarkdownV2" | "HTML";
   replyToMessageId?: string | number;
   replyInThread?: boolean;
+  confirmation?: { command: "new" | "upgrade"; token: string };
 };
 export type ChannelStatusEvent = { connected: boolean; error?: string };
 export type ChannelLogEvent = { level: keyof ChannelLogger; message: string };

@@ -243,6 +243,11 @@ type ConversationDetail = ConversationSummary & {
   sandbox?: WorkItem["sandbox"];
   runtimeKind?: string;
   modelName?: string | null;
+  modelOverride?: {
+    providerId: string;
+    model: string;
+    providerName: string | null;
+  } | null;
   contextWindow?: number | null;
   agentRevisionId?: string | null;
   agentRevisionVersion?: number | null;
@@ -1423,7 +1428,10 @@ export function WorkspaceWork({
         : "preparing";
   const sessionContextWindow =
     conversation?.contextWindow ?? selected?.contextWindow;
-  const sessionModelName = conversation?.modelName ?? selected?.modelName;
+  const sessionModelName =
+    conversation?.modelOverride?.model ??
+    conversation?.modelName ??
+    selected?.modelName;
   const sessionContextEstimated =
     conversation?.contextWindowEstimated ?? selected?.contextWindowEstimated;
   const renderedHookIds = useMemo(
@@ -2883,6 +2891,18 @@ export function WorkspaceWork({
                       {controlAgent.name}
                     </span>
                   ) : null}
+                  {channelConversation && conversation?.modelOverride ? (
+                    <span
+                      className="max-w-48 truncate rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground"
+                      title={
+                        conversation.modelOverride.providerName ?? undefined
+                      }
+                    >
+                      {tChannels("sessionModelOverride", {
+                        model: conversation.modelOverride.model,
+                      })}
+                    </span>
+                  ) : null}
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1">
@@ -2940,6 +2960,22 @@ export function WorkspaceWork({
                   void refreshSelected();
                   router.refresh();
                 }}
+              />
+            ) : null}
+            {conversation &&
+            channelConversation &&
+            !sessionReadOnly &&
+            controlAgent &&
+            conversation.agentRevisionVersion &&
+            controlAgent.currentRevisionVersion &&
+            conversation.agentRevisionVersion <
+              controlAgent.currentRevisionVersion ? (
+              <RevisionUpgradeNotice
+                url={`/api/v1/agents/${conversation.agentId}/conversations/${conversation.id}/revision`}
+                fromVersion={conversation.agentRevisionVersion}
+                targetVersion={controlAgent.currentRevisionVersion}
+                disabled={conversationBusy || Boolean(busy) || composerPending}
+                onUpgraded={() => router.refresh()}
               />
             ) : null}
 
@@ -3036,7 +3072,10 @@ export function WorkspaceWork({
                     <WorkTranscript
                       agentName={controlAgent?.name ?? t("agent")}
                       modelName={
-                        conversation?.modelName ?? selected?.modelName ?? null
+                        conversation?.modelOverride?.model ??
+                        conversation?.modelName ??
+                        selected?.modelName ??
+                        null
                       }
                       messages={
                         conversation?.messages ?? selected?.messages ?? []
@@ -3126,6 +3165,7 @@ export function WorkspaceWork({
                 key={`${conversation.agentId}:${conversation.id}`}
                 endpoint={`/api/v1/agents/${encodeURIComponent(conversation.agentId)}/conversations/${encodeURIComponent(conversation.id)}/execution`}
                 showStatus
+                onBusyChange={setConversationBusy}
                 renderedActivityIds={renderedHookIds}
                 settingsHref={agentSettingsHref(
                   slug,

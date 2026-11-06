@@ -157,22 +157,24 @@ describe("channel inbound events", () => {
       connectionId: "connection",
       platform: "slack",
     });
-    expect(m.message).toHaveBeenCalledWith({
-      connectionId: "connection",
-      workspaceId: "workspace",
-      agentId: "agent",
-      rawBody: expect.objectContaining({
-        message: "Ship release",
-        source: expect.objectContaining({
-          platform: "slack",
-          chatId: "channel",
-          userId: "sender",
-          threadId: "100",
-          messageId: "123",
-          scopeId: "team",
+    expect(m.message).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionId: "connection",
+        workspaceId: "workspace",
+        agentId: "agent",
+        rawBody: expect.objectContaining({
+          message: "Ship release",
+          source: expect.objectContaining({
+            platform: "slack",
+            chatId: "channel",
+            userId: "sender",
+            threadId: "100",
+            messageId: "123",
+            scopeId: "team",
+          }),
         }),
       }),
-    });
+    );
   });
   it("handles non-object events and verification-shaped messages without a string challenge as normal messages", async () => {
     for (const body of [

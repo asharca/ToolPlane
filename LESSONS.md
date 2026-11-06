@@ -45,7 +45,8 @@
 - **提交详情大小补充（2026-11-05，同一私有来源再次失败）**：`resolveCommit()` 请求完整提交详情，却以 256 KiB 限制响应；真实 GitHub 返回 209 个变更文件、307116 字节，导致尚未解析 SHA 就报 `github_response_too_large`。按用户要求仅取消此请求的响应大小限制，保留其他资源限额和鉴权；17 MiB 提交详情回归及来源边界共 34 项通过。受控替换生产镜像后，任务 `commit-repair-935faee9-e7ed-4d46-bf61-aa6e4d9ac1e3` 对提交 `54403f29c85478a9ab44a311a4be066f8eeca3d2` 同步成功，来源 `synced`，活动资源 3 个。下次同步验收须覆盖包含大量文件变更的提交，而不只验证小响应或首次同步。
 - **模型重试接线补充（2026-11-05，线上 `empty_stream` 后新增重试）**：首版把工作区重试次数接在 `sandbox-turn.ts`，宿主回归测试全部通过，但真实 Work 走 A2A `pi-executor` → `task-options` → `runSandboxAgentTurn`，绕过了该入口，伪网关只收到一次请求。改为在 `runNativeSessionExec` 组装每轮 context 时读取工作区设置，真实 Work 观察到一次空流后重试成功，以及重试 2 次后报 `EMPTY_STREAM RETRIED_2`。另外 Pi 的会话初始化会从存储重算 settings，在 `refreshContext` 里应用的覆盖会丢失，须在会话就绪后应用。下次给每轮执行加设置时，接到所有入口共用的宿主调用处，并用一个可控上游跑真实 Work，数实际请求次数。
 - **本地重建迁移遗漏（2026-11-05，用户反馈 Work 页面报错）**：替换 `toolplane-3000` 时复制旧容器的 `Entrypoint=[node]` 与启动命令，绕过镜像的 `docker-entrypoint.sh`；首页及 readiness 均为 200，登录后的 `/app/smoke/work` 却因 `Agent.monthlyBudgetMicros` 缺失报 P2022。核实本地目标库并备份、受控停止应用后，恢复镜像默认入口，成功应用唯一待执行的 `20261105030000_agent_triggers_usage`；smoke 账户实际登录后的 Work 页面 HTTP 200，列表和输入区可见。下次保留部署环境和挂载不等于盲目复制入口覆盖；替换前检查 `prisma migrate status`，并验收带认证的实际业务路由。依据：[镜像入口](docker-entrypoint.sh)、[字段迁移](prisma/migrations/20261105030000_agent_triggers_usage/migration.sql)。
-- **确认日期**：历史日期未知；初始整理于 2026-10-18；2026-10-30、2026-11-01、2026-11-02、2026-11-03、2026-11-04、2026-11-05 实测确认。
+- **本地 :3000 预检复发（2026-11-06，用户报告创建智能体 `PI_CAPABILITY_PREFLIGHT_FAILED`）**：前一日重建 `toolplane-3000` 时沿用旧容器的环境和挂载，仍缺上文“生产 Pi 迁移补充”要求的同绝对路径 `TMPDIR` 挂载；容器内 `docker create --mount type=bind,source=/tmp/...` 实测返回 `bind source path does not exist`，readiness 仍为 200。确认无活动 Work／助手 Run 后受控停止，保留旧容器为 `toolplane-3000-pre-tmpdir-20261106`，以相同镜像、入口、环境追加 `TMPDIR=/home/ashark/Services/toolplane-3000/runtime-tmp` 及同路径 bind 重建；readiness 200，真实浏览器创建无资源及含 MCP＋技能的 Pi 智能体均发布修订 1，新 Work 原生 bash 返回 `TMPDIR_FIX_OK`。下次替换任何容器化实例，除迁移状态和入口外，还须核对 `TMPDIR` 挂载并完成一次真实创建／发布修订。
+- **确认日期**：历史日期未知；初始整理于 2026-10-18；2026-10-30、2026-11-01、2026-11-02、2026-11-03、2026-11-04、2026-11-05、2026-11-06 实测确认。
 
 ### TP-L002：构建成功，不代表最终镜像里的原生依赖能启动
 
@@ -409,4 +410,12 @@
 
 - **证据（2026-11-06，用户反馈）**：用户反馈“输入总是报错”。:3000 上短会话里的每一次 `/compact`，都在约 1.2 秒内以 `PI_SDK_REQUEST_FAILED` 失败，期间没有任何模型代理请求；原因是 Pi 的 `compact()` 在 `prepareCompaction` 返回空时直接抛错。修复后，在同一 Work 会话的真实沙箱里发送 `/compact`，任务状态为 COMPLETED，界面显示 Pi 的提示。
 - **下次怎么验证**：在 `tests/integration/pi-sdk-host.test.ts` 中，对短会话执行原生命令，确认返回成功、没有发出模型请求、会话没有被改写；再在真实 Work 会话中发送一次。
+- **确认日期**：2026-11-06。
+
+### TP-L040：要在控制台展示的日志属性，不能挂在 Agent 范围的事件上
+
+**规则**：`recordEvent` 遇到带 `agentId`（含继承的日志上下文）的事件，会把 attributes 收窄为数值遥测，防止 Agent 内容进入元数据。需要按属性聚合展示的运维事件（如发送人 ID），要在不带 agentId 的独立上下文中记录；测试 fixture 必须和真实连接一样绑定 Agent。
+
+- **证据（2026-11-06，频道重设计验收）**：`channel.sender_rejected` 的集成测试使用未绑定 Agent 的连接，属性完整，测试通过；在 :3000 上对已绑定 Agent 的真实连接调用准入后，两条拒绝日志的 `attributes.data` 都是 `{}`，控制台“最近被拒绝的发送者”因此始终为空。同一轮验收还发现查询读取的是 `attributes->>'userId'`，实际字段在 `attributes->'data'` 之下。现改为以 `withLogContext({ workspaceId, channelId }, …, true)` 记录、按 `data` 读取，回归 fixture 已绑定 Agent。
+- **下次怎么验证**：新增依赖日志属性的控制台视图时，用绑定 Agent 的真实连接写一条事件，直接查 `LogEvent.attributes`，再在页面确认列表有数据；回归见 `tests/integration/agent-channel-access.test.ts` 的 “denies v2 empty allowlists”。依据：[事件脱敏](src/lib/observability/events.ts)、[准入记录](src/lib/agents/channel-sender-access.ts)。
 - **确认日期**：2026-11-06。

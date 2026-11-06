@@ -562,6 +562,11 @@ export class QqAdapter extends ChannelAdapter {
 
     this.emit("message", {
       chatId,
+      chatType: chatId.startsWith("group:")
+        ? "group"
+        : chatId.startsWith("channel:")
+          ? "channel"
+          : "dm",
       userId,
       userName,
       text,
@@ -689,7 +694,19 @@ export class QqAdapter extends ChannelAdapter {
     messageId: string,
   ): void {
     const cmd = text.split(/\s+/)[0].slice(1) as "new" | "compact" | "help";
-    this.emit("command", { chatId, userId, userName, command: cmd, messageId });
+    this.emit("command", {
+      chatId,
+      userId,
+      userName,
+      command: cmd,
+      messageId,
+      chatType: chatId.startsWith("group:")
+        ? "group"
+        : chatId.startsWith("channel:")
+          ? "channel"
+          : "dm",
+      args: text.split(/\s+/).slice(1).join(" "),
+    });
   }
 
   async sendMessage(

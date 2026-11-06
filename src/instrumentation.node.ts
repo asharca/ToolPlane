@@ -1,6 +1,7 @@
 import { startRuntimeOwner } from "@/lib/runtime/owner";
 import { runtimeCanOperate } from "@/lib/runtime/ownership-state";
 import { systemLog } from "@/lib/observability/system";
+import { backfillChannelSenderPolicies } from "@/lib/agents/channel-sender-access";
 import { stopIdleAgentConversationSandboxes } from "@/lib/agents/conversation-sandbox";
 import { runPendingGithubResourceSyncJobs } from "@/lib/plugins/indexer";
 import { provisionOfficialPluginSource } from "@/lib/plugins/sources";
@@ -148,6 +149,7 @@ async function registerNodeOwned() {
   }
 
   try {
+    await backfillChannelSenderPolicies();
     const { reconcileAgentChannelRunners } = await import(
       "@/lib/agents/channel-runtime"
     );

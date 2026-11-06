@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { EventEmitter } from "node:events";
+import { setImmediate } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -8,6 +9,11 @@ const mocks = vi.hoisted(() => ({
   log: vi.fn(() => "Channel operation failed."),
   connection: vi.fn(),
   update: vi.fn(async () => ({ count: 1 })),
+  admit: vi.fn(),
+  persist: vi.fn(),
+  payload: null as unknown,
+  handler: null as ((payload: unknown) => Promise<unknown>) | null,
+  pending: new Set<Promise<unknown>>(),
 }));
 vi.mock("@/lib/runtime/ownership-state", () => ({
   assertRuntimeOwner: vi.fn(),
@@ -40,8 +46,38 @@ vi.mock("@/lib/agents/platforms", () => ({
 vi.mock("@/lib/agents/channel-runtime-logs", () => ({
   appendAgentChannelLog: mocks.log,
 }));
-vi.mock("@/lib/agents/channel-access", () => ({
-  channelSenderAllowed: () => true,
+vi.mock("@/lib/agents/channel-sender-access", () => ({
+  admitChannelSender: mocks.admit,
+}));
+// Transport-only tests stub the queue boundary; real lease recovery/deduplication
+// is covered against Postgres in agent-channel-sessions.test.ts.
+vi.mock("@/lib/agents/channel-inbound-queue", () => ({
+  channelInboundDedupeKey: (messageId: string) => messageId,
+  persistChannelInboundEvent: mocks.persist,
+  registerChannelInboundHandler: (
+    _connectionId: string,
+    handler: (payload: unknown) => Promise<unknown>,
+  ) => {
+    mocks.handler = handler;
+    return () => {
+      if (mocks.handler === handler) mocks.handler = null;
+    };
+  },
+  processChannelInboundQueue: async () => {
+    const operation = mocks.handler?.(mocks.payload).catch(() => {});
+    if (!operation) return;
+    mocks.pending.add(operation);
+    try {
+      await operation;
+    } finally {
+      mocks.pending.delete(operation);
+    }
+  },
+  recoverChannelInboundEvents: async () => {},
+  startChannelInboundRecovery: () => {},
+  stopChannelInboundRecovery: async () => {
+    await Promise.allSettled([...mocks.pending]);
+  },
 }));
 vi.mock("@/lib/agents/channel-sandboxes", () => ({
   getChannelSandbox: vi.fn(),
@@ -72,19 +108,23 @@ let adapter: TestAdapter;
 const incoming = () =>
   adapter.emit("message", {
     chatId: "chat",
+    chatType: "dm",
     userId: "sender",
     userName: "Sender",
     text: "hi",
     messageId: "message-1",
   });
-const drain = () =>
-  Promise.all([
-    ...(globalThis.__toolplaneAgentChannelAdapters
-      ?.get("channel")
-      ?.queues.values() ?? []),
-  ]);
+const drain = async () => {
+  await setImmediate();
+  await Promise.allSettled([...mocks.pending]);
+};
 beforeEach(async () => {
   vi.clearAllMocks();
+  mocks.admit.mockResolvedValue({ allowed: true, role: "user" });
+  mocks.persist.mockImplementation(async (input) => {
+    mocks.payload = input.payload;
+    return { event: { queueKey: input.queueKey }, duplicate: false };
+  });
   adapter = new TestAdapter();
   mocks.createAdapter.mockResolvedValue(adapter);
   mocks.connection.mockResolvedValue({
@@ -94,6 +134,8 @@ beforeEach(async () => {
     sandboxId: null,
     platform: "weixin",
     credentials: {},
+    groupSessionsPerUser: true,
+    threadSessionsPerUser: false,
   });
   mocks.run.mockResolvedValue({
     status: 200,
@@ -111,7 +153,48 @@ describe("channel upstream execution delivery", () => {
     await drain();
     expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
     expect(adapter.sendMessage.mock.calls[0]?.[1]).toBe("Actual reply");
-    expect(mocks.run.mock.calls[0]?.[0]).not.toHaveProperty("onAccepted");
+  });
+
+  it("persists admitted events before executing and carries the adapter source context", async () => {
+    incoming();
+    await drain();
+    expect(mocks.persist).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionId: "channel",
+        workspaceId: "workspace",
+        dedupeKey: "message-1",
+        kind: "hosted",
+      }),
+    );
+    expect(mocks.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inboundPersisted: true,
+        hostedIngress: true,
+        rawBody: expect.objectContaining({
+          source: expect.objectContaining({ chatType: "dm", userId: "sender" }),
+        }),
+      }),
+    );
+    expect(mocks.persist.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.run.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("delivers an admission reply without persisting or executing the rejected sender", async () => {
+    mocks.admit.mockResolvedValueOnce({
+      allowed: false,
+      rule: "user_not_allowed",
+      reply: "Approval code: ABCDEFGH",
+    });
+    incoming();
+    await drain();
+    expect(mocks.persist).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(adapter.sendMessage).toHaveBeenCalledWith(
+      "chat",
+      "Approval code: ABCDEFGH",
+    );
+    expect(mocks.log).not.toHaveBeenCalled();
   });
 
   it.each(["rejected", "error-response"])(
