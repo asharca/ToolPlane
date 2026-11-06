@@ -14,7 +14,7 @@ import { DashboardPanel } from "@/components/dashboard/DashboardUI";
 import {
   RenameWorkspaceForm,
   WorkspaceDeleteForm,
-  WorkspaceMemberAction,
+  WorkspaceLeaveAction,
   WorkspaceTransferForm,
 } from "@/components/dashboard/WorkspaceForms";
 import { listProviders } from "@/lib/agents/queries";
@@ -176,7 +176,7 @@ export default async function SettingsPage({
             </DashboardPanel>
           ) : (
             <DashboardPanel title={management("leave")}>
-              <WorkspaceMemberAction slug={slug} kind="leave" />
+              <WorkspaceLeaveAction slug={slug} />
             </DashboardPanel>
           )}
         </DialogBody>
