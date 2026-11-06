@@ -1,6 +1,9 @@
 import "server-only";
 import { MCP_RESULT_TO_FILE_TOOL } from "./native-tools";
-import { withSandboxExecutionLease } from "./sandbox-execution-gate";
+import {
+  serializeSandboxStep,
+  withSandboxSessionLease,
+} from "./sandbox-execution-gate";
 import { findAgentConversationSandbox } from "./conversation-sandbox";
 import { PiRuntimeInterruptedError } from "./pi-harness";
 import { hasNativeConversationHistory } from "./conversation-context";
@@ -73,6 +76,9 @@ const TURN_TIMEOUT_MS = 30 * 60_000;
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const RUNTIME_TEMP_ROOT = "/workspace/.toolplane/runtime-tmp";
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// Each platform node process in a shared Agent sandbox otherwise starts one V8
+// worker per host core, and every thread counts against the sandbox pids limit.
+const SANDBOX_NODE_FLAG = "--v8-pool-size=1";
 
 export type SandboxAgentRuntimeKind =
   | "pi"
@@ -2208,40 +2214,48 @@ async function runNativeSessionExec(
         }),
       },
     );
-    const ready = await prepareSandboxTurn(
-      exec.container,
-      workspaceRoot,
-      exec.workdir,
-      preparation,
-      options.signal,
+    // Sessions of one sandbox share the runtime directory. Verify and install
+    // one turn at a time: a second concurrent installer finds the runtime
+    // complete and exits before reading its artifact (EPIPE).
+    const prepared = serializeSandboxStep(
+      `runtime:${exec.container}`,
+      async () => {
+        const ready = await prepareSandboxTurn(
+          exec.container,
+          workspaceRoot,
+          exec.workdir,
+          preparation,
+          options.signal,
+        );
+        if (ready) return;
+        const artifact = await waitForSandboxRuntimeInstall(
+          preparePiRuntime(),
+          options.signal,
+        );
+        if (preparation.runtime.kind !== "pi-sdk")
+          throw new Error("PI_SDK_VERSION_MISMATCH");
+        await runTrackedDockerExec({
+          container: exec.container,
+          workdir: "/workspace",
+          executable: "node",
+          args: [
+            preparation.runtime.installerPath,
+            JSON.stringify({
+              directory: PI_SDK_RUNTIME.directory,
+              sha256: artifact.sha256,
+            }),
+          ],
+          stdinFile: artifact.path,
+          signal: options.signal,
+          timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
+        });
+      },
     );
-    if (!ready) {
-      const artifact = await waitForSandboxRuntimeInstall(
-        preparePiRuntime(),
-        options.signal,
-      );
-      if (preparation.runtime.kind !== "pi-sdk")
-        throw new Error("PI_SDK_VERSION_MISMATCH");
-      await runTrackedDockerExec({
-        container: exec.container,
-        workdir: "/workspace",
-        executable: "node",
-        args: [
-          preparation.runtime.installerPath,
-          JSON.stringify({
-            directory: PI_SDK_RUNTIME.directory,
-            sha256: artifact.sha256,
-          }),
-        ],
-        stdinFile: artifact.path,
-        signal: options.signal,
-        timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
-      });
-    }
+    await waitForSandboxRuntimeInstall(prepared, options.signal);
     return await runTrackedDockerExec({
       ...exec,
       executable: "node",
-      args: [driverPath, inputPath],
+      args: [SANDBOX_NODE_FLAG, driverPath, inputPath],
       stdin: undefined,
     });
   } finally {
@@ -2555,7 +2569,7 @@ async function runPiSdk(
       container,
       workdir,
       executable: "node",
-      args: [hostPath, configPath],
+      args: [SANDBOX_NODE_FLAG, hostPath, configPath],
       signal: options.signal,
       timeoutMs: options.timeoutMs ?? TURN_TIMEOUT_MS,
       secrets: [options.runtimeAccessToken],
@@ -2628,11 +2642,21 @@ export async function runSandboxAgentTurn(
 ): Promise<string> {
   if (options.runtimeKind !== "pi-sdk")
     throw new Error("AGENT_RUNTIME_RETIRED");
+  // A turn without a durable session still gets a private one-shot session.
+  const session =
+    options.runtimeSessionId ??
+    options.a2aContextId ??
+    options.conversationId ??
+    randomUUID();
   try {
-    return await withSandboxExecutionLease(options.sandboxId, async () => {
-      await options.onExecutionStage?.("preparing");
-      return runExclusiveSandboxAgentTurn(options);
-    });
+    return await withSandboxSessionLease(
+      options.sandboxId,
+      session,
+      async () => {
+        await options.onExecutionStage?.("preparing");
+        return runSessionSandboxAgentTurn(options);
+      },
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const safeMessage = redact(message, [options.runtimeAccessToken]);
@@ -2652,7 +2676,7 @@ export async function runSandboxAgentTurn(
   }
 }
 
-async function runExclusiveSandboxAgentTurn(
+async function runSessionSandboxAgentTurn(
   options: RunSandboxAgentTurnOptions,
 ): Promise<string> {
   if (
@@ -2736,66 +2760,70 @@ export async function cancelPiHarnessOperation(
   binding: PiHarnessBinding,
 ): Promise<PiHarnessOperationResult> {
   // Drain only an already-bound old operation; never prepare a session or install a runtime.
-  return withSandboxExecutionLease(options.sandboxId, async () => {
-    assertRuntimeOwner();
-    const task = await db.a2ATask.findFirst({
-      where: {
-        id: binding.taskId,
-        contextId: binding.contextId,
-        nativeOperationId: binding.operationId,
-        executionBackend: "pi-harness",
-        context: { workspaceId: options.workspaceId },
-      },
-      select: { context: { select: { agentId: true } } },
-    });
-    if (
-      task?.context.agentId !== options.agentId ||
-      options.a2aContextId !== binding.contextId ||
-      !/^[a-zA-Z0-9_-]{1,200}$/.test(binding.operationId)
-    )
-      throw new Error("Native cleanup operation binding changed.");
-    await assertAssignedDockerSandbox(options, true);
-    const container = sandboxContainerName(options.sandboxId);
-    const id = randomUUID();
-    const inputPath = `${RUNTIME_TEMP_ROOT}/${id}-cancel.json`;
-    const hostPath = `${RUNTIME_TEMP_ROOT}/${id}-drain.mjs`;
-    await writeSandboxFile(
-      container,
-      hostPath,
-      await readFile(`${process.cwd()}/scripts/pi-harness-drain.mjs`, "utf8"),
-    );
-    try {
+  return withSandboxSessionLease(
+    options.sandboxId,
+    options.a2aContextId,
+    async () => {
+      assertRuntimeOwner();
+      const task = await db.a2ATask.findFirst({
+        where: {
+          id: binding.taskId,
+          contextId: binding.contextId,
+          nativeOperationId: binding.operationId,
+          executionBackend: "pi-harness",
+          context: { workspaceId: options.workspaceId },
+        },
+        select: { context: { select: { agentId: true } } },
+      });
+      if (
+        task?.context.agentId !== options.agentId ||
+        options.a2aContextId !== binding.contextId ||
+        !/^[a-zA-Z0-9_-]{1,200}$/.test(binding.operationId)
+      )
+        throw new Error("Native cleanup operation binding changed.");
+      await assertAssignedDockerSandbox(options, true);
+      const container = sandboxContainerName(options.sandboxId);
+      const id = randomUUID();
+      const inputPath = `${RUNTIME_TEMP_ROOT}/${id}-cancel.json`;
+      const hostPath = `${RUNTIME_TEMP_ROOT}/${id}-drain.mjs`;
       await writeSandboxFile(
         container,
-        inputPath,
-        JSON.stringify({ ...binding, agentId: options.agentId }),
+        hostPath,
+        await readFile(`${process.cwd()}/scripts/pi-harness-drain.mjs`, "utf8"),
       );
-      const output = await runTrackedDockerExec({
-        container,
-        workdir: "/workspace",
-        executable: "node",
-        args: [hostPath, inputPath],
-        timeoutMs: options.timeoutMs ?? 15_000,
-        env: { PI_OFFLINE: "1", PI_TELEMETRY: "0", NO_COLOR: "1" },
-      });
-      let result: PiHarnessOperationResult | undefined;
-      for (const line of output.split("\n").filter(Boolean)) {
-        const event = JSON.parse(line);
-        result = z
-          .object({
-            status: z.enum(["completed", "declined", "aborted", "failed"]),
-            text: z.string(),
-            operationId: z.string().optional(),
-          })
-          .parse(event);
-      }
-      if (!result)
-        throw new Error(
-          "PI_PROTOCOL_ERROR: cancellation did not return a terminal result.",
+      try {
+        await writeSandboxFile(
+          container,
+          inputPath,
+          JSON.stringify({ ...binding, agentId: options.agentId }),
         );
-      return result;
-    } finally {
-      await removeSandboxFiles(container, [inputPath, hostPath]);
-    }
-  });
+        const output = await runTrackedDockerExec({
+          container,
+          workdir: "/workspace",
+          executable: "node",
+          args: [hostPath, inputPath],
+          timeoutMs: options.timeoutMs ?? 15_000,
+          env: { PI_OFFLINE: "1", PI_TELEMETRY: "0", NO_COLOR: "1" },
+        });
+        let result: PiHarnessOperationResult | undefined;
+        for (const line of output.split("\n").filter(Boolean)) {
+          const event = JSON.parse(line);
+          result = z
+            .object({
+              status: z.enum(["completed", "declined", "aborted", "failed"]),
+              text: z.string(),
+              operationId: z.string().optional(),
+            })
+            .parse(event);
+        }
+        if (!result)
+          throw new Error(
+            "PI_PROTOCOL_ERROR: cancellation did not return a terminal result.",
+          );
+        return result;
+      } finally {
+        await removeSandboxFiles(container, [inputPath, hostPath]);
+      }
+    },
+  );
 }

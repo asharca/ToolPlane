@@ -134,6 +134,7 @@ import {
   frozenSandboxes,
   sandboxAccesses,
 } from "@/lib/sandboxes/activity";
+import { enqueueSandboxOperation } from "@/lib/sandboxes/lifecycle";
 const input = {
   workspaceId: "workspace",
   agentId: "agent",
@@ -606,16 +607,31 @@ describe("durable conversation sandbox bindings", () => {
       release();
     }
   });
-  it("does not reuse a live sandbox while a disruptive lifecycle operation holds it", async () => {
+  it("waits behind a disruptive lifecycle operation instead of reusing the live sandbox", async () => {
     mocks.sandbox.mockResolvedValue({
       ...sandbox,
       deployment: { ...sandbox.deployment, status: "running" },
     });
     mocks.liveStatus.mockReturnValue("running");
-    frozenSandboxes.add("isolated");
-    await expect(ensureAgentConversationSandbox(input)).rejects.toThrow(
-      "lifecycle operation",
+    const { promise: held, resolve: finish } = Promise.withResolvers<void>();
+    const lifecycle = enqueueSandboxOperation(
+      input.workspaceId,
+      "isolated",
+      () => held,
     );
+    await vi.waitFor(() => expect(frozenSandboxes.has("isolated")).toBe(true));
+    let settled = false;
+    const ensured = ensureAgentConversationSandbox(input).finally(() => {
+      settled = true;
+    });
+    // Let the mocked allocation settle; a reuse would touch the volume next.
+    for (let turn = 0; turn < 20; turn++)
+      await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    expect(mocks.volume).not.toHaveBeenCalled();
+    finish();
+    await lifecycle;
+    await expect(ensured).resolves.toMatchObject({ sandboxId: "isolated" });
     expect(mocks.start).not.toHaveBeenCalled();
   });
   it("revalidates the saved volume before reusing a running sandbox", async () => {

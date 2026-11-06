@@ -4080,7 +4080,7 @@
     "agentConcurrencyDescription": "限制智能体任务的同时执行数。同一智能体的会话共享沙箱，并使用独立工作目录。",
     "agentMaxConcurrent": "每个智能体最大并发执行数",
     "agentMaxTotalConcurrent": "平台沙箱任务最大并发执行总数",
-    "agentConcurrencyBehavior": "不同会话可并行，同一会话保持串行，超出限额的任务等待空位。修改对后续调度生效，不中断正在执行的任务。默认每个智能体 1 个、平台总计 16 个。同一智能体的会话使用独立工作目录，但共享沙箱文件系统。",
+    "agentConcurrencyBehavior": "不同会话可并行，同一会话保持串行，超出限额的任务等待空位。修改对后续调度生效，不中断正在执行的任务。默认每个智能体 1 个、平台总计 16 个。同一智能体的会话使用独立工作目录，但共享沙箱文件系统。智能体沙箱的内存和进程数上限按每个智能体的并发数倍增（CPU 不变），在沙箱下次启动时生效。",
     "errorAgentConcurrency": "请输入整数：每个智能体 1–{perAgent}，平台总计 1–{total}；平台总数不能小于单个智能体的上限。",
     "restoreAgentConcurrencyDefaults": "恢复默认并发限额",
     "agentSandboxAutoStop": "智能体沙箱空闲自动关闭",

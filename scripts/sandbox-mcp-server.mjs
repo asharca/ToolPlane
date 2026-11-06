@@ -593,6 +593,35 @@ async function ensureDockerContainer() {
       await createDockerContainer();
       return;
     }
+    const hostConfig = info.HostConfig ?? {};
+    if (
+      hostConfig.Memory !== RESOURCE_LIMITS.memoryBytes ||
+      hostConfig.PidsLimit !== RESOURCE_LIMITS.pidsLimit ||
+      hostConfig.NanoCpus !== Math.round(RESOURCE_LIMITS.cpus * 1e9)
+    ) {
+      // Agent limits follow the admin concurrency setting; update in place so
+      // the container filesystem survives. Swap mirrors docker run's default.
+      const updated = await run(
+        "docker",
+        [
+          "update",
+          "--memory",
+          String(RESOURCE_LIMITS.memoryBytes),
+          "--memory-swap",
+          String(RESOURCE_LIMITS.memoryBytes * 2),
+          "--cpus",
+          String(RESOURCE_LIMITS.cpus),
+          "--pids-limit",
+          String(RESOURCE_LIMITS.pidsLimit),
+          CONTAINER,
+        ],
+        { env: dockerEnv(), timeoutMs: 30_000 },
+      );
+      if (updated.exitCode !== 0)
+        throw new Error(
+          updated.stderr || `docker update failed (${updated.exitCode})`,
+        );
+    }
     if (info.State?.Running === true) return;
     const started = await run("docker", ["start", CONTAINER], {
       env: dockerEnv(),
