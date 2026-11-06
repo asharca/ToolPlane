@@ -3,7 +3,6 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Checkbox } from "@/components/motion/checkbox";
-import { FormSelect } from "@/components/ui/FormSelect";
 
 export type PlatformSubagentOption = {
   id: string;
@@ -26,31 +25,19 @@ export type SubagentResourcesSnapshot = {
   agents: PlatformSubagentOption[];
 };
 
-const concurrencyOptions = Array.from({ length: 8 }, (_, index) => ({
-  value: String(index + 1),
-  label: String(index + 1),
-}));
-const depthOptions = concurrencyOptions.slice(0, 4);
-
 export function SubagentResources({
   slug,
   agentId,
-  runtimeKind,
   snapshot,
   draft,
-  appliedMode,
-  hasAppliedRevision,
   disabled,
   onLoad,
   onChange,
 }: {
   slug: string;
   agentId: string;
-  runtimeKind: string;
   snapshot: SubagentResourcesSnapshot | null;
   draft: SubagentDraft | null;
-  appliedMode?: "platform" | "native";
-  hasAppliedRevision: boolean;
   disabled: boolean;
   onLoad: (snapshot: SubagentResourcesSnapshot) => void;
   onChange: (draft: SubagentDraft) => void;
@@ -59,8 +46,6 @@ export function SubagentResources({
   const id = useId();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const omp = runtimeKind === "omp";
-  const native = omp && (draft?.native ?? snapshot?.native ?? false);
   const nativePolicy = draft?.nativePolicy ?? snapshot?.nativePolicy;
   const selectedIds = useMemo(
     () =>
@@ -112,7 +97,12 @@ export function SubagentResources({
     );
   if (!snapshot || !nativePolicy) return null;
   const update = (patch: Partial<SubagentDraft>) =>
-    onChange({ native, agentIds: [...selectedIds], nativePolicy, ...patch });
+    onChange({
+      native: false,
+      agentIds: [...selectedIds],
+      nativePolicy,
+      ...patch,
+    });
 
   return (
     <div className="min-w-0 space-y-6">
@@ -175,83 +165,7 @@ export function SubagentResources({
           </fieldset>
         )}
       </section>
-      {omp ? (
-        <section className="space-y-3">
-          <Checkbox
-            checked={native}
-            label={t("nativeToggle")}
-            disabled={disabled}
-            aria-describedby={`${id}-native-help`}
-            onCheckedChange={(nextChecked) => update({ native: nextChecked })}
-          />
-          <p
-            id={`${id}-native-help`}
-            className="pl-8 text-sm leading-6 text-muted-foreground"
-          >
-            {t("nativeHelp")}
-          </p>
-          <p className="pl-8 text-xs leading-5 text-muted-foreground">
-            {t("appliedNative", {
-              state: !hasAppliedRevision
-                ? t("notApplied")
-                : appliedMode === "native"
-                  ? t("nativeEnabled")
-                  : appliedMode === "platform"
-                    ? t("nativeDisabled")
-                    : t("legacyMode"),
-            })}
-          </p>
-          {native ? (
-            <div className="grid gap-4 rounded-xl border border-border/60 bg-background p-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <label
-                  htmlFor={`${id}-concurrency`}
-                  className="text-sm font-medium"
-                >
-                  {t("maxConcurrency")}
-                </label>
-                <FormSelect
-                  id={`${id}-concurrency`}
-                  label={t("maxConcurrency")}
-                  options={concurrencyOptions}
-                  value={String(nativePolicy.maxConcurrency)}
-                  disabled={disabled}
-                  onValueChange={(value) =>
-                    update({
-                      nativePolicy: {
-                        ...nativePolicy,
-                        maxConcurrency: Number(value),
-                      },
-                    })
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor={`${id}-depth`} className="text-sm font-medium">
-                  {t("maxDepth")}
-                </label>
-                <FormSelect
-                  id={`${id}-depth`}
-                  label={t("maxDepth")}
-                  options={depthOptions}
-                  value={String(nativePolicy.maxDepth)}
-                  disabled={disabled}
-                  onValueChange={(value) =>
-                    update({
-                      nativePolicy: {
-                        ...nativePolicy,
-                        maxDepth: Number(value),
-                      },
-                    })
-                  }
-                />
-              </div>
-            </div>
-          ) : null}
-        </section>
-      ) : (
-        <p className="text-sm text-muted-foreground">{t("platformOnly")}</p>
-      )}
+      <p className="text-sm text-muted-foreground">{t("platformOnly")}</p>
     </div>
   );
 }

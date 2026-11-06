@@ -20,6 +20,7 @@ enum NotificationKind {
   workspace_invitation
   site_announcement
   workspace_announcement
+  agent_budget_alert
 }
 
 enum McpToolExposure {
@@ -54,6 +55,9 @@ model User {
   chatToolApprovals ChatToolConfirmation[] @relation("ChatToolApprover")
   nativeWorkSessions WorkSession[] @relation("NativeWorkActor")
   nativeChannelConnections AgentChannelConnection[] @relation("NativeChannelActor")
+  channelSenderApprovals AgentChannelSenderApproval[] @relation("ChannelSenderApprover")
+  channelPairingDecisions AgentChannelPairingRequest[] @relation("ChannelPairingDecider")
+  agentTriggers AgentTrigger[]
   toolkitInstallations ToolkitInstallation[]
   id                     String                @id @default(cuid())
   email                  String                @unique
@@ -179,6 +183,8 @@ model Workspace {
   subagentDefinitions WorkspaceSubagent[]
   remoteA2AAgents RemoteA2AAgent[]
   a2aContexts A2AContext[]
+  agentUsage AgentUsage[]
+  agentTriggers AgentTrigger[]
   id                     String                   @id @default(cuid())
   slug                   String                   @unique
   name                   String
@@ -187,6 +193,8 @@ model Workspace {
   defaultModel           String?
   titleModelProviderId   String?
   titleModel             String?
+  // Automatic retries of one failed model request inside a Pi turn (0 disables).
+  modelRetryAttempts     Int                      @default(3)
   ownerId                String
   owner                  User                     @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   members                Membership[]
@@ -418,6 +426,7 @@ model LogEvent {
   deploymentId   String?
   agentId        String?
   runId          String?
+  taskId         String?
   conversationId String?
   channelId      String?
   providerId     String?
@@ -443,6 +452,7 @@ model LogEvent {
   @@index([domain, level, createdAt])
   @@index([agentId, createdAt])
   @@index([runId, createdAt])
+  @@index([taskId, createdAt])
   @@index([channelId, createdAt])
 }
 
@@ -577,6 +587,10 @@ model ProviderModel {
 }
 
 model Agent {
+  monthlyBudgetMicros BigInt?
+  budgetAlertedMonth String?
+  usage AgentUsage[]
+  triggers AgentTrigger[]
   a2aInboundEnabled Boolean @default(false)
   a2aOutboundEnabled Boolean @default(false)
   a2aPolicy Json?
@@ -627,6 +641,55 @@ model Agent {
 
   @@unique([workspaceId, slug])
   @@unique([id, workspaceId])
+}
+
+model AgentUsage {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId String
+  agent Agent @relation(fields: [agentId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  conversationId String?
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  taskId String @unique
+  entryKind String
+  model String?
+  providerId String?
+  inputTokens Int
+  outputTokens Int
+  cacheReadTokens Int
+  cacheWriteTokens Int
+  costMicros BigInt
+  succeeded Boolean
+  createdAt DateTime @default(now())
+  @@index([agentId, createdAt])
+  @@index([workspaceId, createdAt])
+}
+
+model AgentTrigger {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId String
+  agent Agent @relation(fields: [agentId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  kind String
+  name String
+  enabled Boolean @default(true)
+  cron String?
+  timezone String?
+  prompt String
+  secretHash String?
+  actorId String
+  actor User @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  nextRunAt DateTime?
+  lastRunAt DateTime?
+  lastStatus String?
+  lastError String?
+  lastConversationId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([agentId, createdAt])
+  @@index([enabled, nextRunAt])
 }
 
 // Private encrypted values; revisions contain only credential IDs and names.
@@ -854,13 +917,80 @@ model AgentChannelConnection {
   lastError          String?
   lastStartedAt      DateTime?
   lastEventAt        DateTime?
+  // 1 = legacy credential semantics (empty allowlist admits everyone) until the
+  // startup backfill rewrites them; 2 = explicit access fields below.
+  senderPolicyVersion   Int      @default(2)
+  openToAll             Boolean  @default(false)
+  // Reply to unauthorized direct messages: pair | ignore | decline.
+  unauthorizedDm        String   @default("pair")
+  adminUserIds          String[] @default([])
+  groupSessionsPerUser  Boolean  @default(true)
+  threadSessionsPerUser Boolean  @default(false)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
+  senderApprovals    AgentChannelSenderApproval[]
+  pairingRequests    AgentChannelPairingRequest[]
+  inboundEvents      AgentChannelInboundEvent[]
 
   @@unique([sandboxId, platform, name])
   @@index([workspaceId, agentId])
   @@index([workspaceId, sandboxId])
   @@index([platform, status])
+}
+
+model AgentChannelSenderApproval {
+  id             String                 @id @default(cuid())
+  connectionId   String
+  connection     AgentChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  platformUserId String
+  userName       String?
+  approvedById   String?
+  approvedBy     User?                  @relation("ChannelSenderApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime               @default(now())
+
+  @@unique([connectionId, platformUserId])
+}
+
+model AgentChannelPairingRequest {
+  id             String                 @id @default(cuid())
+  connectionId   String
+  connection     AgentChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  platformUserId String
+  userName       String?
+  chatId         String
+  code           String
+  // pending | approved | dismissed | declined (declined mutes the sender until expiresAt)
+  status         String                 @default("pending")
+  expiresAt      DateTime
+  decidedAt      DateTime?
+  decidedById    String?
+  decidedBy      User?                  @relation("ChannelPairingDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime               @default(now())
+
+  @@index([connectionId, status, expiresAt])
+  @@index([connectionId, platformUserId, status])
+}
+
+// Durable inbound platform events: persisted before admission/dispatch so a
+// restart cannot drop accepted platform messages.
+model AgentChannelInboundEvent {
+  id           String                 @id @default(cuid())
+  connectionId String
+  connection   AgentChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  dedupeKey    String
+  queueKey     String
+  kind         String
+  payload      Json
+  // queued | processing | done | failed
+  status       String                 @default("queued")
+  attempts     Int                    @default(0)
+  leaseUntil   DateTime?
+  lastError    String?
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+
+  @@unique([connectionId, dedupeKey])
+  @@index([connectionId, status, createdAt])
 }
 
 // A directed link letting one agent delegate to another (same workspace) by
@@ -1054,12 +1184,17 @@ model Conversation {
   // null follows the model/provider default. Explicit values are snapshotted
   // per conversation so one chat cannot change another chat's reasoning level.
   reasoningEffort       String?
+  // Channel /model session override: { providerId, model, setBy, setAt }. Null follows the pinned revision.
+  modelOverride         Json?
+  // Channel /resume selection; routing picks the newest of channelSelectedAt/createdAt.
+  channelSelectedAt     DateTime?
   createdAt             DateTime                 @default(now())
   messages              Message[]
   workspaceAttachments  WorkspaceAttachment[]
   publicApiConversation AgentPublicConversation?
   workSession           WorkSession?
   piPackageSet PiSessionPackageSet?
+  agentUsage AgentUsage[]
 
   @@index([sandboxId])
 }

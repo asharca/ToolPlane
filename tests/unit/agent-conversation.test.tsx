@@ -234,7 +234,7 @@ describe("AgentConversation", () => {
     expect(toolsButton).toBeEnabled();
     await userEvent.click(toolsButton);
     expect(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
+      screen.getByRole("option", { name: /Add attachment/ }),
     ).toBeDisabled();
 
     rerender(
@@ -245,7 +245,7 @@ describe("AgentConversation", () => {
     );
 
     expect(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
+      screen.getByRole("option", { name: /Add attachment/ }),
     ).toBeEnabled();
   });
 
@@ -272,7 +272,7 @@ describe("AgentConversation", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
     await userEvent.click(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
+      screen.getByRole("option", { name: /Add attachment/ }),
     );
     const fileInput =
       document.querySelector<HTMLInputElement>('input[type="file"]');
@@ -328,7 +328,7 @@ describe("AgentConversation", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
     await userEvent.click(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
+      screen.getByRole("option", { name: /Add attachment/ }),
     );
     const fileInput =
       document.querySelector<HTMLInputElement>('input[type="file"]');
@@ -385,11 +385,11 @@ describe("AgentConversation", () => {
 
     const input = screen.getByPlaceholderText("Message this agent");
     await user.type(input, "/");
-    const menu = await screen.findByRole("menu", { name: "Tools" });
+    const menu = await screen.findByRole("listbox", { name: "Tools" });
     expect(
-      within(menu).getByRole("menuitem", { name: /compact/ }),
+      within(menu).getByRole("option", { name: /compact/ }),
     ).toBeInTheDocument();
-    await user.click(within(menu).getByRole("menuitem", { name: /compact/ }));
+    await user.click(within(menu).getByRole("option", { name: /compact/ }));
     expect(input).toHaveValue("/compact ");
 
     await user.type(input, "preserve paths");
@@ -517,7 +517,7 @@ describe("AgentConversation", () => {
     });
     await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
     await userEvent.click(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
+      screen.getByRole("option", { name: /Add attachment/ }),
     );
     const input = assertDefined(
       document.querySelector<HTMLInputElement>('input[type="file"]'),
@@ -561,7 +561,7 @@ describe("AgentConversation", () => {
     });
     await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
     await userEvent.click(
-      screen.getByRole("menuitem", { name: /Add attachment/ }),
+      screen.getByRole("option", { name: /Add attachment/ }),
     );
     await userEvent.upload(
       assertDefined(

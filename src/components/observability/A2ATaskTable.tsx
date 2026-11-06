@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useTranslations } from "next-intl";
+import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
 import { DashboardTable } from "@/components/dashboard/DashboardUI";
 import type { A2ATaskSummary } from "@/lib/observability/views/types";
 import {
@@ -14,15 +15,18 @@ import {
 export function A2ATaskTable({
   items,
   detailBase,
+  runDetailBase,
   showWorkspace = false,
   returnTo,
 }: {
   items: A2ATaskSummary[];
   detailBase: string;
+  runDetailBase: string;
   showWorkspace?: boolean;
   returnTo?: string;
 }) {
   const t = useTranslations("console.observability.viewer");
+  const describeRuntimeError = useRuntimeErrorText();
   if (!items.length) return <EmptyState />;
   return (
     <DashboardTable
@@ -32,6 +36,7 @@ export function A2ATaskTable({
         { label: t("task") },
         { label: t("from") },
         { label: t("to") },
+        { label: t("originRun") },
         { label: t("status") },
         { label: t("duration") },
         { label: t("time") },
@@ -56,9 +61,9 @@ export function A2ATaskTable({
             {item.error && (
               <span
                 className="block max-w-72 truncate text-xs text-destructive"
-                title={item.error}
+                title={describeRuntimeError(item.error)?.text ?? item.error}
               >
-                {item.error}
+                {describeRuntimeError(item.error)?.text ?? item.error}
               </span>
             )}
           </Link>,
@@ -71,6 +76,18 @@ export function A2ATaskTable({
           <span key="to" title={item.to.id ?? undefined}>
             {item.to.name}
           </span>,
+          item.origin ? (
+            <Link
+              key="origin"
+              href={`${runDetailBase}/${encodeURIComponent(item.origin.runTaskId)}${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`}
+              className="text-xs text-primary hover:underline"
+            >
+              {item.origin.agent?.name ?? t("agent")} ·{" "}
+              {t(`entryKinds.${item.origin.entryKind}`)}
+            </Link>
+          ) : (
+            "—"
+          ),
           <StatusBadge key="state" status={item.state} />,
           <Duration key="duration" ms={item.durationMs} />,
           <RelativeTime key="time" value={item.startedAt} />,

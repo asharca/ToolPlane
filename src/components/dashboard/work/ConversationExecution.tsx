@@ -17,7 +17,13 @@ const ExecutionResponse = z.object({
   execution: NativeProjectionSchema.extend({
     id: z.string(),
     status: z.string(),
-    error: z.object({ code: z.string(), message: z.string() }).optional(),
+    error: z
+      .object({
+        code: z.string(),
+        reason: z.string().optional(),
+        message: z.string(),
+      })
+      .optional(),
   }).nullable(),
 });
 type Execution = NonNullable<z.infer<typeof ExecutionResponse>["execution"]>;
@@ -44,6 +50,7 @@ export function ConversationExecution({
   onChange,
   renderedActivityIds,
   showActivities = true,
+  onBusyChange,
 }: {
   /** Same-origin endpoint returning the native execution projection. */
   endpoint: string;
@@ -61,6 +68,8 @@ export function ConversationExecution({
   renderedActivityIds?: readonly string[];
   /** False when the surrounding Work transcript owns live and persisted activities. */
   showActivities?: boolean;
+  /** Reports whether the execution is active or its initial status is still unknown. */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const t = useTranslations("console.work");
   const tAgents = useTranslations("console.agents");
@@ -94,6 +103,11 @@ export function ConversationExecution({
     setFresh(false);
     setBusyRequestId(null);
   }
+  const executionStatus = execution?.status;
+  useEffect(() => {
+    onBusyChange?.(!fresh || ACTIVE_STATUSES.has(executionStatus ?? ""));
+    return () => onBusyChange?.(false);
+  }, [executionStatus, fresh, onBusyChange]);
   useEffect(() => {
     void url;
     return () => {
@@ -291,10 +305,13 @@ export function ConversationExecution({
       // reader's language instead. MCP codes use the runtime's
       // "PI_MCP_TOOLS_UNAVAILABLE: REASON name" form.
       const code = execution.error?.code ?? "";
+      const reason = execution.error?.reason;
       const runtimeError = describeRuntimeError(
         code.startsWith("MCP_")
           ? `PI_MCP_TOOLS_UNAVAILABLE: ${code} MCP`
-          : code,
+          : reason
+            ? `${code}: ${reason}`
+            : code,
       );
       return (
         <div

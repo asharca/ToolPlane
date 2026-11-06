@@ -39,11 +39,17 @@ import {
   Plus,
   QrCode,
   Radio,
+  ShieldCheck,
   Trash2,
 } from "lucide-react";
 
 import { CopyButton } from "@/components/dashboard/CopyButton";
 import { QrPairingDisplay } from "@/components/dashboard/agents/QrPairingDisplay";
+import { notify } from "@/components/dashboard/Toaster";
+import {
+  ChannelAccessPanel,
+  type ChannelAccessCommand,
+} from "./ChannelAccessPanel";
 import type { AgentChannelConnectionClientView as Channel } from "@/lib/agents/channel-connection-client";
 import type { AgentChannelLogEntry } from "@/lib/agents/channel-runtime-logs";
 import { LiveControls } from "@/components/observability/LiveToggle";
@@ -107,19 +113,30 @@ type Command = {
     | "stop"
     | "pair"
     | "check"
-    | "move";
+    | "move"
+    | "upgradeConversations"
+    | ChannelAccessCommand["action"];
   connectionId?: string;
   platform?: string;
   name?: string;
   agentId?: string | null;
   sandboxId?: string;
   credentials?: Record<string, string>;
+  access?: Partial<
+    Pick<Channel["access"], "openToAll" | "unauthorizedDm" | "adminUserIds">
+  >;
+  sessions?: Partial<Channel["sessions"]>;
+  requestId?: string;
+  platformUserId?: string;
+  userName?: string;
 };
 type ChannelResponse = {
   connections?: Channel[];
   agents?: Agent[];
   sandboxes?: Sandbox[];
   connectionId?: string;
+  upgraded?: number;
+  skipped?: number;
   error?: string;
 };
 
@@ -566,7 +583,18 @@ function ChannelCommands() {
     >
       <h3 className="mb-2 text-sm font-medium">{t("supportedCommands")}</h3>
       <dl className="space-y-2 text-xs">
-        {(["new", "compact", "help", "whoami"] as const).map((command) => (
+        {(
+          [
+            "help",
+            "whoami",
+            "status",
+            "new",
+            "resume",
+            "compact",
+            "model",
+            "upgrade",
+          ] as const
+        ).map((command) => (
           <div
             key={command}
             className="grid grid-cols-[5rem_minmax(0,1fr)] gap-2"
@@ -579,6 +607,10 @@ function ChannelCommands() {
                   compact: "commandsCompact",
                   help: "commandsHelp",
                   whoami: "commandsWhoami",
+                  status: "commandsStatus",
+                  resume: "commandsResume",
+                  model: "commandsModel",
+                  upgrade: "commandsUpgrade",
                 }[command],
               )}
             </dd>
@@ -609,6 +641,7 @@ function ChannelEditor({
   const [name, setName] = useState(channel.name);
   const [agentId, setAgentId] = useState(channel.agentId ?? "");
   const [values, setValues] = useState<Record<string, string>>({});
+  const [adminIds, setAdminIds] = useState<string | null>(null);
   const idPrefix = useId();
   const pairing = channel.pairing;
   const waiting =
@@ -634,6 +667,20 @@ function ChannelEditor({
     ) {
       void saveCredentials({ [key]: values[key] });
     }
+  };
+  const saveAdminIds = async () => {
+    if (adminIds === null) return;
+    const value = adminIds;
+    const adminUserIds = [
+      ...new Set(
+        value
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (await update({ access: { adminUserIds } }))
+      setAdminIds((current) => (current === value ? null : current));
   };
   if (!platform)
     throw new Error(`Unsupported messaging platform: ${channel.platform}`);
@@ -731,6 +778,20 @@ function ChannelEditor({
               name: name.trim(),
               ...(!channel.sandboxId ? { agentId: agentId || null } : {}),
               credentials: values,
+              ...(adminIds !== null
+                ? {
+                    access: {
+                      adminUserIds: [
+                        ...new Set(
+                          adminIds
+                            .split(",")
+                            .map((id) => id.trim())
+                            .filter(Boolean),
+                        ),
+                      ],
+                    },
+                  }
+                : {}),
             })
           )
             onClose();
@@ -841,6 +902,105 @@ function ChannelEditor({
           <div className="grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-2">
             {fields.map(renderField)}
           </div>
+          <section
+            className="space-y-4 border-t border-border pt-4"
+            aria-labelledby={`${idPrefix}-access`}
+          >
+            <h3 id={`${idPrefix}-access`} className="text-sm font-medium">
+              {t("access")}
+            </h3>
+            <div
+              className={
+                channel.access.openToAll
+                  ? "space-y-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3"
+                  : "space-y-3"
+              }
+            >
+              <DialogField label={t("openToAll")}>
+                <Switch
+                  checked={channel.access.openToAll}
+                  disabled={pending}
+                  ariaLabel={t("openToAll")}
+                  onCheckedChange={(openToAll) =>
+                    void update({ access: { openToAll } })
+                  }
+                />
+              </DialogField>
+              {channel.access.openToAll && (
+                <p
+                  role="status"
+                  className="text-xs text-amber-700 dark:text-amber-400"
+                >
+                  {t("openToAllWarning")}
+                </p>
+              )}
+            </div>
+            <DialogField
+              label={t("unauthorizedDm")}
+              htmlFor={`${idPrefix}-unauthorized-dm`}
+            >
+              <FormSelect
+                id={`${idPrefix}-unauthorized-dm`}
+                value={channel.access.unauthorizedDm}
+                disabled={pending}
+                label={t("unauthorizedDm")}
+                options={(["pair", "ignore", "decline"] as const).map(
+                  (value) => ({
+                    value,
+                    label: t(`unauthorizedDmOptions.${value}`),
+                  }),
+                )}
+                onValueChange={(value) =>
+                  void update({
+                    access: {
+                      unauthorizedDm:
+                        value as Channel["access"]["unauthorizedDm"],
+                    },
+                  })
+                }
+                className="w-full"
+              />
+            </DialogField>
+            <DialogField
+              label={t("adminUserIds")}
+              htmlFor={`${idPrefix}-admins`}
+              dirty={
+                adminIds !== null &&
+                adminIds !== channel.access.adminUserIds.join(", ")
+              }
+            >
+              <Input
+                id={`${idPrefix}-admins`}
+                value={adminIds ?? channel.access.adminUserIds.join(", ")}
+                placeholder={t("adminUserIdsPlaceholder")}
+                onChange={setAdminIds}
+                onBlur={() => void saveAdminIds()}
+                className="w-full"
+              />
+            </DialogField>
+          </section>
+          <section
+            className="space-y-4 border-t border-border pt-4"
+            aria-labelledby={`${idPrefix}-sessions`}
+          >
+            <h3 id={`${idPrefix}-sessions`} className="text-sm font-medium">
+              {t("sessions")}
+            </h3>
+            {(["groupSessionsPerUser", "threadSessionsPerUser"] as const).map(
+              (key) => (
+                <DialogField key={key} label={t(key)}>
+                  <Switch
+                    checked={channel.sessions[key]}
+                    disabled={pending}
+                    ariaLabel={t(key)}
+                    onCheckedChange={(value) =>
+                      void update({ sessions: { [key]: value } })
+                    }
+                  />
+                </DialogField>
+              ),
+            )}
+          </section>
           <ChannelCommands />
           {advanced.length > 0 && (
             <BouncyAccordion
@@ -902,6 +1062,7 @@ export function AgentMessagingPanel({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [logId, setLogId] = useState<string | null>(null);
   const [historyId, setHistoryId] = useState<string | null>(null);
+  const [accessId, setAccessId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [pending, setPending] = useState(0);
   const [error, setError] = useState("");
@@ -1033,6 +1194,7 @@ export function AgentMessagingPanel({
       : (getMessagingPlatform(platform)?.label ?? platform);
   const deleteChannel = connections.find((channel) => channel.id === deleteId);
   const logChannel = connections.find((channel) => channel.id === logId);
+  const accessChannel = connections.find((channel) => channel.id === accessId);
   const historyChannel = connections.find(
     (channel) => channel.id === historyId,
   );
@@ -1155,6 +1317,18 @@ export function AgentMessagingPanel({
                     >
                       {statusText(channel.status)}
                     </AnimatedBadge>
+                    {channel.access.openToAll && (
+                      <AnimatedBadge status="warning">
+                        {t("openToAll")}
+                      </AnimatedBadge>
+                    )}
+                    {channel.access.pendingCount > 0 && (
+                      <AnimatedBadge status="info">
+                        {t("pendingPairingCount", {
+                          count: channel.access.pendingCount,
+                        })}
+                      </AnimatedBadge>
+                    )}
                   </div>
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">
                     {sandboxes.find(
@@ -1169,8 +1343,55 @@ export function AgentMessagingPanel({
                       {channel.lastError}
                     </p>
                   )}
+                  {channel.revisions.outdatedConversations > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                      <p className="text-muted-foreground">
+                        {t("outdatedConversations", {
+                          count: channel.revisions.outdatedConversations,
+                        })}
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={Boolean(pending)}
+                        onClick={async () => {
+                          const result = await send({
+                            action: "upgradeConversations",
+                            connectionId: channel.id,
+                          });
+                          if (
+                            result &&
+                            result.upgraded !== undefined &&
+                            result.skipped !== undefined
+                          )
+                            notify(
+                              t("conversationsUpgraded", {
+                                upgraded: result.upgraded,
+                                skipped: result.skipped,
+                              }),
+                            );
+                          else if (!result)
+                            notify(requestFailed, { severity: "error" });
+                        }}
+                      >
+                        {t("upgradeAll")}
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setError("");
+                      setAccessId(channel.id);
+                    }}
+                    size="icon"
+                    aria-label={t("access")}
+                  >
+                    <ShieldCheck className="size-4" />
+                  </Button>
                   <Button
                     variant="ghost"
                     onClick={() => setHistoryId(channel.id)}
@@ -1244,6 +1465,18 @@ export function AgentMessagingPanel({
           error={error}
           send={send}
           onClose={() => setEditingId(null)}
+        />
+      )}
+      {accessChannel && (
+        <ChannelAccessPanel
+          key={accessChannel.id}
+          endpoint={endpoint}
+          connectionId={accessChannel.id}
+          name={accessChannel.name}
+          pending={Boolean(pending)}
+          mutationError={error}
+          send={send}
+          onClose={() => setAccessId(null)}
         />
       )}
       {logChannel && (

@@ -3,6 +3,9 @@ import { Button } from "@/components/motion/button/base";
 
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { MAX_A2A_INLINE_BYTES } from "@/lib/transport-policy";
+
+const MAX_INLINE_BASE64_LENGTH = Math.ceil(MAX_A2A_INLINE_BYTES / 3) * 4;
 
 export type A2AWirePart = {
   text?: string;
@@ -116,12 +119,18 @@ export function A2AArtifactParts({
               {JSON.stringify(part.data, null, 2)}
             </pre>
           );
-        if (typeof part.raw !== "string" || part.raw.length > 43_692)
+        // Historical artifacts remain downloadable after an administrator lowers the limit.
+        if (
+          typeof part.raw !== "string" ||
+          part.raw.length > MAX_INLINE_BASE64_LENGTH ||
+          !/^[A-Za-z0-9+/]*={0,2}$/.test(part.raw)
+        )
           return null;
         let bytes: Uint8Array<ArrayBuffer>;
         try {
           const raw = atob(part.raw);
-          if (raw.length > 32_768) return null;
+          if (raw.length > MAX_A2A_INLINE_BYTES || btoa(raw) !== part.raw)
+            return null;
           bytes = Uint8Array.from(raw, (value) => value.charCodeAt(0));
         } catch {
           return null;

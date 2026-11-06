@@ -7,18 +7,20 @@ import { Input } from "@/components/motion/input";
 import { FormSelect } from "@/components/ui/FormSelect";
 import type {
   A2ATaskSummary,
+  AgentRunSummary,
   McpCallSummary,
   NamedEntity,
   TimeFilter,
   ViewPage,
 } from "@/lib/observability/views/types";
 import { A2ATaskTable } from "./A2ATaskTable";
+import { AgentRunTable } from "./AgentRunTable";
 import { McpCallTable } from "./McpCallTable";
 import { EmptyState } from "./LogPrimitives";
 import { TimeRangePicker } from "./TimeRangePicker";
 import { LiveToggle } from "./LiveToggle";
 
-type LogItem = McpCallSummary | A2ATaskSummary;
+type LogItem = McpCallSummary | A2ATaskSummary | AgentRunSummary;
 const commonKeys = ["range", "since", "until", "q"];
 const fieldClass =
   "h-9 rounded-md border border-input bg-background px-3 text-sm";
@@ -35,7 +37,7 @@ export function LogExplorer({
   deployments = [],
   agents = [],
 }: {
-  kind: "mcp" | "a2a";
+  kind: "mcp" | "a2a" | "runs";
   /** `internal`: platform plumbing over MCP; `tools`: Agent tool calls (bash, read, MCP…). */
   source?: "internal" | "tools";
   workspaceSlug?: string;
@@ -65,14 +67,19 @@ export function LogExplorer({
           "slow",
           "slowMs",
         ]
-      : [...commonKeys, "agentId", "direction", "state"];
+      : [
+          ...commonKeys,
+          "agentId",
+          kind === "runs" ? "entryKind" : "direction",
+          "state",
+        ];
   const query = new URLSearchParams();
   for (const key of keys) if (params[key]) query.set(key, params[key]);
   if (admin && params.workspaceId) query.set("workspaceId", params.workspaceId);
   if (!query.has("range")) query.set("range", "24h");
   if (deploymentId) query.set("deploymentId", deploymentId);
   if (source) query.set("source", source);
-  const tab = kind === "a2a" ? "a2a" : (source ?? "mcp");
+  const tab = kind === "mcp" ? (source ?? "mcp") : kind;
   const filterString = query.toString();
   if (params.cursor) query.set("cursor", params.cursor);
   const queryString = query.toString();
@@ -82,7 +89,8 @@ export function LogExplorer({
   const base = admin
     ? "/admin/logs"
     : `/app/${encodeURIComponent(workspaceSlug ?? "")}/observability`;
-  const path = kind === "mcp" ? "mcp-calls" : "a2a-tasks";
+  const path =
+    kind === "mcp" ? "mcp-calls" : kind === "runs" ? "agent-runs" : "a2a-tasks";
   const requestUrl = `${apiBase}/${path}?${queryString}`;
   const streamUrl = `${apiBase}/stream?kind=${kind}&${filterString}&after=${encodeURIComponent(liveAfter)}`;
   const filter = useMemo(
@@ -330,23 +338,47 @@ export function LogExplorer({
                 ]}
               />
             </div>
-            <div className="grid gap-1 text-xs text-muted-foreground">
-              <label htmlFor={`${fieldId}-direction`}>{t("direction")}</label>
-              <FormSelect
-                id={`${fieldId}-direction`}
-                name="direction"
-                label={t("direction")}
-                defaultValue={params.direction ?? ""}
-                className="w-36"
-                options={[
-                  { value: "", label: t("all") },
-                  ...["inbound", "outbound", "internal"].map((value) => ({
-                    value,
-                    label: t(`directions.${value}`),
-                  })),
-                ]}
-              />
-            </div>
+            {kind === "runs" ? (
+              <div className="grid gap-1 text-xs text-muted-foreground">
+                <label htmlFor={`${fieldId}-entry-kind`}>
+                  {t("entryKind")}
+                </label>
+                <FormSelect
+                  id={`${fieldId}-entry-kind`}
+                  name="entryKind"
+                  label={t("entryKind")}
+                  defaultValue={params.entryKind ?? ""}
+                  className="w-40"
+                  options={[
+                    { value: "", label: t("all") },
+                    ...["chat", "work", "channel", "control", "trigger"].map(
+                      (value) => ({
+                        value,
+                        label: t(`entryKinds.${value}`),
+                      }),
+                    ),
+                  ]}
+                />
+              </div>
+            ) : (
+              <div className="grid gap-1 text-xs text-muted-foreground">
+                <label htmlFor={`${fieldId}-direction`}>{t("direction")}</label>
+                <FormSelect
+                  id={`${fieldId}-direction`}
+                  name="direction"
+                  label={t("direction")}
+                  defaultValue={params.direction ?? ""}
+                  className="w-36"
+                  options={[
+                    { value: "", label: t("all") },
+                    ...["inbound", "outbound", "internal"].map((value) => ({
+                      value,
+                      label: t(`directions.${value}`),
+                    })),
+                  ]}
+                />
+              </div>
+            )}
             <div className="grid gap-1 text-xs text-muted-foreground">
               <label htmlFor={`${fieldId}-state`}>{t("status")}</label>
               <FormSelect
@@ -427,6 +459,15 @@ export function LogExplorer({
             <McpCallTable
               items={page.items as McpCallSummary[]}
               detailBase={`${base}/mcp`}
+              runDetailBase={`${base}/runs`}
+              a2aDetailBase={`${base}/a2a`}
+              showWorkspace={admin}
+              returnTo={admin ? `${base}?tab=${tab}&${queryString}` : undefined}
+            />
+          ) : kind === "runs" ? (
+            <AgentRunTable
+              items={page.items as AgentRunSummary[]}
+              detailBase={`${base}/runs`}
               showWorkspace={admin}
               returnTo={admin ? `${base}?tab=${tab}&${queryString}` : undefined}
             />
@@ -434,6 +475,7 @@ export function LogExplorer({
             <A2ATaskTable
               items={page.items as A2ATaskSummary[]}
               detailBase={`${base}/a2a`}
+              runDetailBase={`${base}/runs`}
               showWorkspace={admin}
               returnTo={admin ? `${base}?tab=${tab}&${queryString}` : undefined}
             />

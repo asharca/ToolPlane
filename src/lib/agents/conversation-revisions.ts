@@ -53,7 +53,7 @@ async function conversationEntryContexts(
         some: {
           OR: [
             {
-              kind: { in: ["chat", "control", "channel"] },
+              kind: { in: ["chat", "control", "channel", "trigger"] },
               sourceId: conversation.id,
             },
             ...(conversation.workSession
@@ -79,7 +79,7 @@ async function conversationEntryContexts(
       context.entryBindings.some(
         (entry) =>
           !(
-            (["chat", "control", "channel"].includes(entry.kind) &&
+            (["chat", "control", "channel", "trigger"].includes(entry.kind) &&
               entry.sourceId === conversation.id) ||
             (entry.kind === "work" &&
               entry.sourceId === conversation.workSession?.id)
@@ -356,7 +356,7 @@ async function load(tx: Prisma.TransactionClient, input: Scope) {
   if (!owner) throw new AgentConversationRevisionError("notFound", 404);
   const work = conversation.workSession;
   if (
-    (owner.runtimeKind !== "pi-sdk" && owner.runtimeKind !== "omp") ||
+    owner.runtimeKind !== "pi-sdk" ||
     owner.retiredAt ||
     conversation.legacyRevisionUnresolved ||
     !conversation.agentRevisionId ||
@@ -392,7 +392,13 @@ export async function getAgentConversationRevisionDiff(input: Scope) {
 }
 
 /** Advance the existing session and volume, never fork or replay its transcript. */
-export async function upgradeAgentConversationRevision(input: Scope) {
+export async function upgradeAgentConversationRevision(
+  input: Scope,
+  onUpgraded?: (
+    tx: Prisma.TransactionClient,
+    result: { conversationId: string; version: number },
+  ) => Promise<void>,
+) {
   const initial = await load(db, input);
   const release = acquireConversationOperation(
     conversationOperationKey(initial.conversation),
@@ -476,6 +482,10 @@ export async function upgradeAgentConversationRevision(input: Scope) {
                 contexts,
                 to.id,
               );
+              await onUpgraded?.(tx, {
+                conversationId: conversation.id,
+                version: to.version,
+              });
               return { conversationId: conversation.id, version: to.version };
             }
             const sandbox = conversation.sandbox;
@@ -631,6 +641,10 @@ export async function upgradeAgentConversationRevision(input: Scope) {
               });
             }
             await advanceConversationEntryContexts(tx, input, contexts, to.id);
+            await onUpgraded?.(tx, {
+              conversationId: conversation.id,
+              version: to.version,
+            });
             return { conversationId: conversation.id, version: to.version };
           },
           { timeout: 30_000 },

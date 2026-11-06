@@ -176,19 +176,6 @@ export async function resolveCapabilitySubagents(
   return result;
 }
 
-export async function resolveAuthorizedSubagentModels(
-  tx: Prisma.TransactionClient,
-  workspaceId: string,
-  agentId: string,
-  config: AgentRevisionConfig,
-) {
-  return (
-    await resolveCapabilitySubagents(tx, workspaceId, agentId, config)
-  ).flatMap((child) =>
-    child.definition.model ? [child.definition.model] : [],
-  );
-}
-
 export async function assertSubagentRuntimeAccess(
   tx: Prisma.TransactionClient,
   input: {

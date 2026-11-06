@@ -16,6 +16,7 @@ type Gate = {
   active: Map<string, Lease>;
   pending: Pending[];
   maintenance: Map<string, symbol>;
+  drafts: Set<string>;
   maintenanceContext: AsyncLocalStorage<ReadonlyMap<string, symbol>>;
   context: AsyncLocalStorage<Lease>;
   draining: boolean;
@@ -29,12 +30,14 @@ globals.__agentExecutionGate ??= {
   active: new Map(),
   pending: [],
   maintenance: new Map(),
+  drafts: new Set(),
   maintenanceContext: new AsyncLocalStorage<ReadonlyMap<string, symbol>>(),
   context: new AsyncLocalStorage<Lease>(),
   draining: false,
   dirty: false,
 };
 const gate = globals.__agentExecutionGate;
+gate.drafts ??= new Set();
 
 export class AgentExecutionBusyError extends Error {
   constructor() {
@@ -73,7 +76,8 @@ async function drain() {
           if (active.agentId === lease.agentId) activeForAgent++;
         }
         const available =
-          !gate.maintenance.has(lease.agentId) &&
+          (!gate.maintenance.has(lease.agentId) ||
+            gate.drafts.has(lease.agentId)) &&
           !gate.active.has(lease.key) &&
           gate.active.size < limits.maxTotal &&
           activeForAgent < limits.maxPerAgent;
@@ -145,24 +149,46 @@ export async function withAgentExecutionLease<T>(
   }
 }
 
-export async function withAgentMaintenanceLease<T>(
+async function withAgentMutationLease<T>(
   agentId: string,
   fn: () => Promise<T>,
+  draft: boolean,
 ): Promise<T> {
   const inherited = gate.maintenanceContext.getStore();
   const inheritedToken = inherited?.get(agentId);
-  if (inheritedToken && gate.maintenance.get(agentId) === inheritedToken)
+  if (inheritedToken && gate.maintenance.get(agentId) === inheritedToken) {
+    if (!draft && gate.drafts.has(agentId)) throw new AgentExecutionBusyError();
     return fn();
-  if (agentExecutionBusy(agentId)) throw new AgentExecutionBusyError();
+  }
+  if (draft ? gate.maintenance.has(agentId) : agentExecutionBusy(agentId))
+    throw new AgentExecutionBusyError();
   const token = Symbol(agentId);
   gate.maintenance.set(agentId, token);
+  if (draft) gate.drafts.add(agentId);
   const context = new Map(inherited);
   context.set(agentId, token);
   try {
     return await gate.maintenanceContext.run(context, fn);
   } finally {
-    if (gate.maintenance.get(agentId) === token)
+    if (gate.maintenance.get(agentId) === token) {
       gate.maintenance.delete(agentId);
+      gate.drafts.delete(agentId);
+    }
     refreshAgentExecutionLimits();
   }
+}
+
+/** Serialize draft writes with maintenance without reserving execution capacity. */
+export function withAgentDraftLease<T>(
+  agentId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return withAgentMutationLease(agentId, fn, true);
+}
+
+export function withAgentMaintenanceLease<T>(
+  agentId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return withAgentMutationLease(agentId, fn, false);
 }

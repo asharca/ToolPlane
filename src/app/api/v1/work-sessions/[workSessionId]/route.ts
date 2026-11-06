@@ -1,7 +1,7 @@
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import {
-  archiveWorkSession,
+  deleteWorkSession,
   getWorkSessionForUser,
   workSessionWorkingDirectory,
 } from "@/lib/work/sessions";
@@ -62,11 +62,20 @@ export const DELETE = withRequestLogging(
     const { workSessionId } = await params;
     const work = await getWorkSessionForUser(user.id, workSessionId);
     if (!work) return Response.json({ error: "Not found" }, { status: 404 });
-    return (await archiveWorkSession(work.workspaceId, work.id))
-      ? new Response(null, { status: 204 })
-      : Response.json(
-          { error: "Only finished work can be archived" },
-          { status: 409 },
-        );
+    try {
+      return (await deleteWorkSession(work.workspaceId, work.id))
+        ? new Response(null, { status: 204 })
+        : Response.json({ error: "Not found" }, { status: 404 });
+    } catch (error) {
+      return Response.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Could not delete the conversation. Please try again.",
+        },
+        { status: 409 },
+      );
+    }
   },
 );

@@ -1,3 +1,8 @@
+import {
+  DEFAULT_TRANSPORT_POLICY,
+  permitsTransportProtocol,
+  type TransportPolicy,
+} from "@/lib/transport-policy";
 /** Validate the supported peer profile before the SDK's permissive protobuf JSON decoder. */
 type ObjectValue = Record<string, unknown>;
 function object(value: unknown): ObjectValue {
@@ -19,9 +24,14 @@ function array(value: unknown, limit: number): unknown[] {
     throw new Error("Invalid remote array.");
   return value;
 }
-function parts(value: unknown) {
+function parts(value: unknown, policy: TransportPolicy) {
   for (const item of array(value, 32)) {
     const part = object(item);
+    const inline =
+      typeof part.raw === "string" &&
+      part.raw.length <= Math.ceil(policy.a2aInlineBytes / 3) * 4
+        ? Buffer.from(part.raw, "base64")
+        : undefined;
     const kinds = ["text", "raw", "url", "data"].filter((key) =>
       Object.hasOwn(part, key),
     );
@@ -40,12 +50,11 @@ function parts(value: unknown) {
           !/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(part.mediaType) ||
           (kinds[0] === "raw"
             ? typeof part.raw !== "string" ||
-              part.raw.length > 43_692 ||
-              !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-                part.raw,
-              ) ||
-              Buffer.from(part.raw, "base64").length > 32_768 ||
-              Buffer.from(part.raw, "base64").toString("base64") !== part.raw
+              part.raw.length > Math.ceil(policy.a2aInlineBytes / 3) * 4 ||
+              !/^[A-Za-z0-9+/]*={0,2}$/.test(part.raw) ||
+              !inline ||
+              inline.length > policy.a2aInlineBytes ||
+              inline.toString("base64") !== part.raw
             : typeof part.url !== "string" ||
               !part.url ||
               part.url.length > 8192))
@@ -54,7 +63,7 @@ function parts(value: unknown) {
     if (kinds[0] === "url") {
       const url = new URL(part.url as string);
       if (
-        url.protocol !== "https:" ||
+        !permitsTransportProtocol(url.protocol, policy) ||
         url.username ||
         url.password ||
         url.hash ||
@@ -67,6 +76,7 @@ function parts(value: unknown) {
 }
 function message(
   value: unknown,
+  policy: TransportPolicy,
   taskId?: string,
   contextId?: string,
   agentOnly = true,
@@ -79,7 +89,7 @@ function message(
       : !["ROLE_AGENT", "ROLE_USER", 1, 2].includes(msg.role as string | number)
   )
     throw new Error("Invalid remote role.");
-  parts(msg.parts);
+  parts(msg.parts, policy);
   if (msg.taskId !== undefined && msg.taskId !== "") {
     id(msg.taskId);
     if (taskId && taskId !== msg.taskId)
@@ -91,7 +101,7 @@ function message(
       throw new Error("Remote context mismatch.");
   }
 }
-function task(value: unknown) {
+function task(value: unknown, policy: TransportPolicy) {
   const row = object(value);
   id(row.id);
   id(row.contextId);
@@ -118,7 +128,7 @@ function task(value: unknown) {
   )
     throw new Error("Invalid remote task state.");
   if (status.message !== undefined)
-    message(status.message, row.id, row.contextId);
+    message(status.message, policy, row.id, row.contextId);
   if (
     status.timestamp !== undefined &&
     (typeof status.timestamp !== "string" ||
@@ -129,15 +139,19 @@ function task(value: unknown) {
   for (const item of array(row.artifacts ?? [], 16)) {
     const artifact = object(item);
     id(artifact.artifactId);
-    parts(artifact.parts);
+    parts(artifact.parts, policy);
     if (seen.has(artifact.artifactId))
       throw new Error("Duplicate remote artifact.");
     seen.add(artifact.artifactId);
   }
   for (const item of array(row.history ?? [], 32))
-    message(item, row.id, row.contextId, false);
+    message(item, policy, row.id, row.contextId, false);
 }
-export function validateRemoteResponse(request: unknown, response: unknown) {
+export function validateRemoteResponse(
+  request: unknown,
+  response: unknown,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+) {
   const req = object(request),
     rpc = object(response);
   if (
@@ -157,9 +171,9 @@ export function validateRemoteResponse(request: unknown, response: unknown) {
     const result = object(rpc.result);
     if (Object.hasOwn(result, "task") === Object.hasOwn(result, "message"))
       throw new Error("Invalid remote result oneof.");
-    if (Object.hasOwn(result, "task")) task(result.task);
-    else message(result.message);
-  } else task(rpc.result);
+    if (Object.hasOwn(result, "task")) task(result.task, policy);
+    else message(result.message, policy);
+  } else task(rpc.result, policy);
 }
 export function validateCardWire(raw: unknown) {
   const card = object(raw);

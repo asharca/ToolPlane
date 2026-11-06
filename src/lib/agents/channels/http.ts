@@ -1,3 +1,8 @@
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import {
+  DEFAULT_TRANSPORT_POLICY,
+  type TransportPolicy,
+} from "@/lib/transport-policy";
 const PLATFORM_DOMAINS = [
   "telegram.org",
   "qq.com",
@@ -19,10 +24,15 @@ const PLATFORM_DOMAINS = [
 ];
 export const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
 
-export function sanitizeRemoteUrl(raw: string, websocket = false): string {
+export function sanitizeRemoteUrl(
+  raw: string,
+  websocket = false,
+  policy: Pick<TransportPolicy, "allowHttp"> = DEFAULT_TRANSPORT_POLICY,
+): string {
   const url = new URL(raw);
   if (
-    url.protocol !== (websocket ? "wss:" : "https:") ||
+    (url.protocol !== (websocket ? "wss:" : "https:") &&
+      !(policy.allowHttp && url.protocol === (websocket ? "ws:" : "http:"))) ||
     url.username ||
     url.password ||
     url.port ||
@@ -39,7 +49,8 @@ export async function channelFetch(
   input: string | URL,
   init: RequestInit = {},
 ): Promise<Response> {
-  let url = sanitizeRemoteUrl(String(input));
+  const policy = await getTransportSettings();
+  let url = sanitizeRemoteUrl(String(input), false, policy);
   const headers = new Headers(init.headers);
   const signal = AbortSignal.any([
     AbortSignal.timeout(60_000),
@@ -55,7 +66,11 @@ export async function channelFetch(
     const location = response.headers.get("location");
     if (response.status >= 300 && response.status < 400 && location !== null) {
       await response.body?.cancel();
-      const next = sanitizeRemoteUrl(new URL(location, url).toString());
+      const next = sanitizeRemoteUrl(
+        new URL(location, url).toString(),
+        false,
+        policy,
+      );
       if (new URL(url).origin !== new URL(next).origin) {
         if (init.body)
           throw new Error(

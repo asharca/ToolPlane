@@ -9,10 +9,11 @@ import { workSessionWorkingDirectory } from "@/lib/work/sessions";
 import type { LocalA2AGrant } from "@/lib/a2a/principal";
 
 type Tx = Prisma.TransactionClient;
-export type EntryKind = "chat" | "work" | "channel" | "control";
+export type EntryKind = "chat" | "work" | "channel" | "control" | "trigger";
 export type EntryIdentity = {
   kind: EntryKind;
   sourceId: string;
+  conversationId?: string;
   channelId?: string;
 };
 const missing = () => new TaskNotFoundError();
@@ -44,7 +45,7 @@ export async function createEntryPolicy(
     if (
       !work?.agentRevisionId ||
       work.legacyRevisionUnresolved ||
-      (work.runtimeKind !== "pi-sdk" && work.runtimeKind !== "omp") ||
+      work.runtimeKind !== "pi-sdk" ||
       work.cancelRequestedAt ||
       ["archived", "cancelling", "cancelled"].includes(work.status)
     )
@@ -52,9 +53,20 @@ export async function createEntryPolicy(
     workingDirectory = workSessionWorkingDirectory(work.runtimeSnapshot);
     authorization = [work.agentRevisionId, work.runtimeSnapshot, grant.actorId];
   } else {
+    if (source.kind === "trigger") {
+      const trigger = await tx.agentTrigger.findFirst({
+        where: {
+          id: source.sourceId,
+          agentId: grant.agentId,
+          workspaceId: grant.workspaceId,
+          actorId: grant.actorId,
+        },
+      });
+      if (!trigger || !source.conversationId) throw missing();
+    }
     const conversation = await tx.conversation.findFirst({
       where: {
-        id: source.sourceId,
+        id: source.kind === "trigger" ? source.conversationId : source.sourceId,
         agent: { workspaceId: grant.workspaceId },
         agentId: grant.agentId,
       },
@@ -144,6 +156,7 @@ export async function assertEntryPolicy(tx: Tx, grant: LocalA2AGrant) {
     {
       kind: entry.kind,
       sourceId: entry.sourceId,
+      ...(entry.conversationId ? { conversationId: entry.conversationId } : {}),
       ...(entry.channelId ? { channelId: entry.channelId } : {}),
     },
   );

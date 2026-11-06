@@ -1,4 +1,6 @@
 import "server-only";
+import { db } from "@/lib/db";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { randomUUID } from "node:crypto";
 import {
   assertRuntimeOwner,
@@ -301,6 +303,29 @@ async function sessionActorId(): Promise<string | undefined> {
   }
 }
 
+async function assertCurrentRemoteTransport(
+  deploymentId: string,
+): Promise<void> {
+  if (!liveMcpRuntimeSnapshot(deploymentId)?.remoteConnectionIdentity) return;
+  const deployment = await db.deployment.findUnique({
+    where: { id: deploymentId },
+    select: { source: true, sourceRef: true, installCfg: true },
+  });
+  if (
+    deployment?.source !== "remote" ||
+    !deployment.sourceRef?.startsWith("http:")
+  )
+    return;
+  const config = deployment.installCfg as Record<string, unknown> | null;
+  if (
+    config?.allowUnsafeHttp !== true &&
+    !(await getTransportSettings()).allowHttp
+  )
+    throw new Error(
+      "Remote MCP HTTP requires explicit plaintext-risk approval.",
+    );
+}
+
 export async function mcpRpc(
   deploymentId: string,
   method: string,
@@ -308,6 +333,7 @@ export async function mcpRpc(
   timeoutMs = 30000,
   options: McpRpcOptions = {},
 ): Promise<Record<string, unknown> | null> {
+  await assertCurrentRemoteTransport(deploymentId);
   const port = livePort(deploymentId);
   return withLogContext(
     {
@@ -350,6 +376,7 @@ export async function listMcpTools(
   deploymentId: string,
   options: McpToolCatalogOptions = {},
 ): Promise<McpTool[]> {
+  await assertCurrentRemoteTransport(deploymentId);
   let tools: McpTool[] = [];
   let cursor: string | undefined;
   const seenCursors = new Set<string>();

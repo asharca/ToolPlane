@@ -28,6 +28,19 @@ const registrationSchema = z
   .strict();
 export type PluginSourceInput = z.input<typeof registrationSchema>;
 
+function configurationError(error: z.ZodError) {
+  const field = error.issues[0]?.path[0];
+  const codes: Record<string, string> = {
+    name: "registry_name_invalid",
+    repository: "github_repository_invalid",
+    branch: "registry_branch_invalid",
+    token: "registry_token_invalid",
+  };
+  return new GithubRegistryError(
+    codes[String(field)] ?? "registry_configuration_invalid",
+  );
+}
+
 async function authorize(workspaceId: string, userId: string, manage = false) {
   const workspace = await db.workspace.findFirst({
     where: {
@@ -126,11 +139,9 @@ export async function createPluginSource(
 ) {
   await authorize(workspaceId, userId, true);
   const parsed = registrationSchema.safeParse(input);
-  if (
-    !parsed.success ||
-    (parsed.data.visibility === "private" && !parsed.data.token)
-  )
-    throw new GithubRegistryError("registry_configuration_invalid");
+  if (!parsed.success) throw configurationError(parsed.error);
+  if (parsed.data.visibility === "private" && !parsed.data.token)
+    throw new GithubRegistryError("registry_token_required");
   const { token, ...configuration } = parsed.data;
   await new GithubRegistryTransport(
     configuration.repository,
@@ -249,8 +260,7 @@ export async function updatePluginSource(
     })
     .strict()
     .safeParse(input);
-  if (!parsed.success)
-    throw new GithubRegistryError("registry_configuration_invalid");
+  if (!parsed.success) throw configurationError(parsed.error);
   const registry = await db.githubResourceRegistry.findFirst({
     where: {
       id: sourceId,
@@ -263,7 +273,7 @@ export async function updatePluginSource(
   const token = parsed.data.token;
   if (token !== undefined) {
     if (registry.visibility === "private" && !token)
-      throw new GithubRegistryError("registry_configuration_invalid");
+      throw new GithubRegistryError("registry_token_required");
     await new GithubRegistryTransport(
       registry.repository,
       token || undefined,

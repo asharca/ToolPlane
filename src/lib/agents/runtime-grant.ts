@@ -6,16 +6,18 @@ import type { PiPackageMcpToolPolicy } from "./pi-package-mcp";
 import { requireAgentRevision } from "./revisions";
 import { assertLocalRuntimeToken } from "@/lib/a2a/local-runtime";
 import { assertAgentEnvironmentCredentialReferences } from "./environment-credentials";
-import { resolveAgentModelOverride } from "./turn-model";
+import {
+  resolveAgentModelOverride,
+  conversationModelOverride,
+} from "./turn-model";
 import type { SandboxMcpTool } from "@/lib/sandboxes/mcp-policy";
 import {
   externalSandboxTools,
   isExternalSandboxAccess,
   narrowExternalSandboxAccess,
 } from "@/lib/sandboxes/external";
-import { resolveAuthorizedSubagentModels } from "./subagents";
 import { AgentRevisionConfigSchema } from "./revision-types";
-import { resolveNativeRoleModels } from "./native-role-models";
+import { enrichLogContext } from "@/lib/observability/context";
 
 /** A token identifies a pinned session; it never freezes live authorization. */
 export async function resolveAgentRuntimeGrant(
@@ -23,7 +25,7 @@ export async function resolveAgentRuntimeGrant(
   modelTarget?: { providerId: string; model: string },
 ): Promise<{
   mcpToolPolicy: PiPackageMcpToolPolicy;
-  runtimeKind: "pi-sdk" | "omp";
+  runtimeKind: "pi-sdk";
   model: string | null;
   /** Attached sandbox ID → tools allowed by both the pinned revision and the live attachment. */
   externalSandboxTools: Record<string, SandboxMcpTool[]>;
@@ -35,12 +37,14 @@ export async function resolveAgentRuntimeGrant(
     )
       return null;
     if (token.a2aTaskId) await assertLocalRuntimeToken(token);
-    return await db.$transaction(async (tx) => {
+    let verifiedConversationId: string | undefined;
+    const grant = await db.$transaction(async (tx) => {
       const revision = await requireAgentRevision(
         tx,
         token.agentId,
         token.agentRevisionId,
       );
+      if (revision.config.runtimeKind !== "pi-sdk") return null;
       const agent = await tx.agent.findFirst({
         where: {
           id: token.agentId,
@@ -48,7 +52,6 @@ export async function resolveAgentRuntimeGrant(
           runtimeKind: revision.config.runtimeKind,
           retiredAt: null,
           workspace: { status: "active" },
-          providerId: revision.config.providerId,
         },
         select: {
           servers: { select: { deploymentId: true, allowedToolNames: true } },
@@ -59,6 +62,16 @@ export async function resolveAgentRuntimeGrant(
         },
       });
       if (!agent) return null;
+      const provider = revision.config.providerId
+        ? await tx.modelProvider.findFirst({
+            where: {
+              id: token.modelOverride?.providerId ?? revision.config.providerId,
+              workspaceId: token.workspaceId,
+            },
+            select: { apiKey: true },
+          })
+        : null;
+      if (!provider?.apiKey.trim()) return null;
       if (token.modelOverride) {
         if (token.modelOverride.providerId !== token.providerId) return null;
         await resolveAgentModelOverride(
@@ -101,7 +114,7 @@ export async function resolveAgentRuntimeGrant(
         if (!context) return null;
         const conversations = new Set<string>();
         for (const entry of context.entryBindings) {
-          if (["chat", "control", "channel"].includes(entry.kind))
+          if (["chat", "control", "channel", "trigger"].includes(entry.kind))
             conversations.add(entry.sourceId);
           if (entry.kind === "work") {
             const work = await tx.workSession.findFirst({
@@ -189,38 +202,32 @@ export async function resolveAgentRuntimeGrant(
         token.agentId,
         revision.config.environment.credentialReferences,
       );
+      if (modelTarget && modelTarget.providerId !== token.providerId)
+        return null;
       if (
+        token.modelOverride &&
         modelTarget &&
-        (modelTarget.providerId !== token.providerId ||
-          (revision.config.runtimeKind === "omp" &&
-            modelTarget.model !==
-              (token.modelOverride?.model ?? revision.config.model)))
-      ) {
-        if (revision.config.runtimeKind !== "omp") return null;
-        const models = [
-          ...(revision.config.subagents?.length
-            ? await resolveAuthorizedSubagentModels(
-                tx,
-                token.workspaceId,
-                token.agentId,
-                revision.config,
-              )
-            : []),
-          ...(await resolveNativeRoleModels(
-            tx,
-            token.workspaceId,
-            token.agentId,
-            revision.config,
-          )),
-        ];
-        if (
-          !models.some(
-            (entry) =>
-              entry.providerId === modelTarget.providerId &&
-              entry.model === modelTarget.model,
+        token.modelOverride.model !== modelTarget.model
+      )
+        return null;
+      if (conversationId && token.modelOverride) {
+        const session = await tx.conversation.findFirst({
+          where: {
+            id: conversationId,
+            agentId: token.agentId,
+            agent: { workspaceId: token.workspaceId },
+          },
+          select: { modelOverride: true, runtimeSessionKey: true },
+        });
+        if (session?.runtimeSessionKey?.startsWith("channel:")) {
+          const current = conversationModelOverride(session.modelOverride);
+          if (
+            !current ||
+            current.providerId !== token.modelOverride.providerId ||
+            current.model !== token.modelOverride.model
           )
-        )
-          return null;
+            return null;
+        }
       }
       const currentDeployments = new Map<string, string[]>(
         agent.servers.map((server) => [
@@ -250,6 +257,7 @@ export async function resolveAgentRuntimeGrant(
             narrowExternalSandboxAccess(pinned.access, live.access),
           );
       }
+      verifiedConversationId = conversationId;
       return {
         mcpToolPolicy,
         externalSandboxTools: externalTools,
@@ -260,6 +268,14 @@ export async function resolveAgentRuntimeGrant(
           revision.config.model,
       };
     });
+    if (grant)
+      enrichLogContext({
+        ...(token.a2aTaskId ? { taskId: token.a2aTaskId } : {}),
+        ...(verifiedConversationId
+          ? { conversationId: verifiedConversationId }
+          : {}),
+      });
+    return grant;
   } catch {
     return null;
   }

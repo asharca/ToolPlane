@@ -15,12 +15,15 @@ import type {
 } from "@/lib/agents/runtime-commands";
 import { isLocalGrant } from "@/lib/a2a/principal";
 import { workRuntimeObserver } from "@/lib/work/run-control";
+import { recordTaskExecutionStage } from "@/lib/a2a/store";
+import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
+import { MeteredExecutionError } from "@/lib/agents/usage";
 
 /** Local runtime port: Task context identity, not a private Conversation or old sub-agent runner. */
 export const executeLocalTask: TaskExecutor = async (row, signal) => {
   if (row.executionBackend === "pi-harness")
     return drainRetiredPiHarnessTask(row, signal);
-  if (row.executionBackend !== "pi-sdk" && row.executionBackend !== "omp")
+  if (row.executionBackend !== "pi-sdk")
     throw new Error("Unknown Agent execution backend.");
   const grant = row.grant as unknown as TaskGrant;
   const observer =
@@ -29,7 +32,11 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
     grant.entryPolicy?.kind === "work"
       ? workRuntimeObserver(grant.entryPolicy.sourceId)
       : undefined;
-  await observer?.onExecutionStage?.("preparing");
+  const onExecutionStage = async (stage: AgentExecutionStage) => {
+    await recordTaskExecutionStage(row.id, row.leaseToken, stage);
+    await observer?.onExecutionStage?.(stage);
+  };
+  await onExecutionStage("preparing");
   const options = await localTaskOptions(
     row,
     signal,
@@ -38,33 +45,44 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
   let commands: RuntimeCommand[] = [];
   let usage: RuntimeUsage | undefined;
   let commandResult: RuntimeCommandResult | undefined;
-  const text = await runSandboxAgentTurn({
-    ...options,
-    onTextDelta: observer?.onTextDelta,
-    onActivity: observer?.onActivity,
-    onExecutionStage: observer?.onExecutionStage,
-    onContextUsage: observer?.onContextUsage,
-    onCommands: async (value) => {
-      commands = value;
-      await observer?.onCommands?.(value);
-    },
-    onUsage: async (value) => {
-      usage = value;
-      await observer?.onUsage?.(value);
-    },
-    onCommandResult: async (value) => {
-      commandResult = value;
-      await observer?.onCommandResult?.(value);
-    },
-  });
-  signal.throwIfAborted();
-  await assertLiveGrant(grant, "send");
-  if (text.length > A2A_LIMITS.outputCharacters)
-    throw new Error("Task output limit exceeded.");
+  let text: string;
+  try {
+    text = await runSandboxAgentTurn({
+      ...options,
+      onTextDelta: observer?.onTextDelta,
+      onActivity: observer?.onActivity,
+      onExecutionStage,
+      onContextUsage: observer?.onContextUsage,
+      onCommands: async (value) => {
+        commands = value;
+        await observer?.onCommands?.(value);
+      },
+      onUsage: async (value) => {
+        usage = value;
+        await observer?.onUsage?.(value);
+      },
+      onCommandResult: async (value) => {
+        commandResult = value;
+        await observer?.onCommandResult?.(value);
+      },
+    });
+    signal.throwIfAborted();
+    await assertLiveGrant(grant, "send");
+    if (text.length > A2A_LIMITS.outputCharacters)
+      throw new Error("Task output limit exceeded.");
+  } catch (error) {
+    if (usage)
+      throw new MeteredExecutionError(error, {
+        usage,
+        model: options.modelId,
+        providerId: options.provider.id,
+      });
+    throw error;
+  }
   const artifact = textArtifact(text);
-  if (options.runtimeKind === "pi-sdk" || options.runtimeKind === "omp")
+  if (options.runtimeKind === "pi-sdk")
     artifact.metadata = {
-      [options.runtimeKind === "omp" ? "toolplaneOmp" : "toolplanePiSdk"]: {
+      toolplanePiSdk: {
         commands,
         model: { providerId: options.provider.id, model: options.modelId },
         ...(usage ? { usage } : {}),

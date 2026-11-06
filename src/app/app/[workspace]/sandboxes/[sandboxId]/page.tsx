@@ -1,3 +1,4 @@
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 
 import { ButtonLink } from "@/components/motion/button";
@@ -164,7 +165,7 @@ export default async function SandboxDetailPage({
       : sshServer?.host;
   let mcpEndpoint: string | null = null;
   try {
-    mcpEndpoint = sandboxMcpResource(sandbox.id);
+    mcpEndpoint = sandboxMcpResource(sandbox.id, await getTransportSettings());
   } catch {
     /* Display configuration hint instead of a broken URL. */
   }

@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import {
   createHash,
   randomUUID,
@@ -27,6 +28,8 @@ import {
 import { db } from "@/lib/db";
 import { requireAgentRevision } from "@/lib/agents/revisions";
 import type { AgentPromptInvocation } from "@/lib/agents/sandbox-runtime";
+import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
+import { taskDeadlineFailure } from "@/lib/agents/execution/deadline-failure";
 import { getAgentConcurrencySettings } from "@/lib/admin/settings";
 import { runtimeEnv } from "@/lib/runtime-env";
 import {
@@ -69,6 +72,7 @@ import {
   taskStateName,
 } from "@/lib/observability/a2a-log";
 import { logHealth, recordEvent } from "@/lib/observability/events";
+import { isEntryRootGrant } from "@/lib/observability/views/task-origin";
 import { prepareTaskFileParts, retryTaskFileTransfers } from "./task-files";
 
 import { assertCollaborationAdmission } from "./collaboration-policy";
@@ -222,7 +226,7 @@ export async function recordLocalPromptInvocation(
   await db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
     if (
-      (row.executionBackend !== "pi-sdk" && row.executionBackend !== "omp") ||
+      row.executionBackend !== "pi-sdk" ||
       row.leaseToken !== leaseToken ||
       row.state !== TaskState.TASK_STATE_WORKING
     )
@@ -332,7 +336,7 @@ export async function submitTaskInTransaction(
       410,
       "Published legacy execution is retired; retained tasks are read-only.",
     );
-  validateSend(request, LOCAL_OUTPUT_MODES);
+  validateSend(request, LOCAL_OUTPUT_MODES, await getTransportSettings());
   const message = request.message;
   if (!message) throw new RequestMalformedError("A user message is required.");
   const contentHash = digest({
@@ -414,7 +418,11 @@ export async function submitTaskInTransaction(
       where: { id: grant.remoteAgentId, workspaceId: grant.workspaceId },
     });
     const card = AgentCard.fromJSON(peer.card);
-    validateSend(request, card.defaultOutputModes);
+    validateSend(
+      request,
+      card.defaultOutputModes,
+      await getTransportSettings(),
+    );
     if (
       message.parts.some(
         (part) =>
@@ -898,6 +906,32 @@ export async function projectPiHarnessProgress(
     await refreshTaskStorage(tx, row.id, true);
   });
 }
+/** Stage updates share the task lock with UI projection and terminal settlement. */
+export async function recordTaskExecutionStage(
+  id: string,
+  leaseToken: string | null,
+  stage: AgentExecutionStage,
+): Promise<void> {
+  await db.$transaction(async (tx) => {
+    const row = await lockTask(tx, id);
+    if (
+      row.leaseToken !== leaseToken ||
+      ![TaskState.TASK_STATE_SUBMITTED, TaskState.TASK_STATE_WORKING].includes(
+        row.state,
+      ) ||
+      row.deadlineAt <= new Date()
+    )
+      return;
+    const projection = row.uiProjection as Record<string, Prisma.JsonValue>;
+    if (projection?.executionStage === stage) return;
+    await tx.a2ATask.update({
+      where: { id },
+      data: { uiProjection: json({ ...projection, executionStage: stage }) },
+    });
+    await refreshTaskStorage(tx, id);
+  });
+}
+
 export async function finishTask(
   id: string,
   leaseToken: string,
@@ -1011,11 +1045,12 @@ export async function finishTask(
       }
     }
     // A confirmed native terminal result wins late cancellation/deadline races.
+    const deadlineExceeded = row.deadlineAt <= new Date();
     const actual = confirmedNative
       ? state
       : row.cancelRequestedAt
         ? TaskState.TASK_STATE_CANCELED
-        : row.deadlineAt <= new Date()
+        : deadlineExceeded
           ? TaskState.TASK_STATE_FAILED
           : state;
     let current = row;
@@ -1057,6 +1092,8 @@ export async function finishTask(
       });
       current = await persist(tx, row, task, event);
     }
+    if (!confirmedNative && local && !row.cancelRequestedAt && deadlineExceeded)
+      detail = taskDeadlineFailure(row);
     transition(task, actual, detail);
     const updated = await persist(tx, current, task, statusEvent(task), {
       leaseToken: null,
@@ -1088,6 +1125,12 @@ export async function interruptTask(
         "A bound Pi operation must be resumed or canceled natively.",
       );
     }
+    if (
+      isLocalGrant(row.grant as unknown as TaskGrant) &&
+      !row.cancelRequestedAt &&
+      row.deadlineAt <= new Date()
+    )
+      detail = taskDeadlineFailure(row);
     const task = Task.fromJSON(row.snapshot);
     if (row.remoteDispatchedAt) {
       task.metadata = {
@@ -1126,7 +1169,7 @@ export async function recordTaskSettled(row: A2ATask): Promise<void> {
     if (
       isLocalGrant(grant) &&
       grant.entryPolicy &&
-      !grant.ancestorTaskIds.length
+      isEntryRootGrant(grant, row.parentTaskId)
     ) {
       await recordEvent({
         domain: "agent",
@@ -1134,10 +1177,11 @@ export async function recordTaskSettled(row: A2ATask): Promise<void> {
         workspaceId: grant.workspaceId,
         agentId: grant.agentId,
         actorId: grant.actorId,
+        taskId: row.id,
         conversationId:
           grant.entryPolicy.kind === "work"
-            ? undefined
-            : grant.entryPolicy.sourceId,
+            ? grant.entryPolicy.conversationId
+            : (grant.entryPolicy.conversationId ?? grant.entryPolicy.sourceId),
         outcome: a2aTaskOutcome(taskState),
         durationMs: row.statusAt.getTime() - row.createdAt.getTime(),
         attributes: {

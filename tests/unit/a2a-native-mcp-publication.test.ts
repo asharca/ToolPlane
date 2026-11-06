@@ -17,6 +17,13 @@ vi.mock("@/lib/a2a/local-runtime", () => ({
   assertLocalRuntimeToken: mocks.runtime,
 }));
 vi.mock("@/lib/db", () => ({ db: { agent: { count: mocks.enabled } } }));
+vi.mock("@/lib/admin/transport-settings", () => ({
+  getTransportSettings: async () => ({
+    allowHttp: false,
+    a2aInlineBytes: 32768,
+    a2aFileBytes: 10 * 1024 * 1024,
+  }),
+}));
 vi.mock("@/lib/agents/revisions", () => ({
   requireAgentRevision: mocks.revision,
 }));

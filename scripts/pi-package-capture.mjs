@@ -122,11 +122,13 @@ async function incoming(message) {
   if (
     message?.type === "configuration" &&
     !configuration &&
-    Object.keys(message).sort().join(",") === "authentication,registry,type"
+    Object.keys(message).sort().join(",") ===
+      "allowHttp,authentication,registry,type" &&
+    typeof message.allowHttp === "boolean"
   ) {
-    publicUrl(message.registry);
+    publicUrl(message.registry, message.allowHttp);
     if (message.authentication) {
-      publicUrl(message.authentication.url);
+      publicUrl(message.authentication.url, message.allowHttp);
       if (
         !/^(Bearer|Basic) [\x21-\x7e]{1,8192}$/.test(
           message.authentication.authorization,
@@ -215,11 +217,34 @@ const proxy = createServer((socket) => {
     if (end < 0) return;
     socket.pause();
     socket.removeListener("data", receiveHeader);
-    const match = /^CONNECT ([a-zA-Z0-9.-]+):443 HTTP\/1\.[01]\r\n/.exec(
-      header.subarray(0, end + 2).toString("ascii"),
+    const requestHeader = header.subarray(0, end + 2).toString("ascii");
+    const match = /^CONNECT ([a-zA-Z0-9.-]+):(\d{1,5}) HTTP\/1\.[01]\r\n/.exec(
+      requestHeader,
     );
+    const plain = /^([A-Z]+) (http:\/\/\S+) (HTTP\/1\.[01])\r\n/.exec(
+      requestHeader,
+    );
+    let target;
+    if (plain && configuration?.allowHttp === true) {
+      target = new URL(plain[2]);
+      if (
+        target.protocol !== "http:" ||
+        target.username ||
+        target.password ||
+        target.hash ||
+        !/^[a-zA-Z0-9.-]+$/.test(target.hostname)
+      )
+        return fail();
+    }
+    const host = match?.[1] ?? target?.hostname;
+    const port = Number(match?.[2] ?? (target?.port || "80"));
     if (
-      !match ||
+      !host ||
+      !Number.isInteger(port) ||
+      port < 1 ||
+      port > 65535 ||
+      (port !== 443 && configuration?.allowHttp !== true) ||
+      (!match && !target) ||
       channels.size >= 16 ||
       channels.size + closedChannels.size >= 20000
     )
@@ -250,10 +275,21 @@ const proxy = createServer((socket) => {
           data: data.subarray(offset, offset + FRAME).toString("base64"),
         });
     };
-    send({ type: "connect", id, host: match[1], port: 443 });
+    send({ type: "connect", id, host, port });
     connected
       .then(async () => {
-        socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+        if (match) socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+        else {
+          const firstLineEnd = header.indexOf("\r\n");
+          await forward(
+            Buffer.concat([
+              Buffer.from(
+                `${plain[1]} ${target.pathname}${target.search} ${plain[3]}\r\n`,
+              ),
+              header.subarray(firstLineEnd + 2, end + 4),
+            ]),
+          );
+        }
         const leftover = header.subarray(end + 4);
         if (leftover.length) await forward(leftover);
         let chain = Promise.resolve();
@@ -315,14 +351,15 @@ const env = {
     : {}),
 };
 await mkdir(env.HOME, { recursive: true });
-function publicUrl(raw) {
+function publicUrl(raw, allowHttp = configuration?.allowHttp === true) {
   const url = new URL(raw);
   if (
-    url.protocol !== "https:" ||
+    (url.protocol !== "https:" && !(url.protocol === "http:" && allowHttp)) ||
     url.username ||
     url.password ||
     url.search ||
-    (url.port && url.port !== "443")
+    (url.protocol === "https:" && url.port && url.port !== "443") ||
+    url.port === "0"
   )
     throw Error("source_invalid");
   const path = decodeURIComponent(url.pathname);
@@ -944,6 +981,9 @@ async function resources(manifest, inventory) {
 let captureStage = "source";
 async function main() {
   await configured;
+  env.GIT_CONFIG_COUNT = "7";
+  env.GIT_CONFIG_KEY_6 = "protocol.http.allow";
+  env.GIT_CONFIG_VALUE_6 = configuration.allowHttp ? "always" : "never";
   configuration.registry = publicUrl(configuration.registry).href.replace(
     /\/?$/,
     "/",

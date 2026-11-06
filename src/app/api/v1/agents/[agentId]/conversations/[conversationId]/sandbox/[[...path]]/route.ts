@@ -39,7 +39,7 @@ async function proxy(req: Request, { params }: Params) {
   if (!agent || !conversation)
     return Response.json({ error: "Not found" }, { status: 404 });
   const historical =
-    (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp") ||
+    agent.runtimeKind !== "pi-sdk" ||
     agent.retiredAt ||
     conversation.legacyRevisionUnresolved ||
     !conversation.agentRevisionId;

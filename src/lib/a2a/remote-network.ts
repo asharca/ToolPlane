@@ -1,6 +1,21 @@
 import "server-only";
 import { lookup } from "node:dns/promises";
 import { request } from "node:https";
+import { request as httpRequest } from "node:http";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import { resolvePrivateHostsSettings } from "@/lib/admin/settings";
+import {
+  isPrivateRemoteMcpIp,
+  normalizeRemoteMcpHostname,
+  parseRemoteMcpPrivateHosts,
+  type PrivateHostsPolicy,
+} from "../../../scripts/remote-mcp-private-hosts.mjs";
+import {
+  DEFAULT_TRANSPORT_POLICY,
+  permitsTransportProtocol,
+  a2aTransportBodyBytes,
+  type TransportPolicy,
+} from "@/lib/transport-policy";
 import { BlockList, isIP } from "node:net";
 import { validateRemoteResponse, fileSafeLogPayload } from "./remote-wire";
 import { runtimeEnv } from "@/lib/runtime-env";
@@ -60,7 +75,10 @@ export function publicRemoteAddress(address: string): boolean {
         !blocked.check(address, "ipv6");
 }
 /** Deployment administrator approves exact origins; workspace administrators cannot override this policy. */
-export function remoteUrl(value: string): URL {
+export function remoteUrl(
+  value: string,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+): URL {
   let url: URL;
   try {
     url = new URL(value);
@@ -70,7 +88,7 @@ export function remoteUrl(value: string): URL {
   if (
     value !== value.trim() ||
     /[^\x21-\uFFFF]|[\x7f\\]/.test(value) ||
-    url.protocol !== "https:" ||
+    !permitsTransportProtocol(url.protocol, policy) ||
     url.username ||
     url.password ||
     url.search ||
@@ -103,16 +121,24 @@ export function remoteUrl(value: string): URL {
     );
   return url;
 }
-export function remotePair(cardUrl: string, rpcUrl: string) {
-  const card = remoteUrl(cardUrl),
-    rpc = remoteUrl(rpcUrl);
+export function remotePair(
+  cardUrl: string,
+  rpcUrl: string,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+) {
+  const card = remoteUrl(cardUrl, policy),
+    rpc = remoteUrl(rpcUrl, policy);
   if (card.origin !== rpc.origin || card.href === rpc.href)
     throw new RemoteA2AError(
       "Card and RPC addresses must be distinct paths on the same approved origin.",
     );
   return { cardUrl: card.href, rpcUrl: rpc.href };
 }
-async function addresses(host: string, signal: AbortSignal) {
+async function addresses(
+  host: string,
+  signal: AbortSignal,
+  privateHosts: PrivateHostsPolicy | null = null,
+) {
   const pending = isIP(host)
     ? Promise.resolve([{ address: host, family: isIP(host) }])
     : lookup(host, { all: true, verbatim: true });
@@ -127,11 +153,27 @@ async function addresses(host: string, signal: AbortSignal) {
     else signal.addEventListener("abort", abort, { once: true });
   });
   try {
+    const name = normalizeRemoteMcpHostname(host);
+    const listedHost =
+      privateHosts &&
+      (privateHosts.hosts.has(name) ||
+        [...privateHosts.suffixes].some((suffix) =>
+          name.endsWith(`.${suffix}`),
+        ));
     const result = await Promise.race([pending, aborted]);
     if (
       !result.length ||
       result.length > 32 ||
-      result.some((item) => !publicRemoteAddress(item.address))
+      result.some(
+        (item) =>
+          !publicRemoteAddress(item.address) &&
+          !(
+            privateHosts &&
+            isPrivateRemoteMcpIp(item.address) &&
+            (listedHost ||
+              privateHosts.ips.has(normalizeRemoteMcpHostname(item.address)))
+          ),
+      )
     )
       throw new RemoteA2AError("Remote DNS resolved to a prohibited address.");
     return result[0];
@@ -146,9 +188,19 @@ async function fetchPinnedRemoteJson(
   body: string | undefined,
   token: string | undefined,
   signal?: AbortSignal,
+  snapshot?: TransportPolicy,
 ): Promise<Response> {
-  const url = remoteUrl(urlValue);
-  if (body && Buffer.byteLength(body) > REMOTE_REQUEST_BYTES)
+  const policy = snapshot ?? (await getTransportSettings());
+  const url = remoteUrl(urlValue, policy);
+  const responseBytes = Math.max(
+    REMOTE_RESPONSE_BYTES,
+    a2aTransportBodyBytes(policy),
+  );
+  if (
+    body &&
+    Buffer.byteLength(body) >
+      Math.max(REMOTE_REQUEST_BYTES, a2aTransportBodyBytes(policy))
+  )
     throw new RemoteA2AError("Remote request size limit exceeded.");
   if (token && (!/^[\x21-\x7e]+$/.test(token) || token.length > 8192))
     throw new RemoteA2AError("Invalid remote credential.");
@@ -166,7 +218,7 @@ async function fetchPinnedRemoteJson(
       if (abortSignal.aborted) error.cause = abortSignal.reason;
       reject(error);
     };
-    const req = request(
+    const req = (url.protocol === "http:" ? httpRequest : request)(
       url,
       {
         method,
@@ -207,7 +259,7 @@ async function fetchPinnedRemoteJson(
             res.headers["content-encoding"] !== "identity") ||
           (res.headers["a2a-version"] &&
             res.headers["a2a-version"] !== "1.0") ||
-          Number(res.headers["content-length"]) > REMOTE_RESPONSE_BYTES
+          Number(res.headers["content-length"]) > responseBytes
         ) {
           res.destroy();
           req.destroy();
@@ -218,7 +270,7 @@ async function fetchPinnedRemoteJson(
         let bytes = 0;
         res.on("data", (chunk: Buffer) => {
           bytes += chunk.length;
-          if (bytes > REMOTE_RESPONSE_BYTES) {
+          if (bytes > responseBytes) {
             res.destroy();
             req.destroy();
             fail();
@@ -255,7 +307,8 @@ export function remoteRpcFetch(
 ): typeof fetch {
   return async (input, init) => {
     const req = new Request(input, init);
-    const approvedUrl = remoteUrl(rpcUrl).href;
+    const policy = await getTransportSettings();
+    const approvedUrl = remoteUrl(rpcUrl, policy).href;
     if (req.url !== approvedUrl || req.method !== "POST")
       throw new RemoteA2AError("Remote transport target changed.");
     const started = performance.now();
@@ -287,6 +340,7 @@ export function remoteRpcFetch(
         body,
         token,
         req.signal,
+        policy,
       );
       httpStatus = response.status;
       try {
@@ -294,7 +348,7 @@ export function remoteRpcFetch(
         responsePayload = { rawText: text };
         responseComplete = true;
         responsePayload = JSON.parse(text);
-        validateRemoteResponse(rpc, responsePayload);
+        validateRemoteResponse(rpc, responsePayload, policy);
       } catch {
         throw new RemoteA2AError(
           "Remote output is not a valid supported A2A response.",
@@ -374,9 +428,11 @@ export async function fetchRemoteJson(
   }
 }
 
-export const REMOTE_FILE_BYTES = 10 * 1024 * 1024;
 /** Signed query strings are accepted only by the file transport, never Card/RPC. */
-export function remoteFileUrl(value: string): URL {
+export function remoteFileUrl(
+  value: string,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+): URL {
   let url: URL;
   try {
     url = new URL(value);
@@ -387,7 +443,7 @@ export function remoteFileUrl(value: string): URL {
     value !== value.trim() ||
     value.length > 8192 ||
     /[^\x21-\uFFFF]|[\x7f\\]/.test(value) ||
-    url.protocol !== "https:" ||
+    !permitsTransportProtocol(url.protocol, policy) ||
     url.username ||
     url.password ||
     url.hash
@@ -395,62 +451,15 @@ export function remoteFileUrl(value: string): URL {
     throw new RemoteA2AError(
       "File addresses require HTTPS without credentials or fragment.",
     );
-  const privateAddresses = privateFileAddresses(url.origin);
-  if (!privateAddresses) {
-    const clean = new URL(url);
-    clean.search = "";
-    remoteUrl(clean.href);
-  }
   return url;
-}
-function privateFileAddresses(origin: string): string[] | undefined {
-  let configured: unknown;
-  try {
-    configured = JSON.parse(
-      runtimeEnv("TOOLPLANE_A2A_FILE_PRIVATE_ORIGINS") || "{}",
-    );
-  } catch {
-    throw new RemoteA2AError("Invalid private file origin configuration.");
-  }
-  if (
-    !configured ||
-    typeof configured !== "object" ||
-    Array.isArray(configured) ||
-    Object.keys(configured).length > 100
-  )
-    throw new RemoteA2AError("Invalid private file origin configuration.");
-  const values = (configured as Record<string, unknown>)[origin];
-  if (values === undefined) return undefined;
-  // This opt-in permits exact RFC1918/ULA addresses, never metadata/link-local/loopback.
-  const privateV4 = new BlockList();
-  privateV4.addSubnet("10.0.0.0", 8, "ipv4");
-  privateV4.addSubnet("172.16.0.0", 12, "ipv4");
-  privateV4.addSubnet("192.168.0.0", 16, "ipv4");
-  const privateV6 = new BlockList();
-  privateV6.addSubnet("fc00::", 7, "ipv6");
-  if (
-    !Array.isArray(values) ||
-    !values.length ||
-    values.length > 32 ||
-    values.some(
-      (address) =>
-        typeof address !== "string" ||
-        !(isIP(address) === 4
-          ? privateV4.check(address, "ipv4")
-          : isIP(address) === 6 && privateV6.check(address, "ipv6")),
-    )
-  )
-    throw new RemoteA2AError(
-      "Private file origins require exact private addresses.",
-    );
-  return values as string[];
 }
 /** Stream bytes directly to storage. No redirects, auth forwarding, proxy, or payload logging. */
 export async function fetchRemoteFile(
   value: string,
   signal?: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> {
-  const url = remoteFileUrl(value);
+  const policy = await getTransportSettings();
+  const url = remoteFileUrl(value, policy);
   if (inflight >= 16)
     throw new RemoteA2AError("Remote connection capacity reached.");
   inflight++;
@@ -467,18 +476,26 @@ export async function fetchRemoteFile(
       ...(signal ? [signal] : []),
     ]);
     const host = url.hostname.replace(/^\[|\]$/g, "");
-    const approved = privateFileAddresses(url.origin);
-    let pinned: { address: string; family: number };
-    if (approved) {
-      // Pin an administrator-specified address, not a fresh potentially rebinding DNS answer.
-      if (isIP(host) && !approved.includes(host))
-        throw new RemoteA2AError("Private file address is not approved.");
-      pinned = { address: approved[0], family: isIP(approved[0]) };
-    } else pinned = await addresses(host, abortSignal);
+    const privateHosts = parseRemoteMcpPrivateHosts(
+      (await resolvePrivateHostsSettings()).value,
+    );
+    const pinned = await addresses(host, abortSignal, privateHosts);
+    const name = normalizeRemoteMcpHostname(host);
+    const listedHost =
+      privateHosts &&
+      (privateHosts.hosts.has(name) ||
+        [...privateHosts.suffixes].some((suffix) =>
+          name.endsWith(`.${suffix}`),
+        ));
+    if (!listedHost && publicRemoteAddress(pinned.address)) {
+      const clean = new URL(url);
+      clean.search = "";
+      remoteUrl(clean.href, policy);
+    }
     abortSignal.throwIfAborted();
     const { promise, resolve, reject } =
       Promise.withResolvers<ReadableStream<Uint8Array>>();
-    const req = request(
+    const req = (url.protocol === "http:" ? httpRequest : request)(
       url,
       {
         method: "GET",
@@ -497,7 +514,7 @@ export async function fetchRemoteFile(
           (res.statusCode ?? 0) !== 200 ||
           (res.headers["content-encoding"] &&
             res.headers["content-encoding"] !== "identity") ||
-          Number(res.headers["content-length"]) > REMOTE_FILE_BYTES
+          Number(res.headers["content-length"]) > policy.a2aFileBytes
         ) {
           res.destroy();
           req.destroy();
@@ -519,7 +536,7 @@ export async function fetchRemoteFile(
             res.on("data", (chunk: Buffer) => {
               if (ended) return;
               bytes += chunk.byteLength;
-              if (bytes > REMOTE_FILE_BYTES) {
+              if (bytes > policy.a2aFileBytes) {
                 fail();
                 res.destroy();
                 req.destroy();

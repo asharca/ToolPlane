@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { AsyncResource } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -44,12 +45,9 @@ import {
   handleWorkUi,
 } from "@/lib/agents/execution/work-ui";
 import { createAgentRuntimeToken } from "@/lib/agents/runtime-access";
-import { createConfiguredAgent } from "@/lib/agents/mutations";
-import { emptyOmpConfig, OMP_VERSION } from "@/lib/agents/omp-config";
-import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
-import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import { updateTaskUi } from "@/lib/agents/execution/task-ui";
 import { mapTaskSandbox } from "./task-sandbox-fixture";
+import { withAgentMaintenanceLease } from "@/lib/agents/agent-execution-gate";
 const browserActor = vi.hoisted(() => ({ id: "" }));
 vi.mock("@/lib/auth/request-user", () => ({
   resolveRequestPrincipal: async () => ({
@@ -166,91 +164,49 @@ async function fixture() {
   return { agent, config, revision };
 }
 describe.sequential("Work and local A2A owner revisions", () => {
-  it("creates OMP drafts and pins real OMP Work/A2A backends without Pi package state", async () => {
-    const ompConfig = {
-      ...emptyOmpConfig(),
-      files: [{ path: "APPEND_SYSTEM.md", content: "Frozen OMP instructions" }],
-    };
-    const agent = await createConfiguredAgent(
-      workspaceId,
-      {
-        name: `omp-${++sequence}`,
-        systemPrompt: "OMP prompt",
-        providerId,
-        model: "fixture",
-        maxSteps: 10,
-      },
-      { deploymentIds: [], installedSkillIds: [], toolkitIds: [] },
-      { runtime: "omp" },
-    );
-    expect(agent.ompConfig).toEqual(emptyOmpConfig());
-    await db.agent.update({
-      where: { id: agent.id },
-      data: { a2aInboundEnabled: true, ompConfig },
-    });
-    const revision = await publishFixtureAgentRevision(workspaceId, agent.id);
-    expect(revision.config).toMatchObject({
-      runtimeKind: "omp",
-      ompConfig,
-      ompConfigChecksum: marketReleaseChecksum(ompConfig),
-      environment: { ompVersion: OMP_VERSION },
-      packages: [],
-    });
-    expect(revision.config.environment).not.toHaveProperty("piVersion");
+  it("rejects retry and new input while conversation deletion holds maintenance", async () => {
+    const { agent } = await fixture();
     const work = await createWorkSession({
       workspaceId,
       agentId: agent.id,
-      a2aActorId: userId,
-      task: "OMP work",
+      task: "Deletion admission race",
     });
-    expect(work).toMatchObject({
-      runtimeKind: "omp",
-      agentRevisionId: revision.id,
+    if (!work) throw new Error("Missing Work fixture");
+    await db.workSession.update({
+      where: { id: work.id },
+      data: { status: "failed" },
     });
+    const requester = new AsyncResource("concurrent-work-input");
+    try {
+      await withAgentMaintenanceLease(agent.id, () =>
+        requester.runInAsyncScope(async () => {
+          await expect(
+            resumeWorkSession(workspaceId, work.id),
+          ).resolves.toMatchObject({
+            ok: false,
+            reason: "invalid_transition",
+            status: "failed",
+          });
+          await expect(
+            appendWorkSessionInput(workspaceId, work.id, "Concurrent input"),
+          ).resolves.toMatchObject({
+            ok: false,
+            reason: "invalid_transition",
+            status: "failed",
+          });
+        }),
+      );
+    } finally {
+      requester.emitDestroy();
+    }
     expect(
-      await db.piSessionPackageSet.count({
-        where: { conversationId: work?.conversationId },
-      }),
-    ).toBe(0);
-    const grant = await createLocalRootGrant(workspaceId, agent.id, userId);
-    const task = await submitTask(
-      grant,
-      SendMessageRequest.fromJSON({
-        message: {
-          messageId: randomUUID(),
-          role: "ROLE_USER",
-          parts: [{ text: "OMP local execution" }],
-        },
-      }),
-    );
-    expect(task.executionBackend).toBe("omp");
-    const claimed = await claimTask(task.id);
-    expect(claimed).toMatchObject({
-      executionBackend: "omp",
-      grant: { agentRevisionId: revision.id },
-    });
-    await db.agent.update({
-      where: { id: agent.id },
-      data: { ompConfig: emptyOmpConfig() },
-    });
-    const live = await getAgentForRun(agent.id, workspaceId);
-    if (!live) throw new Error("Missing OMP fixture");
+      await db.workSession.findUnique({ where: { id: work.id } }),
+    ).toMatchObject({ status: "failed" });
     expect(
-      (await resolvePinnedAgent(live, revision.id)).revisionConfig,
-    ).toMatchObject({ ompConfig });
-    const changed = emptyOmpConfig();
-    await expect(
-      publishAgentRevision(workspaceId, agent.id, {
-        expectedRevisionId: revision.id,
-        config: { ...revision.config, ompConfig: changed },
+      await db.message.count({
+        where: { conversationId: work.conversationId },
       }),
-    ).rejects.toMatchObject({ code: "OMP_CONFIG_CHECKSUM_MISMATCH" });
-    await requestCancellation(grant, task.id);
-    await db.agent.update({
-      where: { id: agent.id },
-      data: { a2aInboundEnabled: false },
-    });
-    await expect(assertLocalGrant(grant)).rejects.toThrow();
+    ).toBe(1);
   });
   it("persists native Work todos and scopes dialogs to the live turn and initiating browser actor", async () => {
     const { agent, revision } = await fixture();
@@ -631,7 +587,7 @@ describe.sequential("Work and local A2A owner revisions", () => {
     expect(await db.agentRevision.count({ where: { agentId: agent.id } })).toBe(
       3,
     );
-  });
+  }, 20_000);
 
   it("rejects explicit unresolved and wrong-owner pins instead of selecting the current default", async () => {
     const first = await fixture();

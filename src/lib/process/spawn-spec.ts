@@ -1,4 +1,8 @@
 import {
+  DEFAULT_TRANSPORT_POLICY,
+  type TransportPolicy,
+} from "@/lib/transport-policy";
+import {
   sandboxFlags,
   WRAP_IMAGE,
   CACHE_ENV,
@@ -81,6 +85,7 @@ function splitArgs(s: string | undefined): string[] {
 function readRemoteCfg(
   sourceRef: string | null,
   installCfg: unknown,
+  policy: Pick<TransportPolicy, "allowHttp">,
 ): Omit<Extract<SpawnSpec, { kind: "remote" }>, "kind" | "name"> {
   let url: URL;
   try {
@@ -107,7 +112,11 @@ function readRemoteCfg(
     throw new Error("Remote MCP configuration is invalid.");
   }
   const cfg = installCfg as Record<string, unknown>;
-  if (url.protocol === "http:" && cfg.allowUnsafeHttp !== true) {
+  if (
+    url.protocol === "http:" &&
+    cfg.allowUnsafeHttp !== true &&
+    !policy.allowHttp
+  ) {
     throw new Error(
       "Remote MCP HTTP requires explicit plaintext-risk approval.",
     );
@@ -185,7 +194,9 @@ function readRemoteCfg(
     transport,
     headers,
     timeoutMs: Number(timeoutMs),
-    allowUnsafeHttp: cfg.allowUnsafeHttp === true,
+    allowUnsafeHttp:
+      cfg.allowUnsafeHttp === true ||
+      (url.protocol === "http:" && policy.allowHttp),
   };
 }
 
@@ -363,6 +374,7 @@ function readSandboxCfg(installCfg: unknown): {
 export function resolveSpawnSpec(
   d: DeploymentForSpawn,
   rebuild = false,
+  policy: Pick<TransportPolicy, "allowHttp"> = DEFAULT_TRANSPORT_POLICY,
 ): SpawnSpec {
   if (d.source === "sandbox") {
     const cfg = readSandboxCfg(d.installCfg);
@@ -385,7 +397,7 @@ export function resolveSpawnSpec(
     return {
       kind: "remote",
       name: d.name ?? d.server?.name ?? "Remote MCP",
-      ...readRemoteCfg(d.sourceRef, d.installCfg),
+      ...readRemoteCfg(d.sourceRef, d.installCfg, policy),
     };
   }
 

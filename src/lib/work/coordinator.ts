@@ -530,7 +530,7 @@ async function executeWork(workSessionId: string) {
     });
     if (!stillRunning) return;
     if (
-      !["pi-sdk", "omp"].includes(work.runtimeKind) ||
+      work.runtimeKind !== "pi-sdk" ||
       work.legacyRevisionUnresolved ||
       !work.agentRevisionId ||
       work.conversation.legacyRevisionUnresolved ||
@@ -781,7 +781,7 @@ async function claimNextWork(): Promise<string | null> {
     const work = await db.workSession.findFirst({
       where: {
         status: "queued",
-        runtimeKind: { in: ["pi-sdk", "omp"] },
+        runtimeKind: { in: ["pi-sdk"] },
         agentRevisionId: { not: null },
         legacyRevisionUnresolved: false,
         conversation: {

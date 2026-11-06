@@ -118,10 +118,12 @@ const JSON_CONFIG_EXAMPLES = {
 
 export function DeployCustomMcpDialog({
   slug,
+  allowHttp,
   defaultOpen = false,
   inline = false,
 }: {
   slug: string;
+  allowHttp: boolean;
   defaultOpen?: boolean;
   inline?: boolean;
 }) {
@@ -197,7 +199,7 @@ export function DeployCustomMcpDialog({
 
   const validateBeforeSubmit = (event: FormEvent<HTMLFormElement>) => {
     try {
-      parseMcpJsonConfig(config, undefined, { allowUnsafeHttp });
+      parseMcpJsonConfig(config, undefined, { allowUnsafeHttp, allowHttp });
       setConfigError(null);
     } catch (error) {
       event.preventDefault();
@@ -301,9 +303,11 @@ export function DeployCustomMcpDialog({
             {configIsRemote ? (
               <RemoteMcpTransportNotice url={parsedConfig?.ref} showHelp />
             ) : null}
-            <DialogField label={null} dirty={allowUnsafeHttp}>
-              <McpHttpConsent onChange={setAllowUnsafeHttp} />
-            </DialogField>
+            {!allowHttp ? (
+              <DialogField label={null} dirty={allowUnsafeHttp}>
+                <McpHttpConsent onChange={setAllowUnsafeHttp} />
+              </DialogField>
+            ) : null}
             {configError ? (
               <p
                 id="config-error"

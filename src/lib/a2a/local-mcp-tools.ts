@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { z } from "zod";
 import { SendMessageRequest, Task, Part, Role } from "@a2a-js/sdk";
 import { db } from "@/lib/db";
@@ -130,7 +131,12 @@ export async function executeLocalMcpTool(
       }
       case "a2a_send_remote_message": {
         const input = RemoteSend.parse(raw);
-        validateParams("SendMessage", input.request, ["text/plain"]);
+        validateParams(
+          "SendMessage",
+          input.request,
+          ["text/plain"],
+          await getTransportSettings(),
+        );
         const request = SendMessageRequest.fromJSON(input.request);
         if (request.tenant && request.tenant !== input.remoteAgentId)
           throw new Error("Wrong tenant");
@@ -180,7 +186,12 @@ export async function executeLocalMcpTool(
       }
       case "a2a_send_message": {
         const input = Send.parse(raw);
-        validateParams("SendMessage", input.request, LOCAL_OUTPUT_MODES);
+        validateParams(
+          "SendMessage",
+          input.request,
+          LOCAL_OUTPUT_MODES,
+          await getTransportSettings(),
+        );
         const request = SendMessageRequest.fromJSON(input.request);
         if (request.tenant && request.tenant !== input.agentId)
           throw new Error("Wrong tenant");

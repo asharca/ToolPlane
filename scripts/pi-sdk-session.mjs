@@ -23,6 +23,8 @@ import {
   officialTodoPath,
 } from "./pi-sdk-native-resources.mjs";
 const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
+// Native tools inherit this: importing a skill must not add files to its pinned snapshot.
+process.env.PYTHONDONTWRITEBYTECODE = "1";
 // Extension and native writable state belongs to this conversation, never /root.
 for (const [name, directory] of Object.entries({
   HOME: join(config.agentDir, "home"),
@@ -70,9 +72,49 @@ const { theme } = await import(
 );
 const todoPath = officialTodoPath(sdkEntry);
 let promptInvocation;
-const fail = (code) => {
-  throw Object.assign(new Error(code), { code });
+const fail = (code, reason) => {
+  throw Object.assign(new Error(code), { code, ...(reason ? { reason } : {}) });
 };
+// Pi rejects manual compaction of a short or freshly compacted session before
+// any model call; the session is unchanged, so report its notice as the result.
+const COMPACTION_NOOPS = new Set([
+  "Nothing to compact (session too small)",
+  "Already compacted",
+]);
+const compact = (session, instructions) =>
+  session.compact(instructions).catch((error) => {
+    if (COMPACTION_NOOPS.has(error?.message)) return { summary: error.message };
+    throw error;
+  });
+// Provider text may echo credentials or prompts; only a fixed reason leaves the host.
+// The model base URL is always ToolPlane's proxy, so a connection failure means the
+// sandbox cannot reach ToolPlane; upstream outages arrive as proxied HTTP statuses.
+function modelFailureReason(errorMessage) {
+  const message = String(errorMessage ?? "");
+  const status =
+    /^([1-5]\d\d)\b/.exec(message)?.[1] ??
+    /\(([1-5]\d\d)\):/.exec(message)?.[1];
+  if (status) return `HTTP_${status}`;
+  if (/timed? ?out|ETIMEDOUT/i.test(message)) return "TIMEOUT";
+  if (
+    /connection error|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|fetch failed|socket hang up/i.test(
+      message,
+    )
+  )
+    return "UNREACHABLE";
+  if (EMPTY_STREAM.test(message)) return "EMPTY_STREAM";
+  if (/stream ended|finish_reason: network_error|terminated/i.test(message))
+    return "STREAM_INCOMPLETE";
+  if (/content_filter/i.test(message)) return "CONTENT_FILTER";
+  return "PROVIDER_ERROR";
+}
+// Gateways that already sent HTTP 200 report an upstream that produced nothing,
+// or a stream cut before finish_reason, as an in-stream error. Pi 0.87.1 does
+// not classify either as transient.
+const EMPTY_STREAM = /empty_stream|empty .{0,40}stream/i;
+const TRANSIENT_STREAM =
+  /empty_stream|empty .{0,40}stream|without finish_reason/i;
+const MAX_MODEL_RETRIES = 10;
 const emit = (event) => writeFileSync(3, `${JSON.stringify(event)}\n`);
 const within = (root, path) => {
   const rel = relative(root, path);
@@ -144,6 +186,8 @@ let texts = [],
   usage,
   turnError,
   modelFailed = false,
+  modelReason,
+  modelRetried = 0,
   aborted = false;
 let lastState;
 const nativeUi = createNativeUi({
@@ -308,6 +352,7 @@ function toolPayload(value) {
 }
 function event(event) {
   if (!active) return;
+  if (event.type === "auto_retry_start") modelRetried = event.attempt;
   if (event.type === "message_update") {
     const update = event.assistantMessageEvent;
     if (
@@ -373,6 +418,10 @@ function event(event) {
     if (message.role === "assistant") {
       modelFailed =
         message.stopReason === "error" || message.stopReason === "aborted";
+      modelReason =
+        message.stopReason === "error"
+          ? modelFailureReason(message.errorMessage)
+          : undefined;
       const text = contentText(message.content);
       if (text) texts.push(text);
       if (message.usage) {
@@ -392,6 +441,13 @@ function event(event) {
     }
   }
 }
+// Session setup and reload recompute settings from storage, so apply after them.
+function applyRetryBudget() {
+  const retries = config.modelRetries ?? 0;
+  settingsManager.applyOverrides({
+    retry: { enabled: retries > 0, maxRetries: retries },
+  });
+}
 function applyConfiguredThinkingLevel(session) {
   const level = config.reasoningEffort;
   if (level === undefined || level === "default") return;
@@ -400,9 +456,23 @@ function applyConfiguredThinkingLevel(session) {
   // Pi 0.87.1 clamps to the current model and persists the change in this session only.
   session.setThinkingLevel(level, { persist: false });
 }
+// Pinned 0.87.1 exposes no retry matcher setting; extend its instance check so
+// empty/incomplete gateway streams retry under the same budget and backoff.
+function allowTransientStreamRetry(session) {
+  const piRetryable = session._isRetryableError;
+  if (typeof piRetryable !== "function") fail("PI_SDK_VERSION_MISMATCH");
+  if (piRetryable.toolplane) return;
+  const retryable = (message) =>
+    piRetryable.call(session, message) ||
+    (message?.stopReason === "error" &&
+      TRANSIENT_STREAM.test(String(message.errorMessage ?? "")));
+  retryable.toolplane = true;
+  session._isRetryableError = retryable;
+}
 async function bindSession(session) {
   unsubscribe?.();
   unsubscribe = session.subscribe(event);
+  allowTransientStreamRetry(session);
   await session.bindExtensions({
     mode: context?.uiUrl ? "rpc" : "json",
     uiContext: context?.uiUrl ? nativeUi.uiContext : undefined,
@@ -422,6 +492,7 @@ async function bindSession(session) {
       reload: async () => {
         await verifyPiPackageSnapshots(config.packages);
         await runtime.session.reload();
+        applyRetryBudget();
         diagnostics(runtime.services);
         persist();
       },
@@ -522,6 +593,13 @@ async function refreshContext(next) {
   // Turn-scoped model/auth; neither the immutable revision nor packages change.
   config.model = next.model;
   config.reasoningEffort = next.reasoningEffort;
+  // Workspace setting, live per turn: retries one failed model request in place.
+  config.modelRetries =
+    Number.isInteger(next.modelRetries) &&
+    next.modelRetries >= 0 &&
+    next.modelRetries <= MAX_MODEL_RETRIES
+      ? next.modelRetries
+      : 0;
   modelRuntime.registerProvider("toolplane", {
     baseUrl: config.model.baseUrl,
     api: config.model.api,
@@ -555,12 +633,17 @@ async function refreshContext(next) {
   toolSignature = signature;
 }
 async function handle(request) {
-  const respond = (success, result, code) =>
+  const respond = (success, result, code, reason) =>
     emit({
       type: "toolplane_sdk_response",
       id: request.id,
       success,
-      ...(success ? { result } : { error: { code, message: code } }),
+      ...(success
+        ? { result }
+        : {
+            error: { code, message: code, ...(reason ? { reason } : {}) },
+            ...(result ? { result } : {}),
+          }),
     });
   if (!request || typeof request.id !== "string") return;
   if (request.type === "abort") {
@@ -600,6 +683,8 @@ async function handle(request) {
   turnError = undefined;
   aborted = false;
   modelFailed = false;
+  modelReason = undefined;
+  modelRetried = 0;
   let terminal;
   try {
     if (initialError) fail(initialError);
@@ -626,12 +711,13 @@ async function handle(request) {
     // without an override. Session history survives and global defaults do not change.
     await runtime.session.setModel(config.model, { persist: false });
     applyConfiguredThinkingLevel(runtime.session);
+    applyRetryBudget();
     await nativeUi.projectTodos(runtime.session.sessionManager);
     let command;
     let compaction;
     if (request.type === "compact") {
       command = "compact";
-      compaction = await runtime.session.compact(request.customInstructions);
+      compaction = await compact(runtime.session, request.customInstructions);
     } else {
       if (typeof request.message !== "string") fail("PI_SDK_REQUEST_INVALID");
       command = /^\/([^\s]+)(?:\s|$)/.exec(request.message)?.[1];
@@ -660,7 +746,8 @@ async function handle(request) {
       if (command && !commands().some((c) => c.name === command))
         fail("PI_SDK_COMMAND_UNKNOWN");
       if (command === "compact")
-        compaction = await runtime.session.compact(
+        compaction = await compact(
+          runtime.session,
           request.message.slice("/compact".length).trim() || undefined,
         );
       else await runtime.session.prompt(request.message);
@@ -673,7 +760,13 @@ async function handle(request) {
     } while (current !== runtime.session);
     if (aborted) fail("PI_SDK_ABORTED");
     if (turnError) fail(turnError);
-    if (modelFailed) fail("PI_SDK_MODEL_FAILED");
+    if (modelFailed)
+      fail(
+        "PI_SDK_MODEL_FAILED",
+        modelReason && modelRetried > 0
+          ? `${modelReason} RETRIED_${modelRetried}`
+          : modelReason,
+      );
     diagnostics(runtime.services);
     await nativeUi.projectTodos(runtime.session.sessionManager);
     await nativeUi.drain();
@@ -718,7 +811,13 @@ async function handle(request) {
       } catch {
         /* the original failure stays authoritative */
       }
-    terminal = { success: false, code };
+    terminal = {
+      success: false,
+      code,
+      reason: code === "PI_SDK_MODEL_FAILED" ? error.reason : undefined,
+      // Tokens already spent on a failed turn still count toward the budget.
+      result: usage ? { usage } : undefined,
+    };
   } finally {
     nativeUi.cancel();
     await nativeUi.drain();
@@ -728,7 +827,7 @@ async function handle(request) {
     delete process.env.TOOLPLANE_RUNTIME_TOKEN;
     await modelRuntime.removeRuntimeApiKey("toolplane").catch(() => {});
     active = undefined;
-    respond(terminal.success, terminal.result, terminal.code);
+    respond(terminal.success, terminal.result, terminal.code, terminal.reason);
   }
 }
 process.on("unhandledRejection", () => {

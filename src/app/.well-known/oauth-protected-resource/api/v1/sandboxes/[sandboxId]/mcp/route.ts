@@ -1,3 +1,4 @@
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { sandboxProtectedResourceMetadata } from "@/lib/sandboxes/oauth-policy";
 import { privateJson } from "@/lib/sandboxes/http-body";
 export const runtime = "nodejs";
@@ -8,7 +9,10 @@ export async function GET(
 ) {
   try {
     return privateJson(
-      sandboxProtectedResourceMetadata((await ctx.params).sandboxId),
+      sandboxProtectedResourceMetadata(
+        (await ctx.params).sandboxId,
+        await getTransportSettings(),
+      ),
     );
   } catch {
     return privateJson(

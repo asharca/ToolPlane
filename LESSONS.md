@@ -37,7 +37,16 @@
 - **同日合并后重跑补充**：PR 全套通过后，main 的后台聊天测试读出 `succeeded` 在 `tool_calling` 之前；测试查询没有 `orderBy`，而真实订阅按 `sequence` 升序。测试改用同一持久序号排序，不修改运行时事件和状态机。数据库无显式排序不保证插入顺序；不能依赖本机或某次 CI 的行返回顺序。依据：[后台执行测试](tests/integration/chat-background.test.ts)、[事件订阅](src/lib/chat/run-control.ts)。
 - **同日生产升级演练补充**：旧库多个会话共用一个 AgentRuntime 沙箱，Hermes 退休迁移先回填 Conversation.sandboxId，但其唯一索引直到后续共享沙箱迁移才删除，恢复库实测触发 `Conversation_sandboxId_key` 冲突。把索引解除提前到回填之前，后续删除改为幂等；同一备份重建后，正式镜像加只读修正迁移的完整 27 项升级成功。空库迁移通过不能覆盖真实旧库的数据分布，切换前须从生产备份恢复并验证完整待执行链。
 - **同日生产 Pi 迁移补充**：容器内原生预检把私有 `/tmp` 暂存目录交给宿主 Docker daemon bind mount，真实发布报 `PI_CAPABILITY_PREFLIGHT_FAILED` / `bind source path does not exist`；readiness 当时仍为 200。部署增加同绝对路径的专用 `TMPDIR` 挂载并受控重建后，17 个新 Pi 修订均完成真实预检与发布。下次容器化验收须覆盖准备／应用修订，不能只验应用启动。规范：[运行时运维](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS)；实现：[原生预检](src/lib/agents/sandbox-runtime.ts)。
-- **确认日期**：历史日期未知；初始整理于 2026-10-18；2026-10-30、2026-11-01、2026-11-02、2026-11-03、2026-11-04 实测确认。
+- **SDK 导出补充（2026-11-05，线上保存失败）**：共享 `TMPDIR` 不能让应用私有 `/app/scripts/pi-sdk-install.mjs` 在 daemon 宿主出现。固定 SDK 镜像改由 stdin 接收应用读取的可信源码，保留禁网、只读根和降权。真实生产容器设置保存越过导出并成功发布修订；下次必须用脚本仅存在于应用容器内、无现成 SDK 缓存的部署路径验证，不能以宿主进程成功导出代替。
+- **发布等待补充（2026-11-04，用户催查）**：`v0.33.3` 发布作业时间戳显示 15:52:16 UTC 已完成、耗时 9 分 39 秒，但 `gh run watch` 的返回累计约 33 分钟，期间仍沿用等待状态，延误线上切换。不能把监视命令尚未返回等同于远端仍在构建；用户报告等待异常时，用 `gh run view --json status,conclusion,jobs` 与 Release／镜像可用性独立核对，再报告实际阻塞点。最终按固定镜像摘要受控重建，核对容器版本 `0.33.3`、新启动时间及公网 readiness，不以 Release 存在代替部署成功。
+- **本地 :3000 复发（2026-11-05，用户报告 `did not complete (4)`）**：受管启动的 `:3000` 实例未设 `TOOLPLANE_RUNTIME_ORIGIN`，回落到 `.env` 的 `NEXT_PUBLIC_APP_URL`（`:3007`），沙箱模型请求被拒；`nativeFailure` 只给出 `PI_EXECUTION_FAILED`，需从宿主配置的 `baseUrl` 与沙箱内实测连通性定位。重启时继承的 shell 环境还指向另一套 smoke 库和已被占用的 Connector 端口，首次重启 readiness 503；移除这些覆盖、仅追加运行时 Origin 后为 200。修复 Origin 后又暴露上游网关对该 provider 密钥全部模型返回 503，属外部故障。下次本地启动后，从沙箱内实测运行时 Origin，并用一次真实 Work 的原生 `bash` 结果验收，不以 readiness 代替。
+- **捕获镜像补充（2026-11-05，线上私有插件同步失败）**：应用更新后发送含 `allowHttp` 的捕获配置，daemon 上仍是只接受 `authentication,registry,type` 的旧 `toolplane-pi-package-capture:0.87.1`；来源已解析固定 GitHub 提交，捕获阶段却报 `package_capture_failed`，页面仅显示 `registry_sync_failed`。SDK 版本标签相同不代表可信脚本和宿主协议相同。按 Dockerfile 的 `pi-package-capture` target 重建独立镜像后，禁网、只读根、非 root 的真实提示词包捕获返回完整快照且校验和一致。下次更新捕获协议或可信脚本时同步构建辅助镜像，并在应用实际连接的 Docker daemon 上完成真实包捕获和来源同步，不能仅验应用 readiness；重试前检查来源租约，避免覆盖用户已启动的同步。
+- **捕获修复验收**：重建镜像摘要为 `sha256:9e0f2dab851e85dffa2ae5bb9224d7f706786eec27c86f659224247e28b94242`；既有来源同步任务 `cmw3dqkde00f401o3b6kxvhtk` 随后对固定提交 `34dcae67c6ef3ffda05e925d3406503695a6a52b` 返回 `succeeded`，来源状态 `synced`，索引资源 1 个，无错误。受保护的人工入队未匹配正在同步的来源，未新增重复任务。
+- **提交详情大小补充（2026-11-05，同一私有来源再次失败）**：`resolveCommit()` 请求完整提交详情，却以 256 KiB 限制响应；真实 GitHub 返回 209 个变更文件、307116 字节，导致尚未解析 SHA 就报 `github_response_too_large`。按用户要求仅取消此请求的响应大小限制，保留其他资源限额和鉴权；17 MiB 提交详情回归及来源边界共 34 项通过。受控替换生产镜像后，任务 `commit-repair-935faee9-e7ed-4d46-bf61-aa6e4d9ac1e3` 对提交 `54403f29c85478a9ab44a311a4be066f8eeca3d2` 同步成功，来源 `synced`，活动资源 3 个。下次同步验收须覆盖包含大量文件变更的提交，而不只验证小响应或首次同步。
+- **模型重试接线补充（2026-11-05，线上 `empty_stream` 后新增重试）**：首版把工作区重试次数接在 `sandbox-turn.ts`，宿主回归测试全部通过，但真实 Work 走 A2A `pi-executor` → `task-options` → `runSandboxAgentTurn`，绕过了该入口，伪网关只收到一次请求。改为在 `runNativeSessionExec` 组装每轮 context 时读取工作区设置，真实 Work 观察到一次空流后重试成功，以及重试 2 次后报 `EMPTY_STREAM RETRIED_2`。另外 Pi 的会话初始化会从存储重算 settings，在 `refreshContext` 里应用的覆盖会丢失，须在会话就绪后应用。下次给每轮执行加设置时，接到所有入口共用的宿主调用处，并用一个可控上游跑真实 Work，数实际请求次数。
+- **本地重建迁移遗漏（2026-11-05，用户反馈 Work 页面报错）**：替换 `toolplane-3000` 时复制旧容器的 `Entrypoint=[node]` 与启动命令，绕过镜像的 `docker-entrypoint.sh`；首页及 readiness 均为 200，登录后的 `/app/smoke/work` 却因 `Agent.monthlyBudgetMicros` 缺失报 P2022。核实本地目标库并备份、受控停止应用后，恢复镜像默认入口，成功应用唯一待执行的 `20261105030000_agent_triggers_usage`；smoke 账户实际登录后的 Work 页面 HTTP 200，列表和输入区可见。下次保留部署环境和挂载不等于盲目复制入口覆盖；替换前检查 `prisma migrate status`，并验收带认证的实际业务路由。依据：[镜像入口](docker-entrypoint.sh)、[字段迁移](prisma/migrations/20261105030000_agent_triggers_usage/migration.sql)。
+- **本地 :3000 预检复发（2026-11-06，用户报告创建智能体 `PI_CAPABILITY_PREFLIGHT_FAILED`）**：前一日重建 `toolplane-3000` 时沿用旧容器的环境和挂载，仍缺上文“生产 Pi 迁移补充”要求的同绝对路径 `TMPDIR` 挂载；容器内 `docker create --mount type=bind,source=/tmp/...` 实测返回 `bind source path does not exist`，readiness 仍为 200。确认无活动 Work／助手 Run 后受控停止，保留旧容器为 `toolplane-3000-pre-tmpdir-20261106`，以相同镜像、入口、环境追加 `TMPDIR=/home/ashark/Services/toolplane-3000/runtime-tmp` 及同路径 bind 重建；readiness 200，真实浏览器创建无资源及含 MCP＋技能的 Pi 智能体均发布修订 1，新 Work 原生 bash 返回 `TMPDIR_FIX_OK`。下次替换任何容器化实例，除迁移状态和入口外，还须核对 `TMPDIR` 挂载并完成一次真实创建／发布修订。
+- **确认日期**：历史日期未知；初始整理于 2026-10-18；2026-10-30、2026-11-01、2026-11-02、2026-11-03、2026-11-04、2026-11-05、2026-11-06 实测确认。
 
 ### TP-L002：构建成功，不代表最终镜像里的原生依赖能启动
 
@@ -68,7 +77,9 @@
 - **证据**：清理前的 [sandbox actions 大型 mock 测试](https://github.com/asharca/ToolPlane/blob/8dab4aa09edbf187832c1d2ae7c48ec9d2a36432/tests/unit/sandbox-actions.test.ts)、[种子数据断言](https://github.com/asharca/ToolPlane/blob/8dab4aa09edbf187832c1d2ae7c48ec9d2a36432/tests/unit/smoke-mcp-catalog.test.ts)；现行边界见 [AGENTS.md 的 Verification](AGENTS.md#verification) 与 [README 开发命令](README.md#开发命令)。
 - **验证隔离补充（2026-11-01）**：A2A 集成测试与运行中的开发服务共用数据库时，开发 worker 可领取测试任务并创建 Deployment，干扰远端状态与容量断言；Postgres 日志确认 A2AContext 插入与 Deployment 插入形成 Agent／Workspace 锁死锁。串行测试文件不能隔离另一个服务进程；运行任务型集成测试应使用不被开发 worker 连接的独立本地数据库。检查数据库连接目标，并用独立库重跑受影响的 A2A 集成场景。
 - **环境传递补充（2026-11-03）**：仅在 Eval 中构造隔离库环境对象、却未传给实际启动测试的 shell，仍会连接开发库；本次中止误启动并按精确 fixture ID 清理残留，随后在独立库通过 102 项集成检查。启动测试的同一进程必须设置并检查实际 `DATABASE_URL` 的主机和库名，不以另一个进程里的变量作为隔离证据。
+- **独立 UI 实例补充（2026-11-05）**：临时 Next 启动器曾被继承的 `DATABASE_URL` 覆盖 `.env`，隔离库仍使用了错误数据库的口令；修正后又与已有 Connector broker 共用端口，导致 readiness 返回 503。验证实例须显式确定实际子进程的连接目标及配置优先级，并隔离 HTTP、Connector 与运行时所有权域；`Ready in` 不替代 `/api/v1/readiness`。本次换用干净独立库及独立 broker 端口后 readiness 为 200，再验证真实管理员保存、刷新、审计与恢复默认；未修改线上配置或清除既有实例的 dirty 标记。
 - **预检 fixture 补充（2026-11-02）**：`a2a-local.test.ts` 每次 `beforeEach` 为五个 Agent 完整发布修订，反复执行相同 Docker 原生能力预检，导致 24 项在 hook 的 10 秒上限超时。授权数据库用例沿用 `agents-mutations.test.ts` 的真实配置捕获与事务内不可变修订 fixture，不绕过数据库约束；原生发布预检保留在显式发布与运行时验收路径。未提高 timeout，修正后本地委派与历史资源两文件 71 项在 34.47 秒通过。历史 fixture 同时须原子写入子定义与当前版本，固定修订会话须显式标为已解析，不能靠放宽数据库约束让测试通过。
+- **Node 版本补充（2026-11-05）**：首次 A2A 文件验收命令实际使用继承 PATH 中的 Node 22.12.0，不符合 `package.json` 的 Node ≥26.12.1 要求，集成 fixture 的 10 秒 hook 超时。显式使用已安装的 Node 26.12.1 后，同一隔离库的五文件 148 项检查通过；未提高超时。下次在启动检查及 UI 的实际子进程中核对 `process.version`／`process.execPath`，并让 pnpm 子命令沿用同一 PATH；不能以另一个终端的版本或工具退出码推断运行环境。依据：[运行时要求](package.json)、[文件存储回归](tests/integration/a2a-files.test.ts)。
 - **确认日期**：2026-10-26。
 
 ### TP-L005：人工待处理队列上限不能累计计算执行回执
@@ -86,6 +97,7 @@
 
 - **错误与原因**：2026-10-30 插件中心切换回归中，固定会话绕过目录状态，旧测试仍写入 `disabled`/`rejected`，能力测试把文件放在根目录而不是 `package/`，遮住仅改版本号也触发审核的问题；版本引用触发器还未校验安装记录所属工作区与发布来源。
 - **下次怎么验证**：逐文件运行资源路由、版本引用、包绑定与能力指纹测试；覆盖 `withdrawn`/`revoked` 对固定会话拒绝执行、无效安装引用拒绝写入，以及真实 `package/package.json` 仅版本变化无需审核。测试环境需满足 Node 引擎和 disposable 数据库要求，不能把前置条件失败报告为行为通过。
+- **Python 缓存污染（2026-11-05）**：线上日报技能导入 `gb_layout` 后，固定快照新增 `__pycache__/gb_layout.cpython-311.pyc`，后续“继续”在准备阶段被完整性校验拒绝。临时副本仅移除该缓存即通过原校验，另两个插件及 SDK 均正常。原生 Pi 宿主须在启动扩展和工具前设置 `PYTHONDONTWRITEBYTECODE=1`，不能忽略快照中的额外文件。验证使用真实 SDK 的 bash 执行 Python import，并重启宿主继续一轮，确认技能目录未新增文件；回归见 `tests/integration/pi-sdk-host.test.ts`。
 - **证据**：[执行撤销校验](src/lib/pi-packages/revocation.ts)、[版本引用触发器](prisma/migrations/20261030000000_plugin_center/migration.sql)、[资源路由集成测试](tests/integration/pi-sdk-resource-routing.test.ts)、[版本引用集成测试](tests/integration/capability-client-registration-schema.test.ts)、[能力指纹测试](tests/unit/plugin-capabilities.test.ts)。
 - **确认日期**：2026-10-30。
 
@@ -117,7 +129,9 @@
 - **错误与原因**：智能体在设置里绑定 MCP 后没有开放任何工具，修订中的授权为空；会话启动时 Pi MCP 扩展列工具被拒（`MCP_TOOL_FORBIDDEN`，403），整个会话中止，控制台只显示 `PI_SDK_REQUEST_FAILED` 对应的“Pi SDK 执行失败”，要查容器和数据库才能定位。
 - **下次怎么验证**：`tests/integration/pi-sdk-resource-routing.test.ts` 覆盖零工具授权不进入会话；`tests/unit/agent-runtime-proxy.test.ts` 覆盖拒绝响应带 `data.reason`；改动 Pi 扩展源码后，用本地 403 服务直接运行 `piMcpExtensionSource()` 生成的扩展，确认先发出 `toolplane_mcp_unavailable` 事件。
 - **证据**：[会话 MCP 过滤](src/lib/agents/pi-session-packages.ts)、[扩展与宿主事件](src/lib/agents/sandbox-runtime.ts)、[运行时路由](src/app/api/v1/agent-runtime/mcp/[deploymentId]/rpc/route.ts)、[错误文案](src/components/dashboard/useRuntimeErrorText.ts)。
-- **确认日期**：2026-10-31（用户报告）。
+- **2026-11-05 复发（用户要求提示更清晰）**：宿主已产生已翻译的 `PI_SDK_MODEL_FAILED`，但 worker 的错误码白名单把它压成 `PI_EXECUTION_FAILED`，`agentEntryResult` 再改写成 `Agent execution did not complete (4)`；`PI_MCP_TOOLS_UNAVAILABLE` 同样被吞。首次修复后真实 Work 仍缺原因：常驻 broker `native-runtime-session.mjs` 会重新序列化宿主响应并丢掉新字段，而直连宿主的测试绕过了它。现由 [`runtime-failure.ts`](src/lib/agents/runtime-failure.ts) 统一“错误码＋白名单原因”（`HTTP_nnn`／`UNREACHABLE`／`TIMEOUT`），broker 源码纳入常驻会话签名。下次改宿主协议字段，须经真实 broker 回归（[`native-runtime-session.test.ts`](tests/integration/native-runtime-session.test.ts)，修复前失败）并在真实 Work 页面核对文案，不能只测宿主进程。
+- **任务时限补充（2026-11-05，用户反馈线上频繁超时）**：指定任务从提交到过期一直为 `SUBMITTED`，没有执行或沙箱绑定证据，却只显示 `Task deadline exceeded.`；其他执行中到期又可能被通用 `PI_EXECUTION_FAILED` 覆盖。任务总时限包含排队、准备和执行，必须按最后已记录阶段说明，不能把它直接解释为供应商单次请求或工具自身超时。阶段投影与 UI、终态共用任务锁，保留租约校验和显式取消优先级；列表只投影固定错误码，不带正文。修复前两项真实数据库回归分别缺码、返回泛化错误；修复后相关 131 项通过。独立数据库 HTTP 烟测覆盖排队、准备、等待模型、生成、工具五阶段的持久化和日志列表／详情，并验证未授权返回 401；实际组件在中英文、390px 和桌面浏览器核对文案。下次同时验证阶段不会被 UI 更新、过期或旧租约回调覆盖；旧记录无证据时只说明阶段未知，不推断根因。
+- **确认日期**：2026-10-31（用户报告）；2026-11-05（用户报告）。
 
 ### TP-L010：工具失败是工具结果，不是整轮失败
 
@@ -165,7 +179,8 @@
 - **下次怎么验证**：真实传输先证明旧 JSON-only 请求为 406，再通过生成的客户端完成工具发现及一次调用；请求必须声明 JSON 和 SSE。真实浏览器在实际服务地址完成一次批准或拒绝，核对保存结果；保留非法 Origin、显式 Authorization、其他操作人和错配会话的拒绝用例。频道正常结果、人工审批通知与安全失败回传分别验证，不把接收回执视为完成证明。
 - **证据**：[原生 MCP 客户端](src/lib/agents/sandbox-runtime.ts)、[官方 SDK 宿主回归](tests/integration/pi-sdk-host.test.ts)、[会话审批入口](src/lib/agents/execution/conversation-http.ts)、[频道权限与持久化回归](tests/integration/agent-channels.test.ts)。2026-11-01 独立 smoke 实测旧请求 406，修复后发现成功、算术工具返回 `42` 且只执行一次；浏览器在 `:3000` 的拒绝决策持久化为 `denied`，390px 页面无横向溢出。
 - **沙箱管理补充（2026-11-01）**：`sandboxManagementUser` 用配置的公开 Origin（`:3007`）比较 Cookie 请求，实际服务在 `:3000` 时 SSH 创建和 MCP 导出令牌管理对同源浏览器一律返回“工作区不存在”。改为复用 `isSameOriginRequest`；同日确认，不增加计数。验证：在实际服务地址用浏览器会话调用一次变更接口，而不是只用 Bearer 或 mock。证据：[管理入口](src/lib/sandboxes/mcp-management.ts)、[OAuth 集成回归](tests/integration/sandbox-mcp-oauth.test.ts)。
-- **确认日期**：2026-11-01。
+- **频道消息 ID 补充（2026-11-05，用户报告 Discord 无法回应）**：线上 Discord 频道每条普通消息都回复“本次执行未能完成”，日志只有 `Channel execution was rejected.`，且该连接从未创建会话。原因是 Discord、Telegram、Slack 适配器发出的入站事件缺少 `messageId`，`runLoadedAgentMessage` 按原生去重要求返回 400；频道集成测试直接构造带 `messageId` 的请求并 mock 了 `channel-runtime`，绕过了适配器。三个适配器改为携带平台消息 ID（Discord 消息/交互 ID、Telegram `message_id`、Slack `ts`／斜杠命令 envelope），拒绝日志附带状态码与固定错误文本。下次新增或修改频道适配器，须从适配器入站处理（[消息 ID 回归](tests/unit/channel-adapter-message-ids.test.ts)，修复前三项失败）驱动到 `runAgentChannelMessage` 的接纳条件，不能只用手工构造的请求体验收。
+- **确认日期**：2026-11-01；2026-11-05（用户报告）。
 
 ### TP-L015：嵌套浮层的 Escape 必须止于当前层
 
@@ -174,6 +189,7 @@
 - **错误与原因**：全站下拉重做后的 390px 浏览器验收发现，模型搜索输入按 Escape 会连同智能体创建弹窗一起关闭；旧处理仅阻止默认行为，按键继续到达外层弹窗的全局监听。即时检查还可能把正在退出的弹窗误判为仍然打开。
 - **下次怎么验证**：实际打开创建弹窗及模型下拉，按 Escape 后等待焦点返回模型按钮，确认下拉关闭而创建表单仍可操作；同时验证搜索、方向键及 Enter 选择。检查浮层内其他可聚焦控件的 Escape，而不只检查搜索输入。
 - **证据**：[模型选择器的根级按键处理](src/components/dashboard/models/ModelPicker.tsx)。本次真实移动浏览器已确认 Escape 后按钮重新获得焦点、创建表单保留，并通过搜索与键盘选择更新未提交的模型字段。
+- **侧栏补充（2026-11-05）**：资源菜单通过 Portal 冒泡的 Escape 会到达移动侧栏的关闭处理；菜单关闭后的无条件异步 focus 还可能抢走新确认弹窗焦点并滚回原行。菜单边界消费 Escape，仅在菜单自身持有焦点时同步恢复原行且 `preventScroll`。390px 实测菜单关闭后侧栏和分组仍展开。依据：[资源菜单事件与焦点边界](src/components/agents/ai-sidebar.tsx)。
 - **确认日期**：2026-11-01。
 
 ### TP-L016：不同日志页签不能复用上一种数据的组件状态
@@ -223,6 +239,8 @@
 - **当时验证**：OMP 创建流程直接显示平台 MCP/技能选择；桌面和移动端高级设置均无独立配置入口，插件勾选可用；当时删除的导入/预览 API 实际返回 404。资源授权与固定历史回归共 48 项通过。这不是禁止后续明确请求的可选迁移入口。
 - **2026-11-02 后续（用户决定）**：用户在评审子智能体体验后明确放开互斥，平台 Agent 与 OMP 原生子任务可同时启用；仍不恢复手工定义库，也不把平台 Agent 复制成 OMP 进程内定义。修订字段 `subagentMode: "native"` 现表示启用原生子任务。依据：[子智能体设置](src/lib/agents/platform-subagents.ts)、[修订约束](src/lib/agents/revision-types.ts)、[约束迁移](prisma/migrations/20261102040000_agent_subagent_modes_coexist/migration.sql)。
 - **2026-11-03 后续（用户决定）**：用户要求保留 Pi 为主，同时支持导入已有 OMP 配置、技能、MCP 和插件。普通创建无需本机配置；可选导入默认保留 OMP，迁移 Pi 必须显式选择并暴露不兼容项。模型和凭据映射到平台授权资源，原生角色作为私有包内容，不创建另一套平台子定义库。
+- **2026-11-05 后续（用户决定）**：用户明确要求退役 OMP；可执行运行时收敛为 Pi，OMP 历史只读，配置导入仅迁往 Pi。保留历史身份与固定快照，不将原生 task、角色模型、hook 或 eval 静默解释为 Pi 能力；不兼容项须明确处理。此前“导入默认保留 OMP”和双原生执行支持不再适用。
+- **同日验收补充**：执行 API 已拒绝 OMP，但 Work 侧栏仍用“可展示历史”的运行时集合计算 `supportsWork`，误显示“新建工作”和“尚未配置”。可展示历史不等于可执行；实际页面须同时检查历史消息、侧栏创建入口和设置提示，不能只验证主输入框及 HTTP 410。修正位于 [Work 页面](src/app/app/[workspace]/work/page.tsx)。
 - **同日导出实测补充**：真实本机目录中的 AppleDouble 元数据和 `config.yml.backup-20261003` 被误列为阻塞项；应不读取这些私有非执行状态、报告警告，而不是阻止有效配置迁移。无法打包的原生资源仍保留可明确排除的阻塞条目，不能让 issue 引用的资源在界面上消失。依据：[离线导出器](scripts/export-omp-config.mjs)、[导出边界回归](tests/unit/export-omp-config.test.ts)。
 - **确认日期**：2026-11-02、2026-11-03（用户纠正及真实导出）。
 
@@ -233,6 +251,8 @@
 - **错误与原因**：双模式子智能体在实际 `:3000` 页面保存原生并发 2、深度 1 后，PUT 已正确持久化，界面却回退到深度 3、重新标脏且审核区消失。React 自动 reset 触发 Radix Select 的初始值回调；该回调不检查 `defaultPrevented`，仅拦截 `onReset` 不能解决。
 - **下次怎么验证**：实际改动非默认下拉值，跨页签返回后保存，等待权限审核出现并确认选择值未回退、未重新标脏；点击应用后重开页面核对已应用修订，再验证取消不落库。不能把 HTTP 200 或数据库草稿正确当成整个设置流程成功。
 - **证据**：[Agent 设置表单](src/components/dashboard/agents/AgentSettingsForm.tsx)、[共享 FormSelect](src/components/ui/FormSelect.tsx)；复用既有 AssistantEditor 的显式提交流程，不修改 vendored Radix 源码。
+- **快照传输补充（2026-11-05，真实保存验收）**：Office 技能的 XML 附件以 U+FEFF 开头，Prepare 的正确摘要跨 Flight 后对应内容少一个字符，发布抛出 `AGENT_SKILL_CHECKSUM_MISMATCH`；纯 JSON／数据库回归均未触发。审核 action 返回完整 `configJson`，客户端解析后继续现有审核与 CAS 提交，不放宽校验或改写原始内容。真实生产页面保留五个技能完成保存，发布 v7；下次验收须包含带 BOM 的长附件并完成浏览器 Prepare → Apply 往返，不能只验证捕获函数或普通短文本。
+- **插件来源补充（2026-11-05，用户报告）**：新增私有来源失败时，React Action 正常返回错误状态仍触发 reset，文本和 PAT 被清空；只在冒泡阶段 `preventDefault()` 后，Radix 原生监听仍把“私有”改回“公开”。`PluginActionForm` 在失败的 reset 捕获阶段同时阻止默认行为和传播，成功仍允许重置。隔离数据库上的真实页面已验证仓库格式拒绝、GitHub 拒绝 PAT 后全部输入保留，以及真实公开来源注册成功后表单清空并可读回记录；原生产失败输入已丢失，不能把格式错误推测为已确认的 PAT 权限问题。下次必须检查实际提交的可见性、失败后 PAT 是否保留，以及成功重置，不只检查错误文案。依据：[插件表单](src/components/dashboard/plugins/PluginForms.tsx)、[来源校验](src/lib/plugins/sources.ts)。
 - **确认日期**：2026-11-02（真实浏览器验收）。
 
 ### TP-L022：A2A 错误不能用子类携带内部原因
@@ -310,6 +330,9 @@
 - **真实刷新补充（同日验收）**：真实模型流结束后，分支的 `activeMessageId` 改变了 `AssistantConversation` 的 React key，父组件刷新导致重挂载，仍清空执行期间写下的草稿。未发送文本须按会话保存在父层；回归须在完成回调触发重挂载后重新查找输入框，不能只断言已脱离 DOM 的旧元素。依据：`WorkspaceAssistantChat.tsx` 的会话 key 与 `tests/unit/workspace-assistant-chat.test.tsx` 的完成后草稿回归。
 - **执行阶段补充（2026-11-04）**：会话已接纳、连接已建立或收到流 start 都不能证明模型已生成内容。分别追踪排队、准备、真实 provider 请求、首个内容与工具执行；工具后再次请求模型时回到等待阶段。使用真实 Pi／OMP `bash` 回合及助手会话观察阶段切换，并在 OMP 工具运行中刷新验证快照恢复；助手持久化回归暂停首个模型输出，检查等待阶段、游标重放及历史不受污染。依据：`src/lib/agents/execution-stages.ts`、`src/lib/chat/execution-stage.ts`、`tests/integration/chat-background.test.ts`。
 - **准备耗时补充（2026-11-04，用户反馈）**：真实热会话暴露逐文件 tracked Docker exec 的固定开销；宿主脚本批量写入后，Pi／OMP 的准备等待下降，但不能省略每轮可信源码覆盖和完整性校验。性能比较须分开冷启动、热轮次与远程发现耗时；本次助手远程 `tools/list` 从约 0.4 秒波动到 1.4 秒，不能把总准备时间变化全部归因于本地并发修改。验收同时执行真实原生工具，不能只观察阶段标签。
+- **创建就绪补充（2026-11-04，用户纠正）**：用户向已创建的 OMP Agent 只发“你好”，首轮沙箱仍在下载 276,244,656 字节二进制，文件写入持续约 539 秒。创建／发布必须在数据库事务外先完成固定运行时制品准备；聊天仅从已校验的服务端缓存本地分发，并在沙箱离线校验，不能把首次网络安装藏在“准备中”。失败回归检查 Agent、沙箱及 Deployment 未残留；验收须使用刚创建 Agent 自己的全新沙箱执行真实原生工具，再检查第二轮二进制未被重写，不能把已有 Agent 热会话或提示词中的哨兵文字当成功结果。依据：`src/lib/agents/omp-runtime.ts`、`scripts/omp-install.mjs`、`tests/integration/agents-mutations.test.ts`。
+- **Pi 冷安装补充（同日实测）**：不能用已有 SDK 的热沙箱证明离线安装正常。全新沙箱暴露合法主目录别名被缓存路径检查拒绝，以及 `FileHandle.createWriteStream({ autoClose: false })` 的流结束后 `FileHandle.close()` 未收尾；流改用显式 fd，主目录先取 canonical path。验收从固定镜像真实导出制品，在禁网、只读根容器完成离线安装并执行版本检查，再由新建 Pi Agent 实际完成首次和第二轮 `bash`，从原生 JSONL 核对成功的 toolResult。测量分开记录：本次 Pi 首轮准备 25.51 秒、热轮 1.35 秒，OMP 热轮 3.80 秒；不能把共享缓存就绪称为首轮无等待，或把供应商 503 算成本地安装耗时。依据：`src/lib/agents/pi-runtime.ts`、`scripts/pi-sdk-install.mjs`、真实 Work 与原生会话记录。
+- **2026-11-05 冷准备优化（用户再次反馈慢）**：固定 SDK 的 14,106 个文件、约 119 MB 在独立禁网容器中安装需 10.05 秒；逐文件流式复制再逐文件流式校验重复创建大量 stream。专用安装进程改用 256 KiB 复用缓冲区做文件复制与摘要，保留归档摘要、路径／链接验证及安装后完整校验，同一制品安装降到 3.22 秒。全新 Pi Agent 真实首轮准备 11.05 秒，闲置后会话重启 2.60 秒、紧接热轮 0.99 秒，三轮均有成功原生 bash 结果。下次须单独测量离线安装与端到端阶段；不能把安装提速比例当成整个首轮比例，也不能把仍需沙箱启动、资源加载和远程发现的首轮称为零准备。依据：`scripts/pi-sdk-install.mjs`、Work `cmw36flzj004h9mmqlccxj02j`。
 
 ### TP-L030：CI 提速要减少默认工作，不只缩短超时
 
@@ -319,10 +342,80 @@
 - **下次怎么验证**：以不可连接的数据库地址运行默认命令，确认不访问数据库；实际观察 GitHub 新作业及其耗时，再报告提速结果，不能拿本地热缓存时间代替远端结果。
 - **意图澄清（同日）**：用户明确不要求额外限制 CI 时间，只要求实际运行更快。默认作业不设置人为超时，不能用降低超时上限冒充性能优化；保留纯静态检查与缓存方案。
 
+### TP-L031：配置草稿不能复用阻断执行的维护租约
+
+**规则**：区分只更新草稿的配置写入与会破坏活跃沙箱的维护；草稿写入和维护互斥，但不排斥运行中、排队中或新准入的正常执行。执行容量、同会话串行及实时撤销仍独立生效，草稿租约不能升级为独占维护。
+
+- **证据（2026-11-04，用户反馈）**：设置保存的 action、`updateAgent` 和 `setAgentTools` 使用 `withAgentMaintenanceLease`，该租约看到活跃执行就抛出 `Agent execution capacity is busy. The task has not started.`，把配置写入误判成执行准入。独立数据库回归在活跃执行租约内保存，修复前准确失败于 `updateAgent`，修复后保存成功且原会话仍固定旧修订，删除仍被拒绝。
+- **真实页面验收**：修复部署到 `:3000` 后，Pi Work 的原生 `bash sleep 120` 运行中从设置页保存描述成功，默认修订从 1 升到 2，Work 与 Conversation 仍固定原修订；原生工具继续返回 `SAVE_DURING_RUN_OK`。容量和保存回归共 40 项通过。
+- **下次怎么验证**：在真实任务运行期间修改并保存设置，核对新默认修订与原会话固定引用；容量回归同时验证草稿可与执行共存、不绕过并发上限、嵌套维护不能放宽互斥。不能只在 Agent 空闲时验收保存。
+- **依据**：`src/lib/agents/agent-execution-gate.ts`、`tests/unit/agent-execution-gate.test.ts`、`tests/integration/agents-mutations.test.ts`。
+- **固定模型补充（2026-11-05，用户报告 Task not found）**：本地准入、固定配置解析和 runtime grant 把草稿 provider 与 revision 等值比较，未应用 MiniMax 草稿便阻断固定 Qwen 的旧 Work／新入口。执行改查所选修订的 provider，并保留真实资源归属与凭据撤销。独立库先复现四个失败，修复后相关 126 项通过；生产原 v6 会话真实 `bash` 返回 `PINNED_REVISION_OK`，新 v7 MiniMax 会话返回 `NEW_REVISION_OK`。下次同时验证草稿切换／置空不改旧权限，以及固定 provider 删除／空凭据仍拒绝。
+
+### TP-L032：沙箱分类按用户用途，不暴露内部生命周期记录
+
+**规则**：界面只区分智能体沙箱与外挂沙箱；环境模板和历史迁移副本是内部记录，不作为并列资源分类或计入当前沙箱数量。运行状态必须来自实际执行沙箱，不能用模板的停止状态代表智能体不可用。
+
+- **证据（2026-11-04，用户纠正）**：修复“列表全是停止”时，初版改为执行、模板、外挂、历史四类，用户明确要求只保留智能体和外挂两类。真实工作区只有 6 个当前执行沙箱，但另有 10 个模板和 47 条历史记录，暴露内部分类会放大资源数量并增加理解成本。
+- **下次怎么验证**：用同时存在模板、当前执行环境与迁移副本的工作区核对两个分类及计数；在另一 Work 标签执行真实原生工具，返回列表确认对应智能体行自动更新，而非新增一个副本。自动关闭开关另以独立数据库和真实 Docker 验证：模拟该临时记录空闲 16 分钟，关闭时仍运行，重新开启后同一容器停止，不改生产时钟或用户资源。
+- **依据**：`src/app/app/[workspace]/sandboxes/page.tsx`、`src/lib/sandboxes/queries.ts`、`src/lib/agents/conversation-sandbox.ts`、`tests/integration/sandbox-queries.test.ts`。
+
 ### TP-L033：会话列表改版必须验收资源菜单与失败反馈
 
 **规则**：统一侧栏后逐类核对普通聊天、渠道和 Work 的操作权限；自定义菜单不能遗漏既有删除入口或以默认菜单回退暴露无效操作。失败的表单提交不能闪现成功状态。
 
 - **证据（2026-11-04，用户反馈）**：线上普通聊天菜单只返回移动按钮，后端删除 action 仍存在却未接入。实际执行线上发布包的菜单回调，仅得到 Move up/down；恢复删除后，独立数据库中的真实浏览器完成取消、确认删除、正确 Agent 跳转和保留其他会话。运行时未就绪时错误显示在弹窗，另修正 SubmitButton 未传 error 导致短暂显示 Saved 的误导。
+- **Work 删除与长列表补充（2026-11-05，用户反馈）**：原归档后整页跳转会重建侧栏，默认展开状态也随列表重挂载丢失；后端 `take: 100` 另会静默截断历史。改为确认后经既有生命周期真正删除、局部移除和受控展开，仅删除当前项时客户端导航。110 条会话夹具实测尾部可浏览和搜索；删除非当前项保留 URL、文档实例及两个 Agent 展开，滚动只随被删行高度调整；当前项删除切到下一会话，409 保留行与错误弹窗。真实 Docker 回归确认仅清理目标目录／附件，保留共享容器和其他会话。依据：[Work 删除集成回归](tests/integration/work-session-deletion.test.ts)。
+- **首次预览纠正（2026-11-05）**：上一轮把“不反复点更多”误解成初始铺开全部，用户再次明确首次只展开前几项。首次预览与完整历史可访问是两个独立要求；改为每 Agent 前 5 条加当前项、列表尾部一次展开全部，搜索仍查全部历史。28 条夹具实测首次 5 条、一次展开 28 条、收回 5 条，搜索第 28 条后恢复 5 条；验收必须覆盖全新初始状态，不能只证明全部记录能访问。
 - **下次怎么验证**：在独立数据库实际删除一次性聊天、取消另一个聊天，检查渠道无删除入口；拖动排序后刷新核对持久顺序，不能只检查菜单文案或后端函数存在。
 - **依据**：`src/components/dashboard/work/WorkspaceWork.tsx`、`src/components/agents/ai-sidebar.tsx`、`src/lib/agents/actions.ts`。
+
+### TP-L034：统一系统安全策略必须覆盖所有消费者
+
+**规则**：私网访问复用系统白名单及其解析、优先级和拒绝策略，不能为单一传输另建部署配置。诊断应先核对现有系统授权，再建议配置变更。
+
+- **证据（2026-11-05，用户纠正）**：10030 的系统白名单已有 `*.gshbzw.com`，MinIO 解析到 `10.0.10.150`，A2A 文件却只读取独立 JSON 来源映射。初次诊断建议增加环境变量，没有识别已存在的系统授权。文件下载已切换到 `resolvePrivateHostsSettings()`；独立数据库和真实私网 HTTP 下载验证已保存名单放行，清空后在发出下一次请求前拒绝。
+- **下次怎么验证**：覆盖精确主机、子域通配、IP、名单撤销和混合 DNS 答案；确认回环／元数据永不放行，Card／RPC 不随文件策略扩大。检查部署示例和界面说明没有保留第二套配置。
+- **依据**：`src/lib/a2a/remote-network.ts`、`src/lib/admin/settings.ts`、`tests/unit/a2a-remote-network.test.ts`。
+
+### TP-L035：新增执行入口类型须覆盖数据库约束与全部会话绑定白名单；用量费用不能信任沙箱上报
+
+**规则**：给 `submitAgentEntry` 新增 entry kind 时，同步修改 `A2AEntryBinding_kind_check`，并检索所有以会话为来源的入口白名单（运行时 grant、沙箱绑定、修订升级、会话执行接口、日志 `entryKind`）。Agent 用量费用按服务端模型单价计算，不依赖 Pi 上报的 `cost.total`。
+
+- **证据（2026-11-05，触发器验收）**：触发器的集成测试和类型检查都通过了，但真实 webhook 运行先报 `A2AEntryBinding_kind_check` 违反（被统一记成 `TRIGGER_EXECUTION_FAILED`）；补上约束后，沙箱的模型代理又返回 403，原因是 `runtime-grant.ts` 等处只认 `chat/control/channel`，触发器会话因此拿不到 grant。另外 `buildPiModelsConfig` 把模型单价写死为 0，Pi 上报的费用始终为 0，按费用设的预算永远不会触发。修复后，同一 Agent 的定时和 webhook 运行都在真实沙箱中成功；按 ProviderModel 单价算出的费用为 1.2 美元/轮，第二轮越过 80% 告警并达到 100%，之后 REST 返回 402，智能体页面显示预算文案。
+- **下次怎么验证**：新增入口时，用伪 OpenAI 上游跑一次真实沙箱回合，确认模型代理返回 200、会话写入 assistant 消息；为模型配置非零单价，核对 `AgentUsage.costMicros` 非零，并实际越过预算阈值。
+- **依据**：[迁移](prisma/migrations/20261105030000_agent_triggers_usage/migration.sql)、[运行时 grant](src/lib/agents/runtime-grant.ts)、[用量计费](src/lib/agents/usage.ts)、[Pi 模型配置](src/lib/agents/sandbox-runtime.ts)。
+- **确认日期**：2026-11-05。
+
+### TP-L036：输入框工具菜单只用一个面板，+ 与 / 行为一致，子步骤在原面板内进行
+
+**规则**：输入框的工具入口（+ 按钮、`/`、固定在工具栏的快捷按钮）共用 `src/components/dashboard/composer-menu.tsx`。面板贴在输入框外框上方，不遮挡文本区；MCP 资源、提示词（含参数表单）和服务器状态都在同一面板内逐级进入，不额外弹出全屏或居中弹窗。
+
+- **证据（2026-11-06，用户反馈）**：上一版精简后，+ 弹层锚定在按钮上并盖住了输入框；+ 和 `/` 显示的列表不同；点 MCP 先弹出居中的选择窗，再打开另一个大小不同的选择窗。三个输入框各自维护一套菜单和三个 Mcp*PickerButton 弹窗。现在 + 等同于在光标处输入 `/`，取消时连同插入的 `/` 一起删除；解析结果晚于关闭到达时不再写入输入框。
+- **下次怎么验证**：在智能体任务、智能体会话、助手三个输入框里，分别用 + 和 `/` 打开菜单并比较选项；用 `getBoundingClientRect` 确认面板底边在输入框外框之上；走一遍 MCP 提示词→参数表单→插入；按 Esc 和点外部关闭后，检查没有残留的 `/`、没有新开 `role=dialog`；390px 宽度下再看一次。
+- **依据**：[共享菜单](src/components/dashboard/composer-menu.tsx)、[MCP 视图](src/components/dashboard/composer-mcp-menu.ts)、[Work 输入框回归](tests/unit/work-composer.test.tsx)。
+- **确认日期**：2026-11-06。
+
+### TP-L037：统一任务账本上的日志视图必须按来源分类
+
+**规则**：对话、Work、渠道、控制 MCP、触发器与 Agent 间委派共用 `A2ATask` 账本；任何直接读取账本的日志或统计视图都要用 `src/lib/observability/views/task-origin.ts` 的 `entryRootSql` / `isEntryRootGrant` 区分普通运行与真正的 A2A，不能按表名把账本行都当作 A2A。
+
+- **证据（2026-11-06，用户反馈）**：用户问为什么 Agent 对话出现在 A2A 日志里。事件写入已经把入口根任务记为 `agent.execution.*`，但 A2A 列表的 `ledger_tasks` 直接读取全部账本行；本地开发库 150 个任务中 144 个是普通运行，都显示成“内部 用户 → Agent”的 A2A 任务。现在拆出「智能体运行」视图，A2A 只保留入站、出站和委派（委派以运行的直接子任务为根，并链接来源运行）；`LogEvent.taskId` 把工具与 MCP 调用关联到所属任务。
+- **下次怎么验证**：新增或修改读取账本的视图时，在同时有普通运行与委派的真实数据上核对两类行各自出现在哪个视图；回归见 `tests/integration/a2a-logging.test.ts` 的 “Agent runs and genuine A2A separation”。
+- **确认日期**：2026-11-06。
+
+### TP-L038：Pi 原生命令的前置条件提示不是运行失败
+
+**规则**：`scripts/pi-sdk-session.mjs` 会把 SDK 抛出的未知错误统一收敛为 `PI_SDK_REQUEST_FAILED`。Pi 在会话未改变、也未调用模型时抛出的前置条件提示（例如 `/compact` 的 “Nothing to compact (session too small)”），应作为命令的完成结果返回，不能记成运行失败。
+
+- **证据（2026-11-06，用户反馈）**：用户反馈“输入总是报错”。:3000 上短会话里的每一次 `/compact`，都在约 1.2 秒内以 `PI_SDK_REQUEST_FAILED` 失败，期间没有任何模型代理请求；原因是 Pi 的 `compact()` 在 `prepareCompaction` 返回空时直接抛错。修复后，在同一 Work 会话的真实沙箱里发送 `/compact`，任务状态为 COMPLETED，界面显示 Pi 的提示。
+- **下次怎么验证**：在 `tests/integration/pi-sdk-host.test.ts` 中，对短会话执行原生命令，确认返回成功、没有发出模型请求、会话没有被改写；再在真实 Work 会话中发送一次。
+- **确认日期**：2026-11-06。
+
+### TP-L040：要在控制台展示的日志属性，不能挂在 Agent 范围的事件上
+
+**规则**：`recordEvent` 遇到带 `agentId`（含继承的日志上下文）的事件，会把 attributes 收窄为数值遥测，防止 Agent 内容进入元数据。需要按属性聚合展示的运维事件（如发送人 ID），要在不带 agentId 的独立上下文中记录；测试 fixture 必须和真实连接一样绑定 Agent。
+
+- **证据（2026-11-06，频道重设计验收）**：`channel.sender_rejected` 的集成测试使用未绑定 Agent 的连接，属性完整，测试通过；在 :3000 上对已绑定 Agent 的真实连接调用准入后，两条拒绝日志的 `attributes.data` 都是 `{}`，控制台“最近被拒绝的发送者”因此始终为空。同一轮验收还发现查询读取的是 `attributes->>'userId'`，实际字段在 `attributes->'data'` 之下。现改为以 `withLogContext({ workspaceId, channelId }, …, true)` 记录、按 `data` 读取，回归 fixture 已绑定 Agent。
+- **下次怎么验证**：新增依赖日志属性的控制台视图时，用绑定 Agent 的真实连接写一条事件，直接查 `LogEvent.attributes`，再在页面确认列表有数据；回归见 `tests/integration/agent-channel-access.test.ts` 的 “denies v2 empty allowlists”。依据：[事件脱敏](src/lib/observability/events.ts)、[准入记录](src/lib/agents/channel-sender-access.ts)。
+- **确认日期**：2026-11-06。

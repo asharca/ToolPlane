@@ -1,5 +1,6 @@
 "use server";
 
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
@@ -220,7 +221,8 @@ async function deploymentEnvironmentIsReady(deployment: {
     deployment.source === "remote" &&
     deployment.sourceRef?.startsWith("http:") &&
     (deployment.installCfg as Record<string, unknown> | null)
-      ?.allowUnsafeHttp !== true;
+      ?.allowUnsafeHttp !== true &&
+    !(await getTransportSettings()).allowHttp;
   if (
     !needsHttpApproval &&
     missingDeploymentEnvironment(deployment).length === 0
@@ -258,7 +260,8 @@ export async function deployServerAction(formData: FormData) {
   const requiresHttpApproval =
     recipe.source === "remote" &&
     new URL(recipe.ref).protocol === "http:" &&
-    data.installCfg.allowUnsafeHttp !== true;
+    data.installCfg.allowUnsafeHttp !== true &&
+    !(await getTransportSettings()).allowHttp;
   const requiresSetup =
     requiresHttpApproval ||
     missingRequiredEnvironment(recipe, sealedInstallCfg).length > 0;
@@ -315,7 +318,8 @@ export async function deployServerAction(formData: FormData) {
         current.source === "remote" &&
         new URL(current.sourceRef ?? "").protocol === "http:" &&
         (current.installCfg as Record<string, unknown> | null)
-          ?.allowUnsafeHttp !== true
+          ?.allowUnsafeHttp !== true &&
+        !(await getTransportSettings()).allowHttp
       ) {
         await markDeploymentSetupRequired(current.id);
         return "unsafe_http_confirmation_required" as const;
@@ -375,14 +379,17 @@ export async function deployCustomServerAction(
   let parsed: ParsedCustomMcp;
   let runtimeFiles: ValidRuntimeTextFile[];
   try {
-    parsed = parseCustomMcpInput({
-      // New custom deployments are deliberately JSON-only. Keep legacy source
-      // parsing for catalog recipes and existing deployment configuration.
-      source: "config",
-      config: String(formData.get("config") ?? ""),
-      network: String(formData.get("network") ?? "isolated"),
-      allowUnsafeHttp: formData.get("allowUnsafeHttp") === "true",
-    });
+    parsed = parseCustomMcpInput(
+      {
+        // New custom deployments are deliberately JSON-only. Keep legacy source
+        // parsing for catalog recipes and existing deployment configuration.
+        source: "config",
+        config: String(formData.get("config") ?? ""),
+        network: String(formData.get("network") ?? "isolated"),
+        allowUnsafeHttp: formData.get("allowUnsafeHttp") === "true",
+      },
+      await getTransportSettings(),
+    );
     runtimeFiles = parseRuntimeTextFiles(formData.get("runtimeFiles"));
   } catch (error) {
     if (error instanceof Error && error.message.includes("HTTP is unencrypted"))
@@ -607,6 +614,7 @@ export async function updateMcpJsonConfigAction(
           network === null ? undefined : String(network),
           {
             allowEnvironment: false,
+            allowHttp: (await getTransportSettings()).allowHttp,
             allowUnsafeHttp:
               formData.get("allowUnsafeHttp") === "true" ||
               (deployment.installCfg as Record<string, unknown> | null)
@@ -622,7 +630,11 @@ export async function updateMcpJsonConfigAction(
           (parsed.ref === deployment.sourceRef &&
             (deployment.installCfg as Record<string, unknown> | null)
               ?.allowUnsafeHttp === true);
-        if (new URL(parsed.ref).protocol === "http:" && !approved)
+        if (
+          new URL(parsed.ref).protocol === "http:" &&
+          !approved &&
+          !(await getTransportSettings()).allowHttp
+        )
           return { error: "invalidJsonConfig" } as const;
         (parsed.installCfg as Record<string, unknown>).allowUnsafeHttp =
           approved;
@@ -1169,7 +1181,8 @@ export async function setDeploymentEnvAction(
         missing.length > 0 ||
         (dep.source === "remote" &&
           dep.sourceRef?.startsWith("http:") === true &&
-          next.allowUnsafeHttp !== true);
+          next.allowUnsafeHttp !== true &&
+          !(await getTransportSettings()).allowHttp);
       if (requiresSetup) {
         // Stop first. If termination fails, retain the old persisted credentials
         // instead of claiming they were removed while their process still runs.

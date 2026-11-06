@@ -6,7 +6,7 @@ import {
   type ImageAttachment,
   MAX_FILE_SIZE_BYTES,
 } from "../../media";
-import { Bot, InputFile } from "grammy";
+import { Bot, InputFile, type Context } from "grammy";
 import { convert as toMarkdownV2 } from "telegram-markdown-v2";
 
 import {
@@ -27,6 +27,24 @@ const TELEGRAM_MAX_LENGTH = 4096;
 const TELEGRAM_MARKDOWN_CHUNK_BUDGET = 3200;
 
 import { splitMessage } from "../../utils";
+import { SLASH_COMMANDS } from "../../constants";
+
+function telegramContext(ctx: Context) {
+  const threadId =
+    ctx.msg && "message_thread_id" in ctx.msg
+      ? ctx.msg.message_thread_id?.toString()
+      : undefined;
+  return {
+    chatType: threadId
+      ? ("thread" as const)
+      : ctx.chat?.type === "private"
+        ? ("dm" as const)
+        : ctx.chat?.type === "channel"
+          ? ("channel" as const)
+          : ("group" as const),
+    threadId,
+  };
+}
 
 export class TelegramAdapter extends ChannelAdapter {
   private bot: Bot | null = null;
@@ -86,40 +104,33 @@ export class TelegramAdapter extends ChannelAdapter {
       await next();
     });
 
-    // Command handlers
-    bot.command("new", (ctx) => {
-      this.emit("command", {
-        chatId: ctx.chat.id.toString(),
-        userId: ctx.from?.id?.toString() ?? "",
-        userName: ctx.from?.first_name ?? "",
-        command: "new",
+    for (const command of SLASH_COMMANDS) {
+      bot.command(command.name, (ctx) => {
+        this.emit("command", {
+          chatId: ctx.chat.id.toString(),
+          ...telegramContext(ctx),
+          userId: ctx.from?.id.toString() ?? "",
+          userName: ctx.from?.first_name ?? "",
+          messageId: ctx.msg.message_id.toString(),
+          command: command.name,
+          args: ctx.match,
+        });
       });
-    });
-
-    bot.command("compact", (ctx) => {
+    }
+    bot.on("callback_query:data", async (ctx) => {
+      const match = ctx.callbackQuery.data.match(
+        /^tp:(new|upgrade):([a-f0-9]+)$/,
+      );
+      await ctx.answerCallbackQuery();
+      if (!match || !ctx.chat) return;
       this.emit("command", {
         chatId: ctx.chat.id.toString(),
-        userId: ctx.from?.id?.toString() ?? "",
-        userName: ctx.from?.first_name ?? "",
-        command: "compact",
-      });
-    });
-
-    bot.command("help", (ctx) => {
-      this.emit("command", {
-        chatId: ctx.chat.id.toString(),
-        userId: ctx.from?.id?.toString() ?? "",
-        userName: ctx.from?.first_name ?? "",
-        command: "help",
-      });
-    });
-
-    bot.command("whoami", (ctx) => {
-      this.emit("command", {
-        chatId: ctx.chat.id.toString(),
-        userId: ctx.from?.id?.toString() ?? "",
-        userName: ctx.from?.first_name ?? "",
-        command: "whoami",
+        ...telegramContext(ctx),
+        userId: ctx.from.id.toString(),
+        userName: ctx.from.first_name,
+        messageId: `callback:${ctx.callbackQuery.id}`,
+        command: match[1],
+        args: `--confirm ${match[2]}`,
       });
     });
 
@@ -127,8 +138,10 @@ export class TelegramAdapter extends ChannelAdapter {
     bot.on("message:text", (ctx) => {
       this.emit("message", {
         chatId: ctx.chat.id.toString(),
+        ...telegramContext(ctx),
         userId: ctx.from?.id?.toString() ?? "",
         userName: ctx.from?.first_name ?? "",
+        messageId: String(ctx.message.message_id),
         text: ctx.message.text,
       });
     });
@@ -147,8 +160,10 @@ export class TelegramAdapter extends ChannelAdapter {
 
       this.emit("message", {
         chatId: ctx.chat.id.toString(),
+        ...telegramContext(ctx),
         userId: ctx.from?.id?.toString() ?? "",
         userName: ctx.from?.first_name ?? "",
+        messageId: String(ctx.message.message_id),
         text,
         ...(images.length > 0 ? { images } : {}),
       });
@@ -179,20 +194,22 @@ export class TelegramAdapter extends ChannelAdapter {
 
       this.emit("message", {
         chatId: ctx.chat.id.toString(),
+        ...telegramContext(ctx),
         userId: ctx.from?.id?.toString() ?? "",
         userName: ctx.from?.first_name ?? "",
+        messageId: String(ctx.message.message_id),
         text,
         ...(files.length > 0 ? { files } : {}),
       });
     });
 
     // Register bot commands with Telegram
-    await bot.api.setMyCommands([
-      { command: "new", description: "Start a new conversation" },
-      { command: "compact", description: "Compact conversation history" },
-      { command: "help", description: "Show help information" },
-      { command: "whoami", description: "Show the current chat ID" },
-    ]);
+    await bot.api.setMyCommands(
+      SLASH_COMMANDS.map(({ name, description }) => ({
+        command: name,
+        description,
+      })),
+    );
     if (this.shouldStop || this.bot !== bot) return;
 
     // Error handler — err is a BotError wrapping the original cause in err.error
@@ -350,11 +367,27 @@ export class TelegramAdapter extends ChannelAdapter {
         typeof opts?.replyToMessageId === "number" && i === 0
           ? { reply_parameters: { message_id: opts.replyToMessageId } }
           : {};
+      const confirmation =
+        i === 0 && opts?.confirmation
+          ? {
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    {
+                      text: "Confirm",
+                      callback_data: `tp:${opts.confirmation.command}:${opts.confirmation.token}`,
+                    },
+                  ],
+                ],
+              },
+            }
+          : {};
 
       try {
         await this.bot.api.sendMessage(chatId, formatted, {
           parse_mode: parseMode,
           ...replyParams,
+          ...confirmation,
         });
       } catch (error) {
         // Fallback to plain text if MarkdownV2 parsing fails — same chunk content.
@@ -363,7 +396,10 @@ export class TelegramAdapter extends ChannelAdapter {
             chatId,
             error: error instanceof Error ? error.message : String(error),
           });
-          await this.bot.api.sendMessage(chatId, plain, replyParams);
+          await this.bot.api.sendMessage(chatId, plain, {
+            ...replyParams,
+            ...confirmation,
+          });
         } else {
           throw error;
         }

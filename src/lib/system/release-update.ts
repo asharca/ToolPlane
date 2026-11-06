@@ -1,4 +1,9 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import {
+  permitsTransportProtocol,
+  type TransportPolicy,
+} from "@/lib/transport-policy";
 
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -597,7 +602,8 @@ async function downloadFile(
   dest: string,
   maxBytes = MAX_DOWNLOAD_BYTES,
 ): Promise<void> {
-  validateDownloadUrl(url);
+  const policy = await getTransportSettings();
+  validateDownloadUrl(url, policy);
   const response = await fetch(url, {
     headers: githubHeaders(),
     redirect: "follow",
@@ -608,7 +614,7 @@ async function downloadFile(
       `Download failed: ${response.status} ${response.statusText}`,
     );
   }
-  validateDownloadUrl(response.url);
+  validateDownloadUrl(response.url, policy);
 
   const size = Number(response.headers.get("content-length") ?? 0);
   if (size > maxBytes) {
@@ -633,9 +639,9 @@ async function downloadFile(
   }
 }
 
-function validateDownloadUrl(rawUrl: string): void {
+function validateDownloadUrl(rawUrl: string, policy: TransportPolicy): void {
   const parsed = new URL(rawUrl);
-  if (parsed.protocol !== "https:") {
+  if (!permitsTransportProtocol(parsed.protocol, policy)) {
     throw new Error("Only HTTPS release downloads are allowed.");
   }
   if (!TRUSTED_DOWNLOAD_HOSTS.has(parsed.hostname)) {

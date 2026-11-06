@@ -4,6 +4,7 @@ import { runAgentChannelMessage } from "@/lib/agents/message-service";
 import {
   getMessagingPlatform,
   normalizePlatformMessageBody,
+  legacyPlatformMessageSessionKey,
   type MessagingPlatformSlug,
 } from "@/lib/agents/platforms";
 
@@ -103,6 +104,10 @@ export const POST = withRequestLogging(
       workspaceId: connection.workspaceId,
       agentId: connection.agentId,
       rawBody: normalizedBody,
+      legacySessionKey: legacyPlatformMessageSessionKey(
+        platform.slug as MessagingPlatformSlug,
+        rawBody,
+      ),
     });
     return Response.json(
       { ...result.body, connectionId, platform: platform.slug },

@@ -1,14 +1,6 @@
 import "server-only";
 import type { ChannelAdapter } from "./ChannelAdapter";
 
-function list(value?: string) {
-  const ids = (value ?? "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  return ids.includes("*") ? [] : ids;
-}
-
 export async function createChannelAdapter(input: {
   id: string;
   agentId: string;
@@ -27,7 +19,6 @@ export async function createChannelAdapter(input: {
         channelType: "telegram",
         channelConfig: {
           bot_token: c.TELEGRAM_BOT_TOKEN,
-          allowed_chat_ids: list(c.TELEGRAM_ALLOWED_CHATS),
         },
       });
     }
@@ -42,7 +33,6 @@ export async function createChannelAdapter(input: {
           encrypt_key: c.FEISHU_ENCRYPT_KEY ?? "",
           verification_token: c.FEISHU_VERIFICATION_TOKEN ?? "",
           domain: c.FEISHU_DOMAIN === "lark" ? "lark" : "feishu",
-          allowed_chat_ids: list(c.FEISHU_ALLOWED_CHATS),
         },
       });
     }
@@ -54,7 +44,6 @@ export async function createChannelAdapter(input: {
         channelConfig: {
           app_id: c.QQBOT_APP_ID,
           client_secret: c.QQBOT_SECRET,
-          allowed_chat_ids: list(c.QQBOT_ALLOWED_CHATS),
           mention_only: c.QQBOT_REQUIRE_MENTION !== "false",
         },
       });
@@ -68,7 +57,6 @@ export async function createChannelAdapter(input: {
           token: c.WEIXIN_TOKEN,
           accountId: c.WEIXIN_ACCOUNT_ID,
           baseUrl: c.WEIXIN_BASE_URL,
-          allowed_chat_ids: list(c.WEIXIN_ALLOWED_USERS),
         },
       });
     }
@@ -81,7 +69,6 @@ export async function createChannelAdapter(input: {
         channelType: "discord",
         channelConfig: {
           bot_token: c.DISCORD_BOT_TOKEN,
-          allowed_channel_ids: list(c.DISCORD_ALLOWED_CHANNELS),
         },
       });
     }
@@ -93,7 +80,6 @@ export async function createChannelAdapter(input: {
         channelConfig: {
           bot_token: c.SLACK_BOT_TOKEN,
           app_token: c.SLACK_APP_TOKEN,
-          allowed_channel_ids: list(c.SLACK_ALLOWED_CHANNELS),
         },
       });
     }

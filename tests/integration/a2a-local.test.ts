@@ -2,23 +2,19 @@
 import { assertDefined } from "../assert-defined";
 import { createHash, randomUUID } from "node:crypto";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
+import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
+import { emptyOmpConfig } from "@/lib/agents/omp-config";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 import {
   captureAgentRevisionConfig,
   requireAgentRevision,
-  resolvePinnedAgent,
 } from "@/lib/agents/revisions";
-import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 import {
   listPlatformSubagents,
   savePlatformSubagents,
   SubagentSettingsSchema,
 } from "@/lib/agents/platform-subagents";
-import { agentPermissionAdditions } from "@/lib/agents/permission-additions";
-import {
-  diffAgentRevisions,
-  upgradeAgentConversationRevision,
-} from "@/lib/agents/conversation-revisions";
-import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
+import { upgradeAgentConversationRevision } from "@/lib/agents/conversation-revisions";
 import {
   beforeAll,
   beforeEach,
@@ -53,6 +49,7 @@ import {
   assertLocalGrant,
   LOCAL_LIMITS,
   localOwnerKey,
+  localTarget,
 } from "@/lib/a2a/local-policy";
 import { createEntryPolicy } from "@/lib/agents/execution/entry-policy";
 import type { LocalA2AGrant } from "@/lib/a2a/principal";
@@ -66,6 +63,8 @@ import {
   requestCancellation,
   eventsAfter,
   requestWorkEntryCancellation,
+  interruptTask,
+  recordTaskExecutionStage,
 } from "@/lib/a2a/store";
 import type { A2ATask, Prisma } from "@prisma/client";
 import {
@@ -80,6 +79,9 @@ import {
   startAgentWorker,
   stopAgentWorker,
 } from "@/lib/agents/execution/worker";
+import { getLogContext } from "@/lib/observability/context";
+import { recordEvent } from "@/lib/observability/events";
+import { getAgentRun } from "@/lib/observability/views/agent-runs";
 import {
   createAgentRuntimeToken,
   verifyAgentRuntimeToken,
@@ -114,6 +116,7 @@ import { observeWorkRuntime } from "@/lib/work/run-control";
 import { executeLocalTask } from "@/lib/agents/execution/pi-executor";
 import { runSandboxAgentTurn } from "@/lib/agents/sandbox-runtime";
 import type * as AgentSandboxRuntime from "@/lib/agents/sandbox-runtime";
+import { taskRuntimeFailure } from "@/lib/agents/runtime-failure";
 
 // Native process I/O is injected; Work admission, claims, tokens and child grants remain real.
 vi.mock("@/lib/agents/sandbox-runtime", async (original) => ({
@@ -432,21 +435,151 @@ afterAll(async () => {
 });
 
 describe("local Agent authorization and native continuations", () => {
-  it("rejects a pinned local grant after its live provider is removed", async () => {
+  it("keeps a pinned local grant after clearing only its unapplied draft provider", async () => {
     await db.agent.update({
       where: { id: agents[0] },
       data: { providerId: null },
     });
     try {
-      await expect(assertLocalGrant(grant)).rejects.toBeInstanceOf(
-        TaskNotFoundError,
-      );
+      await assertLocalGrant(grant);
+      expect(await localTarget(db, ws, agents[0])).toMatchObject({
+        agentRevisionId: grant.agentRevisionId,
+        providerId: provider,
+      });
+      expect(await createLocalRootGrant(ws, agents[0], user)).toMatchObject({
+        agentRevisionId: grant.agentRevisionId,
+      });
     } finally {
       await db.agent.update({
         where: { id: agents[0] },
         data: { providerId: provider },
       });
     }
+  });
+
+  it("rejects a pinned local grant when its provider credentials are disabled", async () => {
+    const pinnedProvider = await db.modelProvider.findUniqueOrThrow({
+      where: { id: provider },
+      select: { apiKey: true },
+    });
+    await db.modelProvider.update({
+      where: { id: provider },
+      data: { apiKey: " " },
+    });
+    try {
+      await expect(assertLocalGrant(grant)).rejects.toBeInstanceOf(
+        TaskNotFoundError,
+      );
+      await expect(
+        createLocalRootGrant(ws, agents[0], user),
+      ).rejects.toBeInstanceOf(TaskNotFoundError);
+    } finally {
+      await db.modelProvider.update({
+        where: { id: provider },
+        data: { apiKey: pinnedProvider.apiKey },
+      });
+    }
+  });
+
+  it("distinguishes an unstarted task deadline from an execution failure", async () => {
+    const queued = await submitTask(grant, request());
+    await db.a2ATask.update({
+      where: { id: queued.id },
+      data: { deadlineAt: new Date(0) },
+    });
+    await interruptTask(queued.id, "Task deadline exceeded.");
+    const result = await getTask(grant, queued.id);
+    expect(result.status?.state).toBe(TaskState.TASK_STATE_FAILED);
+    expect(taskRuntimeFailure(result)?.code).toBe("PI_TASK_QUEUE_TIMEOUT");
+    expect(() => agentEntryResult(result, "/task")).toThrow(
+      "PI_TASK_QUEUE_TIMEOUT",
+    );
+  });
+
+  it("does not report an expired execution as an unrelated runtime failure", async () => {
+    const running = await root();
+    await db.a2ATask.update({
+      where: { id: running.id },
+      data: { deadlineAt: new Date(0) },
+    });
+    await finishTask(
+      running.id,
+      assertDefined(running.leaseToken),
+      TaskState.TASK_STATE_FAILED,
+      "PI_EXECUTION_FAILED: private error",
+    );
+    expect(taskRuntimeFailure(await getTask(grant, running.id))?.code).toBe(
+      "PI_TASK_TIMEOUT",
+    );
+  });
+
+  it("records preparation before a task is claimed", async () => {
+    const queued = await submitTask(grant, request());
+    await recordTaskExecutionStage(queued.id, null, "preparing");
+    await db.a2ATask.update({
+      where: { id: queued.id },
+      data: { deadlineAt: new Date(0) },
+    });
+    await interruptTask(queued.id, "Task deadline exceeded.");
+    expect(taskRuntimeFailure(await getTask(grant, queued.id))?.code).toBe(
+      "PI_TASK_PREPARATION_TIMEOUT",
+    );
+  });
+
+  it.each([
+    ["preparing", "PI_TASK_PREPARATION_TIMEOUT"],
+    ["waiting-model", "PI_TASK_MODEL_TIMEOUT"],
+    ["generating", "PI_TASK_GENERATION_TIMEOUT"],
+    ["tool-running", "PI_TASK_TOOL_TIMEOUT"],
+  ] as const)(
+    "retains the last observed %s stage through UI updates and stale callbacks",
+    async (stage, code) => {
+      const running = await root();
+      const lease = assertDefined(running.leaseToken);
+      await recordTaskExecutionStage(running.id, lease, stage);
+      await updateTaskUi(await runtimeToken(running), {
+        action: "todos",
+        todos: [],
+      });
+      await recordTaskExecutionStage(running.id, "stale-lease", "generating");
+      await db.a2ATask.update({
+        where: { id: running.id },
+        data: { deadlineAt: new Date(0) },
+      });
+      await recordTaskExecutionStage(running.id, lease, "preparing");
+      await finishTask(
+        running.id,
+        lease,
+        TaskState.TASK_STATE_FAILED,
+        "PI_EXECUTION_FAILED: private runtime exception",
+      );
+      const result = await getTask(grant, running.id);
+      expect(taskRuntimeFailure(result)?.code).toBe(code);
+      expect(JSON.stringify(Task.toJSON(result))).not.toContain(
+        "private runtime exception",
+      );
+      await recordTaskExecutionStage(running.id, null, "queued");
+      expect(taskRuntimeFailure(await getTask(grant, running.id))?.code).toBe(
+        code,
+      );
+    },
+  );
+
+  it("keeps explicit cancellation ahead of a simultaneous deadline", async () => {
+    const running = await root();
+    await requestCancellation(grant, running.id);
+    await db.a2ATask.update({
+      where: { id: running.id },
+      data: { deadlineAt: new Date(0) },
+    });
+    await finishTask(
+      running.id,
+      assertDefined(running.leaseToken),
+      TaskState.TASK_STATE_FAILED,
+    );
+    const result = await getTask(grant, running.id);
+    expect(result.status?.state).toBe(TaskState.TASK_STATE_CANCELED);
+    expect(taskRuntimeFailure(result)).toBeUndefined();
   });
 
   it("projects bound native progress without spending journal sequence or event storage", async () => {
@@ -1368,6 +1501,93 @@ describe("console task tree authorization", () => {
     agentId: agents[0],
     slug: "unused",
   });
+  it("reads retained OMP task messages without minting execution authority or transferring ownership", async () => {
+    const parent = await root();
+    await finishTask(
+      parent.id,
+      assertDefined(parent.leaseToken),
+      TaskState.TASK_STATE_COMPLETED,
+      undefined,
+      textArtifact("Retained result"),
+    );
+    const owner = await db.agent.findUniqueOrThrow({
+      where: { id: agents[0] },
+    });
+    const prior = await requireAgentRevision(
+      db,
+      owner.id,
+      grant.agentRevisionId,
+    );
+    if (prior.config.runtimeKind !== "pi-sdk")
+      throw new Error("Expected native Pi fixture");
+    const { piVersion: _piVersion, ...environment } = prior.config.environment;
+    const ompConfig = emptyOmpConfig();
+    const config = AgentRevisionConfigSchema.parse({
+      ...prior.config,
+      runtimeKind: "omp",
+      environment: { ...environment, ompVersion: "18.14.0" },
+      ompConfig,
+      ompConfigChecksum: marketReleaseChecksum(ompConfig),
+    });
+    // This imports an already-recorded snapshot; no retired runtime is admitted.
+    const archived = await db.agentRevision.create({
+      data: {
+        agentId: owner.id,
+        version: owner.currentRevisionVersion + 1,
+        config: config as Prisma.InputJsonValue,
+      },
+    });
+    const binding = createHash("sha256")
+      .update(JSON.stringify([owner.id, archived.id]))
+      .digest("hex");
+    await db.a2AContext.update({
+      where: { id: parent.contextId },
+      data: { agentRevisionId: archived.id, targetBinding: binding },
+    });
+    await db.a2ATask.update({
+      where: { id: parent.id },
+      data: {
+        executionBackend: "omp",
+        grant: {
+          ...grant,
+          agentRevisionId: archived.id,
+          targetBinding: binding,
+          expiresAt: 1,
+        },
+      },
+    });
+    await db.agent.update({
+      where: { id: owner.id },
+      data: { runtimeKind: "omp", currentRevisionVersion: archived.version },
+    });
+    try {
+      const tree = await getConsoleTaskTree(actor(), parent.id, parent.id, 32);
+      expect(tree.nodes).toEqual([
+        expect.objectContaining({ id: parent.id, executionBackend: "omp" }),
+      ]);
+      expect(
+        Task.fromJSON(tree.selectedTask).history[0].parts[0].content?.value,
+      ).toBe("Do this task");
+      await expect(
+        getConsoleTaskTree({ ...actor(), actorId: otherUser }, parent.id),
+      ).rejects.toBeInstanceOf(TaskNotFoundError);
+      await expect(
+        createLocalRootGrant(ws, owner.id, user),
+      ).rejects.toBeInstanceOf(TaskNotFoundError);
+      expect(
+        await db.agentRevision.findUniqueOrThrow({
+          where: { id: archived.id },
+        }),
+      ).toEqual(archived);
+    } finally {
+      await db.agent.update({
+        where: { id: owner.id },
+        data: {
+          runtimeKind: "pi-sdk",
+        },
+      });
+    }
+  });
   it("shows owned root and descendants without execution grants or private prompts", async () => {
     const parent = await root();
     const delegated = await child(parent);
@@ -2111,7 +2331,133 @@ describe("unified native ingress mappings", () => {
       text: "New task only",
     };
   }
-  it.each(["pi-sdk", "omp"] as const)(
+  it.each(["chat", "work"] as const)(
+    "keeps existing and new %s entries on the published provider after an unapplied draft provider change",
+    async (kind) => {
+      const draftProvider = await db.modelProvider.create({
+        data: {
+          workspaceId: ws,
+          name: "Unapplied draft provider",
+          format: "openai",
+          baseUrl: "https://draft-model.test.invalid",
+          apiKey: "draft-secret-never-used",
+        },
+      });
+      async function pinnedEntry() {
+        const input = await entry(kind);
+        if (kind === "work")
+          await db.workSession.update({
+            where: { id: input.sourceId },
+            data: {
+              runtimeSnapshot: {
+                piPackages: [],
+                workingDirectory: ".",
+                deploymentIds: [],
+                installedSkillIds: [],
+              },
+            },
+          });
+        return input;
+      }
+      try {
+        const input = await pinnedEntry();
+        const first = await submitAgentEntry(input, vi.fn());
+        const original = assertDefined(await claimTask(first.row.id));
+        const originalOptions = await localTaskOptions(
+          original,
+          new AbortController().signal,
+          "",
+        );
+        const originalToken = assertDefined(
+          await verifyAgentRuntimeToken(originalOptions.runtimeAccessToken),
+        );
+        await db.agent.update({
+          where: { id: agents[0] },
+          data: {
+            providerId: draftProvider.id,
+            model: "unapplied-draft-model",
+          },
+        });
+
+        await assertLocalGrant(first.grant);
+        expect(await resolveAgentRuntimeGrant(originalToken)).toMatchObject({
+          runtimeKind: "pi-sdk",
+          model: "fixture",
+        });
+        expect(await localTarget(db, ws, agents[0])).toMatchObject({
+          agentRevisionId: grant.agentRevisionId,
+          providerId: provider,
+        });
+        expect(await createLocalRootGrant(ws, agents[0], user)).toMatchObject({
+          agentRevisionId: grant.agentRevisionId,
+          targetBinding: grant.targetBinding,
+        });
+        await finishTask(
+          original.id,
+          assertDefined(original.leaseToken),
+          TaskState.TASK_STATE_COMPLETED,
+          undefined,
+          textArtifact("completed before follow-up"),
+        );
+
+        for (const nextInput of [
+          {
+            ...input,
+            messageId: randomUUID(),
+            text: "Continue pinned session",
+          },
+          await pinnedEntry(),
+        ]) {
+          const accepted = await submitAgentEntry(nextInput, vi.fn());
+          expect(accepted.grant.agentRevisionId).toBe(grant.agentRevisionId);
+          if (nextInput.sourceId === input.sourceId)
+            expect(accepted.row.contextId).toBe(first.row.contextId);
+          else expect(accepted.row.contextId).not.toBe(first.row.contextId);
+          const running = assertDefined(await claimTask(accepted.row.id));
+          const options = await localTaskOptions(
+            running,
+            new AbortController().signal,
+            "",
+          );
+          expect(options).toMatchObject({
+            agentRevisionId: grant.agentRevisionId,
+            provider: { id: provider },
+            modelId: "fixture",
+          });
+          const token = assertDefined(
+            await verifyAgentRuntimeToken(options.runtimeAccessToken),
+          );
+          expect(token.providerId).toBe(provider);
+          expect(
+            await resolveAgentRuntimeGrant(token, {
+              providerId: provider,
+              model: "fixture",
+            }),
+          ).toMatchObject({ runtimeKind: "pi-sdk", model: "fixture" });
+          expect(
+            await resolveAgentRuntimeGrant({
+              ...token,
+              providerId: draftProvider.id,
+            }),
+          ).toBeNull();
+          await finishTask(
+            running.id,
+            assertDefined(running.leaseToken),
+            TaskState.TASK_STATE_COMPLETED,
+            undefined,
+            textArtifact("completed on pinned provider"),
+          );
+        }
+      } finally {
+        await db.agent.update({
+          where: { id: agents[0] },
+          data: { providerId: provider, model: "fixture" },
+        });
+        await db.modelProvider.delete({ where: { id: draftProvider.id } });
+      }
+    },
+  );
+  it.each(["pi-sdk"] as const)(
     "runs authorized %s Work delegation with its pinned inputs, stream and child projection",
     async (runtimeKind) => {
       const skill = await db.installedSkill.create({
@@ -2128,12 +2474,6 @@ describe("unified native ingress mappings", () => {
         data: { agentId: agents[0], installedSkillId: skill.id },
       });
       try {
-        if (runtimeKind === "omp") {
-          await db.agent.update({
-            where: { id: agents[0] },
-            data: { runtimeKind, subagentMode: "native" },
-          });
-        }
         await publishFixtureAgentRevision(ws, agents[0]);
         grant = await createLocalRootGrant(ws, agents[0], user);
         const input = await entry("work");
@@ -2194,8 +2534,6 @@ describe("unified native ingress mappings", () => {
           expect.objectContaining({ deploymentId: "toolplane-runtime" }),
         ]);
         expect(options.skills).toEqual([]);
-        if (runtimeKind === "omp")
-          expect(options.ompCapabilities?.mode).toBe("native");
         const token = assertDefined(
           await verifyAgentRuntimeToken(options.runtimeAccessToken),
         );
@@ -2337,17 +2675,9 @@ describe("unified native ingress mappings", () => {
     expect(options.runtimeSessionId).toBe(work.conversationId);
   });
 
-  it.each(["pi-sdk", "omp"] as const)(
+  it.each(["pi-sdk"] as const)(
     "binds a new %s Work Context to its existing conversation sandbox before authorizing model and MCP requests",
     async (runtimeKind) => {
-      if (runtimeKind === "omp") {
-        await db.agent.update({
-          where: { id: agents[0] },
-          data: { runtimeKind, subagentMode: "native" },
-        });
-        await publishFixtureAgentRevision(ws, agents[0]);
-        grant = await createLocalRootGrant(ws, agents[0], user);
-      }
       const input = await entry("work");
       await db.workSession.update({
         where: { id: input.sourceId },
@@ -3001,15 +3331,44 @@ describe("unified native ingress mappings", () => {
     try {
       const accepted = await submitAgentEntry(input, vi.fn());
       expect(accepted.row.executionBackend).toBe("pi-sdk");
-      const executor = vi.fn(async () => ({
-        state: TaskState.TASK_STATE_COMPLETED,
-        artifact: textArtifact("Chat reply"),
-      }));
+      const executor = vi.fn(async () => {
+        expect(getLogContext()).toMatchObject({
+          taskId: accepted.row.id,
+          conversationId: input.sourceId,
+        });
+        await recordEvent({
+          domain: "agent",
+          eventName: "sandbox.tool",
+          toolName: "bash",
+          outcome: "success",
+        });
+        return {
+          state: TaskState.TASK_STATE_COMPLETED,
+          artifact: textArtifact("Chat reply"),
+        };
+      });
       await executeAgentTask(accepted.row.id, executor);
       expect(executor).toHaveBeenCalledTimes(1);
       expect(
         (await getTask(accepted.grant, accepted.row.id)).status?.state,
       ).toBe(TaskState.TASK_STATE_COMPLETED);
+      const event = await db.logEvent.findFirstOrThrow({
+        where: { taskId: accepted.row.id, eventName: "sandbox.tool" },
+      });
+      expect(event.taskId).toBe(accepted.row.id);
+      const detail = assertDefined(
+        await getAgentRun(
+          { kind: "workspace", workspaceId: ws, userId: user },
+          accepted.row.id,
+        ),
+      );
+      expect(detail.summary.toolCallCount).toBe(1);
+      expect(detail.toolCalls).toEqual([
+        expect.objectContaining({
+          eventId: event.id,
+          task: { id: accepted.row.id, kind: "run" },
+        }),
+      ]);
     } finally {
       stopAgentWorker();
     }
@@ -3362,7 +3721,7 @@ describe("independent platform and native subagents", () => {
         workspaceId: ws,
         slug: `draft-${randomUUID()}`,
         name: "Unpublished child",
-        runtimeKind: "omp",
+        runtimeKind: "pi-sdk",
       },
     });
     await db.sandbox.update({
@@ -3482,115 +3841,6 @@ describe("independent platform and native subagents", () => {
     }
   });
 
-  it("enables native tasks and platform delegation together without touching remote authority", async () => {
-    await db.agent.update({
-      where: { id: agents[0] },
-      data: { runtimeKind: "omp" },
-    });
-    const platform = await publishFixtureAgentRevision(ws, agents[0]);
-    const {
-      subagentMode: _mode,
-      nativeSubagentPolicy: _policy,
-      ...legacy
-    } = platform.config;
-    expect(AgentRevisionConfigSchema.parse(legacy)).toEqual(legacy);
-    expect(marketReleaseChecksum(AgentRevisionConfigSchema.parse(legacy))).toBe(
-      marketReleaseChecksum(legacy),
-    );
-    const remote = await db.remoteA2AAgent.create({
-      data: {
-        workspaceId: ws,
-        name: "Remote",
-        cardUrl: "https://remote.test/.well-known/agent-card.json",
-        rpcUrl: "https://remote.test/rpc",
-        card: {},
-        enabled: true,
-        allowedAgentIds: [agents[0], agents[1]],
-      },
-    });
-    expect(await save(true, [agents[1]])).toMatchObject({
-      native: true,
-      nativePolicy,
-    });
-    expect(
-      (await db.remoteA2AAgent.findUniqueOrThrow({ where: { id: remote.id } }))
-        .allowedAgentIds,
-    ).toEqual([agents[0], agents[1]]);
-    const both = await publishFixtureAgentRevision(ws, agents[0]);
-    expect(both.config).toMatchObject({
-      subagentMode: "native",
-      nativeSubagentPolicy: nativePolicy,
-      subagents: [],
-      a2a: { outboundEnabled: true },
-    });
-    expect(both.config.a2a.policy.targets).toEqual([
-      expect.objectContaining({ kind: "local", targetId: agents[1] }),
-    ]);
-    expect(
-      AgentRevisionConfigSchema.safeParse({
-        ...both.config,
-        nativeSubagentPolicy: undefined,
-      }).success,
-    ).toBe(false);
-    expect(
-      AgentRevisionConfigSchema.safeParse({
-        ...both.config,
-        subagentMode: "invalid",
-      }).success,
-    ).toBe(false);
-    grant = await createLocalRootGrant(ws, agents[0], user);
-    const parent = await root();
-    expect(
-      (await childGrant(parent.id, assertDefined(parent.leaseToken), agents[1]))
-        .agentId,
-    ).toBe(agents[1]);
-    const token = await runtimeToken(parent);
-    expect(await executeLocalMcpTool(token, "a2a_list_agents", {})).toEqual({
-      agents: [{ id: agents[1], name: "Agent 1" }],
-    });
-    const signed = await createAgentRuntimeToken(token);
-    const client = new Client({
-      name: "native-and-platform-test",
-      version: "1",
-    });
-    const transport = new StreamableHTTPClientTransport(
-      new URL("https://toolplane.test/runtime-tools"),
-      {
-        requestInit: { headers: { authorization: `Bearer ${signed}` } },
-        fetch: async (input, init) => {
-          const req = new Request(input, init);
-          return req.method === "POST"
-            ? handleRuntimeTools(req, parent.id)
-            : new Response(null, { status: 405 });
-        },
-      },
-    );
-    try {
-      await client.connect(transport);
-      expect(
-        (await client.listTools()).tools.map((tool) => tool.name),
-      ).toContain("pi_a2a_submit");
-    } finally {
-      await client.close();
-    }
-    expect(agentPermissionAdditions(platform.config, both.config)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ kind: "delegation", resourceId: "native" }),
-      ]),
-    );
-    expect(agentPermissionAdditions(both.config, both.config)).toEqual([]);
-    const expanded = AgentRevisionConfigSchema.parse({
-      ...both.config,
-      nativeSubagentPolicy: { maxConcurrency: 8, maxDepth: 4 },
-    });
-    expect(
-      diffAgentRevisions(both, { version: both.version + 1, config: expanded }),
-    ).toMatchObject({ changedFields: ["a2a"], grantsNewPermissions: true });
-    expect(
-      diffAgentRevisions({ version: 1, config: expanded }, both),
-    ).toMatchObject({ changedFields: ["a2a"], grantsNewPermissions: false });
-  });
-
   it("keeps remote-only outbound as configured when saving the selection", async () => {
     const remoteOnly = {
       kind: "remote" as const,
@@ -3622,38 +3872,5 @@ describe("independent platform and native subagents", () => {
       (await db.agent.findUniqueOrThrow({ where: { id: agents[0] } }))
         .a2aOutboundEnabled,
     ).toBe(true);
-  });
-
-  it("keeps sessions on their pinned native setting after the draft changes", async () => {
-    await db.agent.update({
-      where: { id: agents[0] },
-      data: { runtimeKind: "omp" },
-    });
-    await save(true);
-    const native = await publishFixtureAgentRevision(ws, agents[0]);
-    const conversation = await db.conversation.create({
-      data: {
-        agentId: agents[0],
-        agentRevisionId: native.id,
-        legacyRevisionUnresolved: false,
-      },
-    });
-    await save(false, [agents[1]]);
-    const platform = await publishFixtureAgentRevision(ws, agents[0]);
-    const live = await db.agent.findUniqueOrThrow({ where: { id: agents[0] } });
-    expect((await resolvePinnedAgent(live, native.id)).subagentMode).toBe(
-      "native",
-    );
-    expect(
-      (await requireAgentRevision(db, agents[0], platform.id)).config
-        .subagentMode,
-    ).toBe("platform");
-    expect(
-      (
-        await db.conversation.findUniqueOrThrow({
-          where: { id: conversation.id },
-        })
-      ).agentRevisionId,
-    ).toBe(native.id);
   });
 });

@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   AgentCard,
@@ -66,6 +67,7 @@ export async function buildAgentCard(grant: TaskGrant): Promise<AgentCard> {
   });
   const base = a2aDeploymentOrigin(
     runtimeEnv("NEXT_PUBLIC_APP_URL") || "http://localhost:3000",
+    await getTransportSettings(),
   );
   return AgentCard.fromJSON({
     name: endpoint.name,

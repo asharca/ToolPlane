@@ -22,12 +22,10 @@ import {
   MAX_MCP_STARTUP_TIMEOUT_MS,
   MIN_MCP_STARTUP_TIMEOUT_MS,
   resetMcpStartupTimeoutSettings,
-  resetRemoteMcpPrivateHostsSettings,
-  resetSshPrivateHostsSettings,
+  resetPrivateHostsSettings,
   updateMcpStartupTimeoutSettings,
-  updateRemoteMcpPrivateHostsSettings,
+  updatePrivateHostsSettings,
   updateSkillImportSettings,
-  updateSshPrivateHostsSettings,
 } from "@/lib/admin/settings";
 import { parseRemoteMcpPrivateHosts } from "../../../scripts/remote-mcp-private-hosts.mjs";
 import {
@@ -208,7 +206,7 @@ export async function updateMcpStartupTimeoutSettingsAction(
   return { ok: true };
 }
 
-export async function updateRemoteMcpPrivateHostsSettingsAction(
+export async function updatePrivateHostsSettingsAction(
   _prev: AdminSettingsActionState,
   formData: FormData,
 ): Promise<AdminSettingsActionState> {
@@ -217,38 +215,13 @@ export async function updateRemoteMcpPrivateHostsSettingsAction(
 
   try {
     if (String(formData.get("intent") ?? "") === "reset") {
-      await resetRemoteMcpPrivateHostsSettings(admin.id);
+      await resetPrivateHostsSettings(admin.id);
     } else {
-      const value = formData.get("remoteMcpPrivateHosts");
+      const value = formData.get("privateHosts");
       if (typeof value !== "string" || !parseRemoteMcpPrivateHosts(value)) {
-        return { error: t("errorRemoteMcpPrivateHosts") };
+        return { error: t("errorPrivateHosts") };
       }
-      await updateRemoteMcpPrivateHostsSettings(value, admin.id);
-    }
-  } catch {
-    return { error: t("errorActionFailed") };
-  }
-
-  revalidatePath("/admin/settings");
-  return { ok: true };
-}
-
-export async function updateSshPrivateHostsSettingsAction(
-  _prev: AdminSettingsActionState,
-  formData: FormData,
-): Promise<AdminSettingsActionState> {
-  const admin = await requireAdmin();
-  const t = await getTranslations("admin");
-
-  try {
-    if (String(formData.get("intent") ?? "") === "reset") {
-      await resetSshPrivateHostsSettings(admin.id);
-    } else {
-      const value = formData.get("sshPrivateHosts");
-      if (typeof value !== "string" || !parseRemoteMcpPrivateHosts(value)) {
-        return { error: t("errorSshPrivateHosts") };
-      }
-      await updateSshPrivateHostsSettings(value, admin.id);
+      await updatePrivateHostsSettings(value, admin.id);
     }
   } catch {
     return { error: t("errorActionFailed") };

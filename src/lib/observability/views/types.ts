@@ -50,6 +50,21 @@ export type A2ATaskFilter = TimeFilter & {
   state?: string;
   q?: string;
 };
+/** How an ordinary Agent run (a top-level entry task) was started. */
+export type AgentRunEntryKind =
+  | "chat"
+  | "work"
+  | "channel"
+  | "control"
+  | "trigger";
+export type AgentRunFilter = TimeFilter & {
+  agentId?: string;
+  entryKind?: AgentRunEntryKind;
+  state?: string;
+  q?: string;
+};
+/** Ledger task a log row belongs to: an Agent run or a genuine A2A task. */
+export type LogTaskRef = { id: string; kind: "run" | "a2a" };
 export type ViewStats = {
   total: number;
   success: number;
@@ -77,6 +92,7 @@ export type McpCallSummary = {
   durationMs: number | null;
   httpStatus: number | null;
   error: string | null;
+  task: LogTaskRef | null;
 };
 export type TimelineEntry = {
   id: string;
@@ -115,6 +131,13 @@ export type A2ATaskSummary = {
   durationMs: number | null;
   childCount: number;
   error?: string;
+  /** Set when this A2A task was delegated from an ordinary Agent run. */
+  origin: AgentRunOrigin | null;
+};
+export type AgentRunOrigin = {
+  runTaskId: string;
+  agent: NamedEntity | null;
+  entryKind: AgentRunEntryKind;
 };
 export type A2ATaskNode = {
   taskId: string;
@@ -154,4 +177,37 @@ export type A2ATaskDetail = {
     response?: JsonValue | null;
     bodyState: BodyState;
   }[];
+};
+export type AgentRunSource = {
+  kind: "conversation" | "work";
+  id: string;
+  title: string | null;
+};
+export type AgentRunSummary = {
+  taskId: string;
+  workspace: NamedEntity | null;
+  agent: NamedEntity | null;
+  entryKind: AgentRunEntryKind;
+  /** Conversation for chat/channel/control/trigger, Work session for work; null if deleted. */
+  source: AgentRunSource | null;
+  actor: Party;
+  state: string;
+  startedAt: string;
+  settledAt: string | null;
+  durationMs: number | null;
+  error?: string;
+  toolCallCount: number;
+  delegationCount: number;
+};
+export type AgentRunDetail = {
+  summary: AgentRunSummary;
+  messages: A2AMessageView[];
+  artifacts: A2AArtifactView[];
+  /** A2A tasks this run delegated directly; each has `origin.runTaskId` = this run. */
+  delegations: A2ATaskSummary[];
+  /** Agent tool calls recorded inside this run, newest first, at most 200. */
+  toolCalls: McpCallSummary[];
+  /** MCP calls recorded inside this run, newest first, at most 200. */
+  mcpCalls: McpCallSummary[];
+  timeline: TimelineEntry[];
 };

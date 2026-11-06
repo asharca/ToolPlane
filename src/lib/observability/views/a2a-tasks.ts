@@ -14,6 +14,7 @@ import {
   resolveLogFilters,
 } from "../queries";
 import { resolveNames, type NameReference, type ResolvedNames } from "./names";
+import { entryRootSql } from "./task-origin";
 import type {
   A2AArtifactView,
   A2AMessageView,
@@ -21,6 +22,7 @@ import type {
   A2ATaskFilter,
   A2ATaskNode,
   A2ATaskSummary,
+  AgentRunEntryKind,
   JsonValue,
   Party,
   TimelineEntry,
@@ -48,6 +50,9 @@ type TaskRow = {
   endpointId: string | null;
   error: string | null;
   childCount: number;
+  originRunTaskId: string | null;
+  originAgentId: string | null;
+  originEntryKind: AgentRunEntryKind | null;
   key: string;
 };
 type ChangeCursor = { createdAt: string; id: string };
@@ -59,7 +64,7 @@ const pageCursorSchema = z.object({
   at: z.string().datetime(),
   id: z.string().min(1).max(500),
 });
-const logScope = (scope: ViewScope) =>
+export const logScope = (scope: ViewScope) =>
   scope.kind === "workspace"
     ? { userId: scope.userId, workspaceId: scope.workspaceId }
     : { adminId: scope.userId };
@@ -74,7 +79,25 @@ const terminalStates = [
 ];
 const errorStates = ["TASK_STATE_FAILED", "TASK_STATE_REJECTED"];
 
-function filters(scope: ViewScope, filter: A2ATaskFilter) {
+export function taskStateSql(alias: string) {
+  const task = Prisma.raw(`"${alias}"`);
+  const cases = Object.entries(TaskState)
+    .filter(([, value]) => typeof value === "number")
+    .map(
+      ([name, value]) =>
+        Prisma.sql`WHEN ${value} THEN ${name.startsWith("TASK_STATE_") ? name : `TASK_STATE_${name}`}`,
+    );
+  return Prisma.sql`CASE ${task}.state ${Prisma.join(cases, " ")} ELSE 'TASK_STATE_UNSPECIFIED' END`;
+}
+
+export function taskErrorSql(alias: string) {
+  const task = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`CASE WHEN ${task}.state IN (4, 7) THEN
+    CASE WHEN ${task}.snapshot #>> '{status,message,parts,0,text}' = 'Task deadline exceeded.' THEN 'PI_TASK_TIMEOUT'
+      ELSE substring(${task}.snapshot #>> '{status,message,parts,0,text}' FROM '^(PI_TASK_[A-Z_]{0,40}TIMEOUT)(?=[: .]|$)') END END`;
+}
+
+export function taskTimeFilters(scope: ViewScope, filter: A2ATaskFilter) {
   const durations = {
     "1h": 3_600_000,
     "24h": 86_400_000,
@@ -98,8 +121,12 @@ function filters(scope: ViewScope, filter: A2ATaskFilter) {
   });
 }
 
-/** Lists and statistics select ledger identity/state only, never conversation JSON. */
-function taskTables(scope: ViewScope, selectedWorkspace?: string) {
+/** Lists select ledger identity/state and bounded timeout codes, never conversation JSON. */
+function taskTables(
+  scope: ViewScope,
+  selectedWorkspace?: string,
+  kind: "a2a" | "runs" = "a2a",
+) {
   const ws = scope.workspaceId ?? selectedWorkspace;
   const logWorkspace = ws
     ? Prisma.sql`AND e."workspaceId" = ${ws}`
@@ -107,18 +134,19 @@ function taskTables(scope: ViewScope, selectedWorkspace?: string) {
   const ledgerWorkspace = ws
     ? Prisma.sql`WHERE c."workspaceId" = ${ws}`
     : Prisma.empty;
-  const stateCases = Object.entries(TaskState)
-    .filter(([, value]) => typeof value === "number")
-    .map(
-      ([name, value]) =>
-        Prisma.sql`WHEN ${value} THEN ${name.startsWith("TASK_STATE_") ? name : `TASK_STATE_${name}`}`,
-    );
+  const state = taskStateSql("t");
   return Prisma.sql`
     scoped_events AS (
-      SELECT e.*, e.attributes->'data'->'a2a' AS meta
+      SELECT e.*, ${kind === "runs" ? Prisma.sql`jsonb_build_object('taskId', e."taskId")` : Prisma.sql`e.attributes->'data'->'a2a'`} AS meta
       FROM "LogEvent" e
-      WHERE e.domain = 'a2a' AND e."workspaceId" IS NOT NULL
-        AND NULLIF(e.attributes->'data'->'a2a'->>'taskId', '') IS NOT NULL ${logWorkspace}
+      WHERE e."workspaceId" IS NOT NULL ${logWorkspace}
+        AND ${
+          kind === "runs"
+            ? Prisma.sql`e."taskId" IS NOT NULL`
+            : Prisma.sql`e.domain = 'a2a' AND NULLIF(e.attributes->'data'->'a2a'->>'taskId', '') IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM "A2ATask" entry JOIN "A2AContext" ec ON ec.id = entry."contextId"
+              WHERE entry.id = e.attributes->'data'->'a2a'->>'taskId' AND ec."workspaceId" = e."workspaceId" AND ${entryRootSql("entry")})`
+        }
     ), log_tasks AS (
       SELECT e."workspaceId", e.meta->>'taskId' AS "taskId",
         COALESCE((array_agg(NULLIF(e.meta->>'rootTaskId', '') ORDER BY e."createdAt", e.id)
@@ -143,14 +171,15 @@ function taskTables(scope: ViewScope, selectedWorkspace?: string) {
       FROM scoped_events e GROUP BY e."workspaceId", e.meta->>'taskId'
     ), ledger_tasks AS (
       SELECT t.id AS "taskId", c."workspaceId", t."contextId", COALESCE(NULLIF(t."rootTaskId", ''), t.id) AS "rootTaskId",
-        t."parentTaskId", CASE t.state ${Prisma.join(stateCases, " ")} ELSE 'TASK_STATE_UNSPECIFIED' END AS state,
+        t."parentTaskId", ${state} AS state,
         t."createdAt" AS "startedAt", t."completedAt" AS "settledAt",
         CASE WHEN c."targetKind" = 'remote' THEN 'outbound' WHEN c."endpointId" IS NOT NULL THEN 'inbound' ELSE 'internal' END AS direction,
         c."agentId", c."endpointId", c."clientId", c."remoteAgentId",
         COALESCE(t.grant->>'sourceAgentId', t.grant->'ancestorAgentIds'->>-1) AS "sourceAgentId",
-        t.grant->>'actorId' AS "actorId"
+        t.grant->>'actorId' AS "actorId",
+        ${taskErrorSql("t")} AS error
       FROM "A2ATask" t JOIN "A2AContext" c ON c.id = t."contextId" ${ledgerWorkspace}
-    ), merged_tasks AS (
+    ), raw_merged_tasks AS (
       SELECT COALESCE(t."taskId", l."taskId") AS "taskId", COALESCE(t."workspaceId", l."workspaceId") AS "workspaceId",
         COALESCE(t."rootTaskId", l."rootTaskId") AS "rootTaskId", COALESCE(t."parentTaskId", l."parentTaskId") AS "parentTaskId",
         COALESCE(t."contextId", l."contextId") AS "contextId", COALESCE(t.state, l.state) AS state,
@@ -160,8 +189,24 @@ function taskTables(scope: ViewScope, selectedWorkspace?: string) {
         COALESCE(t.direction, l.direction, 'internal') AS direction,
         COALESCE(t."agentId", l."agentId") AS "agentId", COALESCE(t."endpointId", l."endpointId") AS "endpointId",
         COALESCE(t."clientId", l."clientId") AS "clientId", COALESCE(t."remoteAgentId", l."remoteAgentId") AS "remoteAgentId",
-        COALESCE(t."actorId", l."actorId") AS "actorId", t."sourceAgentId", l.error, l.search
+        COALESCE(t."actorId", l."actorId") AS "actorId", t."sourceAgentId", COALESCE(t.error, l.error) AS error, l.search
       FROM ledger_tasks t FULL JOIN log_tasks l ON l."taskId" = t."taskId" AND l."workspaceId" = t."workspaceId"
+    ), merged_tasks AS (
+      SELECT m."taskId", m."workspaceId",
+        CASE WHEN ${kind === "a2a"} AND ${entryRootSql("origin")}
+          THEN COALESCE(ledger.grant->'ancestorTaskIds'->>1, m."taskId") ELSE m."rootTaskId" END AS "rootTaskId",
+        CASE WHEN ${kind === "a2a"} AND ${entryRootSql("origin")} AND m."parentTaskId" = origin.id
+          THEN NULL ELSE m."parentTaskId" END AS "parentTaskId",
+        m."contextId", m.state, m."startedAt", m."settledAt", m.direction, m."agentId", m."endpointId",
+        m."clientId", m."remoteAgentId", m."actorId", m."sourceAgentId", m.error, m.search,
+        CASE WHEN ${entryRootSql("origin")} THEN origin.id END AS "originRunTaskId",
+        CASE WHEN ${entryRootSql("origin")} THEN origin.grant->>'agentId' END AS "originAgentId",
+        CASE WHEN ${entryRootSql("origin")} THEN origin.grant->'entryPolicy'->>'kind' END AS "originEntryKind"
+      FROM raw_merged_tasks m
+      LEFT JOIN "A2ATask" ledger ON ledger.id = m."taskId"
+      LEFT JOIN "A2ATask" origin ON origin.id = m."rootTaskId"
+        AND EXISTS (SELECT 1 FROM "A2AContext" oc WHERE oc.id = origin."contextId" AND oc."workspaceId" = m."workspaceId")
+      WHERE ${kind === "runs" ? Prisma.sql`${entryRootSql("ledger")}` : Prisma.sql`NOT COALESCE(${entryRootSql("ledger")}, FALSE)`}
     ), tasks AS (
       SELECT m.*,
         CASE WHEN COALESCE(m."sourceAgentId", parent."agentId") IS NOT NULL THEN 'agent' WHEN m.direction = 'outbound' AND m."agentId" IS NOT NULL THEN 'agent'
@@ -182,7 +227,7 @@ function taskTables(scope: ViewScope, selectedWorkspace?: string) {
 }
 
 function rootConditions(scope: ViewScope, filter: A2ATaskFilter) {
-  const parsed = filters(scope, filter);
+  const parsed = taskTimeFilters(scope, filter);
   const conditions = [
     Prisma.sql`r."startedAt" >= ${parsed.since} AND r."startedAt" <= ${parsed.until}`,
   ];
@@ -234,6 +279,7 @@ function references(rows: TaskRow[]): NameReference[] {
       rows.flatMap((row) =>
         [
           row.fromKind === "agent" ? row.fromId : null,
+          row.originAgentId,
           row.toKind === "agent" ? row.toId : null,
         ]
           .filter((id): id is string => !!id)
@@ -255,6 +301,14 @@ function summary(row: TaskRow, names: ResolvedNames): A2ATaskSummary {
     settledAt: row.settledAt?.toISOString() ?? null,
     durationMs: row.durationMs,
     childCount: row.childCount,
+    origin:
+      row.originRunTaskId && row.originEntryKind
+        ? {
+            runTaskId: row.originRunTaskId,
+            agent: names.entity("agent", row.originAgentId, row.workspaceId),
+            entryKind: row.originEntryKind,
+          }
+        : null,
     ...(row.error && errorStates.includes(row.state)
       ? { error: row.error }
       : {}),
@@ -437,12 +491,13 @@ function ledgerContent(value: JsonValue): JsonValue {
   return data;
 }
 
-export async function getA2ATask(
+export async function getLedgerTaskDetail(
   scope: ViewScope,
   taskId: string,
+  kind: "a2a" | "runs" = "a2a",
 ): Promise<A2ATaskDetail | null> {
   await authorizeLogs(logScope(scope));
-  const tables = taskTables(scope);
+  const tables = taskTables(scope, undefined, kind);
   const found = await db.$queryRaw<
     TaskRow[]
   >(Prisma.sql`WITH ${tables} SELECT t.* FROM tasks t
@@ -454,7 +509,7 @@ export async function getA2ATask(
     actorId: scope.userId,
     workspaceId: task.workspaceId,
     action: "logging.detail.viewed",
-    targetType: "a2aTask",
+    targetType: kind === "runs" ? "agentRun" : "a2aTask",
     targetId: task.rootTaskId,
   });
   const [roots, treeRows, events, ledgerEvents, ledgerTasks] =
@@ -660,6 +715,29 @@ export async function getA2ATask(
   };
 }
 
+export function getA2ATask(
+  scope: ViewScope,
+  taskId: string,
+): Promise<A2ATaskDetail | null> {
+  return getLedgerTaskDetail(scope, taskId, "a2a");
+}
+
+export async function listRunDelegations(
+  scope: ViewScope,
+  runTaskId: string,
+): Promise<A2ATaskSummary[]> {
+  await authorizeLogs(logScope(scope));
+  const rows = await db.$queryRaw<
+    TaskRow[]
+  >(Prisma.sql`WITH ${taskTables(scope)}
+    SELECT r.* FROM roots r WHERE r."originRunTaskId" = ${runTaskId}
+      AND EXISTS (SELECT 1 FROM "A2ATask" child JOIN "A2AContext" c ON c.id = child."contextId"
+        WHERE child.id = r."rootTaskId" AND child."parentTaskId" = ${runTaskId} AND c."workspaceId" = r."workspaceId")
+    ORDER BY r."startedAt", r."rootTaskId"`);
+  const names = await resolveNames(references(rows));
+  return rows.map((row) => summary(row, names));
+}
+
 export async function pollA2ATasks(
   scope: ViewScope,
   filter: A2ATaskFilter,
@@ -683,10 +761,9 @@ export async function pollA2ATasks(
       SELECT e.id, e."createdAt", t."rootTaskId", e."workspaceId"
       FROM scoped_events e JOIN tasks t ON t."taskId" = e.meta->>'taskId' AND t."workspaceId" = e."workspaceId"
       UNION ALL
-      SELECT concat('ledger:', t.id) AS id, t."updatedAt" AS "createdAt", COALESCE(NULLIF(t."rootTaskId", ''), t.id) AS "rootTaskId", c."workspaceId"
-      FROM "A2ATask" t JOIN "A2AContext" c ON c.id = t."contextId"
-      WHERE ${ws ? Prisma.sql`c."workspaceId" = ${ws}` : Prisma.sql`TRUE`}
-        AND NOT EXISTS (SELECT 1 FROM scoped_events e WHERE e."workspaceId" = c."workspaceId" AND e.meta->>'taskId' = t.id)
+      SELECT concat('ledger:', ledger.id) AS id, ledger."updatedAt" AS "createdAt", t."rootTaskId", t."workspaceId"
+      FROM "A2ATask" ledger JOIN tasks t ON t."taskId" = ledger.id
+      WHERE NOT EXISTS (SELECT 1 FROM scoped_events e WHERE e."workspaceId" = t."workspaceId" AND e.meta->>'taskId' = ledger.id)
     ) SELECT * FROM changes WHERE ("createdAt", id) > (${new Date(after.createdAt)}, ${after.id})
       AND "createdAt" <= ${stop} ORDER BY "createdAt", id LIMIT 50`);
   if (!changes.length) return { items: [], nextCursor: after };

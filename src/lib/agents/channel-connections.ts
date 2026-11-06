@@ -26,6 +26,8 @@ import {
 import { hostedRunnerSpec } from "@/lib/agents/platform-runner";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
 import { agentChannelSandboxId, getChannelSandbox } from "./channel-sandboxes";
+import { channelLegacyPolicyBackfill } from "./channel-sender-access";
+import { writeAudit } from "@/lib/observability/audit";
 
 export type AgentChannelConnectionView = {
   id: string;
@@ -44,6 +46,14 @@ export type AgentChannelConnectionView = {
   credentialValues: Record<string, string>;
   missingStartCredentialNames: string[];
   pairing: AgentChannelPairingState | null;
+  access: {
+    openToAll: boolean;
+    unauthorizedDm: "pair" | "ignore" | "decline";
+    adminUserIds: string[];
+    pendingCount: number;
+  };
+  sessions: { groupSessionsPerUser: boolean; threadSessionsPerUser: boolean };
+  revisions: { currentVersion: number | null; outdatedConversations: number };
   inboundToken: string;
   inboundTokenPrefix: string;
   runnerPid: number | null;
@@ -101,10 +111,40 @@ function statusForCredentials(
   return "stopped";
 }
 
-function toView(row: ChannelRow): AgentChannelConnectionView | null {
+async function toView(
+  row: ChannelRow,
+): Promise<AgentChannelConnectionView | null> {
   const platform = getMessagingPlatform(row.platform);
   if (!platform) return null;
   const credentials = decryptChannelCredentials(row.credentials);
+  const [agent, pendingCount] = await Promise.all([
+    row.agentId
+      ? db.agent.findFirst({
+          where: { id: row.agentId, workspaceId: row.workspaceId },
+          select: { currentRevisionVersion: true },
+        })
+      : null,
+    db.agentChannelPairingRequest.count({
+      where: {
+        connectionId: row.id,
+        connection: { workspaceId: row.workspaceId },
+        status: "pending",
+        expiresAt: { gt: new Date() },
+      },
+    }),
+  ]);
+  const currentVersion = agent?.currentRevisionVersion ?? null;
+  const outdatedConversations =
+    row.agentId && currentVersion
+      ? await db.conversation.count({
+          where: {
+            agentId: row.agentId,
+            agent: { workspaceId: row.workspaceId },
+            runtimeSessionKey: { startsWith: `channel:${row.id}:` },
+            agentRevision: { version: { lt: currentVersion } },
+          },
+        })
+      : 0;
   return {
     id: row.id,
     workspaceId: row.workspaceId,
@@ -131,6 +171,20 @@ function toView(row: ChannelRow): AgentChannelConnectionView | null {
       credentials,
     ),
     pairing: pairingFromConfig(row.config),
+    access: {
+      openToAll: row.openToAll,
+      unauthorizedDm:
+        row.unauthorizedDm === "ignore" || row.unauthorizedDm === "decline"
+          ? row.unauthorizedDm
+          : "pair",
+      adminUserIds: row.adminUserIds,
+      pendingCount,
+    },
+    sessions: {
+      groupSessionsPerUser: row.groupSessionsPerUser,
+      threadSessionsPerUser: row.threadSessionsPerUser,
+    },
+    revisions: { currentVersion, outdatedConversations },
     inboundToken: decryptSecretText(row.inboundTokenSecret),
     inboundTokenPrefix: row.inboundTokenPrefix,
     runnerPid: row.runnerPid,
@@ -151,9 +205,9 @@ export async function listAgentChannelConnections(
     where: { workspaceId, agentId, sandboxId },
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
   });
-  return rows
-    .map(toView)
-    .filter((row): row is AgentChannelConnectionView => Boolean(row));
+  return (await Promise.all(rows.map(toView))).filter(
+    (row): row is AgentChannelConnectionView => Boolean(row),
+  );
 }
 
 export async function getAgentChannelConnection(
@@ -229,7 +283,7 @@ export async function createAgentChannelConnection(params: {
         inboundTokenPrefix: tokenPrefix(token),
       },
     });
-    return { connection: toView(row) };
+    return { connection: await toView(row) };
   } catch {
     return {
       error:
@@ -244,6 +298,14 @@ export async function updateAgentChannelConnectionCredentials(params: {
   credentials: Record<string, string>;
   name?: string;
   agentId?: string | null;
+  actorId?: string;
+  access?: Partial<
+    Pick<
+      AgentChannelConnectionView["access"],
+      "openToAll" | "unauthorizedDm" | "adminUserIds"
+    >
+  >;
+  sessions?: Partial<AgentChannelConnectionView["sessions"]>;
 }): Promise<{
   error?: string;
   connection?: AgentChannelConnectionView | null;
@@ -285,6 +347,21 @@ export async function updateAgentChannelConnectionCredentials(params: {
     if (field.secret && !changes[field.name]) delete changes[field.name];
   }
   const next = cleanCredentials({ ...current, ...changes });
+  const legacyKey = `${row.platform.toUpperCase()}_ALLOW_ALL_USERS`;
+  const migratePolicy =
+    row.senderPolicyVersion === 1 ||
+    legacyKey in current ||
+    legacyKey in params.credentials;
+  const legacyCredentials = {
+    ...next,
+    ...(legacyKey in params.credentials
+      ? { [legacyKey]: params.credentials[legacyKey] }
+      : {}),
+  };
+  const legacyOpenToAll = migratePolicy
+    ? channelLegacyPolicyBackfill(row.platform, legacyCredentials)
+    : undefined;
+  delete next[legacyKey];
 
   const {
     liveAgentChannelStatus,
@@ -294,16 +371,43 @@ export async function updateAgentChannelConnectionCredentials(params: {
   const restart = liveAgentChannelStatus(row.id) !== "stopped";
   if (restart) await stopAgentChannelRunner(params.workspaceId, row.id);
   try {
-    const updated = await db.agentChannelConnection.update({
-      where: { id: row.id },
-      data: {
-        name: params.name?.trim(),
-        agentId: params.agentId,
-        sandboxId,
-        status: statusForCredentials(platform, next),
-        lastError: null,
-        credentials: encryptSecretRecord(next) as Prisma.InputJsonValue,
-      },
+    const updated = await db.$transaction(async (tx) => {
+      const updated = await tx.agentChannelConnection.update({
+        where: { id: row.id, workspaceId: params.workspaceId },
+        data: {
+          name: params.name?.trim(),
+          agentId: params.agentId,
+          sandboxId,
+          status: statusForCredentials(platform, next),
+          lastError: null,
+          credentials: encryptSecretRecord(next) as Prisma.InputJsonValue,
+          ...(migratePolicy
+            ? {
+                senderPolicyVersion: 2,
+                openToAll: legacyOpenToAll,
+                ...(row.senderPolicyVersion === 1
+                  ? { groupSessionsPerUser: !hostedRunnerSpec(row.platform) }
+                  : {}),
+              }
+            : {}),
+          ...params.access,
+          ...params.sessions,
+        },
+      });
+      if (params.actorId)
+        await writeAudit(tx, {
+          actorId: params.actorId,
+          workspaceId: params.workspaceId,
+          action: "agent.channel.update",
+          targetType: "AgentChannelConnection",
+          targetId: row.id,
+          changes: {
+            access: params.access,
+            sessions: params.sessions,
+            credentialNames: Object.keys(changes),
+          },
+        });
+      return updated;
     });
     if (
       restart &&

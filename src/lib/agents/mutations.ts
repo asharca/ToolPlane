@@ -4,7 +4,10 @@ import { db } from "@/lib/db";
 import { visiblePluginWhere } from "@/lib/plugins/catalog";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import { deleteAgentConversationSandboxes } from "@/lib/agents/conversation-sandbox";
-import { withAgentMaintenanceLease } from "@/lib/agents/agent-execution-gate";
+import {
+  withAgentDraftLease,
+  withAgentMaintenanceLease,
+} from "@/lib/agents/agent-execution-gate";
 import { writeAudit } from "@/lib/observability/audit";
 import { conversationTitleFromParts } from "@/lib/agents/conversation-title";
 import {
@@ -40,13 +43,14 @@ import { ensureWorkspaceMcpDeploymentPinned } from "@/lib/process/mcp-pinning";
 import { prepareSessionMcpDefinition } from "@/lib/process/mcp-definition";
 import { catalogToolNames } from "@/lib/process/mcp-grant-sync";
 import { isExecutableAgentRuntimeKind } from "./runtime-kind";
-import { emptyOmpConfig } from "./omp-config";
-import type { OmpConfigSnapshot } from "./omp-config";
+import { preparePiRuntime } from "./pi-runtime";
+import { parseOmpConfigSnapshot } from "./omp-config-server";
+import { isOmpInstructionPath } from "./omp-config";
 
 function assertNativeAgent(runtimeKind: string, retiredAt: Date | null): void {
   if (!isExecutableAgentRuntimeKind(runtimeKind) || retiredAt !== null) {
     throw new AgentConfigurationError(
-      "Historical Agents are read-only; copy configuration to a native Pi or OMP Agent.",
+      "Historical Agents are read-only; copy configuration to a native Pi Agent.",
     );
   }
 }
@@ -246,9 +250,7 @@ export async function createAgentRecords(
 ) {
   const runtime = options.runtime ?? "pi-sdk";
   if (!isExecutableAgentRuntimeKind(runtime)) {
-    throw new AgentConfigurationError(
-      "Only native Pi and OMP Agents can be created.",
-    );
+    throw new AgentConfigurationError("Only native Pi Agents can be created.");
   }
   const agent = await tx.agent.create({
     data: {
@@ -256,11 +258,6 @@ export async function createAgentRecords(
       name,
       slug,
       runtimeKind: runtime,
-      ...(runtime === "omp"
-        ? {
-            ompConfig: emptyOmpConfig() as Prisma.InputJsonValue,
-          }
-        : {}),
     },
   });
   const templateSlug =
@@ -322,6 +319,8 @@ export async function cloneAgent(
           name: true,
           description: true,
           systemPrompt: true,
+          runtimeKind: true,
+          ompConfig: true,
           disabledBuiltinTools: true,
           maxSteps: true,
         },
@@ -335,8 +334,21 @@ export async function cloneAgent(
         where: { id: cloned.id },
         data: {
           description: source.description,
-          systemPrompt: source.systemPrompt,
-          disabledBuiltinTools: source.disabledBuiltinTools,
+          systemPrompt:
+            [
+              source.systemPrompt,
+              ...(source.runtimeKind === "omp" && source.ompConfig
+                ? parseOmpConfigSnapshot(source.ompConfig)
+                    .files.filter((file) => isOmpInstructionPath(file.path))
+                    .map((file) => file.content)
+                : []),
+            ]
+              .filter(Boolean)
+              .join("\n\n") || null,
+          disabledBuiltinTools: normalizeDisabledBuiltinTools(
+            "pi-sdk",
+            source.disabledBuiltinTools,
+          ),
           maxSteps: source.maxSteps,
         },
       });
@@ -483,7 +495,7 @@ async function validateAndWritePiPackages(
   piPackages: AgentConfig["piPackages"],
 ) {
   if (piPackages === undefined) return; // undefined = no change
-  if (runtimeKind !== "pi-sdk" && runtimeKind !== "omp")
+  if (runtimeKind !== "pi-sdk")
     throw new AgentConfigurationError("pi_packages_runtime_unsupported");
   if (
     !Array.isArray(piPackages) ||
@@ -639,14 +651,14 @@ export async function setAgentPiPackages(
   agentId: string,
   piPackages: NonNullable<AgentConfig["piPackages"]>,
 ) {
-  return withAgentMaintenanceLease(agentId, () =>
+  return withAgentDraftLease(agentId, () =>
     db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
       const agent = await tx.agent.findFirst({
         where: {
           id: agentId,
           workspaceId,
-          runtimeKind: { in: ["pi-sdk", "omp"] },
+          runtimeKind: "pi-sdk",
           publicRuntimeAllocation: null,
           workspace: { status: "active" },
         },
@@ -675,7 +687,7 @@ async function requireAgentWorkspaceResource(
     where: {
       id: agentId,
       workspaceId,
-      runtimeKind: { in: ["pi-sdk", "omp"] },
+      runtimeKind: "pi-sdk",
       publicRuntimeAllocation: null,
       workspace: { status: "active" },
     },
@@ -842,16 +854,12 @@ export async function createConfiguredAgent(
   tools: AgentToolSelection,
   options: CreateAgentOptions & {
     enable?: boolean;
-    ompConfig?: OmpConfigSnapshot;
-    nativeSubagents?: boolean;
     authorize?: (tx: Prisma.TransactionClient) => Promise<void>;
   },
 ) {
   const runtime = options.runtime ?? "pi-sdk";
   if (!isExecutableAgentRuntimeKind(runtime)) {
-    throw new AgentConfigurationError(
-      "Only native Pi and OMP Agents can be created.",
-    );
+    throw new AgentConfigurationError("Only native Pi Agents can be created.");
   }
   const cleanName = cfg.name.trim() || "New agent";
   const deploymentIds = uniqueIds(tools.deploymentIds);
@@ -874,6 +882,8 @@ export async function createConfiguredAgent(
     });
     if (options.enable) await prepareSessionMcpDefinition(deployment);
   }
+  // Finish network preparation before taking transactional locks or exposing a usable Agent.
+  if (options.enable && runtime === "pi-sdk") await preparePiRuntime();
   return await db.$transaction(
     async (tx) => {
       await options.authorize?.(tx);
@@ -953,12 +963,6 @@ export async function createConfiguredAgent(
             cfg.disabledBuiltinTools,
           ),
           maxSteps: cfg.maxSteps,
-          ...(runtime === "omp" && options.nativeSubagents
-            ? { subagentMode: "native" }
-            : {}),
-          ...(runtime === "omp" && options.ompConfig
-            ? { ompConfig: options.ompConfig as Prisma.InputJsonValue }
-            : {}),
         },
       });
       await tx.agentServer.createMany({
@@ -1013,7 +1017,7 @@ export async function updateAgent(
   agentId: string,
   cfg: AgentConfig,
 ) {
-  return withAgentMaintenanceLease(agentId, async () => {
+  return withAgentDraftLease(agentId, async () => {
     await db.$transaction(async (tx) => {
       if (cfg.piPackages !== undefined) {
         await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
@@ -1109,7 +1113,7 @@ export async function setAgentTools(
   agentId: string,
   tools: AgentToolSelection,
 ) {
-  return withAgentMaintenanceLease(agentId, async () => {
+  return withAgentDraftLease(agentId, async () => {
     const agent = await db.agent.findFirst({
       where: { id: agentId, workspaceId },
       select: { id: true, runtimeKind: true, retiredAt: true },
@@ -1698,6 +1702,10 @@ export async function createConversation(
   agentId: string,
   title?: string,
   runtimeSession?: Partial<ConversationRuntimeSession>,
+  onCreated?: (
+    tx: Prisma.TransactionClient,
+    conversationId: string,
+  ) => Promise<void>,
 ) {
   return db.$transaction(async (tx) => {
     const agent = await tx.agent.findFirst({
@@ -1714,7 +1722,7 @@ export async function createConversation(
         legacyRevisionUnresolved: false,
       },
     });
-    return tx.conversation.update({
+    const selected = await tx.conversation.update({
       where: { id: conversation.id },
       data: defaultConversationRuntimeSession(
         agent.id,
@@ -1722,6 +1730,8 @@ export async function createConversation(
         runtimeSession,
       ),
     });
+    await onCreated?.(tx, selected.id);
+    return selected;
   });
 }
 

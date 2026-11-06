@@ -14,6 +14,7 @@ import {
   textArtifact,
 } from "@/lib/a2a/model";
 import { validateParams, validateSend } from "@/lib/a2a/validation";
+import { a2aTransportBodyBytes } from "@/lib/transport-policy";
 
 const message = {
   messageId: "m-1",
@@ -30,6 +31,73 @@ const task = () =>
   });
 
 describe("native A2A 1.0 protocol contract", () => {
+  it("admits configured 512 KiB inline files through wire and SDK validation without widening text or canonical encoding", () => {
+    const policy = { allowHttp: false, a2aInlineBytes: 512 * 1024 };
+    const request = {
+      message: {
+        ...message,
+        parts: [
+          {
+            raw: Buffer.alloc(policy.a2aInlineBytes, 97).toString("base64"),
+            mediaType: "application/octet-stream",
+          },
+        ],
+      },
+    };
+    expect(Buffer.byteLength(JSON.stringify(request))).toBeLessThan(
+      a2aTransportBodyBytes(policy),
+    );
+    expect(() =>
+      validateParams("SendMessage", request, ["text/plain"], policy),
+    ).not.toThrow();
+    expect(() =>
+      validateSend(
+        SendMessageRequest.fromJSON(request),
+        ["text/plain"],
+        policy,
+      ),
+    ).not.toThrow();
+    expect(() => validateParams("SendMessage", request)).toThrow();
+    request.message.parts[0].raw = Buffer.alloc(
+      policy.a2aInlineBytes + 1,
+    ).toString("base64");
+    expect(() =>
+      validateParams("SendMessage", request, ["text/plain"], policy),
+    ).toThrow();
+    request.message.parts[0].raw = "Zh==";
+    expect(() =>
+      validateParams("SendMessage", request, ["text/plain"], policy),
+    ).toThrow();
+  });
+
+  it("allows only HTTP scheme relaxation and retains file URL credential and fragment restrictions", () => {
+    const policy = { allowHttp: true, a2aInlineBytes: 32 * 1024 };
+    const input = (url: string) => ({
+      message: {
+        ...message,
+        parts: [{ url, mediaType: "application/octet-stream" }],
+      },
+    });
+    expect(() =>
+      validateParams(
+        "SendMessage",
+        input("http://files.example/report"),
+        ["text/plain"],
+        policy,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      validateParams("SendMessage", input("http://files.example/report")),
+    ).toThrow();
+    for (const url of [
+      "ftp://files.example/report",
+      "http://user:pass@files.example/report",
+      "http://files.example/report#secret",
+    ])
+      expect(() =>
+        validateParams("SendMessage", input(url), ["text/plain"], policy),
+      ).toThrow();
+  });
   it("uses official oneofs, enums and JSON response shapes without v0.3 fields", () => {
     const value = jsonEvent(taskEvent(task()));
     expect(value).toMatchObject({

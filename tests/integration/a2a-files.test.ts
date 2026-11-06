@@ -17,6 +17,11 @@ import type * as RuntimeOwnership from "@/lib/runtime/ownership-state";
 import type { LocalA2AGrant } from "@/lib/a2a/principal";
 import { encryptSecretText } from "@/lib/security/secrets";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
+import {
+  DEFAULT_A2A_FILE_BYTES,
+  DEFAULT_TRANSPORT_POLICY,
+} from "@/lib/transport-policy";
+import { TRANSPORT_SETTINGS_KEY } from "@/lib/admin/transport-settings";
 const io = vi.hoisted(() => ({
   blobs: new Map<string, Uint8Array>(),
   remove: vi.fn(),
@@ -71,10 +76,10 @@ import {
   openTaskFileCapability,
   storeTaskFile,
   storeAdmittedTaskFile,
-  TASK_FILE_LIMITS,
 } from "@/lib/a2a/files";
 import { submitTask } from "@/lib/a2a/store";
 let user: string;
+let originalTransportSetting: string | undefined;
 const fixtures: { workspace: string; agent: string }[] = [];
 const body = (value = "abc") => new Blob([value]).stream();
 async function task(index = 0) {
@@ -114,6 +119,11 @@ async function seed(
   });
 }
 beforeAll(async () => {
+  originalTransportSetting = (
+    await db.systemSetting.findUnique({
+      where: { key: TRANSPORT_SETTINGS_KEY },
+    })
+  )?.value;
   vi.stubEnv("AUTH_SECRET", "isolated-task-file-integration-secret");
   user = (
     await db.user.create({
@@ -171,6 +181,7 @@ beforeEach(async () => {
   io.remove.mockReset();
   io.gate = null;
   io.entered = null;
+  await db.systemSetting.deleteMany({ where: { key: TRANSPORT_SETTINGS_KEY } });
   await db.a2ATaskFile.deleteMany({
     where: { workspaceId: { in: fixtures.map((f) => f.workspace) } },
   });
@@ -183,6 +194,11 @@ beforeEach(async () => {
   });
 });
 afterAll(async () => {
+  await db.systemSetting.deleteMany({ where: { key: TRANSPORT_SETTINGS_KEY } });
+  if (originalTransportSetting !== undefined)
+    await db.systemSetting.create({
+      data: { key: TRANSPORT_SETTINGS_KEY, value: originalTransportSetting },
+    });
   await db.a2ATaskFile.deleteMany({
     where: { workspaceId: { in: fixtures.map((f) => f.workspace) } },
   });
@@ -318,11 +334,11 @@ describe("PostgreSQL task file invariants with streaming storage boundary", () =
     async (scope) => {
       const a = await task(),
         b = scope === "task" ? a : await task();
-      if (scope === "task") await seed(a.id, 9, TASK_FILE_LIMITS.fileBytes);
+      if (scope === "task") await seed(a.id, 9, DEFAULT_A2A_FILE_BYTES);
       else {
         for (let i = 0; i < 6; i++) {
           const t = await task();
-          await seed(t.id, i === 5 ? 1 : 20, TASK_FILE_LIMITS.fileBytes);
+          await seed(t.id, i === 5 ? 1 : 20, DEFAULT_A2A_FILE_BYTES);
         }
       }
       const { promise: gate, resolve: release } = Promise.withResolvers<void>();
@@ -334,14 +350,127 @@ describe("PostgreSQL task file invariants with streaming storage boundary", () =
       try {
         await entered;
         await expect(
-          storeTaskFile(b.id, "two", "b.txt", "text/plain", body()),
-        ).rejects.toThrow("storage limit");
+          storeTaskFile(
+            b.id,
+            "two",
+            "b.txt",
+            "text/plain",
+            new Blob([new Uint8Array(5 * 1024 * 1024)]).stream(),
+          ),
+        ).rejects.toThrow();
       } finally {
         release();
       }
       await first;
     },
   );
+  it("applies file size changes to storage while retaining ready files and total quotas", async () => {
+    const setLimit = (mib: number) =>
+      db.systemSetting.upsert({
+        where: { key: TRANSPORT_SETTINGS_KEY },
+        create: {
+          key: TRANSPORT_SETTINGS_KEY,
+          value: JSON.stringify({
+            ...DEFAULT_TRANSPORT_POLICY,
+            a2aFileBytes: mib * 1024 ** 2,
+          }),
+        },
+        update: {
+          value: JSON.stringify({
+            ...DEFAULT_TRANSPORT_POLICY,
+            a2aFileBytes: mib * 1024 ** 2,
+          }),
+        },
+      });
+    const t = await task();
+    const large = new Uint8Array(12 * 1024 ** 2);
+    large[large.length - 1] = 42;
+    const stream = () => new Blob([large]).stream();
+    await expect(
+      storeTaskFile(
+        t.id,
+        "large",
+        "large.bin",
+        "application/octet-stream",
+        stream(),
+      ),
+    ).rejects.toThrow();
+    await setLimit(25);
+    const file = await storeTaskFile(
+      t.id,
+      "large",
+      "large.bin",
+      "application/octet-stream",
+      stream(),
+    );
+    expect(file.size).toBe(large.byteLength);
+    await setLimit(1);
+    const opened = await openTaskFile(t.id, file.id);
+    expect(
+      Buffer.from(await new Response(opened.body).arrayBuffer()).equals(
+        Buffer.from(large.buffer),
+      ),
+    ).toBe(true);
+    await expect(
+      storeTaskFile(
+        t.id,
+        "new",
+        "new.bin",
+        "application/octet-stream",
+        stream(),
+      ),
+    ).rejects.toThrow();
+    await setLimit(100);
+    const next = await storeTaskFile(
+      t.id,
+      "small",
+      "small.txt",
+      "text/plain",
+      body("after large file"),
+    );
+    expect(
+      await new Response((await openTaskFile(t.id, next.id)).body).text(),
+    ).toBe("after large file");
+  });
+
+  it("retains an active reservation when the administrator lowers the file limit", async () => {
+    const t = await task();
+    await seed(t.id, 6, DEFAULT_A2A_FILE_BYTES);
+    await db.systemSetting.create({
+      data: {
+        key: TRANSPORT_SETTINGS_KEY,
+        value: JSON.stringify({
+          ...DEFAULT_TRANSPORT_POLICY,
+          a2aFileBytes: 40 * 1024 ** 2,
+        }),
+      },
+    });
+    const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+    const { promise: entered, resolve: markEntered } =
+      Promise.withResolvers<void>();
+    io.gate = gate;
+    io.entered = markEntered;
+    const first = storeTaskFile(t.id, "first", "a.txt", "text/plain", body());
+    try {
+      await entered;
+      await db.systemSetting.update({
+        where: { key: TRANSPORT_SETTINGS_KEY },
+        data: {
+          value: JSON.stringify({
+            ...DEFAULT_TRANSPORT_POLICY,
+            a2aFileBytes: DEFAULT_A2A_FILE_BYTES,
+          }),
+        },
+      });
+      await expect(
+        storeTaskFile(t.id, "second", "b.txt", "text/plain", body()),
+      ).rejects.toThrow("storage limit");
+    } finally {
+      release();
+    }
+    await first;
+  });
+
   it("binds capabilities to signature, expiry and live revocation without execution lease", async () => {
     const t = await task();
     const file = await storeTaskFile(

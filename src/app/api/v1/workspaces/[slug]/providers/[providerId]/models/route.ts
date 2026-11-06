@@ -22,8 +22,6 @@ export const POST = withRequestLogging(
     const workspace = await getWorkspaceForUser(slug, user.id);
     if (!workspace)
       return Response.json({ error: "Workspace not found" }, { status: 404 });
-    if (workspace.ownerId !== user.id)
-      return Response.json({ error: "Not authorized." }, { status: 403 });
     const provider = await getProvider(workspace.id, providerId);
     if (!provider)
       return Response.json({ error: "Provider not found" }, { status: 404 });

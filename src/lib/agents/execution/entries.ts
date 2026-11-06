@@ -25,8 +25,16 @@ import type {
   SandboxRuntimeActivity,
 } from "@/lib/agents/sandbox-runtime";
 import type { AgentModelOverride } from "@/lib/agents/chat-body";
-import { resolveAgentModelOverride } from "@/lib/agents/turn-model";
+import {
+  resolveAgentModelOverride,
+  resolveConversationModelOverride,
+} from "@/lib/agents/turn-model";
 import { AGENT_TURN_MODEL_PART } from "@/lib/agents/turn-model";
+import {
+  runtimeFailureText,
+  taskRuntimeFailure,
+} from "@/lib/agents/runtime-failure";
+import { taskDeadlineFailure } from "@/lib/agents/execution/deadline-failure";
 import { db } from "@/lib/db";
 import { requireAgentRevision } from "@/lib/agents/revisions";
 import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
@@ -49,6 +57,7 @@ import {
 import { settled, terminal, A2A_LIMITS } from "@/lib/a2a/model";
 import { refreshTaskStorage } from "@/lib/a2a/quotas";
 import { wakeAgentWorker } from "@/lib/agents/execution/worker";
+import { assertAgentBudget } from "@/lib/agents/usage";
 
 export type EntryMessage = { id?: string; role: string; parts: unknown };
 export type AgentEntryInput = EntryIdentity & {
@@ -111,6 +120,7 @@ export async function submitAgentEntry(
       kind: input.kind,
       sourceId: input.sourceId,
       ...(input.channelId ? { channelId: input.channelId } : {}),
+      ...(input.conversationId ? { conversationId: input.conversationId } : {}),
     });
     const grant = await createLocalEntryGrant(
       tx,
@@ -132,10 +142,30 @@ export async function submitAgentEntry(
       );
       grant.modelOverride = input.modelOverride;
     }
+    const conversation = await tx.conversation.findFirst({
+      where: {
+        ...(input.kind === "work"
+          ? { workSession: { id: input.sourceId } }
+          : { id: input.conversationId ?? input.sourceId }),
+        agentId: input.agentId,
+        agent: { workspaceId: input.workspaceId },
+      },
+      select: { modelOverride: true },
+    });
+    const sessionModel = await resolveConversationModelOverride(
+      input.workspaceId,
+      conversation?.modelOverride,
+      (await requireAgentRevision(tx, grant.agentId, grant.agentRevisionId))
+        .config.runtimeKind,
+      tx,
+    );
+    if (sessionModel) {
+      grant.modelOverride = sessionModel.override;
+    }
     const key = {
       ownerKey: grant.ownerKey,
       kind: input.kind,
-      sourceId: input.sourceId,
+      sourceId: input.conversationId ?? input.sourceId,
     };
     const inputHash = hash(
       input.modelOverride ? [input.text, input.modelOverride] : [input.text],
@@ -225,6 +255,7 @@ export async function submitAgentEntry(
         throw new TaskNotFoundError();
       return { row: replay.task, grant, replay: true };
     }
+    await assertAgentBudget(tx, input.agentId);
     const previous = binding?.lastTask;
     if (previous && !settled(previous.state))
       throw new UnsupportedOperationError(
@@ -277,7 +308,10 @@ export async function submitAgentEntry(
     workspaceId: input.workspaceId,
     agentId: input.agentId,
     actorId: input.actorId,
-    conversationId: input.kind === "work" ? undefined : input.sourceId,
+    conversationId:
+      input.kind === "work"
+        ? undefined
+        : (input.conversationId ?? input.sourceId),
     outcome: "success",
     durationMs: performance.now() - started,
     attributes: {
@@ -311,7 +345,10 @@ export async function runAgentEntry(
     select: { slug: true },
   });
   const query = new URLSearchParams({ agent: input.agentId });
-  query.set(input.kind === "work" ? "w" : "c", input.sourceId);
+  query.set(
+    input.kind === "work" ? "w" : "c",
+    input.conversationId ?? input.sourceId,
+  );
   const path = `/app/${encodeURIComponent(workspace.slug)}/work?${query}`;
   await input.onAccepted?.(Task.fromJSON(accepted.row.snapshot), path);
   const observedPrompts = new Set<string>();
@@ -361,9 +398,7 @@ export async function runAgentEntry(
         }
       }
       if (row.deadlineAt <= new Date())
-        throw new UnsupportedOperationError(
-          `Task deadline reached. Inspect the durable task at ${path}`,
-        );
+        throw new UnsupportedOperationError(taskDeadlineFailure(row));
       await delay(500, undefined, { signal: input.signal });
     }
   } catch (error) {
@@ -417,8 +452,19 @@ export function agentEntryResult(task: Task, path: string) {
   if (task.status?.state === TaskState.TASK_STATE_INPUT_REQUIRED)
     return detail || `More input is required: ${path}`;
   // Never let an error/cancelled task look like a successful legacy response.
+  // Only the fixed failure token is surfaced; free status text stays in the ledger.
+  const failure = taskRuntimeFailure(task);
+  if (failure) throw new UnsupportedOperationError(runtimeFailureText(failure));
+  const outcome =
+    task.status?.state === TaskState.TASK_STATE_CANCELED
+      ? "was cancelled"
+      : task.status?.state === TaskState.TASK_STATE_REJECTED
+        ? "was rejected"
+        : task.status?.state === TaskState.TASK_STATE_AUTH_REQUIRED
+          ? "requires authorization"
+          : "failed";
   throw new UnsupportedOperationError(
-    `Agent execution did not complete (${task.status?.state ?? "unknown"}). Inspect ${path}`,
+    `Agent execution ${outcome}. Inspect ${path}`,
   );
 }
 

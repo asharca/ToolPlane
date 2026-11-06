@@ -41,10 +41,7 @@ export const POST = withRequestLogging(
     const { agentId } = await params;
     const liveAgent = await getAgentForRequest(agentId, user.id);
     if (!liveAgent) return new Response("Not found", { status: 404 });
-    if (
-      (liveAgent.runtimeKind !== "pi-sdk" && liveAgent.runtimeKind !== "omp") ||
-      liveAgent.retiredAt
-    )
+    if (liveAgent.runtimeKind !== "pi-sdk" || liveAgent.retiredAt)
       return new Response("Historical Agent sessions are read-only.", {
         status: 409,
       });

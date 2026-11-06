@@ -5,6 +5,7 @@ import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { authorizeLogs, LogAccessError } from "../queries";
 import { listMcpCalls, getMcpCall, pollMcpCalls } from "./mcp-calls";
 import { listA2ATasks, getA2ATask, pollA2ATasks } from "./a2a-tasks";
+import { listAgentRuns, getAgentRun, pollAgentRuns } from "./agent-runs";
 import type { ViewScope } from "./types";
 
 const text = z.string().max(200).optional();
@@ -35,6 +36,14 @@ const a2aFilter = z.object({
   direction: z.enum(["inbound", "outbound", "internal"]).optional(),
   state: text,
 });
+const runFilter = z.object({
+  ...timeFields,
+  agentId: text,
+  entryKind: z
+    .enum(["chat", "work", "channel", "control", "trigger"])
+    .optional(),
+  state: text,
+});
 export type StreamCursor = { createdAt: string; id: string };
 const cursorSchema = z.object({
   createdAt: z.string().datetime(),
@@ -60,7 +69,7 @@ const noStore = { "Cache-Control": "no-store" };
 export async function handleLogRequest(
   req: Request,
   target: { slug: string } | { admin: true },
-  kind: "mcp" | "a2a" | "stream",
+  kind: "mcp" | "a2a" | "runs" | "stream",
   id?: string,
 ): Promise<Response> {
   try {
@@ -86,18 +95,24 @@ export async function handleLogRequest(
       const detail =
         kind === "mcp"
           ? await getMcpCall(scope, id)
-          : await getA2ATask(scope, id);
+          : kind === "runs"
+            ? await getAgentRun(scope, id)
+            : await getA2ATask(scope, id);
       return detail
         ? Response.json(detail, { headers: noStore })
         : Response.json({ error: "Not found" }, { status: 404 });
     }
     const selected =
       kind === "stream"
-        ? z.enum(["mcp", "a2a"]).parse(query.get("kind"))
+        ? z.enum(["mcp", "a2a", "runs"]).parse(query.get("kind"))
         : kind;
     const values = Object.fromEntries(query);
     const filter =
-      selected === "mcp" ? mcpFilter.parse(values) : a2aFilter.parse(values);
+      selected === "mcp"
+        ? mcpFilter.parse(values)
+        : selected === "runs"
+          ? runFilter.parse(values)
+          : a2aFilter.parse(values);
     const now = Date.now();
     const durations = {
       "1h": 3_600_000,
@@ -132,7 +147,9 @@ export async function handleLogRequest(
     const page =
       selected === "mcp"
         ? await listMcpCalls(scope, filter, cursor)
-        : await listA2ATasks(scope, filter, cursor);
+        : selected === "runs"
+          ? await listAgentRuns(scope, filter, cursor)
+          : await listA2ATasks(scope, filter, cursor);
     return Response.json(page, { headers: noStore });
   } catch (error) {
     if (error instanceof LogAccessError)
@@ -154,8 +171,11 @@ export async function handleLogRequest(
 export function logStream(
   req: Request,
   scope: ViewScope,
-  kind: "mcp" | "a2a",
-  filter: z.infer<typeof mcpFilter> | z.infer<typeof a2aFilter>,
+  kind: "mcp" | "a2a" | "runs",
+  filter:
+    | z.infer<typeof mcpFilter>
+    | z.infer<typeof a2aFilter>
+    | z.infer<typeof runFilter>,
   after: StreamCursor,
 ): Response {
   const encoder = new TextEncoder();
@@ -192,7 +212,9 @@ export function logStream(
             const page =
               kind === "mcp"
                 ? await pollMcpCalls(scope, filter, cursor)
-                : await pollA2ATasks(scope, filter, cursor);
+                : kind === "runs"
+                  ? await pollAgentRuns(scope, filter, cursor)
+                  : await pollA2ATasks(scope, filter, cursor);
             if (stopped) break;
             for (const entry of page.items) {
               controller.enqueue(

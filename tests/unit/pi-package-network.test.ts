@@ -8,6 +8,7 @@ import type * as Dns from "node:dns/promises";
 const transport = vi.hoisted(() => ({
   lookup: vi.fn(),
   request: vi.fn(),
+  policy: vi.fn(),
   status: 200,
   body: Buffer.from("{}"),
 }));
@@ -18,6 +19,10 @@ vi.mock("node:dns/promises", async (original) => ({
 vi.mock("node:https", async (original) => ({
   ...(await original<typeof Https>()),
   request: transport.request,
+}));
+vi.mock("node:http", () => ({ request: transport.request }));
+vi.mock("@/lib/admin/transport-settings", () => ({
+  getTransportSettings: transport.policy,
 }));
 vi.mock("@/lib/plugins/catalog", () => ({
   PluginError: class extends Error {
@@ -37,6 +42,10 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  transport.policy.mockResolvedValue({
+    allowHttp: false,
+    a2aInlineBytes: 32768,
+  });
   transport.status = 200;
   transport.body = Buffer.from("{}");
   transport.lookup.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
@@ -64,6 +73,38 @@ const authentication = {
   authorization: "Bearer write-secret",
 };
 describe("source network credential boundary", () => {
+  it("allows administrator-enabled HTTP while preserving scoped credentials, DNS restrictions and redirects", async () => {
+    const policy = { allowHttp: true, a2aInlineBytes: 32768 };
+    transport.policy.mockResolvedValue(policy);
+    expect(
+      piSourceUrl("http://registry.example:8080/private/pkg", policy).protocol,
+    ).toBe("http:");
+    const authentication = {
+      url: "http://registry.example/private/",
+      authorization: "Bearer debug-secret",
+    };
+    await piSourceRequest(new URL("http://registry.example/private/pkg"), {
+      authentication,
+    });
+    expect(transport.request.mock.calls[0][1].headers.authorization).toBe(
+      "Bearer debug-secret",
+    );
+    expect(
+      sourceAuthorization(
+        new URL("http://other.example/private/pkg"),
+        authentication,
+        policy,
+      ),
+    ).toBeUndefined();
+    transport.lookup.mockResolvedValue([{ address: "127.0.0.1", family: 4 }]);
+    await expect(
+      piSourceRequest(new URL("http://registry.example/private/pkg")),
+    ).rejects.toMatchObject({ code: "source_network_blocked" });
+    transport.policy.mockResolvedValue({ ...policy, allowHttp: false });
+    await expect(
+      piSourceRequest(new URL("http://registry.example/private/pkg")),
+    ).rejects.toThrow();
+  });
   it.each([
     "https://registry.example/private-evil/pkg",
     "https://other.example/private/pkg",

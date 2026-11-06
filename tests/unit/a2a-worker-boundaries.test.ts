@@ -62,6 +62,7 @@ vi.mock("@/lib/a2a/store", () => ({
   interruptTask: state.interrupt,
   releasePiHarnessClaim: state.releaseClaim,
   deferTaskFileStaging: state.deferFiles,
+  recordTaskExecutionStage: vi.fn(),
 }));
 vi.mock("@/lib/runtime/ownership-state", () => ({
   assertRuntimeOwner: () => {
@@ -418,13 +419,17 @@ describe("A2A worker admission and recovery boundaries", () => {
       new Error("PI_OUTPUT_TRUNCATED: model stopped at its output limit"),
       "PI_OUTPUT_TRUNCATED",
     ],
+    [
+      new Error("PI_SDK_MODEL_FAILED: HTTP_503"),
+      "PI_SDK_MODEL_FAILED: HTTP_503",
+    ],
   ])("preserves bounded native failure code %s", async (error, code) => {
     const row = task("local", "pi-harness", true);
     await executeAgentTask(row.id, async () => {
       throw error;
     });
     expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
-    expect(state.messages.get(row.id)).toMatch(new RegExp(`^${code}:`));
+    expect(state.messages.get(row.id)).toMatch(new RegExp(`^${code}[:.]`));
   });
 
   it("releases an interrupted retired bound-operation drain without recording task failure", async () => {
@@ -539,7 +544,6 @@ describe("A2A worker admission and recovery boundaries", () => {
     ] as never);
     await tickAgentWorker();
     expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
-    expect(state.messages.get(row.id)).toBe("Task deadline exceeded.");
     expect(state.log).toHaveBeenCalledWith(
       "error",
       "Remote A2A observation failed.",

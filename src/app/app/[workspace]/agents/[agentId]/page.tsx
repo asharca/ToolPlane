@@ -117,7 +117,11 @@ export default async function AgentDetailPage({
     "advanced",
   ];
   const initialSettingsTab =
-    settings === "a2a" || settings === "channels" || settings === "changelog"
+    settings === "a2a" ||
+    settings === "channels" ||
+    settings === "changelog" ||
+    settings === "triggers" ||
+    settings === "usage"
       ? settings
       : (allowedSections.find((section) => section === settings) ?? "general");
   return (
@@ -131,10 +135,7 @@ export default async function AgentDetailPage({
         initialA2ATaskId={task}
         initialSettingsTab={initialSettingsTab}
         agentName={agent.name}
-        ready={
-          (agent.runtimeKind === "pi-sdk" || agent.runtimeKind === "omp") &&
-          Boolean(publishedRevision)
-        }
+        ready={agent.runtimeKind === "pi-sdk" && Boolean(publishedRevision)}
         channelSettings={{
           connections: connections.map(toAgentChannelConnectionClientView),
         }}
@@ -143,7 +144,6 @@ export default async function AgentDetailPage({
           name: agent.name,
           description: agent.description ?? "",
           runtimeKind: agent.runtimeKind,
-          ompConfig: agent.ompConfig,
           systemPrompt: agent.systemPrompt ?? "",
           disabledBuiltinTools: agent.disabledBuiltinTools,
           providerId: agent.providerId,

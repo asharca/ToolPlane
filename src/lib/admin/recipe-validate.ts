@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { randomUUID } from "node:crypto";
 import { resolveSpawnSpec, type SpawnSpec } from "@/lib/process/spawn-spec";
 import {
@@ -62,6 +63,7 @@ export async function validateServerRecipe(
         installCfg: data.installCfg,
       },
       true,
+      await getTransportSettings(),
     );
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Bad recipe." };

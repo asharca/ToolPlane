@@ -587,6 +587,7 @@ describe("getObservability", () => {
     expect(all.items).toHaveLength(2);
     expect(all.stats.total).toBe(2);
     for (const item of all.items) {
+      expect(item.task).toBeNull();
       const detail = assertDefined(await getMcpCall(scope, item.id));
       const suffix = item.callId?.endsWith("first") ? "first" : "second";
       expect(JSON.stringify(detail)).toContain(`"marker":"${suffix}"`);

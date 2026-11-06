@@ -60,7 +60,7 @@ vi.mock("@/lib/admin/settings", () => ({
     maxTimeoutMs: 900_000,
     source: "database",
   }),
-  resolveRemoteMcpPrivateHostsSettings: async () => ({
+  resolvePrivateHostsSettings: async () => ({
     value: "",
     source: "database",
   }),

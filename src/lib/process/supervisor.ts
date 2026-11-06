@@ -33,7 +33,7 @@ import { MCP_NETWORK } from "./sandbox";
 import { ensureConnectorBroker } from "@/lib/sandboxes/connector-broker";
 import {
   resolveMcpStartupTimeoutSettings,
-  resolveRemoteMcpPrivateHostsSettings,
+  resolvePrivateHostsSettings,
 } from "@/lib/admin/settings";
 import {
   DEPLOYMENT_CONFIG_MOUNT_PATH,
@@ -1857,9 +1857,7 @@ async function launchProcess(
       ? await resolveMcpStartupTimeoutSettings()
       : null;
   const remotePrivateHosts =
-    managedSpec.kind === "remote"
-      ? await resolveRemoteMcpPrivateHostsSettings()
-      : null;
+    managedSpec.kind === "remote" ? await resolvePrivateHostsSettings() : null;
   // This is deliberately generated after the SpawnSpec is built. It is never
   // stored in that spec, the runtime registry, or the captured log stream.
   const runtimeEventToken =

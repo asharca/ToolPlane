@@ -30,15 +30,13 @@ export function WorkspaceWelcome({
         {t(isOwner ? "welcomeHint" : "sharedHint")}
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
-        {isOwner ? (
-          <ButtonLink
-            href={`/app/${slug}/providers`}
-            variant="secondary"
-            size="sm"
-          >
-            {t("configureModels")}
-          </ButtonLink>
-        ) : null}
+        <ButtonLink
+          href={`/app/${slug}/providers`}
+          variant="secondary"
+          size="sm"
+        >
+          {t("configureModels")}
+        </ButtonLink>
         <ButtonLink href={`/app/${slug}/chat`} variant="secondary" size="sm">
           {t("startChat")}
         </ButtonLink>

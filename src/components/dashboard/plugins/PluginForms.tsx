@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useId, useState } from "react";
+import { useActionState, useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/motion/button";
 import { FormSelect } from "@/components/ui/FormSelect";
@@ -27,8 +27,14 @@ export function PluginActionForm({
   confirm?: boolean;
 }) {
   const t = useTranslations("console.plugins");
+  const resetAllowed = useRef(false);
   const [state, action, pending] = useActionState<PluginActionState, FormData>(
-    pluginAction,
+    async (previous, form) => {
+      resetAllowed.current = false;
+      const result = await pluginAction(previous, form);
+      resetAllowed.current = Boolean(result.success);
+      return result;
+    },
     {},
   );
   useEffect(() => {
@@ -37,6 +43,13 @@ export function PluginActionForm({
   return (
     <form
       action={action}
+      onResetCapture={(event) => {
+        if (!resetAllowed.current) {
+          event.preventDefault();
+          // Radix resets its controlled value in a native form listener.
+          event.stopPropagation();
+        }
+      }}
       onSubmit={(event) => {
         if (confirm && !window.confirm(t("confirmRemove")))
           event.preventDefault();

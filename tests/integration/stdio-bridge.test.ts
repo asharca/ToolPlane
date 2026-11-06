@@ -1,6 +1,13 @@
+// @vitest-environment node
 import { describe, it, expect, afterAll } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
+import { db } from "@/lib/db";
+import {
+  PRIVATE_HOSTS_SETTING_KEY,
+  resolvePrivateHostsSettings,
+} from "@/lib/admin/settings";
+import { resolveSshAddress } from "@/lib/sandboxes/ssh-servers";
 
 const BRIDGE = path.join(process.cwd(), "scripts", "mcp-stdio-bridge.mjs");
 const REMOTE_BRIDGE = path.join(
@@ -279,6 +286,57 @@ describe("mcp-http-bridge", () => {
       },
     );
     expect(unlisted.stderr).toContain("non-public address");
+  }, 10_000);
+
+  it("uses the same live saved policy for SSH and subsequent Remote MCP launches", async () => {
+    const key = PRIVATE_HOSTS_SETTING_KEY;
+    const preload = `data:text/javascript,${encodeURIComponent(`
+      import { createRequire } from 'node:module';
+      const require = createRequire(${JSON.stringify(REMOTE_BRIDGE)});
+      require('undici').fetch = async () => { throw new Error('shared policy reached transport'); };
+    `)}`;
+    try {
+      // Re-read the saved policy before every launch; an explicit empty or
+      // malformed override must revoke private access for both protocols.
+      for (const value of ["10.20.0.5", "", "10.20.0.5,127.0.0.1"]) {
+        await db.systemSetting.upsert({
+          where: { key },
+          create: { key, value },
+          update: { value },
+        });
+        const result = await runRemoteBridge(
+          {
+            url: "https://10.20.0.5/mcp",
+            transport: "sse",
+            headers: {},
+            timeoutMs: 1000,
+          },
+          ["--import", preload],
+          {
+            MCP_REMOTE_PRIVATE_HOSTS: (await resolvePrivateHostsSettings())
+              .value,
+          },
+        );
+        if (value === "10.20.0.5") {
+          await expect(resolveSshAddress("10.20.0.5")).resolves.toBe(
+            "10.20.0.5",
+          );
+          expect(result.stderr).toContain("shared policy reached transport");
+          expect(result.stderr).not.toContain("non-public address");
+        } else {
+          await expect(resolveSshAddress("10.20.0.5")).rejects.toMatchObject({
+            code: "SSH_HOST_PRIVATE_NOT_ALLOWED",
+          });
+          expect(result.code).toBe(1);
+          expect(result.stderr).toContain("non-public address");
+          expect(result.stderr).not.toContain(
+            "shared policy reached transport",
+          );
+        }
+      }
+    } finally {
+      await db.systemSetting.deleteMany({ where: { key } });
+    }
   }, 10_000);
 
   it("bounds an SSE connection that never completes startup", async () => {

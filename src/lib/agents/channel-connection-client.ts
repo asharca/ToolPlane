@@ -14,6 +14,9 @@ export type AgentChannelConnectionClientView = Pick<
   | "credentialValues"
   | "missingStartCredentialNames"
   | "pairing"
+  | "access"
+  | "sessions"
+  | "revisions"
   | "lastError"
 >;
 
@@ -33,6 +36,9 @@ export function toAgentChannelConnectionClientView(
     credentialValues: connection.credentialValues,
     missingStartCredentialNames: connection.missingStartCredentialNames,
     pairing: connection.pairing,
+    access: connection.access,
+    sessions: connection.sessions,
+    revisions: connection.revisions,
     lastError: connection.lastError,
   };
 }

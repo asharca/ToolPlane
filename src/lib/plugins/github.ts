@@ -230,7 +230,7 @@ export class GithubRegistryTransport {
         await this.json(
           repository,
           `commits/${encodeURIComponent(branch)}`,
-          256 * 1024,
+          Number.POSITIVE_INFINITY,
         ),
       );
     if (!parsed.success) throw new GithubRegistryError("github_commit_invalid");

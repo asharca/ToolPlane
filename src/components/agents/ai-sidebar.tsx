@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
+  Fragment,
   type DragEvent,
   type KeyboardEvent,
   type ReactNode,
@@ -78,8 +79,11 @@ export interface AISidebarProps {
   defaultActiveId?: string | null;
   onActiveChange?: (id: string) => void;
   defaultExpandedIds?: string[];
+  expandedIds?: string[];
+  onExpandedIdsChange?: (ids: string[]) => void;
   renderIcon?: (item: SidebarResource) => ReactNode;
   renderActions?: (item: SidebarResource) => ReactNode;
+  renderAfterRow?: (item: SidebarResource) => ReactNode;
   renderMenu?: (
     item: SidebarResource,
     controls: SidebarResourceMenuControls,
@@ -446,7 +450,11 @@ function ResourceRow({
           event.defaultPrevented ||
           draggedRef.current ||
           renaming ||
-          row.item.disabled
+          row.item.disabled ||
+          !event.currentTarget.contains(event.target as Node) ||
+          (event.target as Element).closest(
+            "button, a, input, select, textarea",
+          )
         )
           return;
         if (acceptsChildren) onToggle();
@@ -524,12 +532,18 @@ function ResourceRow({
       )}
 
       {!renaming && !row.item.disabled ? (
-        // biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/useKeyWithClickEvents: This wrapper only stops portal event bubbling; child controls own keyboard interactions.
+        // biome-ignore lint/a11y/noStaticElementInteractions: This wrapper only stops portal event bubbling; child controls own keyboard interactions.
         <div
           className="flex shrink-0 items-center gap-0.5"
           // Portal events follow the React tree, so menu actions must not reach the row.
           onClick={(event) => event.stopPropagation()}
           onDoubleClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape" || !menuOpen) return;
+            event.preventDefault();
+            event.stopPropagation();
+            onMenuOpenChange(false);
+          }}
         >
           {renderActions?.(row.item)}
           {menu ? (
@@ -577,16 +591,33 @@ export function AISidebar({
   defaultActiveId = null,
   onActiveChange,
   defaultExpandedIds = [],
+  expandedIds: controlledExpandedIds,
+  onExpandedIdsChange,
   renderIcon,
   renderMenu,
   renderActions,
+  renderAfterRow,
   ariaLabel = "Resources",
   className,
 }: AISidebarProps) {
   const [internalItems, setInternalItems] = useState(items ?? defaultItems);
   const [internalActiveId, setInternalActiveId] = useState(defaultActiveId);
-  const [expandedIds, setExpandedIds] = useState(
+  const [internalExpandedIds, setInternalExpandedIds] = useState(
     () => new Set(defaultExpandedIds),
+  );
+  const expandedIds = useMemo(
+    () =>
+      controlledExpandedIds === undefined
+        ? internalExpandedIds
+        : new Set(controlledExpandedIds),
+    [controlledExpandedIds, internalExpandedIds],
+  );
+  const updateExpandedIds = useCallback(
+    (next: Set<string>) => {
+      if (controlledExpandedIds === undefined) setInternalExpandedIds(next);
+      onExpandedIdsChange?.([...next]);
+    },
+    [controlledExpandedIds, onExpandedIdsChange],
   );
   const [focusedId, setFocusedId] = useState<string | null>(
     activeId ?? defaultActiveId,
@@ -691,21 +722,21 @@ export function AISidebar({
     [activeId, onActiveChange],
   );
 
-  const toggle = useCallback((id: string) => {
-    setExpandedIds((current) => {
-      const next = new Set(current);
+  const toggle = useCallback(
+    (id: string) => {
+      const next = new Set(expandedIds);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      return next;
-    });
-  }, []);
+      updateExpandedIds(next);
+    },
+    [expandedIds, updateExpandedIds],
+  );
 
   // The same four moves `Alt+Shift+Arrow` performs, handed to the row menu so
   // they survive on a device with no drag and no modifier keys.
   const moveCommands = useCallback(
-    (row: FlatResource): SidebarResourceMoveCommands => {
+    (row: FlatResource, index: number): SidebarResourceMoveCommands => {
       if (row.item.disabled) return {};
-      const index = flat.findIndex(({ item }) => item.id === row.item.id);
       const previous = flat[index - 1];
       const next = flat[index + 1];
       const parentId = row.parentId;
@@ -737,7 +768,7 @@ export function AISidebar({
         commands.into = {
           label: previous.item.label,
           run: () => {
-            setExpandedIds((current) => new Set(current).add(previous.item.id));
+            updateExpandedIds(new Set(expandedIds).add(previous.item.id));
             void performMove({
               itemId: row.item.id,
               targetId: previous.item.id,
@@ -757,7 +788,7 @@ export function AISidebar({
 
       return commands;
     },
-    [flat, performMove],
+    [expandedIds, flat, performMove, updateExpandedIds],
   );
 
   const handleKeyDown = useCallback(
@@ -829,7 +860,7 @@ export function AISidebar({
         canContain(previous.item)
       ) {
         event.preventDefault();
-        setExpandedIds((current) => new Set(current).add(previous.item.id));
+        updateExpandedIds(new Set(expandedIds).add(previous.item.id));
         void performMove({
           itemId: row.item.id,
           targetId: previous.item.id,
@@ -870,7 +901,15 @@ export function AISidebar({
         setMenuOpenId(row.item.id);
       }
     },
-    [expandedIds, flat, focusRow, performMove, select, toggle],
+    [
+      expandedIds,
+      flat,
+      focusRow,
+      performMove,
+      select,
+      toggle,
+      updateExpandedIds,
+    ],
   );
 
   return (
@@ -901,91 +940,104 @@ export function AISidebar({
         )}
       >
         <AnimatePresence initial={false}>
-          {flat.map((row) => (
-            <ResourceRow
-              key={row.item.id}
-              row={row}
-              active={selectedId === row.item.id}
-              expanded={expandedIds.has(row.item.id)}
-              focused={focusedRow === row.item.id}
-              draggingId={draggingId}
-              dropTarget={dropTarget}
-              menuOpen={menuOpenId === row.item.id}
-              moves={moveCommands(row)}
-              renaming={renamingId === row.item.id}
-              onFocus={() => setFocusedId(row.item.id)}
-              onSelect={() => select(row.item.id)}
-              renderActions={renderActions}
-              onToggle={() => toggle(row.item.id)}
-              onKeyDown={(event) => handleKeyDown(event, row)}
-              onRenameStart={() => setRenamingId(row.item.id)}
-              onRenameCancel={() => setRenamingId(null)}
-              onRenameCommit={(label) => {
-                const trimmed = label.trim();
-                setRenamingId(null);
-                if (!trimmed || trimmed === row.item.label) return;
-                const before = renderedItems;
-                updateItems(renameResource(before, row.item.id, trimmed));
-                void Promise.resolve(onRename?.(row.item, trimmed)).catch(
-                  () => {
-                    updateItems(before);
-                    setAnnouncement(
-                      `Rename failed. ${row.item.label} was restored.`,
-                    );
-                  },
-                );
-              }}
-              onMenuOpenChange={(open) => {
-                setMenuOpenId(open ? row.item.id : null);
-                if (!open) focusRow(row.item.id);
-              }}
-              onDragStart={(event, id) => {
-                setDraggingId(id);
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData("text/plain", id);
-              }}
-              onDragEnd={() => {
-                setDraggingId(null);
-                setDropTarget(null);
-              }}
-              onDragOver={(event, targetRow) => {
-                if (!draggingId || draggingId === targetRow.item.id) return;
-                const source = findResource(renderedItems, draggingId);
-                if (source && containsResource(source, targetRow.item.id))
-                  return;
-                event.preventDefault();
-                event.stopPropagation();
-                const rect = event.currentTarget.getBoundingClientRect();
-                const ratio = (event.clientY - rect.top) / rect.height;
-                const position =
-                  !targetRow.item.disabled &&
-                  canContain(targetRow.item) &&
-                  ratio >= 0.25 &&
-                  ratio <= 0.75
-                    ? "inside"
-                    : ratio < 0.5
-                      ? "before"
-                      : "after";
-                setDropTarget({ id: targetRow.item.id, position });
-              }}
-              onDrop={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (draggingId && dropTarget) {
-                  void performMove({
-                    itemId: draggingId,
-                    targetId: dropTarget.id,
-                    position: dropTarget.position,
-                  });
-                }
-              }}
-              renderIcon={renderIcon}
-              renderMenu={renderMenu}
-              setRef={(node) => {
-                if (node) rowRefs.current.set(row.item.id, node);
-                else rowRefs.current.delete(row.item.id);
-              }}
-            />
+          {flat.map((row, index) => (
+            <Fragment key={row.item.id}>
+              <ResourceRow
+                row={row}
+                active={selectedId === row.item.id}
+                expanded={expandedIds.has(row.item.id)}
+                focused={focusedRow === row.item.id}
+                draggingId={draggingId}
+                dropTarget={dropTarget}
+                menuOpen={menuOpenId === row.item.id}
+                moves={moveCommands(row, index)}
+                renaming={renamingId === row.item.id}
+                onFocus={() => setFocusedId(row.item.id)}
+                onSelect={() => select(row.item.id)}
+                renderActions={renderActions}
+                onToggle={() => toggle(row.item.id)}
+                onKeyDown={(event) => handleKeyDown(event, row)}
+                onRenameStart={() => setRenamingId(row.item.id)}
+                onRenameCancel={() => setRenamingId(null)}
+                onRenameCommit={(label) => {
+                  const trimmed = label.trim();
+                  setRenamingId(null);
+                  if (!trimmed || trimmed === row.item.label) return;
+                  const before = renderedItems;
+                  updateItems(renameResource(before, row.item.id, trimmed));
+                  void Promise.resolve(onRename?.(row.item, trimmed)).catch(
+                    () => {
+                      updateItems(before);
+                      setAnnouncement(
+                        `Rename failed. ${row.item.label} was restored.`,
+                      );
+                    },
+                  );
+                }}
+                onMenuOpenChange={(open) => {
+                  setMenuOpenId(open ? row.item.id : null);
+                  if (
+                    !open &&
+                    document.activeElement instanceof Element &&
+                    document.activeElement
+                      .closest("[data-sidebar-resource-menu]")
+                      ?.getAttribute("data-sidebar-resource-menu") ===
+                      row.item.id
+                  ) {
+                    rowRefs.current
+                      .get(row.item.id)
+                      ?.focus({ preventScroll: true });
+                  }
+                }}
+                onDragStart={(event, id) => {
+                  setDraggingId(id);
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", id);
+                }}
+                onDragEnd={() => {
+                  setDraggingId(null);
+                  setDropTarget(null);
+                }}
+                onDragOver={(event, targetRow) => {
+                  if (!draggingId || draggingId === targetRow.item.id) return;
+                  const source = findResource(renderedItems, draggingId);
+                  if (source && containsResource(source, targetRow.item.id))
+                    return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const ratio = (event.clientY - rect.top) / rect.height;
+                  const position =
+                    !targetRow.item.disabled &&
+                    canContain(targetRow.item) &&
+                    ratio >= 0.25 &&
+                    ratio <= 0.75
+                      ? "inside"
+                      : ratio < 0.5
+                        ? "before"
+                        : "after";
+                  setDropTarget({ id: targetRow.item.id, position });
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (draggingId && dropTarget) {
+                    void performMove({
+                      itemId: draggingId,
+                      targetId: dropTarget.id,
+                      position: dropTarget.position,
+                    });
+                  }
+                }}
+                renderIcon={renderIcon}
+                renderMenu={renderMenu}
+                setRef={(node) => {
+                  if (node) rowRefs.current.set(row.item.id, node);
+                  else rowRefs.current.delete(row.item.id);
+                }}
+              />
+              {renderAfterRow?.(row.item)}
+            </Fragment>
           ))}
         </AnimatePresence>
 

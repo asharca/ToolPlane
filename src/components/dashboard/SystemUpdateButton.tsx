@@ -7,10 +7,10 @@ import { Check, Download, ExternalLink, RefreshCw } from "lucide-react";
 import { MarkGithubIcon } from "@primer/octicons-react";
 import { useTranslations } from "next-intl";
 import {
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-} from "@/components/motion/popover";
+  MorphPopover,
+  MorphPopoverContent,
+  MorphPopoverTrigger,
+} from "@/components/motion/popover-morph";
 
 export const SYSTEM_UPDATE_LOCAL_STATUS_PATH =
   "/api/v1/admin/system/update?local=1";
@@ -361,7 +361,8 @@ export function SystemUpdateButton({
     status?.currentVersion,
     status?.latestVersion,
   );
-  const detail = message || status?.reason || null;
+  const rawDetail = message || status?.reason || null;
+  const detail = rawDetail === label ? null : rawDetail;
   const showUpdate =
     canInstall && status?.canUpdate === true && status.updateAvailable === true;
   const hasUpdate = status?.updateAvailable === true;
@@ -378,15 +379,28 @@ export function SystemUpdateButton({
           : -1;
   const stages = [t("downloading"), t("applying"), t("restartingShort")];
 
+  // Same precedence as `label`, so the dot never contradicts the text.
+  const statusTone =
+    uiState === "error"
+      ? "bg-(--color-destructive)"
+      : busy
+        ? "bg-primary"
+        : status && !status.canUpdate
+          ? "bg-muted-foreground"
+          : hasUpdate
+            ? "bg-(--color-warning)"
+            : status?.updateAvailable === false
+              ? "bg-(--color-success)"
+              : "bg-muted-foreground";
+
   return (
-    <Popover
-      side="top"
-      align="start"
+    <MorphPopover
+      className={compact ? undefined : "w-full"}
       onOpenChange={(open) => {
         if (open && !busy) void refresh();
       }}
     >
-      <PopoverTrigger>
+      <MorphPopoverTrigger>
         <Button
           type="button"
           aria-label={triggerLabel}
@@ -416,33 +430,38 @@ export function SystemUpdateButton({
             />
           ) : null}
         </Button>
-      </PopoverTrigger>
+      </MorphPopoverTrigger>
 
-      <PopoverContent className="flex max-h-[min(42rem,calc(100dvh-2rem))] w-[30rem] max-w-[calc(100vw-1rem)] flex-col gap-4 overflow-y-auto p-5">
-        <div className="flex items-start gap-3">
+      <MorphPopoverContent
+        side="top"
+        align="start"
+        sideOffset={10}
+        className="flex w-80 max-w-[calc(100vw-2rem)] flex-col border-foreground/15 bg-popover text-popover-foreground"
+      >
+        <header className="flex items-start gap-2 px-4 pb-3 pt-3.5">
           <div aria-live="polite" className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-foreground">
+            <h2 className="text-sm font-semibold text-foreground">
               {settingsT("systemUpdate")}
+            </h2>
+            <p
+              className="mt-1 truncate font-mono text-xs text-muted-foreground"
+              title={versionDetail ?? undefined}
+            >
+              {versionDetail ?? "—"}
             </p>
-            {canInstall ? (
-              <>
-                <p
-                  role={uiState === "error" ? "alert" : "status"}
-                  className="mt-1 text-sm font-medium text-foreground"
-                >
-                  {label}
-                </p>
-                {detail ? (
-                  <p
-                    className="mt-0.5 break-words text-xs leading-5 text-muted-foreground"
-                    title={detail}
-                  >
-                    {detail}
-                  </p>
-                ) : null}
-              </>
-            ) : null}
           </div>
+          {status?.repository ? (
+            <a
+              href={`https://github.com/${status.repository}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={status.repository}
+              title={status.repository}
+              className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+            >
+              <MarkGithubIcon aria-hidden="true" size={14} />
+            </a>
+          ) : null}
           {canInstall ? (
             <Button
               type="button"
@@ -452,56 +471,74 @@ export function SystemUpdateButton({
               title={t("checkAndUpdate")}
               variant="ghost"
               size="icon"
-              className="shrink-0"
+              className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
             >
-              <RefreshCw className={`size-4 ${busy ? "animate-spin" : ""}`} />
+              <RefreshCw className={`size-3.5 ${busy ? "animate-spin" : ""}`} />
             </Button>
           ) : null}
-        </div>
+        </header>
 
-        <dl
-          aria-label={versionDetail ?? t("currentVersion")}
-          className="grid grid-cols-2 gap-4 rounded-xl bg-muted/50 p-3"
-        >
-          <div className="min-w-0">
-            <dt className="text-xs text-muted-foreground">
-              {t("currentVersion")}
-            </dt>
-            <dd className="mt-1 break-all font-mono text-lg font-semibold">
-              {status?.currentVersion ?? "—"}
-            </dd>
+        {canInstall ? (
+          <div className="mx-3 mb-3 rounded-lg bg-foreground/[0.04] px-3 py-2">
+            <p
+              role={uiState === "error" ? "alert" : "status"}
+              className="flex items-center gap-2 text-xs font-medium text-foreground"
+            >
+              <span
+                aria-hidden="true"
+                className={`size-1.5 shrink-0 rounded-full ${statusTone}`}
+              />
+              {label}
+            </p>
+            {detail ? (
+              <p
+                className="mt-1 line-clamp-3 break-words pl-3.5 text-xs leading-5 text-muted-foreground"
+                title={detail}
+              >
+                {detail}
+              </p>
+            ) : null}
+            {activeStage >= 0 ? (
+              <ol
+                aria-label={t("updateProgress")}
+                className="mt-2 flex items-center gap-1.5 pl-3.5"
+              >
+                {stages.map((stage, index) => {
+                  const complete = index < activeStage;
+                  const active = index === activeStage;
+                  return (
+                    <li
+                      key={stage}
+                      className={`flex min-w-0 items-center gap-1 text-[11px] ${
+                        active || complete
+                          ? "text-foreground"
+                          : "text-muted-foreground"
+                      }`}
+                    >
+                      {complete ? (
+                        <Check className="size-3 shrink-0 text-primary" />
+                      ) : active ? (
+                        <RefreshCw className="size-3 shrink-0 animate-spin" />
+                      ) : (
+                        <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/50" />
+                      )}
+                      <span className="truncate">{stage}</span>
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : null}
           </div>
-          <div className="min-w-0">
-            <dt className="text-xs text-muted-foreground">
-              {t("latestVersion")}
-            </dt>
-            <dd className="mt-1 break-all font-mono text-lg font-semibold">
-              {status?.latestVersion ?? "—"}
-            </dd>
-          </div>
-        </dl>
-
-        {status?.repository ? (
-          <a
-            href={`https://github.com/${status.repository}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <MarkGithubIcon aria-hidden="true" size={16} className="shrink-0" />
-            <span className="min-w-0 flex-1 break-all">
-              {status.repository}
-            </span>
-            <ExternalLink aria-hidden="true" className="size-3.5 shrink-0" />
-          </a>
         ) : null}
 
         <section
-          className="min-h-0 border-t border-border pt-4"
+          className="border-t border-border px-4 py-3"
           aria-label={t("changelog")}
         >
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold">{t("changelog")}</h3>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h3 className="text-xs font-medium text-muted-foreground">
+              {t("changelog")}
+            </h3>
             {status?.releaseUrl ? (
               <a
                 href={status.releaseUrl}
@@ -517,88 +554,46 @@ export function SystemUpdateButton({
             ) : null}
           </div>
           {status?.releaseNotes?.trim() ? (
-            <div className="max-h-64 overflow-y-auto overscroll-contain break-words pr-2 text-sm leading-6 [overflow-wrap:anywhere]">
+            <div className="max-h-48 overflow-y-auto overscroll-contain break-words pr-1 text-xs leading-5 [overflow-wrap:anywhere] [&_h1]:mb-1 [&_h1]:mt-0 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:mb-1 [&_h2]:mt-3 [&_h2]:text-xs [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-2 [&_h3]:text-xs [&_h3]:font-medium [&_li]:my-0 [&_li]:py-0.5 [&_p]:my-1 [&_ul]:my-1">
               <SafeStreamdown mode="static" parseIncompleteMarkdown={false}>
                 {status.releaseNotes}
               </SafeStreamdown>
             </div>
           ) : (
-            <p className="py-3 text-sm text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {uiState === "checking" ? t("checking") : t("noReleaseNotes")}
             </p>
           )}
         </section>
 
-        {activeStage >= 0 ? (
-          <ol aria-label={t("updateProgress")} className="flex flex-col gap-2">
-            {stages.map((stage, index) => {
-              const complete = index < activeStage;
-              const active = index === activeStage;
-              return (
-                <li
-                  key={stage}
-                  className={`flex items-center gap-2 text-xs ${
-                    active
-                      ? "font-medium text-foreground"
-                      : complete
-                        ? "text-foreground"
-                        : "text-muted-foreground"
-                  }`}
-                >
-                  <span
-                    className={`flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] ${
-                      active
-                        ? "bg-primary text-primary-foreground"
-                        : complete
-                          ? "bg-muted text-primary"
-                          : "bg-muted text-muted-foreground"
-                    }`}
-                  >
-                    {complete ? (
-                      <Check className="size-3" />
-                    ) : active ? (
-                      <RefreshCw className="size-3 animate-spin" />
-                    ) : (
-                      index + 1
-                    )}
-                  </span>
-                  <span>{stage}</span>
-                </li>
-              );
-            })}
-          </ol>
-        ) : null}
-
         {showUpdate ? (
-          <Button
-            type="button"
-            onClick={runUpdate}
-            disabled={
-              uiState === "updating" ||
-              uiState === "applying" ||
-              uiState === "restarting"
-            }
-            variant="primary"
-            size="sm"
-            className="w-full"
-          >
-            {uiState === "updating" ||
-            uiState === "applying" ||
-            uiState === "restarting" ? (
-              <RefreshCw className="size-3.5 animate-spin" />
-            ) : (
-              <Download className="size-3.5" />
-            )}
-            {uiState === "updating"
-              ? t("updating")
-              : uiState === "applying"
-                ? t("applying")
-                : uiState === "restarting"
-                  ? t("restartingShort")
-                  : t("updateNow")}
-          </Button>
+          <footer className="border-t border-border p-3">
+            <Button
+              type="button"
+              onClick={runUpdate}
+              disabled={busy}
+              variant="primary"
+              size="sm"
+              className="w-full"
+            >
+              {busy ? (
+                <RefreshCw className="size-3.5 animate-spin" />
+              ) : (
+                <Download className="size-3.5" />
+              )}
+              {uiState === "updating"
+                ? t("updating")
+                : uiState === "applying"
+                  ? t("applying")
+                  : uiState === "restarting"
+                    ? t("restartingShort")
+                    : uiState === "checking"
+                      ? t("checking")
+                      : t("updateNow")}
+            </Button>
+          </footer>
         ) : null}
-      </PopoverContent>
-    </Popover>
+      </MorphPopoverContent>
+    </MorphPopover>
   );
 }

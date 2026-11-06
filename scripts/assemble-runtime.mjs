@@ -304,24 +304,6 @@ for (const entry of [
 ]) {
   await copyEntry(entry);
 }
-// Sandbox hosts are read dynamically by the server and deliberately excluded
-// from Next's dependency trace. Assembly owns their complete runtime closure.
-for (const script of [
-  "omp-install.mjs",
-  "omp-rpc.mjs",
-  "omp-ui.mjs",
-  "omp-policy.mjs",
-  "omp-session.mjs",
-  "omp-capabilities.mjs",
-  "omp-hooks.mjs",
-  "omp-plugin-resources.mjs",
-]) {
-  if (!(await pathExists(path.join(outputRoot, "scripts", script)))) {
-    throw new Error(
-      `Required OMP sandbox host missing from runtime: ${script}`,
-    );
-  }
-}
 
 const embeddedRuntimeRoot = path.join(
   outputRoot,

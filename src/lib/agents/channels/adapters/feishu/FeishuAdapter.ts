@@ -177,8 +177,6 @@ export class FeishuAdapter extends ChannelAdapter {
   private readonly domain: FeishuDomain;
   private readonly streams = new Map<string, FeishuStreamSession>();
   private readonly chatReactions = new Map<string, ChatReaction>();
-  private readonly lastDropNotificationAt = new Map<string, number>();
-  private static readonly DROP_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000;
 
   constructor(config: ChannelAdapterConfig<"feishu">) {
     super(config);
@@ -278,7 +276,6 @@ export class FeishuAdapter extends ChannelAdapter {
           chatId: event.chatId,
           reason: event.reason,
         });
-        this.notifyDrop(event.chatId);
       },
       error: (error) => {
         this.log.error("Feishu channel error", {
@@ -520,15 +517,25 @@ export class FeishuAdapter extends ChannelAdapter {
       this.log.warn("Dropping message from unauthorized chat", {
         chatId: message.chatId,
       });
-      this.notifyDrop(message.chatId);
       return;
     }
 
     const text = message.content.trim();
     const conversationId = message.threadId;
-    const conversation = conversationId
-      ? { conversationId: `thread:${conversationId}`, replyInThread: true }
-      : {};
+    const conversation = {
+      chatType: conversationId
+        ? "thread"
+        : message.chatType === "p2p"
+          ? "dm"
+          : "group",
+      ...(conversationId
+        ? {
+            conversationId: `thread:${conversationId}`,
+            threadId: conversationId,
+            replyInThread: true,
+          }
+        : {}),
+    };
     if (isSlashCommand(text)) {
       const parts = text.split(/\s+/);
       this.emit("command", {
@@ -636,37 +643,6 @@ export class FeishuAdapter extends ChannelAdapter {
     }
 
     return { images, files };
-  }
-
-  private shouldNotifyDrop(chatId: string): boolean {
-    const now = Date.now();
-    const last = this.lastDropNotificationAt.get(chatId) ?? 0;
-    if (now - last < FeishuAdapter.DROP_NOTIFICATION_COOLDOWN_MS) {
-      this.log.debug("Suppressing duplicate drop notification", { chatId });
-      return false;
-    }
-    this.lastDropNotificationAt.set(chatId, now);
-    if (this.lastDropNotificationAt.size > 1000) {
-      const oldest = [...this.lastDropNotificationAt.entries()]
-        .sort((a, b) => a[1] - b[1])
-        .slice(0, 500);
-      for (const [key] of oldest) this.lastDropNotificationAt.delete(key);
-    }
-    return true;
-  }
-
-  private notifyDrop(chatId: string): void {
-    if (!this.shouldNotifyDrop(chatId)) return;
-    this.sendMessage(
-      chatId,
-      "Message could not be processed. Please try again.",
-      replyOptions(),
-    ).catch((err) => {
-      this.log.debug("Failed to send drop notification to channel", {
-        chatId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
   }
 
   private getChannel(): Lark.LarkChannel {

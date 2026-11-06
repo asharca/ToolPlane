@@ -450,6 +450,25 @@ describe("resolveSpawnSpec", () => {
     }
   });
 
+  it("uses global HTTP only in the execution snapshot and never mutates persisted MCP consent", () => {
+    const deployment = {
+      serverId: null,
+      name: "debug",
+      source: "remote",
+      sourceRef: "http://example.com/mcp",
+      installCfg: {
+        transport: "streamable-http",
+        authType: "none",
+        allowUnsafeHttp: false,
+      },
+    };
+    expect(() => resolveSpawnSpec(deployment)).toThrow();
+    expect(
+      resolveSpawnSpec(deployment, false, { allowHttp: true }),
+    ).toMatchObject({ kind: "remote", allowUnsafeHttp: true });
+    expect(deployment.installCfg.allowUnsafeHttp).toBe(false);
+    expect(() => resolveSpawnSpec(deployment)).toThrow();
+  });
   it("resolves remote MCP auth from private env references", () => {
     expect(
       resolveSpawnSpec({

@@ -1,4 +1,5 @@
 // Adapted from Cherry Studio. See NOTICE for source and license.
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import {
   downloadFileAsBase64,
   downloadImageAsBase64,
@@ -59,6 +60,7 @@ type DiscordMessage = {
   id: string;
   channel_id: string;
   guild_id?: string;
+  channel?: { type?: number; parent_id?: string };
   author: { id: string; username: string; bot?: boolean };
   member?: { roles?: string[] };
   content: string;
@@ -226,15 +228,21 @@ type DiscordInteraction = {
   token: string;
   channel_id: string;
   guild_id?: string;
+  channel?: { type?: number; parent_id?: string };
   member?: { user: { id: string; username: string }; roles?: string[] };
   user?: { id: string; username: string };
-  data?: { name: string; options?: Array<{ name: string; value: unknown }> };
+  data?: {
+    name: string;
+    custom_id?: string;
+    options?: Array<{ name: string; value: unknown }>;
+  };
 };
 
 export class DiscordAdapter extends ChannelAdapter {
   private ws: WebSocket | null = null;
   private readonly botToken: string;
   private readonly allowedChannelIds: string[];
+  private readonly channelTypes = new Map<string, number>();
 
   private sessionId: string | null = null;
   private applicationId: string | null = null;
@@ -316,7 +324,9 @@ export class DiscordAdapter extends ChannelAdapter {
       const wsUrl = `${gatewayUrl}?v=10&encoding=json`;
       this.log.info("Connecting to Discord gateway", { url: wsUrl });
 
-      const ws = new WebSocket(sanitizeRemoteUrl(wsUrl, true));
+      const ws = new WebSocket(
+        sanitizeRemoteUrl(wsUrl, true, await getTransportSettings()),
+      );
       this.ws = ws;
 
       ws.on("open", () => {
@@ -484,6 +494,24 @@ export class DiscordAdapter extends ChannelAdapter {
     data: unknown,
   ): Promise<void> {
     switch (eventType) {
+      case "GUILD_CREATE": {
+        const guild = data as {
+          channels?: { id: string; type: number }[];
+          threads?: { id: string; type: number }[];
+        };
+        for (const channel of [
+          ...(guild.channels ?? []),
+          ...(guild.threads ?? []),
+        ])
+          this.channelTypes.set(channel.id, channel.type);
+        break;
+      }
+      case "CHANNEL_CREATE":
+      case "THREAD_CREATE": {
+        const channel = data as { id: string; type: number };
+        this.channelTypes.set(channel.id, channel.type);
+        break;
+      }
       case "READY": {
         const ready = data as {
           session_id: string;
@@ -525,6 +553,11 @@ export class DiscordAdapter extends ChannelAdapter {
     const chatId = msg.guild_id
       ? `channel:${msg.channel_id}`
       : `dm:${msg.channel_id}`;
+    const context = await this.messageContext(
+      msg.channel_id,
+      msg.guild_id,
+      msg.channel?.type,
+    );
 
     if (!this.isAllowed(chatId, msg.channel_id)) return;
 
@@ -539,10 +572,13 @@ export class DiscordAdapter extends ChannelAdapter {
         | "whoami";
       this.emit("command", {
         chatId,
+        ...context,
         userId: msg.author.id,
         userName: msg.author.username ?? "",
         roleIds: msg.member?.roles,
+        messageId: msg.id,
         command: cmd,
+        args: text.split(/\s+/).slice(1).join(" "),
       });
     } else {
       // Download images in parallel, converting to base64
@@ -573,9 +609,11 @@ export class DiscordAdapter extends ChannelAdapter {
 
       this.emit("message", {
         chatId,
+        ...context,
         userId: msg.author.id,
         userName: msg.author.username ?? "",
         roleIds: msg.member?.roles,
+        messageId: msg.id,
         text,
         images,
         files,
@@ -626,12 +664,53 @@ export class DiscordAdapter extends ChannelAdapter {
       `${DISCORD_API_BASE}/applications/${this.applicationId}/commands`,
       {
         method: "PUT",
-        body: SLASH_COMMANDS as unknown as Record<string, unknown>[],
+        body: SLASH_COMMANDS.map((command) => ({
+          ...command,
+          ...(["new", "resume", "model", "upgrade"].includes(command.name)
+            ? {
+                options: [
+                  {
+                    type: 3,
+                    name: "args",
+                    description: "Command arguments",
+                    required: false,
+                  },
+                ],
+              }
+            : {}),
+        })),
       },
     );
     this.log.info("Registered Discord slash commands", {
       count: SLASH_COMMANDS.length,
     });
+  }
+
+  private async messageContext(
+    channelId: string,
+    guildId?: string,
+    type?: number,
+  ) {
+    let channelType = type ?? this.channelTypes.get(channelId);
+    if (guildId && channelType === undefined) {
+      const response = await this.apiRequest(
+        `${DISCORD_API_BASE}/channels/${channelId}`,
+      );
+      const channel = (await response.json()) as { type?: number };
+      channelType = channel.type;
+      if (channelType !== undefined)
+        this.channelTypes.set(channelId, channelType);
+    }
+    const thread =
+      channelType !== undefined && [10, 11, 12].includes(channelType);
+    return {
+      chatType: thread
+        ? ("thread" as const)
+        : guildId
+          ? ("channel" as const)
+          : ("dm" as const),
+      ...(thread ? { threadId: channelId } : {}),
+    };
   }
 
   private async handleInteraction(
@@ -641,12 +720,17 @@ export class DiscordAdapter extends ChannelAdapter {
     if (interaction.type === INTERACTION_TYPE_PING) return;
 
     if (
-      interaction.type !== INTERACTION_TYPE_APPLICATION_COMMAND ||
+      ![INTERACTION_TYPE_APPLICATION_COMMAND, 3].includes(interaction.type) ||
       !interaction.data
     )
       return;
 
-    const commandName = interaction.data.name;
+    const component =
+      interaction.type === 3
+        ? interaction.data.custom_id?.match(/^tp:(new|upgrade):([a-f0-9]+)$/)
+        : null;
+    if (interaction.type === 3 && !component) return;
+    const commandName = component?.[1] ?? interaction.data.name;
     const user = interaction.member?.user ?? interaction.user;
     const chatId = interaction.guild_id
       ? `channel:${interaction.channel_id}`
@@ -666,10 +750,21 @@ export class DiscordAdapter extends ChannelAdapter {
 
     this.emit("command", {
       chatId,
+      ...(await this.messageContext(
+        interaction.channel_id,
+        interaction.guild_id,
+        interaction.channel?.type,
+      )),
       userId: user?.id ?? "",
       userName: user?.username ?? "",
       roleIds: interaction.member?.roles,
+      messageId: interaction.id,
       command: commandName as "new" | "compact" | "help",
+      args: component
+        ? `--confirm ${component[2]}`
+        : interaction.data.options
+            ?.map((option) => String(option.value))
+            .join(" "),
     });
   }
 
@@ -701,7 +796,10 @@ export class DiscordAdapter extends ChannelAdapter {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          type: INTERACTION_CALLBACK_DEFERRED_CHANNEL_MESSAGE,
+          type:
+            interaction.type === 3
+              ? 6
+              : INTERACTION_CALLBACK_DEFERRED_CHANNEL_MESSAGE,
         }),
       },
     );
@@ -713,7 +811,7 @@ export class DiscordAdapter extends ChannelAdapter {
   async sendMessage(
     chatId: string,
     text: string,
-    _opts?: SendMessageOptions,
+    opts?: SendMessageOptions,
   ): Promise<void> {
     const chunks = splitMessage(text, DISCORD_MAX_LENGTH);
     const channelId = chatId.split(":")[1];
@@ -723,7 +821,26 @@ export class DiscordAdapter extends ChannelAdapter {
         `${DISCORD_API_BASE}/channels/${channelId}/messages`,
         {
           method: "POST",
-          body: { content: chunks[i] },
+          body: {
+            content: chunks[i],
+            ...(i === 0 && opts?.confirmation
+              ? {
+                  components: [
+                    {
+                      type: 1,
+                      components: [
+                        {
+                          type: 2,
+                          style: 4,
+                          label: "Confirm",
+                          custom_id: `tp:${opts.confirmation.command}:${opts.confirmation.token}`,
+                        },
+                      ],
+                    },
+                  ],
+                }
+              : {}),
+          },
         },
       );
 

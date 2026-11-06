@@ -5,7 +5,14 @@ import type { ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter, once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
@@ -48,6 +55,7 @@ type RequestContext = {
   mcpConfig: { servers: unknown[] };
   model: Record<string, unknown>;
   reasoningEffort?: string;
+  modelRetries?: number;
 };
 const children = new Set<ChildProcess>();
 const cleanups: Array<() => Promise<void>> = [];
@@ -81,6 +89,14 @@ function completion(
       `data: ${JSON.stringify({ id: "controlled", object: "chat.completion.chunk", created: 1, model: "controlled", ...chunk })}\n\n`,
     );
   response.end("data: [DONE]\n\n");
+}
+// A gateway that already answered 200 reports an upstream that produced nothing
+// as an in-stream error (observed from sub2api as `empty_stream`).
+function emptyStream(response: ServerResponse) {
+  response.writeHead(200, { "content-type": "text/event-stream" });
+  response.end(
+    `data: ${JSON.stringify({ error: { message: "empty_stream", type: "upstream_error" } })}\n\n`,
+  );
 }
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), "pi-sdk-host-"));
@@ -469,6 +485,33 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 describe("official Pi SDK headless session host", () => {
+  it("keeps Python imports from changing skill files across continued native turns", async () => {
+    const f = await setup();
+    const skill = join(f.workspace, "python-skill");
+    await mkdir(skill);
+    await writeFile(join(skill, "gb_layout.py"), "VALUE = 42\n");
+    f.behavior.tool = "bash";
+    const code = `import sys; sys.path.insert(0, ${JSON.stringify(skill)}); import gb_layout; from pathlib import Path; Path("python-result.txt").write_text(str(gb_layout.VALUE))`;
+    f.behavior.toolArgs = JSON.stringify({ command: `python3 -c '${code}'` });
+    const first = await f.launch({ defaultTools: ["bash"] });
+    expect(
+      (await first.request("prompt", "Run the Python skill")).success,
+    ).toBe(true);
+    expect(await readFile(join(f.workspace, "python-result.txt"), "utf8")).toBe(
+      "42",
+    );
+    expect(await readdir(skill)).toEqual(["gb_layout.py"]);
+    await first.stop();
+    const resumed = await f.launch({
+      defaultTools: ["bash"],
+      historyRequired: true,
+    });
+    expect(
+      (await resumed.request("prompt", "Run the Python skill again")).success,
+    ).toBe(true);
+    expect(await readdir(skill)).toEqual(["gb_layout.py"]);
+  }, 60000);
+
   it("continues copied native history after workspace rebasing without changing transcript bodies or revision pins", async () => {
     const f = await setup();
     const first = await f.launch();
@@ -700,6 +743,30 @@ describe("official Pi SDK headless session host", () => {
     expect(JSON.stringify(f.requests.at(-1)?.body)).toContain(
       "NATIVE_SUMMARY_FROM_PROVIDER",
     );
+  }, 60000);
+  it("settles /compact on a short session as a completed no-op without a model call", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    const host = await f.launch();
+    const first = await host.request("prompt", "hi");
+    expect(first.success).toBe(true);
+    const requests = f.requests.length;
+    const compacted = await host.request("prompt", "/compact");
+    expect(compacted.success).toBe(true);
+    expect(assertDefined(compacted.result).commandResult).toEqual({
+      command: "compact",
+      text: "Nothing to compact (session too small)",
+      status: "completed",
+    });
+    expect(f.requests).toHaveLength(requests);
+    const sessionFile = assertDefined(first.result).state.sessionFile;
+    const entries = (await readFile(sessionFile, "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    expect(entries.some((entry) => entry.type === "compaction")).toBe(false);
+    const continued = await host.request("prompt", "Continue");
+    expect(continued.success).toBe(true);
   }, 60000);
   it("automatically compacts native session history at the SDK threshold and resumes its persisted projection", async () => {
     const f = await setup();
@@ -1622,5 +1689,77 @@ describe("official Pi SDK headless session host", () => {
         "Continue after stop",
       ),
     ).toMatchObject({ success: true });
+  }, 60000);
+  it("reports model failures as fixed reasons without provider text", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    f.behavior.streamCompletion = async (response) => {
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({ error: { message: "upstream-secret unavailable" } }),
+      );
+    };
+    const host = await f.launch();
+    const unavailable = await host.request("prompt", "Provider outage");
+    expect(unavailable).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "HTTP_503" },
+    });
+    expect(JSON.stringify(unavailable)).not.toContain("upstream-secret");
+    const closed = createServer();
+    await once(closed.listen(0, "127.0.0.1"), "listening");
+    const { port } = closed.address() as { port: number };
+    await once(closed.close(), "close");
+    expect(
+      await host.request("prompt", "Wrong runtime origin", {
+        ...f.context,
+        model: { ...f.config.model, baseUrl: `http://127.0.0.1:${port}/v1` },
+      }),
+    ).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "UNREACHABLE" },
+    });
+  }, 60000);
+  it("retries an empty gateway stream within the turn budget, then reports the reason and retry count", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    let empty = 1;
+    f.behavior.streamCompletion = async (response) => {
+      if (empty-- > 0) return emptyStream(response);
+      completion(response, { content: "RECOVERED" }, "stop");
+    };
+    const host = await f.launch();
+    expect(
+      await host.request("prompt", "Retry once", {
+        ...f.context,
+        modelRetries: 2,
+      }),
+    ).toMatchObject({ success: true, result: { text: "RECOVERED" } });
+    expect(f.requests).toHaveLength(2);
+    // The failed attempt is not replayed to the model as an assistant turn.
+    expect(f.requests[1].body.messages.at(-1)?.role).toBe("user");
+
+    f.behavior.streamCompletion = async (response) => emptyStream(response);
+    const exhausted = await host.request("prompt", "Keep failing", {
+      ...f.context,
+      modelRetries: 1,
+    });
+    expect(exhausted).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "EMPTY_STREAM RETRIED_1" },
+    });
+    expect(f.requests).toHaveLength(4);
+
+    // Retries off: one request, no retry count.
+    expect(
+      await host.request("prompt", "No retry", {
+        ...f.context,
+        modelRetries: 0,
+      }),
+    ).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "EMPTY_STREAM" },
+    });
+    expect(f.requests).toHaveLength(5);
   }, 60000);
 });

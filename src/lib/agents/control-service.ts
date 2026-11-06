@@ -144,9 +144,7 @@ type AgentControlRow = Prisma.AgentGetPayload<{
 
 function toSafeAgent(agent: AgentControlRow, workspaceSlug: string) {
   const configured = Boolean(agent.provider && agent.model);
-  const readOnly =
-    (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp") ||
-    Boolean(agent.retiredAt);
+  const readOnly = agent.runtimeKind !== "pi-sdk" || Boolean(agent.retiredAt);
   return {
     id: agent.id,
     name: agent.name,
@@ -376,9 +374,7 @@ export async function listAgentControlAgents(workspaceId: string) {
   });
   return agents.map((agent) => {
     const configured = Boolean(agent.provider && agent.model);
-    const readOnly =
-      (agent.runtimeKind !== "pi-sdk" && agent.runtimeKind !== "omp") ||
-      Boolean(agent.retiredAt);
+    const readOnly = agent.runtimeKind !== "pi-sdk" || Boolean(agent.retiredAt);
     return {
       id: agent.id,
       name: agent.name,

@@ -51,6 +51,45 @@ export async function resolveAgentModelOverride(
   return tx ? resolve(tx) : db.$transaction(resolve);
 }
 
+/** Persisted channel selection is authoritative, but is revalidated for every turn. */
+export function conversationModelOverride(
+  value: unknown,
+): AgentModelOverride | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== "object" || Array.isArray(value))
+    throw new Error("MODEL_OVERRIDE_UNAVAILABLE");
+  const candidate = value as Record<string, unknown>;
+  const parsed = AgentModelOverrideSchema.safeParse({
+    providerId: candidate.providerId,
+    model: candidate.model,
+  });
+  if (!parsed.success) throw new Error("MODEL_OVERRIDE_UNAVAILABLE");
+  return parsed.data;
+}
+
+export async function resolveConversationModelOverride(
+  workspaceId: string,
+  value: unknown,
+  runtimeKind: string,
+  tx?: Prisma.TransactionClient,
+) {
+  const override = conversationModelOverride(value);
+  if (!override) return undefined;
+  try {
+    return {
+      ...(await resolveAgentModelOverride(
+        workspaceId,
+        override,
+        runtimeKind,
+        tx,
+      )),
+      override,
+    };
+  } catch {
+    throw new Error("MODEL_OVERRIDE_UNAVAILABLE");
+  }
+}
+
 export const AGENT_MODEL_OVERRIDE_PART = "data-agent-model-override";
 export const AGENT_TURN_MODEL_PART = "data-agent-turn-model";
 

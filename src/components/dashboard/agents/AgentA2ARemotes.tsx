@@ -17,7 +17,13 @@ import type {
   RemoteAgentView,
 } from "@/lib/a2a/remote-registry";
 
-export function AgentA2ARemotes({ base }: { base: string }) {
+export function AgentA2ARemotes({
+  base,
+  readOnly = false,
+}: {
+  base: string;
+  readOnly?: boolean;
+}) {
   const t = useTranslations("console.agents.a2a.remote");
   const [view, setView] = useState<RemoteAgentView | null>(null);
   const [error, setError] = useState("");
@@ -80,7 +86,7 @@ export function AgentA2ARemotes({ base }: { base: string }) {
     };
   }, [token]);
   async function mutate(action: RemoteAgentAction) {
-    if (flight.current || !window.confirm(t("confirm"))) return;
+    if (readOnly || flight.current || !window.confirm(t("confirm"))) return;
     flight.current = true;
     setBusy(true);
     setError("");
@@ -157,7 +163,7 @@ export function AgentA2ARemotes({ base }: { base: string }) {
           {error}
         </div>
       ) : null}
-      {view?.canManage ? (
+      {view?.canManage && !readOnly ? (
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="text-sm">
             <Input
@@ -281,7 +287,7 @@ export function AgentA2ARemotes({ base }: { base: string }) {
               {remote.rpcUrl}
             </code>
             <code className="block break-all text-xs">{remote.id}</code>
-            {view.canManage ? (
+            {view.canManage && !readOnly ? (
               <div className="flex flex-wrap gap-2">
                 <Button
                   disabled={busy}

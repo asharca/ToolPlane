@@ -30,6 +30,10 @@ export const HOST_ONLY_COMMAND_NAMES = [
   "new",
   "help",
   "whoami",
+  "status",
+  "resume",
+  "model",
+  "upgrade",
   "effort",
   "fast",
 ] as const;
@@ -72,10 +76,7 @@ export function parseRuntimeCommand(
     .match(/^\/([a-z][a-z0-9_:-]{0,99})(?:\s+([\s\S]*))?$/i);
   return match
     ? {
-        name:
-          runtimeKind === "pi-sdk" || runtimeKind === "omp"
-            ? match[1]
-            : match[1].toLowerCase(),
+        name: runtimeKind === "pi-sdk" ? match[1] : match[1].toLowerCase(),
         args: match[2]?.trim() ?? "",
       }
     : null;

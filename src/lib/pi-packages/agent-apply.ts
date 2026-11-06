@@ -18,8 +18,6 @@ import {
   requirePluginWorkspace,
   visiblePluginWhere,
 } from "@/lib/plugins/catalog";
-import { captureNativeRoleModels } from "@/lib/agents/native-role-models";
-import { parsePiPackageReleaseManifest } from "./manifest";
 
 export type AgentPackageMcpConnection = {
   deploymentId: string;
@@ -66,7 +64,7 @@ export async function applyPiPackageToAgent(input: {
         where: {
           id: input.agentId,
           workspaceId: input.workspaceId,
-          runtimeKind: { in: ["pi-sdk", "omp"] },
+          runtimeKind: "pi-sdk",
           retiredAt: null,
           publicRuntimeAllocation: null,
         },
@@ -246,26 +244,6 @@ export async function applyPiPackageToAgent(input: {
               ),
               input.package,
             ],
-            ...(current.config.runtimeKind === "omp" &&
-            current.config.subagentMode === "native"
-              ? {
-                  nativeRoleModels: [
-                    ...(current.config.nativeRoleModels ?? []).filter(
-                      (role) =>
-                        role.marketInstallId !== input.package.marketInstallId,
-                    ),
-                    ...captureNativeRoleModels([
-                      {
-                        ...input.package,
-                        manifest: parsePiPackageReleaseManifest(
-                          install.currentRelease.manifest,
-                          install.currentRelease.checksum,
-                        ),
-                      },
-                    ]),
-                  ],
-                }
-              : {}),
             mcpGrants: [
               ...current.config.mcpGrants.filter(
                 (grant) =>

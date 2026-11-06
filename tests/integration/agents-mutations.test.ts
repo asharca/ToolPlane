@@ -5,6 +5,7 @@ import {
   it,
   expect,
   beforeAll,
+  beforeEach,
   afterAll,
   afterEach,
   vi,
@@ -13,6 +14,11 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import * as sandboxRuntime from "@/lib/sandboxes/runtime";
 import * as agentRuntime from "@/lib/agents/sandbox-runtime";
+import * as piRuntime from "@/lib/agents/pi-runtime";
+import {
+  AgentExecutionBusyError,
+  withAgentExecutionLease,
+} from "@/lib/agents/agent-execution-gate";
 import {
   cloneAgent,
   createAgent,
@@ -44,6 +50,7 @@ import {
 import {
   captureAgentRevisionConfig,
   prepareAgentRevisionMcpDeployments,
+  publishAgentRevision,
   resolvePinnedAgent,
 } from "@/lib/agents/revisions";
 import { resolveAgentRuntimeGrant } from "@/lib/agents/runtime-grant";
@@ -134,6 +141,14 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
+beforeEach(() => {
+  // Only the external Docker artifact boundary is stubbed; DB behavior is real.
+  vi.spyOn(piRuntime, "preparePiRuntime").mockResolvedValue({
+    path: "/fixture/pi-sdk.archive",
+    sha256: "a".repeat(64),
+  });
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -199,32 +214,85 @@ describe("agents mutations", () => {
     });
   });
 
-  it("rolls back the Agent and sandbox when initial capability preflight fails", async () => {
-    vi.spyOn(sandboxRuntime, "resolveDockerImageDigest").mockResolvedValue(
-      `fixture@sha256:${"a".repeat(64)}`,
+  it.each([
+    { runtime: "pi-sdk", failure: "PI_SDK_ARTIFACT_PREPARE_FAILED" },
+    { runtime: "pi-sdk", failure: "PI_CAPABILITY_CONFLICT" },
+  ] as const)(
+    "leaves no $runtime creation records when $failure occurs",
+    async ({ runtime, failure }) => {
+      vi.spyOn(sandboxRuntime, "resolveDockerImageDigest").mockResolvedValue(
+        `fixture@sha256:${"a".repeat(64)}`,
+      );
+      vi.spyOn(agentRuntime, "preflightPiSdkCapabilities").mockRejectedValue(
+        new Error("PI_CAPABILITY_CONFLICT"),
+      );
+      if (failure === "PI_SDK_ARTIFACT_PREPARE_FAILED") {
+        vi.mocked(piRuntime.preparePiRuntime).mockRejectedValue(
+          new Error(failure),
+        );
+      }
+      const before = {
+        agents: await db.agent.count({ where: { workspaceId } }),
+        sandboxes: await db.sandbox.count({ where: { workspaceId } }),
+        deployments: await db.deployment.count({ where: { workspaceId } }),
+      };
+      await expect(
+        createConfiguredAgent(
+          workspaceId,
+          {
+            name: "Rejected creation",
+            providerId,
+            model: "model-1",
+            systemPrompt: null,
+            maxSteps: 8,
+          },
+          { deploymentIds: [], installedSkillIds: [], toolkitIds: [] },
+          { runtime, enable: true },
+        ),
+      ).rejects.toThrow(failure);
+      expect({
+        agents: await db.agent.count({ where: { workspaceId } }),
+        sandboxes: await db.sandbox.count({ where: { workspaceId } }),
+        deployments: await db.deployment.count({ where: { workspaceId } }),
+      }).toEqual(before);
+    },
+  );
+
+  it("preserves the draft and creates no revision when Pi artifact publication preparation fails", async () => {
+    const agent = await createAgent(
+      workspaceId,
+      "Pi publication preparation failure",
     );
-    vi.spyOn(agentRuntime, "preflightPiSdkCapabilities").mockRejectedValue(
-      new Error("PI_CAPABILITY_CONFLICT"),
-    );
+    const config = await captureAgentRevisionConfig(db, agent.id, {
+      kind: "docker",
+      image: `toolplane-test@sha256:${"0".repeat(64)}`,
+      network: "isolated",
+      piVersion: "0.87.1",
+      initialSnapshot: null,
+      resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
+      credentialReferences: [],
+    });
     const before = {
       agents: await db.agent.count({ where: { workspaceId } }),
       sandboxes: await db.sandbox.count({ where: { workspaceId } }),
       deployments: await db.deployment.count({ where: { workspaceId } }),
     };
+    vi.mocked(piRuntime.preparePiRuntime).mockRejectedValue(
+      new Error("PI_SDK_ARTIFACT_PREPARE_FAILED"),
+    );
     await expect(
-      createConfiguredAgent(
-        workspaceId,
-        {
-          name: "Rejected creation",
-          providerId,
-          model: "model-1",
-          systemPrompt: null,
-          maxSteps: 8,
-        },
-        { deploymentIds: [], installedSkillIds: [], toolkitIds: [] },
-        { runtime: "pi-sdk", enable: true },
-      ),
-    ).rejects.toThrow("PI_CAPABILITY_CONFLICT");
+      publishAgentRevision(workspaceId, agent.id, {
+        expectedRevisionId: null,
+        config,
+      }),
+    ).rejects.toThrow("PI_SDK_ARTIFACT_PREPARE_FAILED");
+    expect(
+      (await db.agent.findUniqueOrThrow({ where: { id: agent.id } }))
+        .currentRevisionVersion,
+    ).toBe(0);
+    expect(await db.agentRevision.count({ where: { agentId: agent.id } })).toBe(
+      0,
+    );
     expect({
       agents: await db.agent.count({ where: { workspaceId } }),
       sandboxes: await db.sandbox.count({ where: { workspaceId } }),
@@ -281,7 +349,7 @@ describe("agents mutations", () => {
     await expect(createConversation(workspaceId, agent.id)).rejects.toThrow(
       "AGENT_REVISION_UNRESOLVED",
     );
-    for (const runtime of ["pi", "claude-code", "dsh"] as const) {
+    for (const runtime of ["pi", "omp", "claude-code", "dsh"] as const) {
       await expect(
         createAgent(workspaceId, `Retired ${runtime}`, { runtime }),
       ).rejects.toThrow("Only native Pi");
@@ -408,8 +476,60 @@ describe("agents mutations", () => {
     ).toMatchObject({ agentRevisionId: null, legacyRevisionUnresolved: true });
   });
 
+  it("saves configuration during execution without rebinding its conversation or permitting deletion", async () => {
+    const agent = await createAgent(workspaceId, "Running settings agent");
+    const published = await seedPublishedRevision(agent.id);
+    const conversation = assertDefined(
+      await createConversation(workspaceId, agent.id),
+    );
+    await withAgentExecutionLease(
+      { agentId: agent.id, sessionId: conversation.id },
+      async () => {
+        await updateAgent(workspaceId, agent.id, {
+          name: agent.name,
+          systemPrompt: "Next revision instructions",
+          providerId: null,
+          model: null,
+          maxSteps: 8,
+        });
+        await setAgentTools(workspaceId, agent.id, {
+          deploymentIds: [],
+          installedSkillIds: [],
+          toolkitIds: [],
+        });
+        await updateAgent(`${workspaceId}-outside`, agent.id, {
+          name: "Unauthorized edit",
+          systemPrompt: null,
+          providerId: null,
+          model: null,
+          maxSteps: 1,
+        });
+        expect(
+          await db.agent.findUniqueOrThrow({ where: { id: agent.id } }),
+        ).toMatchObject({
+          name: agent.name,
+          systemPrompt: "Next revision instructions",
+          currentRevisionVersion: published.version,
+        });
+        expect(
+          await db.conversation.findUniqueOrThrow({
+            where: { id: conversation.id },
+          }),
+        ).toMatchObject({ agentRevisionId: published.id });
+        expect(
+          await db.agentRevision.findUniqueOrThrow({
+            where: { id: published.id },
+          }),
+        ).toMatchObject({ config: published.config });
+        await expect(deleteAgent(workspaceId, agent.id)).rejects.toBeInstanceOf(
+          AgentExecutionBusyError,
+        );
+      },
+    );
+  });
+
   it.each(["config", "model"] as const)(
-    "preserves immutable provider pins and requires current reauthorization after native default changes through %s",
+    "keeps immutable provider pins across unapplied native default changes through %s and rejects actual provider deletion",
     async (editPath) => {
       const prior = await db.modelProvider.create({
         data: {
@@ -474,30 +594,20 @@ describe("agents mutations", () => {
       expect(changed.currentRevisionVersion).toBe(published.version);
       await expect(
         resolvePinnedAgent(changed, conversation.agentRevisionId),
-      ).rejects.toThrow("AGENT_PROVIDER_REVOKED");
-      await updateAgentModelSelection(
-        workspaceId,
-        agent.id,
-        prior.id,
-        "prior-model",
-      );
-      expect(
-        await resolvePinnedAgent(changed, conversation.agentRevisionId),
-      ).toMatchObject({
+      ).resolves.toMatchObject({
         providerId: prior.id,
+        provider: { id: prior.id },
         model: "prior-model",
         systemPrompt: "Published instructions",
       });
       await updateAgentModelSelection(workspaceId, agent.id, null, null);
       await expect(
         resolvePinnedAgent(changed, conversation.agentRevisionId),
-      ).rejects.toThrow("AGENT_PROVIDER_REVOKED");
-      await updateAgentModelSelection(
-        workspaceId,
-        agent.id,
-        prior.id,
-        "prior-model",
-      );
+      ).resolves.toMatchObject({
+        providerId: prior.id,
+        provider: { id: prior.id },
+        model: "prior-model",
+      });
       await deleteProvider(workspaceId, prior.id, userId);
       await expect(
         resolvePinnedAgent(changed, conversation.agentRevisionId),

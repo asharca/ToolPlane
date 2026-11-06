@@ -1,5 +1,12 @@
+import {
+  DEFAULT_TRANSPORT_POLICY,
+  type TransportPolicy,
+} from "@/lib/transport-policy";
 /** Shared presentation data; this module must never import credentials or server code. */
-export function a2aDeploymentOrigin(raw: string): string {
+export function a2aDeploymentOrigin(
+  raw: string,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+): string {
   const url = new URL(raw);
   // Only literal RFC1918 addresses qualify; public hosts still require HTTPS.
   const developmentLan =
@@ -15,7 +22,8 @@ export function a2aDeploymentOrigin(raw: string): string {
     !["http:", "https:"].includes(url.protocol) ||
     (url.protocol !== "https:" &&
       !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
-      !developmentLan)
+      !developmentLan &&
+      !policy.allowHttp)
   ) {
     throw new Error(
       "A2A requires HTTPS (HTTP is allowed on loopback and private IPv4 addresses in development).",
@@ -29,8 +37,9 @@ export function a2aConnectionInfo(
   slug: string,
   agentId: string,
   endpointId?: string | null,
+  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
 ) {
-  const base = a2aDeploymentOrigin(origin);
+  const base = a2aDeploymentOrigin(origin, policy);
   const local = new URL(
     `/api/v1/workspaces/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}/a2a/local`,
     base,

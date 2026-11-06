@@ -66,6 +66,7 @@ export class WeChatAdapter extends ChannelAdapter {
         return;
       this.emit("message", {
         chatId: message.userId,
+        chatType: "dm",
         userId: message.userId,
         userName: message.userId,
         messageId: message.messageId,

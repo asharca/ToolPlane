@@ -62,7 +62,7 @@ in the relevant subsystem document rather than duplicating it.
   Deployment/Sandbox JSON and Docker inspect environment. See
   `src/lib/agents/runtime-grant.ts`, `src/lib/process/session-mcp.ts` and
   [runtime operations](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS). Retired runtime history is read-only; do not restore
-  legacy execution or reuse its credentials when creating a new Pi or OMP draft.
+  legacy execution or reuse its credentials when creating a new Pi draft.
   Public API infrastructure remains, but no runtime supports public Endpoint execution.
   Hermes Agent records and their history are removed by the runtime-removal migration.
 - Return plaintext API tokens only at creation; persist only their hashes.
@@ -98,7 +98,7 @@ Confirm the database is local before migrating or seeding.
 
 ## Verification
 
-- Keep permanent tests focused on core behavior: auth/workspace isolation, Pi, OMP and
+- Keep permanent tests focused on core behavior: auth/workspace isolation, Pi and
   Assistant execution, immutable revisions/credentials, conversation/Work/A2A
   lifecycle, MCP access, and file/recovery boundaries. Add a regression only for a
   plausible consumer-visible failure or an uncovered core invariant; prefer an
@@ -152,7 +152,7 @@ sandboxes, and agents. Route groups do not appear in URLs:
 | Auth | `src/lib/auth/request-user.ts`, `session.ts`, `tokens.ts` |
 | Toolkit retirement and client registration | `src/lib/toolkits/cutover.ts`; [runtime operations](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS); `src/lib/pi-packages/installations.ts`. Legacy execution/tokens are retired; conversion does not grant new authority. |
 | GitHub Plugin Center | `src/lib/market/github-registry*.ts`; [GitHub plugin center](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS#user-content-github-插件中心). Catalog contents only come from indexed fixed GitHub commits; preserve immutable pins and workspace-private authoring/uploads. No manual catalog publish/ZIP/npm intake paths. |
-| Agent revisions and turns | `src/lib/agents/revisions.ts`, `sandbox-turn.ts`, `conversation-sandbox.ts`; Pi (`pi-sdk`) and OMP (`omp`) are independent executable kernels. Sessions pin applied revisions and own separate directories in one persistent sandbox per Agent; package pins remain conversation/context-scoped. OMP config import: `omp-config.ts`, `scripts/export-omp-config.mjs`, `scripts/omp-session.mjs`. |
+| Agent revisions and turns | `src/lib/agents/revisions.ts`, `sandbox-turn.ts`, `conversation-sandbox.ts`; Pi (`pi-sdk`) is the only executable kernel. OMP and other retired runtimes retain read-only history. Sessions pin applied revisions and own separate directories in one persistent sandbox per Agent; package pins remain conversation/context-scoped. OMP-to-Pi import: `omp-import.ts`, `scripts/export-omp-config.mjs`; incompatible native capabilities must not silently migrate. |
 | Assistant chat and tools | `src/lib/chat/service.ts`, `run-control.ts`, `tools.ts`; independent Assistant revisions and durable Runs, remote MCP only, no Agent/Skill/package/stdio/A2A execution. |
 | Agent chat and tools | `src/app/api/v1/agents/[agentId]/chat/route.ts`; `src/lib/agents/resolve.ts`, `tools.ts`, `mutations.ts` |
 | Sandboxes and PTY | [Sandboxes](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/SANDBOXES); conversation-scoped routes under `src/app/api/v1/agents/[agentId]/conversations/[conversationId]/` |
@@ -165,7 +165,7 @@ MCP deployments run real processes/containers. Reconcile persisted deployment
 status with supervisor live state; observability comes from `LogEvent` (see
 [observability](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/OBSERVABILITY)).
 Agent chat uses the AI SDK UI message stream through `ui-stream.ts`; execution
-uses the pinned Pi or OMP revision and its session directory in an Agent-owned sandbox. Preserve
+uses the pinned Pi revision and its session directory in an Agent-owned sandbox. Preserve
 conversation ownership, immutable artifacts, live authorization narrowing,
 tool-source deduplication, and A2A depth/cycle guards. Assistant Run persistence,
 confirmation recovery and subscription lifecycles remain separate.

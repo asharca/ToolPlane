@@ -1,4 +1,5 @@
 // Adapted from Cherry Studio. See NOTICE for source and license.
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import {
   type FileAttachment,
   type ImageAttachment,
@@ -45,6 +46,7 @@ type SlackMessageEvent = {
   text?: string;
   files?: SlackFile[];
   ts: string;
+  thread_ts?: string;
   channel_type?: string; // 'im' for DMs, 'channel'/'group' for channels
 };
 
@@ -327,7 +329,9 @@ export class SlackAdapter extends ChannelAdapter {
       if (this.shouldStop) return;
       this.log.info("Connecting to Slack Socket Mode");
 
-      const ws = new WebSocket(sanitizeRemoteUrl(wsUrl, true));
+      const ws = new WebSocket(
+        sanitizeRemoteUrl(wsUrl, true, await getTransportSettings()),
+      );
       this.ws = ws;
 
       ws.on("open", () => {
@@ -399,7 +403,7 @@ export class SlackAdapter extends ChannelAdapter {
         break;
       case "slash_commands":
         if (envelope.payload) {
-          await this.handleSlashCommand(envelope.payload);
+          await this.handleSlashCommand(envelope.payload, envelope.envelope_id);
         }
         break;
     }
@@ -415,11 +419,23 @@ export class SlackAdapter extends ChannelAdapter {
     const chatId = event.channel;
     if (!this.isAllowed(chatId)) return;
 
-    // Add 👀 reaction to acknowledge receipt
-    await this.addReaction(chatId, event.ts);
-
     const userId = event.user ?? "";
     const userName = await this.resolveUserName(userId);
+    const threadId =
+      event.thread_ts && event.thread_ts !== event.ts
+        ? event.thread_ts
+        : undefined;
+    const context = {
+      chatType: threadId
+        ? "thread"
+        : event.channel_type === "im"
+          ? "dm"
+          : event.channel_type === "mpim"
+            ? "group"
+            : "channel",
+      threadId,
+      replyInThread: Boolean(threadId),
+    };
 
     // Strip bot mentions from text
     const rawText = event.text ?? "";
@@ -455,7 +471,15 @@ export class SlackAdapter extends ChannelAdapter {
         | "compact"
         | "help"
         | "whoami";
-      this.emit("command", { chatId, userId, userName, command: cmd });
+      this.emit("command", {
+        chatId,
+        ...context,
+        userId,
+        userName,
+        messageId: event.ts,
+        command: cmd,
+        args: text.split(/\s+/).slice(1).join(" "),
+      });
     } else {
       // Download images (with bot token auth for private files)
       let images: ImageAttachment[] | undefined;
@@ -482,12 +506,22 @@ export class SlackAdapter extends ChannelAdapter {
         if (downloaded.length > 0) files = downloaded;
       }
 
-      this.emit("message", { chatId, userId, userName, text, images, files });
+      this.emit("message", {
+        chatId,
+        ...context,
+        userId,
+        userName,
+        messageId: event.ts,
+        text,
+        images,
+        files,
+      });
     }
   }
 
   private async handleSlashCommand(
     payload: NonNullable<SlackSocketEnvelope["payload"]>,
+    envelopeId: string,
   ): Promise<void> {
     const command = payload.command?.replace("/", "") ?? "";
     const chatId = payload.channel_id ?? "";
@@ -497,12 +531,15 @@ export class SlackAdapter extends ChannelAdapter {
     if (!chatId) return;
     if (!this.isAllowed(chatId)) return;
 
-    if (["new", "compact", "help", "whoami"].includes(command)) {
+    if (command) {
       this.emit("command", {
         chatId,
+        chatType: payload.channel_name === "directmessage" ? "dm" : "channel",
         userId,
         userName,
+        messageId: envelopeId,
         command: command as "new" | "compact" | "help",
+        args: payload.text,
       });
     }
   }
@@ -610,9 +647,12 @@ export class SlackAdapter extends ChannelAdapter {
   }
 
   // Shared adapter signature.
-  async sendTypingIndicator(_chatId: string): Promise<void> {
-    // Slack doesn't have a public "typing" API for bots.
-    // Acknowledgment is handled via reactions in handleEvent() instead.
+  async sendTypingIndicator(
+    chatId: string,
+    opts?: SendMessageOptions,
+  ): Promise<void> {
+    if (opts?.replyToMessageId)
+      await this.addReaction(chatId, String(opts.replyToMessageId));
   }
 
   // ─── Streaming ─────────────────────────────────────────────

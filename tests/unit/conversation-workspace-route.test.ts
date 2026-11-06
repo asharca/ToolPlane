@@ -200,42 +200,50 @@ describe("conversation workspace authorization and activity", () => {
     expect(m.port).not.toHaveBeenCalled();
     expect(m.begin).not.toHaveBeenCalled();
   });
-  it("rejects historical terminals and mutations without opening a bridge", async () => {
-    m.agent.mockResolvedValue({
-      runtimeKind: "pi",
-      conversations: [{ ...session, agentRevisionId: null }],
-    });
-    expect(
-      (
-        await GET(
-          new Request("http://localhost/stream"),
-          context(["terminal", "session", "stream"]),
-        )
-      ).status,
-    ).toBe(410);
-    expect(
-      (
-        await POST(
-          new Request("http://localhost/rpc", {
-            method: "POST",
-            body: JSON.stringify({
-              jsonrpc: "2.0",
-              method: "tools/call",
-              params: {
-                name: "write_file",
-                arguments: { path: "notes.txt", content: "changed" },
-              },
+  it.each(["pi", "omp"])(
+    "rejects historical %s terminals and mutations without opening a bridge",
+    async (runtimeKind) => {
+      m.agent.mockResolvedValue({
+        runtimeKind,
+        conversations: [
+          {
+            ...session,
+            agentRevisionId: runtimeKind === "omp" ? "retained-revision" : null,
+          },
+        ],
+      });
+      expect(
+        (
+          await GET(
+            new Request("http://localhost/stream"),
+            context(["terminal", "session", "stream"]),
+          )
+        ).status,
+      ).toBe(410);
+      expect(
+        (
+          await POST(
+            new Request("http://localhost/rpc", {
+              method: "POST",
+              body: JSON.stringify({
+                jsonrpc: "2.0",
+                method: "tools/call",
+                params: {
+                  name: "write_file",
+                  arguments: { path: "notes.txt", content: "changed" },
+                },
+              }),
             }),
-          }),
-          context(),
-        )
-      ).status,
-    ).toBe(410);
-    expect(m.readHistorical).not.toHaveBeenCalled();
-    expect(m.mapping).not.toHaveBeenCalled();
-    expect(m.port).not.toHaveBeenCalled();
-    expect(m.begin).not.toHaveBeenCalled();
-  });
+            context(),
+          )
+        ).status,
+      ).toBe(410);
+      expect(m.readHistorical).not.toHaveBeenCalled();
+      expect(m.mapping).not.toHaveBeenCalled();
+      expect(m.port).not.toHaveBeenCalled();
+      expect(m.begin).not.toHaveBeenCalled();
+    },
+  );
   it("holds sandbox activity until a terminal stream is canceled", async () => {
     const upstreamCancel = vi.fn();
     vi.stubGlobal(

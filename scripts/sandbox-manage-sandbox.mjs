@@ -5,14 +5,12 @@ const raw = process.argv.slice(2);
 const args = raw.filter((item) => !item.startsWith("--"));
 const [command, id, second, third] = args;
 const base = new URL(process.env.TOOLPLANE_URL || "http://127.0.0.1:3000");
-if (
-  base.protocol !== "https:" &&
-  !(
-    ["127.0.0.1", "localhost", "[::1]"].includes(base.hostname) &&
-    base.protocol === "http:"
-  )
-)
-  throw new Error("Use HTTPS for non-loopback connections.");
+if (!["https:", "http:"].includes(base.protocol))
+  throw new Error("Use an explicit HTTP or HTTPS ToolPlane origin.");
+if (base.protocol === "http:")
+  console.error(
+    "Warning: HTTP sends your account token and sandbox content without encryption. Use only a trusted debugging network.",
+  );
 if (base.username || base.password || base.search || base.hash)
   throw new Error("Use an origin without credentials or query parameters.");
 const token = process.env.TOOLPLANE_API_TOKEN;

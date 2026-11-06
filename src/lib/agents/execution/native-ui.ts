@@ -1,3 +1,4 @@
+import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
 import "server-only";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
@@ -212,6 +213,7 @@ type Dialog = {
 };
 export type NativeUiProjection = {
   lease?: string;
+  executionStage?: AgentExecutionStage;
   dialogs: Dialog[];
   todos: z.infer<typeof Todo>[];
   uiEvents: Request[];
@@ -222,6 +224,7 @@ export function nativeUiProjection(value: unknown): NativeUiProjection {
   const v = value as Partial<NativeUiProjection> | null;
   return {
     lease: v?.lease,
+    executionStage: v?.executionStage,
     dialogs: v?.dialogs ?? [],
     todos: v?.todos ?? [],
     uiEvents: v?.uiEvents ?? [],

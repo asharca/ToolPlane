@@ -1,10 +1,10 @@
 // @vitest-environment node
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
-import { SSH_PRIVATE_HOSTS_SETTING_KEY } from "@/lib/admin/settings";
+import { PRIVATE_HOSTS_SETTING_KEY } from "@/lib/admin/settings";
 import { resolveSshAddress } from "@/lib/sandboxes/ssh-servers";
 
-const key = SSH_PRIVATE_HOSTS_SETTING_KEY;
+const key = PRIVATE_HOSTS_SETTING_KEY;
 const allow = (value: string) =>
   db.systemSetting.upsert({
     where: { key },

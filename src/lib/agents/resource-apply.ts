@@ -115,7 +115,7 @@ async function currentTarget(
     where: {
       id: scope.agentId,
       workspaceId: scope.workspaceId,
-      runtimeKind: { in: ["pi-sdk", "omp"] },
+      runtimeKind: { in: ["pi-sdk"] },
       retiredAt: null,
       publicRuntimeAllocation: { is: null },
     },

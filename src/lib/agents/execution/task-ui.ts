@@ -71,7 +71,11 @@ export async function updateTaskUi(
       throw new TaskNotFoundError();
     const { projection, result } = applyNativeUiAction(
       work && !nativeUiProjection(row.uiProjection).lease
-        ? { ...nativeUiProjection(work.uiProjection), activities: [] }
+        ? {
+            ...nativeUiProjection(work.uiProjection),
+            executionStage: nativeUiProjection(row.uiProjection).executionStage,
+            activities: [],
+          }
         : row.uiProjection,
       lease,
       row.deadlineAt.getTime(),

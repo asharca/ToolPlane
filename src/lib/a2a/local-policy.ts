@@ -49,6 +49,7 @@ export function localEntryOwnerKey(
     actorId,
     entry.kind,
     entry.sourceId,
+    ...(entry.conversationId ? [entry.conversationId] : []),
   );
 }
 export async function assertLocalActor(
@@ -116,7 +117,6 @@ export async function localTarget(
       runtimeKind: true,
       a2aInboundEnabled: true,
       a2aOutboundEnabled: true,
-      providerId: true,
       sandboxes: {
         select: {
           sandboxId: true,
@@ -136,7 +136,7 @@ export async function localTarget(
       subAgents: { orderBy: { childId: "asc" }, select: { childId: true } },
     },
   });
-  if (agent?.runtimeKind !== "pi-sdk" && agent?.runtimeKind !== "omp")
+  if (agent?.runtimeKind !== "pi-sdk")
     throw unavailable("SUBAGENT_RUNTIME_UNAVAILABLE");
   if (!entry && !agent.a2aInboundEnabled)
     throw unavailable("A2A_INBOUND_DISABLED");
@@ -154,10 +154,13 @@ export async function localTarget(
   const sandbox = agent.sandboxes[0];
   if (!config.providerId || !config.model)
     throw unavailable("SUBAGENT_MODEL_REQUIRED");
-  if (
-    sandbox.sandboxId !== config.sandboxTemplateId ||
-    agent.providerId !== config.providerId
-  )
+  // A pending draft selection is not a revocation of the published provider.
+  const provider = await tx.modelProvider.findFirst({
+    where: { id: config.providerId, workspaceId },
+    select: { apiKey: true },
+  });
+  if (!provider?.apiKey.trim()) throw unavailable("SUBAGENT_MODEL_REQUIRED");
+  if (sandbox.sandboxId !== config.sandboxTemplateId)
     throw unavailable("SUBAGENT_REVISION_OUTDATED");
   const skills = config.skills
     .filter((skill) =>
@@ -323,7 +326,11 @@ export async function createLocalEntryGrant(
           select: { agentRevisionId: true, legacyRevisionUnresolved: true },
         })
       : await tx.conversation.findFirst({
-          where: { id: entry.sourceId, agentId, agent: { workspaceId } },
+          where: {
+            id: entry.conversationId ?? entry.sourceId,
+            agentId,
+            agent: { workspaceId },
+          },
           select: { agentRevisionId: true, legacyRevisionUnresolved: true },
         });
   if (!owner?.agentRevisionId || owner.legacyRevisionUnresolved)

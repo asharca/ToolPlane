@@ -3,7 +3,7 @@ import { AnimatedBadge } from "@/components/motion/animated-badge";
 
 import { ButtonLink, Button } from "@/components/motion/button";
 
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useMemo, useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 
 import { Eye, KeyRound, Loader2, RefreshCw } from "lucide-react";
@@ -15,6 +15,8 @@ import {
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { McpSharedChangeConfirmation } from "./McpSharedChangeConfirmation";
 import { McpHttpConsent } from "./McpHttpConsent";
+import { RemoteMcpTransportNotice } from "./RemoteMcpTransportNotice";
+import { parseMcpJsonConfig } from "@/lib/workspace/custom-mcp";
 import {
   McpNetworkModeControl,
   type McpNetworkMode,
@@ -38,6 +40,7 @@ export function McpJsonConfigEditor({
   variablesHref,
   configuredVariables = 0,
   remote = false,
+  allowHttp,
 }: {
   slug: string;
   deploymentId: string;
@@ -48,6 +51,7 @@ export function McpJsonConfigEditor({
   variablesHref?: string;
   configuredVariables?: number;
   remote?: boolean;
+  allowHttp: boolean;
 }) {
   const t = useTranslations("console.mcp");
   const [state, formAction, isPending] = useActionState<
@@ -61,6 +65,17 @@ export function McpJsonConfigEditor({
   const [lastEditAt, setLastEditAt] = useState(0);
   const [network, setNetwork] = useState<McpNetworkMode>(initialNetwork);
   const error = errorMessage(state.error, t) ?? revealError;
+  const remoteUrl = useMemo(() => {
+    if (!remote) return null;
+    try {
+      const parsed = parseMcpJsonConfig(config, undefined, {
+        allowUnsafeHttp: true,
+      });
+      return parsed.source === "remote" ? parsed.ref : null;
+    } catch {
+      return null;
+    }
+  }, [config, remote]);
 
   const revealConfig = () => {
     setRevealError(null);
@@ -127,7 +142,10 @@ export function McpJsonConfigEditor({
           impactedObjects={state.impactedObjects}
         />
         {remote ? (
-          <McpHttpConsent />
+          <div className="space-y-3">
+            <RemoteMcpTransportNotice url={remoteUrl} />
+            {!allowHttp ? <McpHttpConsent /> : null}
+          </div>
         ) : (
           <McpNetworkModeControl
             value={network}

@@ -16,10 +16,14 @@ import { AdminPage, AdminPageHeader } from "@/components/admin/AdminUI";
 import { McpRuntimeSettingsForm } from "@/components/admin/McpRuntimeSettingsForm";
 import { AgentConcurrencySettingsForm } from "@/components/admin/AgentConcurrencySettingsForm";
 import { AgentSandboxAutoStopSettingsForm } from "@/components/admin/AgentSandboxAutoStopSettingsForm";
-import { RemoteMcpPrivateHostsSettingsForm } from "@/components/admin/RemoteMcpPrivateHostsSettingsForm";
-import { SshPrivateHostsSettingsForm } from "@/components/admin/SshPrivateHostsSettingsForm";
+import { PrivateHostsSettingsForm } from "@/components/admin/PrivateHostsSettingsForm";
 import { RuntimeSettingsForm } from "@/components/admin/RuntimeSettingsForm";
 import { SkillImportSettingsForm } from "@/components/admin/SkillImportSettingsForm";
+import { TransportSettingsForm } from "@/components/admin/TransportSettingsForm";
+import {
+  TRANSPORT_SETTINGS_KEY,
+  getTransportSettings,
+} from "@/lib/admin/transport-settings";
 import {
   AGENT_CONCURRENCY_SETTING_KEY,
   getAgentConcurrencySettings,
@@ -28,15 +32,13 @@ import {
   MAX_AGENT_CONCURRENCY,
   MAX_TOTAL_AGENT_CONCURRENCY,
   MCP_STARTUP_TIMEOUTS_SETTING_KEY,
-  REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY,
+  PRIVATE_HOSTS_SETTING_KEY,
   SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
-  SSH_PRIVATE_HOSTS_SETTING_KEY,
   getSkillImportSettings,
   MAX_MCP_STARTUP_TIMEOUT_MS,
   MIN_MCP_STARTUP_TIMEOUT_MS,
   resolveMcpStartupTimeoutSettings,
-  resolveRemoteMcpPrivateHostsSettings,
-  resolveSshPrivateHostsSettings,
+  resolvePrivateHostsSettings,
 } from "@/lib/admin/settings";
 
 export const dynamic = "force-dynamic";
@@ -48,19 +50,19 @@ export default async function AdminSettingsPage() {
     attachmentLimit,
     skillImportSettings,
     mcpStartupTimeouts,
-    remoteMcpPrivateHosts,
-    sshPrivateHosts,
+    privateHosts,
     agentConcurrency,
     agentSandboxAutoStop,
+    transportSettings,
   ] = await Promise.all([
     getTranslations("admin"),
     resolveAgentAttachmentLimit(),
     getSkillImportSettings(),
     resolveMcpStartupTimeoutSettings(),
-    resolveRemoteMcpPrivateHostsSettings(),
-    resolveSshPrivateHostsSettings(),
+    resolvePrivateHostsSettings(),
     getAgentConcurrencySettings(),
     getAgentSandboxAutoStopSettings(),
+    getTransportSettings(),
   ]);
   const [ops, locale, changes] = await Promise.all([
     getTranslations("adminOps"),
@@ -70,9 +72,9 @@ export default async function AdminSettingsPage() {
       AGENT_SANDBOX_AUTO_STOP_SETTING_KEY,
       AGENT_ATTACHMENT_LIMIT_SETTING_KEY,
       MCP_STARTUP_TIMEOUTS_SETTING_KEY,
-      REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY,
-      SSH_PRIVATE_HOSTS_SETTING_KEY,
+      PRIVATE_HOSTS_SETTING_KEY,
       SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
+      TRANSPORT_SETTINGS_KEY,
     ]),
   ]);
   const section = (key: string, children: ReactNode) => {
@@ -139,6 +141,10 @@ export default async function AdminSettingsPage() {
           />,
         )}
         {section(
+          TRANSPORT_SETTINGS_KEY,
+          <TransportSettingsForm {...transportSettings} />,
+        )}
+        {section(
           MCP_STARTUP_TIMEOUTS_SETTING_KEY,
           <McpRuntimeSettingsForm
             idleTimeoutMs={mcpStartupTimeouts.idleTimeoutMs}
@@ -149,17 +155,10 @@ export default async function AdminSettingsPage() {
           />,
         )}
         {section(
-          REMOTE_MCP_PRIVATE_HOSTS_SETTING_KEY,
-          <RemoteMcpPrivateHostsSettingsForm
-            value={remoteMcpPrivateHosts.value}
-            source={remoteMcpPrivateHosts.source}
-          />,
-        )}
-        {section(
-          SSH_PRIVATE_HOSTS_SETTING_KEY,
-          <SshPrivateHostsSettingsForm
-            value={sshPrivateHosts.value}
-            source={sshPrivateHosts.source}
+          PRIVATE_HOSTS_SETTING_KEY,
+          <PrivateHostsSettingsForm
+            value={privateHosts.value}
+            source={privateHosts.source}
           />,
         )}
         {section(

@@ -152,6 +152,22 @@ describe("GitHub registry source boundaries", () => {
     },
   );
 
+  it("resolves a branch when commit details exceed general response limits", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({ sha: commit, patch: "x".repeat(17 * 1024 * 1024) }),
+      ),
+    );
+    await expect(
+      new GithubRegistryTransport(
+        "acme/source",
+        "private-token",
+        "private",
+      ).resolveCommit("acme/source", "main"),
+    ).resolves.toBe(commit);
+  });
+
   it("keeps branch resolution pinned across a permanent repository rename", async () => {
     const branch = "release/next";
     const suffix = `/commits/${encodeURIComponent(branch)}`;

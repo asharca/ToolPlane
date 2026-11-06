@@ -14,6 +14,7 @@ export type LogContext = {
   deploymentId?: string;
   agentId?: string;
   runId?: string;
+  taskId?: string;
   conversationId?: string;
   channelId?: string;
   providerId?: string;
@@ -50,6 +51,7 @@ export function withLogContext<T>(
     "deploymentId",
     "agentId",
     "runId",
+    "taskId",
     "conversationId",
     "channelId",
     "providerId",

@@ -1,6 +1,7 @@
 "use client";
 import { SidebarToolbar } from "@/components/dashboard/SidebarToolbar";
 import { useSidebarScroll } from "@/components/dashboard/useSidebarScroll";
+import { notify } from "@/components/dashboard/Toaster";
 
 import { Button } from "@/components/motion/button";
 
@@ -242,6 +243,11 @@ type ConversationDetail = ConversationSummary & {
   sandbox?: WorkItem["sandbox"];
   runtimeKind?: string;
   modelName?: string | null;
+  modelOverride?: {
+    providerId: string;
+    model: string;
+    providerName: string | null;
+  } | null;
   contextWindow?: number | null;
   agentRevisionId?: string | null;
   agentRevisionVersion?: number | null;
@@ -313,7 +319,7 @@ const MESSAGEABLE_STATUSES = new Set([
   "completed",
   "failed",
 ]);
-const ARCHIVABLE_STATUSES = new Set([
+const DELETABLE_STATUSES = new Set([
   "idle",
   "completed",
   "failed",
@@ -1168,6 +1174,7 @@ export function WorkspaceWork({
     null;
   const workAgents = agents.filter((item) => item.supportsWork);
   const [items, setItems] = useState(sessions);
+  const deletedWorkSessionIds = useRef(new Set<string>());
   // Server lists are authoritative after navigation/refresh; optimistic
   // entries survive until the server returns them.
   const [syncedSessions, setSyncedSessions] = useState(sessions);
@@ -1177,7 +1184,9 @@ export function WorkspaceWork({
       const known = new Set(sessions.map((item) => item.id));
       return [
         ...current.filter((item) => item.optimistic && !known.has(item.id)),
-        ...sessions,
+        ...sessions.filter(
+          (item) => !deletedWorkSessionIds.current.has(item.id),
+        ),
       ];
     });
   }
@@ -1193,6 +1202,13 @@ export function WorkspaceWork({
   const [conversationBusy, setConversationBusy] = useState(false);
   const [listOptionsOpen, setListOptionsOpen] = useState(false);
   const [sidebarSearch, setSidebarSearch] = useState("");
+  const [fullConversationLists, setFullConversationLists] = useState<
+    Record<string, boolean>
+  >({});
+  const [searchExpandedResources, setSearchExpandedResources] = useState<{
+    query: string;
+    ids: string[];
+  } | null>(null);
   const [mobilePane, setMobilePane] = useState<"sessions" | "work">("work");
   const [sidebarOpen, setSidebarOpen] = usePersistentBoolean(
     `toolplane:work-sidebar:${workspaceId}`,
@@ -1229,9 +1245,12 @@ export function WorkspaceWork({
   const [deleteAgentTarget, setDeleteAgentTarget] = useState<WorkAgent | null>(
     null,
   );
-  const [deleteConversationTarget, setDeleteConversationTarget] =
-    useState<ConversationSummary | null>(null);
+  const [deleteConversationTarget, setDeleteConversationTarget] = useState<
+    (ConversationSummary & { workSessionId?: string }) | null
+  >(null);
   const [deleteConversationError, setDeleteConversationError] = useState("");
+  const [deleteConversationPending, setDeleteConversationPending] =
+    useState(false);
   const [groupEditor, setGroupEditor] = useState<{
     id: string | null;
     name: string;
@@ -1409,7 +1428,10 @@ export function WorkspaceWork({
         : "preparing";
   const sessionContextWindow =
     conversation?.contextWindow ?? selected?.contextWindow;
-  const sessionModelName = conversation?.modelName ?? selected?.modelName;
+  const sessionModelName =
+    conversation?.modelOverride?.model ??
+    conversation?.modelName ??
+    selected?.modelName;
   const sessionContextEstimated =
     conversation?.contextWindowEstimated ?? selected?.contextWindowEstimated;
   const renderedHookIds = useMemo(
@@ -1528,7 +1550,14 @@ export function WorkspaceWork({
               label: item.label,
               kind: "bookmark" as const,
             })),
-          ],
+          ].filter(
+            (item, index) =>
+              sidebarSearch.trim() ||
+              fullConversationLists[itemAgent.id] ||
+              index < 5 ||
+              item.id === `session:${selectedWorkSessionId}` ||
+              item.id === `conversation:${conversation?.id}`,
+          ),
         }),
       );
     if (!groupPreferences.groups.length) return agentResources(visibleAgents);
@@ -1546,7 +1575,16 @@ export function WorkspaceWork({
         children: agentResources(groupedAgents.ungrouped),
       },
     ];
-  }, [groupPreferences.groups.length, groupedAgents, t, visibleAgents]);
+  }, [
+    groupPreferences.groups.length,
+    groupedAgents,
+    t,
+    visibleAgents,
+    sidebarSearch,
+    fullConversationLists,
+    selectedWorkSessionId,
+    conversation?.id,
+  ]);
   const filteredSidebarResources = useMemo(() => {
     const query = sidebarSearch.trim().toLocaleLowerCase();
     if (!query) return sidebarResources;
@@ -1564,6 +1602,68 @@ export function WorkspaceWork({
     : selected
       ? `session:${selected.id}`
       : null;
+  const activeResourceIdRef = useRef(activeResourceId);
+  activeResourceIdRef.current = activeResourceId;
+  const expandedResourceIds = useMemo(
+    () =>
+      sidebarSearch.trim() &&
+      searchExpandedResources?.query === sidebarSearch.trim()
+        ? searchExpandedResources.ids
+        : [
+            ...(sidebarSearch.trim()
+              ? filteredSidebarResources.flatMap((resource) => [
+                  resource.id,
+                  ...(resource.children?.map((child) => child.id) ?? []),
+                ])
+              : []),
+            ...groupPreferences.groups
+              .filter((group) => !groupPreferences.collapsed[group.id])
+              .map((group) => `group:${group.id}`),
+            ...(groupPreferences.collapsed[UNGROUPED_SIDEBAR_GROUP_ID]
+              ? []
+              : ["group:ungrouped"]),
+            ...visibleAgents
+              .filter(
+                ({ agent: itemAgent, channels }) =>
+                  expandedAgents[itemAgent.id] ??
+                  (itemAgent.id === activeAgentId || channels.length > 0),
+              )
+              .map(({ agent: itemAgent }) => `agent:${itemAgent.id}`),
+          ],
+    [
+      activeAgentId,
+      expandedAgents,
+      filteredSidebarResources,
+      groupPreferences.collapsed,
+      groupPreferences.groups,
+      searchExpandedResources,
+      sidebarSearch,
+      visibleAgents,
+    ],
+  );
+
+  function persistExpandedResources(ids: string[]) {
+    if (sidebarSearch.trim()) {
+      setSearchExpandedResources({ query: sidebarSearch.trim(), ids });
+      return;
+    }
+    const expanded = new Set(ids);
+    setExpandedAgents(
+      Object.fromEntries(
+        agents.map((item) => [item.id, expanded.has(`agent:${item.id}`)]),
+      ),
+    );
+    setGroupPreferences((current) => ({
+      ...current,
+      collapsed: Object.fromEntries([
+        ...current.groups.map((group) => [
+          group.id,
+          !expanded.has(`group:${group.id}`),
+        ]),
+        [UNGROUPED_SIDEBAR_GROUP_ID, !expanded.has("group:ungrouped")],
+      ]),
+    }));
+  }
 
   async function moveSidebarResource(move: SidebarResourceMove) {
     const [sourceKind, sourceId] = move.itemId.split(":", 2);
@@ -2178,12 +2278,44 @@ export function WorkspaceWork({
     }
   }
 
-  async function archiveWork(id: string) {
-    const response = await fetch(`/api/v1/work-sessions/${id}`, {
-      method: "DELETE",
-    });
-    if (response.ok)
-      window.location.assign(`/app/${encodeURIComponent(slug)}/work`);
+  async function deleteWorkConversation(
+    target: ConversationSummary & { workSessionId: string },
+  ) {
+    const response = await fetch(
+      `/api/v1/work-sessions/${encodeURIComponent(target.workSessionId)}`,
+      {
+        method: "DELETE",
+      },
+    );
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new Error(
+        typeof body?.error === "string"
+          ? body.error
+          : t("deleteConversationError"),
+      );
+    }
+    deletedWorkSessionIds.current.add(target.workSessionId);
+    setItems((current) =>
+      current.filter((item) => item.id !== target.workSessionId),
+    );
+    setDeleteConversationTarget(null);
+    notify(t("conversationDeleted"));
+    if (activeResourceIdRef.current !== `session:${target.workSessionId}`)
+      return;
+    const remaining = visibleAgents.find(
+      (item) => item.agent.id === target.agentId,
+    );
+    const nextSession = remaining?.sessions.find(
+      (item) => item.id !== target.workSessionId,
+    );
+    const nextConversation = remaining?.channels[0];
+    const href = nextSession
+      ? workHref(slug, nextSession.id)
+      : nextConversation
+        ? `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(target.agentId)}&c=${encodeURIComponent(nextConversation.id)}`
+        : `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(target.agentId)}`;
+    router.replace(href, { scroll: false });
   }
 
   async function toggleAgentPin(item: WorkAgent) {
@@ -2396,40 +2528,50 @@ export function WorkspaceWork({
               >
                 {filteredSidebarResources.length ? (
                   <AISidebar
-                    key={JSON.stringify([
-                      groupPreferences.collapsed,
-                      expandedAgents,
-                      sidebarSearch.trim(),
-                    ])}
                     items={filteredSidebarResources}
                     activeId={activeResourceId}
+                    renderAfterRow={(resource) => {
+                      if (sidebarSearch.trim()) return null;
+                      const roots = sidebarResources.flatMap((item) =>
+                        item.id.startsWith("group:")
+                          ? (item.children ?? [])
+                          : [item],
+                      );
+                      const parent = roots.find(
+                        (item) => item.children?.at(-1)?.id === resource.id,
+                      );
+                      if (!parent) return null;
+                      const id = parent.id.slice("agent:".length);
+                      const entry = visibleAgents.find(
+                        ({ agent }) => agent.id === id,
+                      );
+                      if (
+                        !entry ||
+                        entry.sessions.length + entry.channels.length <= 5
+                      )
+                        return null;
+                      return (
+                        <button
+                          type="button"
+                          aria-label={`${fullConversationLists[id] ? t("collapseAll") : t("expandAll")} ${entry.agent.name}`}
+                          onClick={() =>
+                            setFullConversationLists((current) => ({
+                              ...current,
+                              [id]: !current[id],
+                            }))
+                          }
+                          className="ml-10 self-start rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                        >
+                          {fullConversationLists[id]
+                            ? t("collapseAll")
+                            : t("expandAll")}
+                        </button>
+                      );
+                    }}
                     ariaLabel={tAgents("agents")}
                     className={`px-0 [&_[role=treeitem]]:rounded-lg [&_[role=treeitem]]:min-h-10 [&_[aria-selected=true]]:bg-muted [&_[role=treeitem]>span[aria-hidden=true]:empty]:ml-1 [&_[role=treeitem]>span[aria-hidden=true]:empty]:w-0 [&_[role=treeitem]>span[aria-hidden=true]:has(>[data-sidebar-dot])]:ml-1 [&_[role=treeitem]>span[aria-hidden=true]:has(>[data-sidebar-dot])]:w-0 ${sidebarHoverActionsClassName}`}
-                    defaultExpandedIds={[
-                      ...(sidebarSearch.trim()
-                        ? filteredSidebarResources.flatMap((resource) => [
-                            resource.id,
-                            ...(resource.children?.map((child) => child.id) ??
-                              []),
-                          ])
-                        : []),
-                      ...groupPreferences.groups
-                        .filter(
-                          (group) => !groupPreferences.collapsed[group.id],
-                        )
-                        .map((group) => `group:${group.id}`),
-                      ...(groupPreferences.collapsed[UNGROUPED_SIDEBAR_GROUP_ID]
-                        ? []
-                        : ["group:ungrouped"]),
-                      ...visibleAgents
-                        .filter(
-                          ({ agent: itemAgent, channels }) =>
-                            expandedAgents[itemAgent.id] ??
-                            (itemAgent.id === activeAgentId ||
-                              channels.length > 0),
-                        )
-                        .map(({ agent: itemAgent }) => `agent:${itemAgent.id}`),
-                    ]}
+                    expandedIds={expandedResourceIds}
+                    onExpandedIdsChange={persistExpandedResources}
                     onActiveChange={(id) => {
                       setDraftSelectionKey(null);
                       setMobilePane("work");
@@ -2632,7 +2774,8 @@ export function WorkspaceWork({
                       const action = (label: string, run: () => void) => (
                         <button
                           type="button"
-                          onClick={() => {
+                          onClick={(event) => {
+                            event.stopPropagation();
                             controls.close();
                             run();
                           }}
@@ -2682,8 +2825,17 @@ export function WorkspaceWork({
                       }
                       if (kind === "session") {
                         const item = items.find((session) => session.id === id);
-                        return item && ARCHIVABLE_STATUSES.has(item.status)
-                          ? action(t("archive"), () => void archiveWork(id))
+                        return item && DELETABLE_STATUSES.has(item.status)
+                          ? action(t("deleteConversation"), () => {
+                              setDeleteConversationError("");
+                              setDeleteConversationTarget({
+                                id: item.conversationId,
+                                agentId: item.agentId,
+                                title: item.title,
+                                source: null,
+                                workSessionId: item.id,
+                              });
+                            })
                           : null;
                       }
                       if (kind === "conversation") {
@@ -2737,6 +2889,18 @@ export function WorkspaceWork({
                   {controlAgent ? (
                     <span className="hidden max-w-40 truncate rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground sm:inline-block">
                       {controlAgent.name}
+                    </span>
+                  ) : null}
+                  {channelConversation && conversation?.modelOverride ? (
+                    <span
+                      className="max-w-48 truncate rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground"
+                      title={
+                        conversation.modelOverride.providerName ?? undefined
+                      }
+                    >
+                      {tChannels("sessionModelOverride", {
+                        model: conversation.modelOverride.model,
+                      })}
                     </span>
                   ) : null}
                 </div>
@@ -2796,6 +2960,22 @@ export function WorkspaceWork({
                   void refreshSelected();
                   router.refresh();
                 }}
+              />
+            ) : null}
+            {conversation &&
+            channelConversation &&
+            !sessionReadOnly &&
+            controlAgent &&
+            conversation.agentRevisionVersion &&
+            controlAgent.currentRevisionVersion &&
+            conversation.agentRevisionVersion <
+              controlAgent.currentRevisionVersion ? (
+              <RevisionUpgradeNotice
+                url={`/api/v1/agents/${conversation.agentId}/conversations/${conversation.id}/revision`}
+                fromVersion={conversation.agentRevisionVersion}
+                targetVersion={controlAgent.currentRevisionVersion}
+                disabled={conversationBusy || Boolean(busy) || composerPending}
+                onUpgraded={() => router.refresh()}
               />
             ) : null}
 
@@ -2892,7 +3072,10 @@ export function WorkspaceWork({
                     <WorkTranscript
                       agentName={controlAgent?.name ?? t("agent")}
                       modelName={
-                        conversation?.modelName ?? selected?.modelName ?? null
+                        conversation?.modelOverride?.model ??
+                        conversation?.modelName ??
+                        selected?.modelName ??
+                        null
                       }
                       messages={
                         conversation?.messages ?? selected?.messages ?? []
@@ -2982,6 +3165,7 @@ export function WorkspaceWork({
                 key={`${conversation.agentId}:${conversation.id}`}
                 endpoint={`/api/v1/agents/${encodeURIComponent(conversation.agentId)}/conversations/${encodeURIComponent(conversation.id)}/execution`}
                 showStatus
+                onBusyChange={setConversationBusy}
                 renderedActivityIds={renderedHookIds}
                 settingsHref={agentSettingsHref(
                   slug,
@@ -3062,7 +3246,6 @@ export function WorkspaceWork({
                     workSessionId={selected?.id}
                     conversationId={selected?.conversationId}
                     commands={commands}
-                    runtimeKind={commandRuntimeKind}
                     draft={draft}
                     onDraftChange={setDraft}
                     attachments={attachments}
@@ -3241,18 +3424,31 @@ export function WorkspaceWork({
       <CenterMorphModal
         open={Boolean(deleteConversationTarget)}
         onOpenChange={(open) => {
-          if (!open) setDeleteConversationTarget(null);
+          if (!open && !deleteConversationPending)
+            setDeleteConversationTarget(null);
         }}
       >
         <CenterMorphModalContent
-          ariaLabel={tAgents("deleteConversation")}
+          ariaLabel={
+            deleteConversationTarget?.workSessionId
+              ? t("deleteConversation")
+              : tAgents("deleteConversation")
+          }
           closeButtonLabel={tAgents("close")}
           className="max-w-md"
         >
-          <DialogHeader title={tAgents("deleteConversation")} />
+          <DialogHeader
+            title={
+              deleteConversationTarget?.workSessionId
+                ? t("deleteConversation")
+                : tAgents("deleteConversation")
+            }
+          />
           <DialogBody>
             <p className="text-sm text-muted-foreground">
-              {tAgents("deleteConversationDescription")}
+              {deleteConversationTarget?.workSessionId
+                ? t("deleteConversationDescription")
+                : tAgents("deleteConversationDescription")}
             </p>
             {deleteConversationError ? (
               <p role="alert" className="mt-3 text-sm text-destructive">
@@ -3262,10 +3458,21 @@ export function WorkspaceWork({
           </DialogBody>
           <form
             action={async (formData) => {
+              if (!deleteConversationTarget || deleteConversationPending)
+                return;
+              const target = deleteConversationTarget;
+              setDeleteConversationPending(true);
               setDeleteConversationError("");
               try {
-                const result = await deleteConversationAction(formData);
-                if (result.error) setDeleteConversationError(result.error);
+                if (target.workSessionId) {
+                  await deleteWorkConversation({
+                    ...target,
+                    workSessionId: target.workSessionId,
+                  });
+                } else {
+                  const result = await deleteConversationAction(formData);
+                  if (result.error) setDeleteConversationError(result.error);
+                }
               } catch (cause) {
                 unstable_rethrow(cause);
                 setDeleteConversationError(
@@ -3273,6 +3480,8 @@ export function WorkspaceWork({
                     ? cause.message
                     : operationsT("failed"),
                 );
+              } finally {
+                setDeleteConversationPending(false);
               }
             }}
           >

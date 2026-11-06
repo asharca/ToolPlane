@@ -17,37 +17,14 @@ import { isLocalGrant, type TaskGrant } from "@/lib/a2a/principal";
 import { NativeUiResponse, NativeUiProjectionLimitError } from "./native-ui";
 import { readTaskUi, respondTaskUi } from "./task-ui";
 import { uiStatus } from "./ui-http";
+import { taskRuntimeFailure } from "@/lib/agents/runtime-failure";
 
-const failureCodes: Record<string, true> = {
-  PI_SANDBOX_BUSY: true,
-  PI_STORAGE_QUOTA_EXCEEDED: true,
-  PI_EXECUTION_FAILED: true,
-  PI_SESSION_MISSING: true,
-  PI_SESSION_CORRUPT: true,
-  PI_MODEL_UNAVAILABLE: true,
-  PI_INPUT_INVALID: true,
-  PI_CONFIG_INVALID: true,
-  PI_PROCESS_STOP_UNCONFIRMED: true,
-  PI_NODE_UNSUPPORTED: true,
-  PI_SQLITE_UNAVAILABLE: true,
-  PI_HARNESS_VERSION_MISMATCH: true,
-  PI_RECOVERY_CHECK_FAILED: true,
-  PI_PROTOCOL_ERROR: true,
-  PI_TARGET_UNAVAILABLE: true,
-  PI_OUTPUT_TRUNCATED: true,
-  PI_SDK_REQUEST_FAILED: true,
-  MCP_UNREACHABLE: true,
-  MCP_GRANT_REVOKED: true,
-  MCP_TOOL_FORBIDDEN: true,
-};
-function executionErrorCode(snapshot: unknown) {
-  const task = Task.fromJSON(snapshot);
-  for (const part of task.status?.message?.parts ?? []) {
-    if (part.content?.$case !== "text") continue;
-    const code = part.content.value.split(":", 1)[0];
-    if (Object.hasOwn(failureCodes, code)) return code;
-  }
-  return "AGENT_EXECUTION_FAILED";
+function executionFailure(snapshot: unknown) {
+  return (
+    taskRuntimeFailure(Task.fromJSON(snapshot)) ?? {
+      code: "AGENT_EXECUTION_FAILED",
+    }
+  );
 }
 const reply = (body: unknown, status = 200) =>
   Response.json(body, {
@@ -126,7 +103,7 @@ export async function handleConversationExecution(
       const binding = await db.a2AEntryBinding.findFirst({
         where: {
           sourceId: conversation.id,
-          kind: { in: ["chat", "channel", "control"] },
+          kind: { in: ["chat", "channel", "control", "trigger"] },
           context: {
             workspaceId: agent.workspaceId,
             agentId,
@@ -202,7 +179,7 @@ export async function handleConversationExecution(
           ...(status === "failed"
             ? {
                 error: {
-                  code: executionErrorCode(task.snapshot),
+                  ...executionFailure(task.snapshot),
                   message:
                     "执行未能完成。请检查模型或工具连接后再发送新消息；本次执行不会自动重试。",
                 },

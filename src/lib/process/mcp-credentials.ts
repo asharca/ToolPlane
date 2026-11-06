@@ -1,4 +1,5 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { db } from "@/lib/db";
 import { decryptSecretText, encryptSecretText } from "@/lib/security/secrets";
 import { mcpDefinitionChecksum } from "./mcp-definition";
@@ -107,6 +108,7 @@ export async function resolveMcpConnectionSpawnSpec(input: {
   const spec = resolveSpawnSpec(
     { ...deployment, installCfg: { ...config(deployment.installCfg), env } },
     input.rebuild,
+    await getTransportSettings(),
   );
   return { spec, redactionValues: Object.values(env).filter(Boolean) };
 }

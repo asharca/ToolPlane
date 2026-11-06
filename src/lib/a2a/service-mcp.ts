@@ -1,4 +1,6 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import { a2aTransportBodyBytes } from "@/lib/transport-policy";
 import { z } from "zod";
 import {
   GetTaskRequest,
@@ -81,7 +83,7 @@ export async function executeServiceMcpTool(
       : name === "a2a_list_tasks"
         ? "ListTasks"
         : "CancelTask";
-  validateParams(method, input);
+  validateParams(method, input, ["text/plain"], await getTransportSettings());
   const handler = new NativeA2AHandler(grant, await buildAgentCard(grant));
   const context = new ServerCallContext({
     requestedVersion: A2A_PROTOCOL_VERSION,
@@ -136,7 +138,14 @@ export async function handleServiceMcp(req: Request, endpointId: string) {
         "application/json"
       )
         throw new A2AHttpError(415, "Expected JSON.");
-      const parsed = await parseJson(req, Rpc, A2A_LIMITS.bodyBytes);
+      const parsed = await parseJson(
+        req,
+        Rpc,
+        Math.max(
+          A2A_LIMITS.bodyBytes,
+          a2aTransportBodyBytes(await getTransportSettings()),
+        ),
+      );
       if (!parsed.ok)
         throw new A2AHttpError(
           parsed.reason === "too_large" ? 413 : 400,

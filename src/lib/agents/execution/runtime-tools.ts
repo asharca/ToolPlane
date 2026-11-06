@@ -1,4 +1,6 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import { a2aTransportBodyBytes } from "@/lib/transport-policy";
 import { z } from "zod";
 import { toJsonRpcError } from "@a2a-js/sdk/errors";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -10,7 +12,7 @@ import {
 import { db } from "@/lib/db";
 import { agentRuntimeTokenFromRequest } from "@/lib/agents/runtime-access";
 import { parseJson } from "@/lib/agents/public-api/body";
-import { withLogContext } from "@/lib/observability/context";
+import { withLogContext, enrichLogContext } from "@/lib/observability/context";
 import {
   recordA2AEvent,
   a2aTaskOutcome,
@@ -60,6 +62,13 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
         { error: "Task authority expired" },
         { status: 403, headers },
       );
+    enrichLogContext({
+      taskId: authority.row.id,
+      workspaceId: authority.grant.workspaceId,
+      agentId: authority.grant.agentId,
+      conversationId:
+        token.conversationId ?? authority.grant.entryPolicy?.conversationId,
+    });
     if (!admit(taskId))
       return Response.json(
         { error: "Request limit" },
@@ -73,7 +82,14 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
         { error: "Expected JSON" },
         { status: 415, headers },
       );
-    const parsed = await parseJson(req, Rpc, LOCAL_LIMITS.requestBytes);
+    const parsed = await parseJson(
+      req,
+      Rpc,
+      Math.max(
+        LOCAL_LIMITS.requestBytes,
+        a2aTransportBodyBytes(await getTransportSettings()),
+      ),
+    );
     if (!parsed.ok)
       return Response.json(
         { error: "Invalid MCP request" },
@@ -91,10 +107,7 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
         { error: "Credentials are not task content" },
         { status: 400, headers },
       );
-    if (
-      authority.row.executionBackend !== "pi-sdk" &&
-      authority.row.executionBackend !== "omp"
-    )
+    if (authority.row.executionBackend !== "pi-sdk")
       return Response.json(
         { error: "Retired local execution is read-only." },
         { status: 410, headers },

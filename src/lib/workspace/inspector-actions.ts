@@ -7,7 +7,7 @@ import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { effectiveStatus } from "@/lib/process/supervisor";
 import type { SpawnSpec } from "@/lib/process/spawn-spec";
 import { resolveMcpConnectionSpawnSpec } from "@/lib/process/mcp-credentials";
-import { resolveRemoteMcpPrivateHostsSettings } from "@/lib/admin/settings";
+import { resolvePrivateHostsSettings } from "@/lib/admin/settings";
 import {
   listMcpToolsViaSandbox,
   mcpRpcViaSandbox,
@@ -147,7 +147,7 @@ async function inspectorContext(input: {
       });
       if (spec.kind !== "remote") return { error: "unsupportedTransport" };
       remote = spec;
-      remotePrivateHosts = (await resolveRemoteMcpPrivateHostsSettings()).value;
+      remotePrivateHosts = (await resolvePrivateHostsSettings()).value;
     } catch {
       return { error: "connectorFailed" };
     }

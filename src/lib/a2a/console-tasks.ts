@@ -1,5 +1,9 @@
 import { nativeUiView } from "@/lib/agents/execution/native-ui";
 import "server-only";
+import { createHash } from "node:crypto";
+import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
+import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
 import { Task } from "@a2a-js/sdk";
 import {
   TaskNotFoundError,
@@ -7,6 +11,7 @@ import {
 } from "@a2a-js/sdk/errors";
 import { db } from "@/lib/db";
 import {
+  assertLocalActor,
   assertLocalGrant,
   createLocalEntryGrant,
   createLocalRootGrant,
@@ -19,6 +24,7 @@ import {
   isRemoteGrant,
   isWorkspaceGrant,
   type TaskGrant,
+  type LocalA2AGrant,
 } from "./principal";
 import { remoteTarget } from "./remote-policy";
 import { getTaskRow } from "./store";
@@ -55,6 +61,54 @@ export type ConsoleTaskTree = {
   selectedTask: Record<string, unknown>;
 };
 
+type ConsoleLocalTarget = { name: string; binding: string; targets: string[] };
+
+/** History has read authority, never a freshly minted execution grant. */
+async function retainedOmpTarget(grant: LocalA2AGrant) {
+  const agent = await db.agent.findFirst({
+    where: {
+      ...ORDINARY_AGENT_FILTER,
+      id: grant.agentId,
+      workspaceId: grant.workspaceId,
+      runtimeKind: "omp",
+    },
+    select: {
+      name: true,
+      a2aOutboundEnabled: true,
+      subAgents: { select: { childId: true } },
+    },
+  });
+  const revision = await db.agentRevision.findFirst({
+    where: { id: grant.agentRevisionId, agentId: grant.agentId },
+    select: { config: true },
+  });
+  if (!agent || !revision) throw new TaskNotFoundError();
+  const config = AgentRevisionConfigSchema.parse(revision.config);
+  if (
+    config.runtimeKind !== "omp" ||
+    config.ompConfigChecksum !== marketReleaseChecksum(config.ompConfig)
+  )
+    throw new TaskNotFoundError();
+  return {
+    name: agent.name,
+    binding: createHash("sha256")
+      .update(JSON.stringify([grant.agentId, grant.agentRevisionId]))
+      .digest("hex"),
+    targets:
+      agent.a2aOutboundEnabled && config.a2a.outboundEnabled
+        ? config.a2a.policy.targets
+            .filter(
+              (target) =>
+                target.kind === "local" &&
+                agent.subAgents.some(
+                  (link) => link.childId === target.targetId,
+                ),
+            )
+            .map((target) => target.targetId)
+        : [],
+  };
+}
+
 /** Knowing a child ID never authorizes it: enter through an owned, non-delegated root. */
 export async function getConsoleTaskTree(
   ctx: ConsoleActor,
@@ -81,13 +135,28 @@ export async function getConsoleTaskTree(
   });
   if (!stored) throw new TaskNotFoundError();
   const entry = stored.grant as unknown as TaskGrant;
+  const historical = stored.executionBackend === "omp";
+  if (historical) {
+    await assertLocalActor(db, ctx.workspaceId, ctx.actorId);
+    if (
+      !isLocalGrant(entry) ||
+      entry.actorId !== ctx.actorId ||
+      entry.workspaceId !== ctx.workspaceId ||
+      entry.agentId !== ctx.agentId ||
+      entry.ownerKey !==
+        localOwnerKey(ctx.workspaceId, ctx.agentId, ctx.actorId)
+    )
+      throw new TaskNotFoundError();
+  }
   if (isLocalGrant(entry) && entry.entryPolicy && entry.actorId !== ctx.actorId)
     throw new TaskNotFoundError();
-  if (isLocalGrant(entry) && entry.entryPolicy) await assertLocalGrant(entry);
-  const authority =
-    isLocalGrant(entry) &&
-    entry.entryPolicy &&
-    entry.ancestorTaskIds.length === 0
+  if (!historical && isLocalGrant(entry) && entry.entryPolicy)
+    await assertLocalGrant(entry);
+  const authority = historical
+    ? entry
+    : isLocalGrant(entry) &&
+        entry.entryPolicy &&
+        entry.ancestorTaskIds.length === 0
       ? entry.ownerKey ===
         localOwnerKey(ctx.workspaceId, ctx.agentId, ctx.actorId)
         ? entry
@@ -99,7 +168,7 @@ export async function getConsoleTaskTree(
             entry.entryPolicy,
           )
       : await createLocalRootGrant(ctx.workspaceId, ctx.agentId, ctx.actorId);
-  const root = await getTaskRow(authority, rootId);
+  const root = historical ? stored : await getTaskRow(authority, rootId);
   if (root.parentTaskId || root.rootTaskId !== root.id)
     throw new TaskNotFoundError();
   const rows = await db.a2ATask.findMany({
@@ -119,7 +188,7 @@ export async function getConsoleTaskTree(
       "Task tree exceeds its configured limit.",
     );
   const visible = new Map<string, (typeof rows)[number]>();
-  const targets = new Map<string, Awaited<ReturnType<typeof localTarget>>>();
+  const targets = new Map<string, ConsoleLocalTarget>();
   const nodes: ConsoleTaskTree["nodes"] = [];
   for (const row of rows) {
     const grant = row.grant as unknown as TaskGrant;
@@ -211,14 +280,17 @@ export async function getConsoleTaskTree(
     let target = targets.get(grant.agentId);
     if (!target) {
       try {
-        target = await localTarget(
-          db,
-          ctx.workspaceId,
-          grant.agentId,
-          row.id === root.id && grant.ancestorTaskIds.length === 0
-            ? grant.entryPolicy
-            : "delegation",
-        );
+        target =
+          row.executionBackend === "omp"
+            ? await retainedOmpTarget(grant)
+            : await localTarget(
+                db,
+                ctx.workspaceId,
+                grant.agentId,
+                row.id === root.id && grant.ancestorTaskIds.length === 0
+                  ? grant.entryPolicy
+                  : "delegation",
+              );
         targets.set(grant.agentId, target);
       } catch {
         continue;

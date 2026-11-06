@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useTranslations } from "next-intl";
+import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
 import type {
   A2ATaskDetail as A2ATaskDetailView,
   A2ATaskNode,
@@ -164,6 +165,7 @@ export function A2ATaskConversation({
 
 export function A2ATaskDetail({ detail }: { detail: A2ATaskDetailView }) {
   const t = useTranslations("console.observability.viewer");
+  const describeRuntimeError = useRuntimeErrorText();
   const { summary } = detail;
   return (
     <div className="min-w-0 space-y-6">
@@ -191,7 +193,9 @@ export function A2ATaskDetail({ detail }: { detail: A2ATaskDetailView }) {
           </p>
         )}
         {summary.error && (
-          <p className="text-sm text-destructive">{summary.error}</p>
+          <p className="text-sm text-destructive">
+            {describeRuntimeError(summary.error)?.text ?? summary.error}
+          </p>
         )}
       </header>
       <section className="space-y-3">

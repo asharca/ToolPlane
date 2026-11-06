@@ -1,4 +1,9 @@
 import "server-only";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
+import {
+  DEFAULT_A2A_FILE_BYTES,
+  permitsTransportProtocol,
+} from "@/lib/transport-policy";
 import {
   createHash,
   createHmac,
@@ -39,11 +44,9 @@ import { remoteTarget } from "./remote-policy";
 import { assertEntryPolicy } from "@/lib/agents/execution/entry-policy";
 
 export const TASK_FILE_LIMITS = {
-  fileBytes: 10 * 1024 * 1024,
   taskBytes: 100 * 1024 * 1024,
   workspaceBytes: 1024 * 1024 * 1024,
   filesPerTask: 20,
-  inlineBytes: 32 * 1024,
   retentionMs: 7 * 24 * 60 * 60 * 1000,
   ticketMs: 15 * 60 * 1000,
   uploadMs: 15 * 60 * 1000,
@@ -307,6 +310,7 @@ async function storeAuthorizedTaskFile(
   if (!/^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/.test(mimeType) || mimeType.length > 160)
     throw new UnsupportedOperationError("Invalid file media type.");
   const authority = await authorize();
+  const { a2aFileBytes: fileBytes } = await getTransportSettings();
   const token = randomUUID();
   const safeName = safeAttachmentFilename(filename);
   const path = `objects/${token}-${safeName}`;
@@ -316,7 +320,7 @@ async function storeAuthorizedTaskFile(
       where: { taskId_sourceKey: { taskId, sourceKey } },
     });
     if (existing?.status === "ready")
-      return { file: ready(existing), upload: false };
+      return { file: ready(existing), upload: false as const };
     if (existing?.status === "uploading")
       throw new UnsupportedOperationError(
         "File transfer is already in progress.",
@@ -325,15 +329,17 @@ async function storeAuthorizedTaskFile(
       { taskCount: bigint; taskBytes: bigint; workspaceBytes: bigint }[]
     >`
       SELECT COUNT(*) FILTER (WHERE "taskId"=${taskId}) AS "taskCount",
-        COALESCE(SUM(CASE WHEN "taskId"=${taskId} AND "storagePath" IS NOT NULL THEN COALESCE("size", ${TASK_FILE_LIMITS.fileBytes}) ELSE 0 END), 0) AS "taskBytes",
-        COALESCE(SUM(CASE WHEN "storagePath" IS NOT NULL THEN COALESCE("size", ${TASK_FILE_LIMITS.fileBytes}) ELSE 0 END), 0) AS "workspaceBytes"
+        COALESCE(SUM(CASE WHEN "taskId"=${taskId} AND "storagePath" IS NOT NULL THEN COALESCE("size", ${DEFAULT_A2A_FILE_BYTES}) ELSE 0 END), 0) AS "taskBytes",
+        COALESCE(SUM(CASE WHEN "storagePath" IS NOT NULL THEN COALESCE("size", ${DEFAULT_A2A_FILE_BYTES}) ELSE 0 END), 0) AS "workspaceBytes"
       FROM "A2ATaskFile" WHERE "workspaceId"=${task.context.workspaceId}`;
+    const reservedBytes = Math.min(
+      fileBytes,
+      TASK_FILE_LIMITS.taskBytes - Number(usage.taskBytes),
+      TASK_FILE_LIMITS.workspaceBytes - Number(usage.workspaceBytes),
+    );
     if (
       (!existing && Number(usage.taskCount) >= TASK_FILE_LIMITS.filesPerTask) ||
-      Number(usage.taskBytes) + TASK_FILE_LIMITS.fileBytes >
-        TASK_FILE_LIMITS.taskBytes ||
-      Number(usage.workspaceBytes) + TASK_FILE_LIMITS.fileBytes >
-        TASK_FILE_LIMITS.workspaceBytes
+      reservedBytes <= 0
     )
       throw new UnsupportedOperationError("Task file storage limit exceeded.");
     const expiresAt = new Date(
@@ -350,7 +356,8 @@ async function storeAuthorizedTaskFile(
       uploadToken: token,
       uploadStartedAt: new Date(),
       storagePath: path,
-      size: null,
+      // Persist the reservation so later setting changes cannot undercount it.
+      size: reservedBytes,
       sha256: null,
       errorCode: null,
       expiresAt,
@@ -358,7 +365,7 @@ async function storeAuthorizedTaskFile(
     const file = existing
       ? await tx.a2ATaskFile.update({ where: { id: existing.id }, data })
       : await tx.a2ATaskFile.create({ data: { ...data, taskId, sourceKey } });
-    return { file, upload: true };
+    return { file, upload: true as const, maxBytes: reservedBytes };
   });
   if (!reservation.upload) {
     const file = ready(reservation.file);
@@ -371,7 +378,7 @@ async function storeAuthorizedTaskFile(
     for await (const chunk of body) {
       signal?.throwIfAborted();
       size += chunk.byteLength;
-      if (size > TASK_FILE_LIMITS.fileBytes)
+      if (size > fileBytes)
         throw new UnsupportedOperationError(
           "Task file storage limit exceeded.",
         );
@@ -400,7 +407,7 @@ async function storeAuthorizedTaskFile(
       body,
       objectId: token,
       allowEmpty: true,
-      maxBytes: TASK_FILE_LIMITS.fileBytes,
+      maxBytes: reservation.maxBytes,
       signal,
     });
     written = true;
@@ -609,7 +616,11 @@ export async function createTaskFileUrl(
       })(),
   );
   const origin = new URL(baseUrl);
-  if (origin.protocol !== "https:" || origin.username || origin.password)
+  if (
+    !permitsTransportProtocol(origin.protocol, await getTransportSettings()) ||
+    origin.username ||
+    origin.password
+  )
     throw new Error("HTTPS file egress origin is required.");
   const expiry = String(
     Math.min(

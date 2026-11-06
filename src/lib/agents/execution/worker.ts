@@ -13,6 +13,7 @@ import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
 import { withLogContext } from "@/lib/observability/context";
 import { recordA2AEvent, taskStateName } from "@/lib/observability/a2a-log";
 import { recordEvent } from "@/lib/observability/events";
+import { isEntryRootGrant } from "@/lib/observability/views/task-origin";
 import { systemLog } from "@/lib/observability/system";
 import { ACTIVE, A2A_LIMITS } from "@/lib/a2a/model";
 import {
@@ -21,6 +22,7 @@ import {
   interruptTask,
   releasePiHarnessClaim,
   deferTaskFileStaging,
+  recordTaskExecutionStage,
 } from "@/lib/a2a/store";
 import {
   assertLiveGrant,
@@ -34,6 +36,7 @@ import {
   SandboxExecutionBusyError,
 } from "@/lib/agents/sandbox-execution-gate";
 import { PiRuntimeInterruptedError } from "@/lib/agents/pi-harness";
+import { parseRuntimeFailure } from "@/lib/agents/runtime-failure";
 import { reconcileLocalWaits } from "@/lib/a2a/local-continuation";
 import { reconcileRemoteTasks } from "@/lib/a2a/remote-executor";
 import {
@@ -49,6 +52,12 @@ import { deleteAgentContextSandbox } from "@/lib/agents/conversation-sandbox";
 import { stageTaskFileTransfers } from "@/lib/a2a/task-files";
 import { cleanupTaskFiles } from "@/lib/a2a/files";
 import { workRuntimeObserver } from "@/lib/work/run-control";
+import {
+  MeteredExecutionError,
+  recordAgentTaskUsage,
+  type TaskUsage,
+} from "@/lib/agents/usage";
+import { settleAgentTriggerTask } from "@/lib/agents/triggers";
 
 type ActiveExecution = {
   controller: AbortController;
@@ -82,14 +91,10 @@ function nativeFailure(error: unknown) {
   // Storage exhaustion is a platform decision, not an opaque Pi crash.
   if (error instanceof A2AQuotaError)
     return "PI_STORAGE_QUOTA_EXCEEDED: The task payload exceeded the configured storage budget; the result was not stored.";
-  // Only fixed codes may escape: native exception text can contain credentials or task content.
-  const code =
-    error instanceof Error
-      ? /^(PI_SESSION_MISSING|PI_SESSION_CORRUPT|PI_MODEL_UNAVAILABLE|PI_INPUT_INVALID|PI_CONFIG_INVALID|PI_PROCESS_STOP_UNCONFIRMED|PI_NODE_UNSUPPORTED|PI_SQLITE_UNAVAILABLE|PI_HARNESS_VERSION_MISMATCH|PI_RECOVERY_CHECK_FAILED|PI_PROTOCOL_ERROR|PI_TARGET_UNAVAILABLE|PI_OUTPUT_TRUNCATED|PI_SDK_REQUEST_FAILED|MCP_UNREACHABLE|MCP_GRANT_REVOKED|MCP_TOOL_FORBIDDEN)(?=:|$)/.exec(
-          error.message,
-        )?.[1]
-      : undefined;
-  return `${code ?? "PI_EXECUTION_FAILED"}: Pi task execution failed. No automatic replay was performed.`;
+  // Only fixed tokens may escape: native exception text can contain credentials or task content.
+  const failure =
+    error instanceof Error ? parseRuntimeFailure(error.message) : undefined;
+  return `${failure?.code ?? "PI_EXECUTION_FAILED"}: ${failure?.reason ? `${failure.reason}. ` : ""}Agent task execution failed. No automatic replay was performed.`;
 }
 export function executeAgentTask(
   id: string,
@@ -143,6 +148,18 @@ export function executeAgentTask(
     return withLogContext(
       {
         workspaceId: grant.workspaceId,
+        taskId: row.id,
+        ...(isLocalGrant(grant) &&
+        grant.entryPolicy &&
+        isEntryRootGrant(grant, row.parentTaskId)
+          ? {
+              conversationId:
+                grant.entryPolicy.kind === "work"
+                  ? grant.entryPolicy.conversationId
+                  : (grant.entryPolicy.conversationId ??
+                    grant.entryPolicy.sourceId),
+            }
+          : {}),
         suppressPayload: true,
         ...(isLocalGrant(grant)
           ? { actorId: grant.actorId, agentId: grant.agentId }
@@ -155,11 +172,12 @@ export function executeAgentTask(
         let timeout: NodeJS.Timeout | undefined;
         let watchdog: NodeJS.Timeout | undefined;
         let checking = false;
+        let metering: TaskUsage | undefined;
         try {
           if (
             isLocalGrant(grant) &&
             grant.entryPolicy &&
-            !grant.ancestorTaskIds.length
+            isEntryRootGrant(grant, row.parentTaskId)
           ) {
             await recordEvent({
               domain: "agent",
@@ -169,8 +187,9 @@ export function executeAgentTask(
               actorId: grant.actorId,
               conversationId:
                 grant.entryPolicy.kind === "work"
-                  ? undefined
-                  : grant.entryPolicy.sourceId,
+                  ? grant.entryPolicy.conversationId
+                  : (grant.entryPolicy.conversationId ??
+                    grant.entryPolicy.sourceId),
               attributes: {
                 taskId: row.id,
                 contextId: row.contextId,
@@ -287,7 +306,12 @@ export function executeAgentTask(
               ? { nativeOperationId }
               : undefined,
           );
-        } catch (error) {
+        } catch (cause) {
+          const error =
+            cause instanceof MeteredExecutionError ? cause.cause : cause;
+          if (cause instanceof MeteredExecutionError) {
+            metering = cause.metering;
+          }
           if (
             error &&
             typeof error === "object" &&
@@ -349,6 +373,8 @@ export function executeAgentTask(
           clearTimeout(timeout);
           clearInterval(watchdog);
           release?.();
+          await recordAgentTaskUsage(row, metering);
+          await settleAgentTriggerTask(row);
         }
       },
       true,
@@ -413,7 +439,9 @@ export function executeAgentTask(
           : null;
       const sessionId =
         !grant.ancestorTaskIds.length && grant.entryPolicy
-          ? (work?.conversationId ?? grant.entryPolicy.sourceId)
+          ? (work?.conversationId ??
+            grant.entryPolicy.conversationId ??
+            grant.entryPolicy.sourceId)
           : queued.contextId;
       return await withAgentExecutionLease(
         {
@@ -423,6 +451,8 @@ export function executeAgentTask(
           wait: false,
         },
         async () => {
+          if (!active.native)
+            await recordTaskExecutionStage(id, queued.leaseToken, "preparing");
           await observer?.onExecutionStage?.("preparing");
           const cleanup = Boolean(active.native && queued.nativeOperationId);
           const { sandboxId } = await localTaskSandbox(
@@ -449,6 +479,8 @@ export function executeAgentTask(
         error instanceof SandboxExecutionBusyError ||
         error instanceof AgentExecutionBusyError
       ) {
+        if (!active.native)
+          await recordTaskExecutionStage(id, queued.leaseToken, "queued");
         await observer?.onExecutionStage?.("queued");
         return;
       }
@@ -537,7 +569,7 @@ export async function tickAgentWorker() {
       [
         { executionBackend: "pi-harness" },
         {
-          executionBackend: { in: ["pi-sdk", "omp"] },
+          executionBackend: { in: ["pi-sdk"] },
           context: { targetKind: "local" },
         },
         {

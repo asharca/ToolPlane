@@ -28,7 +28,10 @@ import {
 } from "./conversation-operations";
 import { parseRuntimeCommand } from "./runtime-commands";
 import type { AgentModelOverride } from "./chat-body";
-import { resolveAgentModelOverride } from "./turn-model";
+import {
+  resolveAgentModelOverride,
+  conversationModelOverride,
+} from "./turn-model";
 
 export class RuntimeCommandError extends Error {
   constructor(
@@ -69,7 +72,7 @@ export async function executeRuntimeCommand(input: {
   if (!liveAgent || !scope || scope.publicApiConversation)
     throw new RuntimeCommandError("notFound", 404);
   if (
-    (liveAgent.runtimeKind !== "pi-sdk" && liveAgent.runtimeKind !== "omp") ||
+    liveAgent.runtimeKind !== "pi-sdk" ||
     liveAgent.retiredAt ||
     scope.legacyRevisionUnresolved ||
     !scope.agentRevisionId
@@ -79,6 +82,8 @@ export async function executeRuntimeCommand(input: {
       409,
     );
   const agent = await resolvePinnedAgent(liveAgent, scope.agentRevisionId);
+  const storedOverride = conversationModelOverride(scope.modelOverride);
+  if (storedOverride) input = { ...input, modelOverride: storedOverride };
   if (input.modelOverride)
     await resolveAgentModelOverride(
       input.workspaceId,
@@ -86,7 +91,7 @@ export async function executeRuntimeCommand(input: {
       agent.runtimeKind,
     );
   const kind = agent.runtimeKind;
-  if (kind !== "pi-sdk" && kind !== "omp")
+  if (kind !== "pi-sdk")
     throw new RuntimeCommandError(
       "Historical Agent sessions are read-only.",
       409,
@@ -226,7 +231,10 @@ export async function executeRuntimeCommand(input: {
         messageId: input.messageId ?? randomUUID(),
         text: input.line,
         signal: input.signal,
-        modelOverride: input.modelOverride,
+        modelOverride:
+          sdkEntry.kind === "chat" || sdkEntry.kind === "work"
+            ? input.modelOverride
+            : undefined,
         onPromptInvocation: (invocation) =>
           persistAgentPromptInvocation({
             conversationId: conversation.id,
