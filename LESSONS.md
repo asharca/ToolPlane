@@ -427,3 +427,10 @@
 - **证据（2026-11-06，频道重设计验收）**：`channel.sender_rejected` 的集成测试使用未绑定 Agent 的连接，属性完整，测试通过；在 :3000 上对已绑定 Agent 的真实连接调用准入后，两条拒绝日志的 `attributes.data` 都是 `{}`，控制台“最近被拒绝的发送者”因此始终为空。同一轮验收还发现查询读取的是 `attributes->>'userId'`，实际字段在 `attributes->'data'` 之下。现改为以 `withLogContext({ workspaceId, channelId }, …, true)` 记录、按 `data` 读取，回归 fixture 已绑定 Agent。
 - **下次怎么验证**：新增依赖日志属性的控制台视图时，用绑定 Agent 的真实连接写一条事件，直接查 `LogEvent.attributes`，再在页面确认列表有数据；回归见 `tests/integration/agent-channel-access.test.ts` 的 “denies v2 empty allowlists”。依据：[事件脱敏](src/lib/observability/events.ts)、[准入记录](src/lib/agents/channel-sender-access.ts)。
 - **确认日期**：2026-11-06。
+
+### TP-L042：可选渲染器关闭时应省略键，而不是传 undefined
+
+**规则**：向 Markdown 等组件传入可选组件映射时，未启用的覆盖应从对象中省略；显式 `img: undefined` 可能覆盖组件库的默认渲染器。
+
+- **证据（2026-11-07，#185 验收）**：资源预览禁用图片时引入条件 `img` 覆盖，普通 README 分支传入 `undefined`，已有相对图片链接回归报 `Element type is invalid`。改为条件展开映射后，资源预览和原 README 两文件共 7 项测试通过。
+- **下次怎么验证**：同一轮覆盖新模式的恶意内容／图片隔离及默认模式的真实图片、链接渲染，不能只测新增开关开启的分支。依据：`PluginReadme.tsx`、`tests/unit/plugin-readme.test.tsx`。
