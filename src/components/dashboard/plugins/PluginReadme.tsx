@@ -59,7 +59,11 @@ export function PluginReadme({
         }}
         components={{
           ...(resourcePreview
-            ? { img: ({ alt }: { alt?: string }) => <span>{alt}</span> }
+            ? {
+                img: ({ alt }: Record<string, unknown>) => (
+                  <span>{typeof alt === "string" ? alt : null}</span>
+                ),
+              }
             : {}),
           a: ({ href, children }) => {
             if (!href) return <span>{children}</span>;
