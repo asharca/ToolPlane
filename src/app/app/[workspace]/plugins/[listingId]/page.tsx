@@ -213,7 +213,13 @@ export default async function PluginDetailPage({
             {plugin.install ? (
               <>
                 <dt className="text-muted-foreground">{t("currentVersion")}</dt>
-                <dd>{pluginReleaseLabel(plugin.install.currentRelease)}</dd>
+                <dd>
+                  {releases.find(
+                    (release) =>
+                      release.id === plugin.install?.currentReleaseId,
+                  )?.snapshot.version ??
+                    pluginReleaseLabel(plugin.install.currentRelease)}
+                </dd>
               </>
             ) : releases[0] ? (
               <>
