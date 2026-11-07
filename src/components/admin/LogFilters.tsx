@@ -132,7 +132,6 @@ export function LogFilters({
                       "agent",
                       "runtime",
                       "channel",
-                      "plugin",
                       "system",
                     ].map((value) => ({
                       value,

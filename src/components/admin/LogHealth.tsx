@@ -54,7 +54,6 @@ export async function LogHealth({ adminId }: { adminId: string }) {
               "agent",
               "runtime",
               "channel",
-              "plugin",
               "system",
             ].map((domain) => {
               const row = health.domains.find((item) => item.domain === domain);
