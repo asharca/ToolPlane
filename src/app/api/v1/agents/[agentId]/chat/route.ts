@@ -26,6 +26,7 @@ import { db } from "@/lib/db";
 import { enrichLogContext } from "@/lib/observability/context";
 import { withRequestLogging } from "@/lib/observability/http";
 import { workspaceAccessResponse } from "@/lib/workspace/access-stream";
+import { notifyTaskOutput } from "@/lib/agents/execution/live-output";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
@@ -240,18 +241,14 @@ export const POST = withRequestLogging(
               responseFailed = true;
               responseError = error;
             }
-            const runtimeParts = responseFailed
-              ? []
-              : agentEntryRuntimeParts(result.task);
+            const runtimeParts = agentEntryRuntimeParts(result.task);
             const parts = [
+              ...runtimeParts,
               ...hookParts,
               ...childParts,
               ...(responseFailed
                 ? []
-                : [
-                    { type: "text", text: responseText, state: "done" },
-                    ...runtimeParts,
-                  ]),
+                : [{ type: "text", text: responseText, state: "done" }]),
             ];
             if (parts.length)
               await db.message.create({
@@ -261,6 +258,7 @@ export const POST = withRequestLogging(
                   parts,
                 },
               });
+            notifyTaskOutput(result.task.id);
             for (const part of hookParts) writer.write(part);
             for (const part of childParts) writer.write(part);
             if (responseFailed) throw responseError;

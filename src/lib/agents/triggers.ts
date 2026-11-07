@@ -21,6 +21,7 @@ import {
   trackRuntimeOperation,
 } from "@/lib/runtime/ownership-state";
 import { systemLog } from "@/lib/observability/system";
+import { notifyTaskOutput } from "./execution/live-output";
 
 export const triggerSecretHash = (secret: string) =>
   createHash("sha256").update(secret).digest("hex");
@@ -196,6 +197,7 @@ export async function settleAgentTriggerTask(row: A2ATask) {
       },
     });
   });
+  notifyTaskOutput(row.id);
 }
 const globalTriggers = globalThis as typeof globalThis & {
   __agentTriggerTimer?: NodeJS.Timeout;

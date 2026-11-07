@@ -4,6 +4,9 @@ import { Button } from "@/components/motion/button/base";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { ConversationExecution } from "../work/ConversationExecution";
+import { MessageScroller } from "@/components/agents/message-scroller";
+import { useLiveTaskOutput } from "../work/useLiveTaskOutput";
+import { LiveOutputStatus, LiveOutputView } from "../work/LiveOutputView";
 import { A2AArtifactParts, type A2AWirePart } from "./A2AArtifactParts";
 
 import type { ConsoleTaskTree } from "@/lib/a2a/console-tasks";
@@ -12,7 +15,6 @@ import {
   A2ATaskTree,
   type TaskTreeNode,
 } from "@/components/observability/A2ATaskDetail";
-import { LiveToggle } from "@/components/observability/LiveToggle";
 import { Timeline } from "@/components/observability/Timeline";
 import type { JsonValue } from "@/lib/observability/views/types";
 
@@ -58,21 +60,41 @@ export function AgentA2ATaskMonitor({
   showHistory?: boolean;
 }) {
   const t = useTranslations("console.agents.a2a");
+  const liveT = useTranslations("console.liveOutput");
   const [tree, setTree] = useState<ConsoleTaskTree | null>(null);
   const [transitions, setTransitions] = useState<ConsoleTaskTree["nodes"]>([]);
   const [selectedId, setSelectedId] = useState(rootTaskId);
   const [automatic, setAutomatic] = useState(true);
   const [failed, setFailed] = useState(false);
   const [refresh, setRefresh] = useState(0);
-  const [liveAfter] = useState(() => new Date().toISOString());
+  const [accessRevoked, setAccessRevoked] = useState(false);
+  const [scope, setScope] = useState(`${base}:${rootTaskId}`);
+  if (scope !== `${base}:${rootTaskId}`) {
+    setScope(`${base}:${rootTaskId}`);
+    setTree(null);
+    setTransitions([]);
+    setSelectedId(rootTaskId);
+    setAccessRevoked(false);
+    setFailed(false);
+  }
   const [retryingFiles, setRetryingFiles] = useState(false);
   const [fileRetryFailed, setFileRetryFailed] = useState(false);
-  const workspaceMatch = base.match(
-    /^\/api\/v1\/workspaces\/([^/]+)\/agents\/([^/]+)\//,
-  );
-  const streamUrl = workspaceMatch
-    ? `/api/v1/workspaces/${workspaceMatch[1]}/logs/stream?kind=a2a&agentId=${workspaceMatch[2]}&after=${encodeURIComponent(liveAfter)}`
-    : null;
+  const live = useLiveTaskOutput({
+    url: accessRevoked
+      ? null
+      : `${base}/tasks/events?${new URLSearchParams({ rootTaskId, selectedTaskId: selectedId })}`,
+    paused: !automatic,
+    onSettled: (taskId) => {
+      if (taskId !== selectedId) return;
+      setRefresh((value) => value + 1);
+    },
+    onRevoked: () => {
+      setAccessRevoked(true);
+      setTree(null);
+      setTransitions([]);
+      unavailable.current?.();
+    },
+  });
   const notify = useRef(onRootState);
   const unavailable = useRef(onUnavailable);
   const lastRequest = useRef({ refresh, selectedId });
@@ -83,6 +105,7 @@ export function AgentA2ATaskMonitor({
     notify.current = onRootState;
   }, [onRootState]);
   useEffect(() => {
+    if (accessRevoked) return;
     const manual =
       lastRequest.current.refresh !== refresh ||
       lastRequest.current.selectedId !== selectedId;
@@ -116,6 +139,8 @@ export function AgentA2ATaskMonitor({
           if (!stopped && !controller.signal.aborted) {
             done = true;
             setTree(null);
+            setTransitions([]);
+            setAccessRevoked(true);
             setFailed(true);
             unavailable.current?.();
           }
@@ -171,7 +196,7 @@ export function AgentA2ATaskMonitor({
               timer = undefined;
               void load();
             },
-            Math.min(20_000, 2500 * 2 ** failures),
+            Math.min(30_000, 5_000 * 2 ** failures),
           );
         }
       }
@@ -193,9 +218,56 @@ export function AgentA2ATaskMonitor({
       flight?.abort();
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [base, rootTaskId, selectedId, automatic, refresh, showHistory]);
+  }, [
+    base,
+    rootTaskId,
+    selectedId,
+    automatic,
+    refresh,
+    showHistory,
+    accessRevoked,
+  ]);
 
-  const selected = tree?.selectedTask as ResultTask | undefined;
+  const selected =
+    tree?.selectedTask.id === selectedId
+      ? (tree.selectedTask as ResultTask)
+      : undefined;
+  const output = live.output?.taskId === selectedId ? live.output : null;
+  // Failed/cancelled partial text may exist only in the live-output replay.
+  // A settled notification alone must never discard it.
+  const renderedTextParts = selected
+    ? [
+        ...(showHistory
+          ? (selected.history ?? []).filter(
+              (message) => message.role !== "ROLE_USER",
+            )
+          : []),
+        ...(selected.status?.message ? [selected.status.message] : []),
+        ...(selected.artifacts ?? []),
+        {
+          parts: (selected.artifacts ?? []).flatMap(
+            (artifact) => artifact.parts ?? [],
+          ),
+        },
+      ]
+    : [];
+  const outputText = output?.text.replace(/\s+/g, " ").trim();
+  const outputTextPersisted =
+    !output?.text ||
+    renderedTextParts.some((item) => {
+      const texts = (item.parts ?? []).flatMap((part) =>
+        typeof part.text === "string" ? [part.text] : [],
+      );
+      return [texts.join("\n"), texts.join("")].some((text) => {
+        const persisted = text.replace(/\s+/g, " ").trim();
+        return (
+          persisted === outputText ||
+          (!output.active &&
+            Boolean(outputText) &&
+            persisted.startsWith(outputText ?? ""))
+        );
+      });
+    });
   const nodes: TaskTreeNode[] = (tree?.nodes ?? []).map((node) => ({
     taskId: node.id,
     parentTaskId: node.parentTaskId,
@@ -220,20 +292,23 @@ export function AgentA2ATaskMonitor({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="text-sm font-semibold">{t("taskTree")}</h4>
         <div className="flex gap-2">
-          {streamUrl && (
-            <LiveToggle
-              key={streamUrl}
-              url={streamUrl}
-              onPausedChange={(paused) => setAutomatic(!paused)}
-              onItems={(items) => {
-                if (items.length) setRefresh((value) => value + 1);
-              }}
-            />
-          )}
+          <LiveOutputStatus
+            connection={accessRevoked ? "revoked" : live.connection}
+          />
+          <Button
+            onClick={() => setAutomatic((value) => !value)}
+            variant="secondary"
+            size="sm"
+            disabled={accessRevoked}
+            aria-pressed={!automatic}
+          >
+            {liveT(automatic ? "pause" : "resume")}
+          </Button>
           <Button
             onClick={() => setRefresh((value) => value + 1)}
             variant={"secondary"}
             size={"sm"}
+            disabled={!automatic || accessRevoked}
           >
             {t("refreshTasks")}
           </Button>
@@ -326,111 +401,131 @@ export function AgentA2ATaskMonitor({
           }))}
         />
       )}
-      {selected ? (
-        <section
-          className="space-y-2 rounded-lg border border-border bg-muted/30 p-3"
-          aria-label={t("taskResult")}
-        >
-          <code className="block break-all text-xs">{selected.id}</code>
-          {selected.metadata?.toolplaneFileDelivery?.state === "pending" ? (
-            <p role="status" className="text-sm">
-              {t("filesReceiving")}
-            </p>
-          ) : null}
-          {selected.metadata?.toolplaneFileDelivery?.state === "failed" ? (
-            <div className="space-y-2">
+      <MessageScroller
+        key={`${base}:${rootTaskId}:${selectedId}`}
+        label={t("taskResult")}
+        busy={automatic && Boolean(output?.active)}
+        viewportClassName="max-h-[65vh]"
+        contentClassName="space-y-3"
+      >
+        {selected ? (
+          <section
+            className="space-y-2 rounded-lg border border-border bg-muted/30 p-3"
+            aria-label={t("taskResult")}
+          >
+            <code className="block break-all text-xs">{selected.id}</code>
+            {selected.metadata?.toolplaneFileDelivery?.state === "pending" ? (
               <p role="status" className="text-sm">
-                {t("fileDeliveryFailed")}
+                {t("filesReceiving")}
               </p>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={retryingFiles}
-                onClick={async () => {
-                  setRetryingFiles(true);
-                  setFileRetryFailed(false);
-                  try {
-                    const response = await fetch(`${base}/tasks`, {
-                      method: "POST",
-                      credentials: "same-origin",
-                      cache: "no-store",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        action: "retryFiles",
-                        rootTaskId,
-                        taskId: selected.id,
-                      }),
-                      signal: AbortSignal.timeout(15_000),
-                    });
-                    if (!response.ok) throw new Error("File retry unavailable");
-                    setRefresh((value) => value + 1);
-                  } catch {
-                    setFileRetryFailed(true);
-                  } finally {
-                    setRetryingFiles(false);
-                  }
-                }}
-              >
-                {t("retryFiles")}
-              </Button>
-              {fileRetryFailed ? (
-                <p role="alert" className="text-sm text-destructive">
-                  {t("fileRetryFailed")}
+            ) : null}
+            {selected.metadata?.toolplaneFileDelivery?.state === "failed" ? (
+              <div className="space-y-2">
+                <p role="status" className="text-sm">
+                  {t("fileDeliveryFailed")}
                 </p>
-              ) : null}
-            </div>
-          ) : null}
-          <ConversationExecution
-            key={`${rootTaskId}:${selected.id}`}
-            endpoint={`${base}/ui?${new URLSearchParams({ rootTaskId, taskId: selected.id })}`}
-            showStatus={false}
-            active={!terminal(selected.status?.state ?? "")}
-          />
-          <A2ATaskConversation
-            messages={[
-              ...(showHistory ? (selected.history ?? []) : []),
-              ...(selected.status?.message?.parts?.length &&
-              !(
-                showHistory &&
-                selected.history?.some(
-                  (message) =>
-                    message.messageId === selected.status?.message?.messageId,
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={retryingFiles || !automatic}
+                  onClick={async () => {
+                    setRetryingFiles(true);
+                    setFileRetryFailed(false);
+                    try {
+                      const response = await fetch(`${base}/tasks`, {
+                        method: "POST",
+                        credentials: "same-origin",
+                        cache: "no-store",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          action: "retryFiles",
+                          rootTaskId,
+                          taskId: selected.id,
+                        }),
+                        signal: AbortSignal.timeout(15_000),
+                      });
+                      if (!response.ok)
+                        throw new Error("File retry unavailable");
+                      setRefresh((value) => value + 1);
+                    } catch {
+                      setFileRetryFailed(true);
+                    } finally {
+                      setRetryingFiles(false);
+                    }
+                  }}
+                >
+                  {t("retryFiles")}
+                </Button>
+                {fileRetryFailed ? (
+                  <p role="alert" className="text-sm text-destructive">
+                    {t("fileRetryFailed")}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            <ConversationExecution
+              key={`${rootTaskId}:${selected.id}`}
+              endpoint={`${base}/ui?${new URLSearchParams({ rootTaskId, taskId: selected.id })}`}
+              showStatus={false}
+              paused={!automatic}
+              showActivities={false}
+              active={!terminal(selected.status?.state ?? "")}
+            />
+            <A2ATaskConversation
+              messages={[
+                ...(showHistory ? (selected.history ?? []) : []),
+                ...(selected.status?.message?.parts?.length &&
+                !(
+                  showHistory &&
+                  selected.history?.some(
+                    (message) =>
+                      message.messageId === selected.status?.message?.messageId,
+                  )
                 )
-              )
-                ? [
-                    {
-                      messageId:
-                        selected.status.message.messageId ??
-                        `${selected.id}:status`,
-                      role: "ROLE_AGENT",
-                      parts: selected.status.message.parts,
-                    },
-                  ]
-                : []),
-            ].map((message) => ({
-              id: message.messageId,
-              taskId: selected.id,
-              role: message.role === "ROLE_USER" ? "user" : "agent",
-              parts: (message.parts ?? []) as JsonValue[],
-              time: null,
-            }))}
-            artifacts={(selected.artifacts ?? []).map((artifact) => ({
-              id: artifact.artifactId,
-              taskId: selected.id,
-              name: artifact.name ?? null,
-              description: null,
-              parts: (artifact.parts ?? []) as JsonValue[],
-            }))}
-            renderParts={(parts, name) => (
-              <A2AArtifactParts
-                taskId={selected.id}
-                name={name}
-                parts={parts as A2AWirePart[]}
-              />
-            )}
-          />
-        </section>
-      ) : null}
+                  ? [
+                      {
+                        messageId:
+                          selected.status.message.messageId ??
+                          `${selected.id}:status`,
+                        role: "ROLE_AGENT",
+                        parts: selected.status.message.parts,
+                      },
+                    ]
+                  : []),
+              ].map((message) => ({
+                id: message.messageId,
+                taskId: selected.id,
+                role: message.role === "ROLE_USER" ? "user" : "agent",
+                parts: (message.parts ?? []) as JsonValue[],
+                time: null,
+              }))}
+              artifacts={(selected.artifacts ?? []).map((artifact) => ({
+                id: artifact.artifactId,
+                taskId: selected.id,
+                name: artifact.name ?? null,
+                description: null,
+                parts: (artifact.parts ?? []) as JsonValue[],
+              }))}
+              renderParts={(parts, name) => (
+                <A2AArtifactParts
+                  taskId={selected.id}
+                  name={name}
+                  parts={parts as A2AWirePart[]}
+                />
+              )}
+            />
+          </section>
+        ) : null}
+        {output &&
+        !accessRevoked &&
+        (!outputTextPersisted ||
+          output.activities.length > 0 ||
+          output.active) ? (
+          <div className="rounded-lg border border-border bg-muted/30 p-3">
+            <LiveOutputView output={output} hideText={outputTextPersisted} />
+          </div>
+        ) : null}
+      </MessageScroller>
     </section>
   );
 }

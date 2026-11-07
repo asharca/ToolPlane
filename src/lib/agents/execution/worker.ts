@@ -58,6 +58,7 @@ import {
   type TaskUsage,
 } from "@/lib/agents/usage";
 import { settleAgentTriggerTask } from "@/lib/agents/triggers";
+import { startTaskOutput } from "./live-output";
 
 type ActiveExecution = {
   controller: AbortController;
@@ -145,6 +146,8 @@ export function executeAgentTask(
     }
     const row = claimed;
     const grant = row.grant as unknown as TaskGrant;
+    if (isLocalGrant(grant) && row.executionBackend === "pi-sdk")
+      startTaskOutput(row.id, { runtimeKind: "pi-sdk" });
     return withLogContext(
       {
         workspaceId: grant.workspaceId,

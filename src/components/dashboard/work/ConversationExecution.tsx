@@ -51,6 +51,7 @@ export function ConversationExecution({
   renderedActivityIds,
   showActivities = true,
   onBusyChange,
+  paused = false,
 }: {
   /** Same-origin endpoint returning the native execution projection. */
   endpoint: string;
@@ -70,6 +71,8 @@ export function ConversationExecution({
   showActivities?: boolean;
   /** Reports whether the execution is active or its initial status is still unknown. */
   onBusyChange?: (busy: boolean) => void;
+  /** Freeze observation and disable decisions until monitoring resumes. */
+  paused?: boolean;
 }) {
   const t = useTranslations("console.work");
   const tAgents = useTranslations("console.agents");
@@ -121,7 +124,7 @@ export function ConversationExecution({
   useEffect(() => {
     // A decision or manual refresh restarts polling for the same conversation.
     void reload;
-    if (revoked) return;
+    if (revoked || paused) return;
     let alive = true;
     let failures = 0;
     let stopped = false;
@@ -205,7 +208,14 @@ export function ConversationExecution({
       flight?.abort();
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [url, reload, revoked]);
+  }, [url, reload, revoked, paused]);
+
+  useEffect(() => {
+    if (paused) {
+      setFresh(false);
+      decisionFlight.current?.abort();
+    }
+  }, [paused]);
 
   // Pick up a turn started in the surrounding view without waiting a full idle tick.
   useEffect(() => {
@@ -215,6 +225,7 @@ export function ConversationExecution({
   async function respond(result: NativeResponse) {
     if (
       decisionFlight.current ||
+      paused ||
       failed ||
       revoked ||
       !fresh ||
@@ -289,6 +300,7 @@ export function ConversationExecution({
             variant="outline"
             size="sm"
             className="rounded-full"
+            disabled={paused}
             onClick={() => {
               setFailed(false);
               setReload((value) => value + 1);
@@ -399,6 +411,7 @@ export function ConversationExecution({
           scope={`${url}:${projection.id}`}
           disabled={
             failed ||
+            paused ||
             revoked ||
             !fresh ||
             !ACTIVE_STATUSES.has(projection.status)

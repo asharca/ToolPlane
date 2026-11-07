@@ -264,6 +264,17 @@
     "whatIsAnMcpServerToolplane": "What is an MCP Server? | ToolPlane"
   },
   "console": {
+    "liveOutput": {
+      "truncated": "Live preview truncated. See the saved record for the full reply.",
+      "connecting": "Connecting",
+      "live": "Live",
+      "disconnected": "Disconnected",
+      "reconnecting": "Reconnecting",
+      "paused": "Paused",
+      "revoked": "Access is no longer available",
+      "pause": "Pause live updates",
+      "resume": "Resume live updates"
+    },
     "agentAutomation": {
       "triggers": "Triggers",
       "refresh": "Refresh",
@@ -1702,7 +1713,20 @@
       "noPrompts": "No saved prompts"
     },
     "agentMessaging": {
-      "access": "Access",
+      "title": "Channels",
+      "basic": "Basic",
+      "observe": "View channel observations",
+      "saveSettings": "Save settings",
+      "addChannel": "Add channel",
+      "choosePlatform": "Choose a platform",
+      "allChannels": "All",
+      "channelList": "Channel connections",
+      "channelDetails": "Channel details",
+      "configure": "Configure",
+      "collapse": "Collapse",
+      "moreActions": "More actions for {name}",
+      "noChannels": "No channels added yet",
+      "access": "Permissions",
       "openToAll": "Open to everyone",
       "openToAllWarning": "Any sender can use this bot within the configured chat policies, including people who have not been approved.",
       "unauthorizedDm": "Unapproved direct messages",
@@ -1750,7 +1774,6 @@
       "commandsModel": "Admins only: change this session's model. Use /model reset to restore the default.",
       "commandsUpgrade": "Admins only: upgrade this conversation to the current agent revision after confirmation.",
       "conversationHistory": "Conversation history",
-      "historyLiveReadOnly": "Read-only · New messages and replies sync automatically",
       "historyLoadOlder": "Load earlier messages",
       "historyEmpty": "No channel conversations yet",
       "historyUser": "User",
@@ -1902,7 +1925,6 @@
       "createAndRequestQr": "Create and request QR",
       "createChannel": "Create {platform} channel",
       "configureAModelProviderBeforeExternalMessagesCanReceiveAgentReplies": "Configure a model provider before external messages can receive agent replies.",
-      "addChannel": "Add channel",
       "chooseOnePlatformAndFollowItsNativeSetupFlow": "Choose one platform and follow its native setup flow.",
       "add": "Add",
       "connectedChannels": "Connected channels",
@@ -2426,6 +2448,21 @@
       "skillsTab": "Skills"
     },
     "observability": {
+      "channels": {
+        "title": "Channels",
+        "description": "Inspect channel conversations and runtime logs. Configuration and permissions remain in the agent’s channel settings.",
+        "allAgents": "All agents",
+        "connection": "Channel connection",
+        "selectConnection": "Select a channel connection",
+        "retry": "Retry",
+        "loading": "Loading…",
+        "noMatchingConnection": "No matching channel connection. Adjust the filters.",
+        "clearFilters": "Clear filters",
+        "historyDescription": "Conversations are grouped from saved messages. Open Work for live generation, tool calls, and execution status.",
+        "untitledConversation": "Untitled conversation",
+        "loadedMessages": "{count} loaded messages",
+        "openLive": "View live in Work"
+      },
       "agentUsage": "Agent usage",
       "viewer": {
         "runs": "Agent runs",

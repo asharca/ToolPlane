@@ -18,6 +18,15 @@ import { workRuntimeObserver } from "@/lib/work/run-control";
 import { recordTaskExecutionStage } from "@/lib/a2a/store";
 import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
 import { MeteredExecutionError } from "@/lib/agents/usage";
+import { getLogContext } from "@/lib/observability/context";
+import {
+  startTaskOutput,
+  taskOutput,
+  configureTaskOutput,
+  publishTaskText,
+  publishTaskActivity,
+  publishTaskStage,
+} from "./live-output";
 
 /** Local runtime port: Task context identity, not a private Conversation or old sub-agent runner. */
 export const executeLocalTask: TaskExecutor = async (row, signal) => {
@@ -26,6 +35,8 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
   if (row.executionBackend !== "pi-sdk")
     throw new Error("Unknown Agent execution backend.");
   const grant = row.grant as unknown as TaskGrant;
+  if (!taskOutput(row.id)?.active)
+    startTaskOutput(row.id, { runtimeKind: "pi-sdk" });
   const observer =
     isLocalGrant(grant) &&
     !grant.ancestorTaskIds.length &&
@@ -34,6 +45,7 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
       : undefined;
   const onExecutionStage = async (stage: AgentExecutionStage) => {
     await recordTaskExecutionStage(row.id, row.leaseToken, stage);
+    publishTaskStage(row.id, stage);
     await observer?.onExecutionStage?.(stage);
   };
   await onExecutionStage("preparing");
@@ -42,6 +54,11 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
     signal,
     LOCAL_COLLABORATION_INSTRUCTIONS,
   );
+  configureTaskOutput(
+    row.id,
+    [options.runtimeAccessToken, ...(getLogContext()?.secrets ?? [])],
+    options.modelId,
+  );
   let commands: RuntimeCommand[] = [];
   let usage: RuntimeUsage | undefined;
   let commandResult: RuntimeCommandResult | undefined;
@@ -49,8 +66,14 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
   try {
     text = await runSandboxAgentTurn({
       ...options,
-      onTextDelta: observer?.onTextDelta,
-      onActivity: observer?.onActivity,
+      onTextDelta: async (delta) => {
+        publishTaskText(row.id, delta);
+        await observer?.onTextDelta?.(delta);
+      },
+      onActivity: async (activity) => {
+        publishTaskActivity(row.id, activity);
+        await observer?.onActivity?.(activity);
+      },
       onExecutionStage,
       onContextUsage: observer?.onContextUsage,
       onCommands: async (value) => {

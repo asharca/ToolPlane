@@ -1,9 +1,25 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  type ReactNode,
+} from "react";
 import { useTranslations } from "next-intl";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/motion/button/base";
+
+const InlineDetailsContext = createContext(false);
+
+export function ChannelInlineDetails({ children }: { children: ReactNode }) {
+  return (
+    <InlineDetailsContext.Provider value={true}>
+      {children}
+    </InlineDetailsContext.Provider>
+  );
+}
 
 export function ChannelDetailPanel({
   title,
@@ -15,33 +31,37 @@ export function ChannelDetailPanel({
   children: ReactNode;
 }) {
   const t = useTranslations("common");
+  const inline = useContext(InlineDetailsContext);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
+    if (inline) return;
     const trigger = document.activeElement;
     heading.current?.focus();
     return () => {
       if (trigger instanceof HTMLElement && trigger.isConnected)
         trigger.focus();
     };
-  }, []);
+  }, [inline]);
   return (
     <section
       aria-label={title}
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
-      <header className="flex shrink-0 items-center gap-3 border-b border-border px-6 py-4">
-        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
-          <ArrowLeft className="size-4" />
-          {t("back")}
-        </Button>
-        <h2
-          ref={heading}
-          tabIndex={-1}
-          className="min-w-0 break-words text-base font-semibold outline-none"
-        >
-          {title}
-        </h2>
-      </header>
+      {!inline && (
+        <header className="flex shrink-0 items-center gap-3 border-b border-border px-6 py-4">
+          <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+            <ArrowLeft className="size-4" />
+            {t("back")}
+          </Button>
+          <h2
+            ref={heading}
+            tabIndex={-1}
+            className="min-w-0 break-words text-base font-semibold outline-none"
+          >
+            {title}
+          </h2>
+        </header>
+      )}
       {children}
     </section>
   );

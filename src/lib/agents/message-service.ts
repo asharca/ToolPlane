@@ -55,6 +55,7 @@ import {
 import { AgentRevisionError, resolvePinnedAgent } from "./revisions";
 import { persistAgentPromptInvocation } from "./prompt-invocation";
 import { parseRuntimeFailure } from "./runtime-failure";
+import { notifyTaskOutput, taskOutput } from "./execution/live-output";
 
 export const CHANNEL_EXECUTION_FAILURE_MESSAGE =
   "本次执行未能完成，未自动重试。请在工作区查看会话执行状态，检查模型或工具连接后再发送新消息。";
@@ -802,6 +803,7 @@ async function runLoadedAgentMessage(params: {
     : (body.conversationId ?? `agent-message:${agent.id}:${event.sessionKey}`);
   let releaseConversation: (() => void) | null = null;
   let persistedConversationId: string | null = null;
+  let persistedTaskId: string | null = null;
   let assistantMessageId: string = randomUUID();
   const response = (
     conversationId: string,
@@ -985,6 +987,9 @@ async function runLoadedAgentMessage(params: {
       messageId: event.source.messageId ?? userMessage.id,
       text: latestEntryText(userMessage),
       signal: params.signal,
+      onAccepted: (task) => {
+        persistedTaskId = task.id;
+      },
       onPromptInvocation: (invocation) =>
         persistAgentPromptInvocation({
           conversationId: conversation.id,
@@ -1005,6 +1010,7 @@ async function runLoadedAgentMessage(params: {
         parts: [{ type: "text", text: replyText }, ...runtimeParts],
       },
     });
+    notifyTaskOutput(result.task.id);
     return response(conversation.id, replyText);
   } catch (error) {
     const failureCode =
@@ -1020,12 +1026,41 @@ async function runLoadedAgentMessage(params: {
     // Aborting a channel observer (including shutdown) is not a failed execution.
     if (params.signal?.aborted) throw error;
     if (persistedConversationId) {
+      let startedAt = persistedTaskId
+        ? taskOutput(persistedTaskId)?.startedAt
+        : undefined;
+      if (persistedTaskId && startedAt === undefined) {
+        const task = await db.a2ATask.findUnique({
+          where: { id: persistedTaskId },
+          select: { snapshot: true },
+        });
+        const replay = z
+          .object({
+            metadata: z.object({
+              toolplaneLiveOutput: z.object({ startedAt: z.number().finite() }),
+            }),
+          })
+          .safeParse(task?.snapshot);
+        if (replay.success)
+          startedAt = replay.data.metadata.toolplaneLiveOutput.startedAt;
+      }
       await db.message.create({
         data: {
           id: assistantMessageId,
           conversationId: persistedConversationId,
           role: "assistant",
           parts: [
+            ...(persistedTaskId
+              ? [
+                  {
+                    type: "data-agent-task",
+                    data: {
+                      taskId: persistedTaskId,
+                      ...(startedAt === undefined ? {} : { startedAt }),
+                    },
+                  },
+                ]
+              : []),
             { type: "text", text: failureMessage },
             {
               type: "data-agent-execution",
@@ -1044,6 +1079,7 @@ async function runLoadedAgentMessage(params: {
           ],
         },
       });
+      if (persistedTaskId) notifyTaskOutput(persistedTaskId);
       return response(persistedConversationId, failureMessage);
     }
     if (error instanceof AgentRevisionError)
