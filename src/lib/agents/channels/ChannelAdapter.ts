@@ -138,6 +138,12 @@ export abstract class ChannelAdapter extends EventEmitter {
     opts?: SendMessageOptions,
   ): Promise<void>;
   /* Optional hooks share the upstream adapter signatures. */
+  /** Finish a transport acknowledgement without sending a new channel message. */
+  async sendPendingReply(
+    _chatId: string,
+    _text: string,
+    _opts?: SendMessageOptions,
+  ): Promise<void> {}
   async sendFile(_chatId: string, _file: FileAttachment): Promise<void> {
     throw new Error("File delivery is not supported.");
   }

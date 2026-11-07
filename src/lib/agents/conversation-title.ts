@@ -1,4 +1,4 @@
-const DEFAULT_TITLE_LENGTH = 64;
+export const CONVERSATION_TITLE_MAX_LENGTH = 20;
 
 function compactText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -6,7 +6,7 @@ function compactText(value: string): string {
 
 export function conversationTitleFromParts(
   parts: unknown,
-  maxLength = DEFAULT_TITLE_LENGTH,
+  maxLength = CONVERSATION_TITLE_MAX_LENGTH,
 ): string | null {
   if (!Array.isArray(parts) || maxLength < 1) return null;
 

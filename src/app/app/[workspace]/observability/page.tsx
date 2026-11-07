@@ -23,6 +23,7 @@ import {
 } from "@/components/dashboard/DashboardUI";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 import { WorkspaceAgentUsage } from "@/components/dashboard/AgentUsagePanel";
+import { ChannelObservability } from "@/components/observability/ChannelObservability";
 
 export const dynamic = "force-dynamic";
 
@@ -81,6 +82,7 @@ export default async function ObservabilityPage({
     { key: "tools", label: viewerT("tools") },
     { key: "mcp", label: viewerT("mcp") },
     { key: "a2a", label: viewerT("a2a") },
+    { key: "channels", label: t("channels.title") },
     { key: "internal", label: viewerT("internal") },
     { key: "usage", label: t("usage") },
     { key: "plugin", label: t("plugin") },
@@ -94,6 +96,22 @@ export default async function ObservabilityPage({
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect("/app");
   const base = `/app/${slug}/observability`;
+  if (current === "channels") {
+    return (
+      <>
+        <DashboardHeader title={t("observability")} />
+        <DashboardPage>
+          <TabBar tabs={tabs} current={current} basePath={base} />
+          <ChannelObservability
+            key={`${ws.id}:${query.agentId ?? ""}:${query.channelId ?? ""}`}
+            slug={slug}
+            agentId={query.agentId}
+            channelId={query.channelId}
+          />
+        </DashboardPage>
+      </>
+    );
+  }
   if (
     current === "runs" ||
     current === "mcp" ||

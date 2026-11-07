@@ -264,6 +264,17 @@
     "whatIsAnMcpServerToolplane": "什么是 MCP 服务器？ | ToolPlane"
   },
   "console": {
+    "liveOutput": {
+      "truncated": "实时预览已截断，完整回复请查看保存后的记录。",
+      "connecting": "连接中",
+      "live": "实时连接",
+      "disconnected": "连接已断开",
+      "reconnecting": "正在重新连接",
+      "paused": "已暂停",
+      "revoked": "访问权限已失效",
+      "pause": "暂停实时更新",
+      "resume": "恢复实时更新"
+    },
     "agentAutomation": {
       "triggers": "触发器",
       "refresh": "刷新",
@@ -1786,7 +1797,20 @@
       "noPrompts": "暂无已保存的提示词"
     },
     "agentMessaging": {
-      "access": "访问权限",
+      "title": "频道",
+      "basic": "基础",
+      "observe": "查看频道观测",
+      "saveSettings": "保存设置",
+      "addChannel": "添加频道",
+      "choosePlatform": "选择频道平台",
+      "allChannels": "全部",
+      "channelList": "频道连接",
+      "channelDetails": "频道详情",
+      "configure": "配置",
+      "collapse": "收起",
+      "moreActions": "{name}的更多操作",
+      "noChannels": "尚未添加频道",
+      "access": "权限",
       "openToAll": "向所有人开放",
       "openToAllWarning": "在已配置的聊天策略范围内，任何发送者都能使用此机器人，包括尚未批准的用户。",
       "unauthorizedDm": "未批准用户的私聊",
@@ -1834,7 +1858,6 @@
       "commandsModel": "仅管理员：更改当前会话的模型，使用 /model reset 恢复默认模型。",
       "commandsUpgrade": "仅管理员：确认后将当前会话升级至智能体的最新修订。",
       "conversationHistory": "对话记录",
-      "historyLiveReadOnly": "只读 · 自动同步新消息和回复",
       "historyLoadOlder": "加载更早记录",
       "historyEmpty": "暂无频道对话记录",
       "historyUser": "用户",
@@ -1986,7 +2009,6 @@
       "createAndRequestQr": "创建并请求二维码",
       "createChannel": "创建 {platform} 频道",
       "configureAModelProviderBeforeExternalMessagesCanReceiveAgentReplies": "在接收外部消息回复前，请先配置模型提供商。",
-      "addChannel": "添加频道",
       "chooseOnePlatformAndFollowItsNativeSetupFlow": "选择一个平台并按其原生流程设置。",
       "add": "添加",
       "connectedChannels": "已连接频道",
@@ -2510,6 +2532,21 @@
       "skillsTab": "技能"
     },
     "observability": {
+      "channels": {
+        "title": "频道",
+        "description": "查看频道会话和运行日志。配置与权限仍在智能体的频道设置中管理。",
+        "allAgents": "全部智能体",
+        "connection": "频道连接",
+        "selectConnection": "选择频道连接",
+        "retry": "重试",
+        "loading": "正在加载…",
+        "noMatchingConnection": "未找到匹配的频道连接，请调整筛选条件。",
+        "clearFilters": "清除筛选",
+        "historyDescription": "按会话汇总已保存的消息。打开 Work 查看实时生成、工具调用和执行状态。",
+        "untitledConversation": "未命名会话",
+        "loadedMessages": "已加载 {count} 条消息",
+        "openLive": "在 Work 查看实时会话"
+      },
       "agentUsage": "智能体用量",
       "viewer": {
         "runs": "智能体运行",

@@ -1,49 +1,43 @@
 "use client";
 import { BouncyAccordion } from "@/components/motion/bouncy-accordion";
 import { Button } from "@/components/motion/button/base";
+import { ButtonLink } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
-import { SafeStreamdown } from "@/components/dashboard/SafeStreamdown";
-import { displayMessagingUserText } from "@/lib/agents/messaging";
 import { FormSelect } from "@/components/ui/FormSelect";
 import { Switch } from "@/components/motion/switch";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import {
-  CenterMorphModal,
-  CenterMorphModalContent,
-} from "@/components/motion/center-morph-modal";
+  ChannelDetailPanel,
+  ChannelPanelCancel,
+  ChannelInlineDetails,
+} from "./ChannelDetailPanel";
+import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
+import {
+  MorphPopover,
+  MorphPopoverTrigger,
+  MorphPopoverContent,
+} from "@/components/motion/popover-morph";
 import {
   DialogBody,
-  DialogCancel,
   DialogField,
   DialogFooter,
-  DialogHeader,
 } from "@/components/dashboard/dialog";
 
 import Image from "next/image";
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   ArrowRightLeft,
-  FileText,
-  MessagesSquare,
+  ChevronDown,
+  ChevronUp,
+  MoreHorizontal,
   LoaderCircle,
-  Pencil,
   Plus,
   QrCode,
   Radio,
-  ShieldCheck,
   Trash2,
 } from "lucide-react";
 
-import { CopyButton } from "@/components/dashboard/CopyButton";
 import { QrPairingDisplay } from "@/components/dashboard/agents/QrPairingDisplay";
 import { notify } from "@/components/dashboard/Toaster";
 import {
@@ -51,9 +45,6 @@ import {
   type ChannelAccessCommand,
 } from "./ChannelAccessPanel";
 import type { AgentChannelConnectionClientView as Channel } from "@/lib/agents/channel-connection-client";
-import type { AgentChannelLogEntry } from "@/lib/agents/channel-runtime-logs";
-import { LiveControls } from "@/components/observability/LiveToggle";
-import { RelativeTime } from "@/components/observability/LogPrimitives";
 import {
   getMessagingPlatform,
   hasBuiltInPairingProvider,
@@ -84,18 +75,12 @@ const PRIMARY_FIELDS: Partial<Record<MessagingPlatformSlug, string[]>> = {
     "FEISHU_ENCRYPT_KEY",
     "FEISHU_VERIFICATION_TOKEN",
     "FEISHU_DOMAIN",
-    "FEISHU_ALLOWED_CHATS",
   ],
-  telegram: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_CHATS"],
-  qqbot: [
-    "QQBOT_APP_ID",
-    "QQBOT_SECRET",
-    "QQBOT_ALLOWED_CHATS",
-    "QQBOT_REQUIRE_MENTION",
-  ],
+  telegram: ["TELEGRAM_BOT_TOKEN"],
+  qqbot: ["QQBOT_APP_ID", "QQBOT_SECRET"],
   weixin: [],
-  discord: ["DISCORD_BOT_TOKEN", "DISCORD_ALLOWED_CHANNELS"],
-  slack: ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_ALLOWED_CHANNELS"],
+  discord: ["DISCORD_BOT_TOKEN"],
+  slack: ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
 };
 type Agent = { id: string; name: string };
 type Sandbox = {
@@ -156,424 +141,6 @@ function PlatformIcon({ platform }: { platform: string }) {
   );
 }
 
-function ChannelDialog({
-  title,
-  onClose,
-  children,
-  wide = false,
-}: {
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-  wide?: boolean;
-}) {
-  const t = useTranslations("console.agentMessaging");
-  return (
-    <CenterMorphModal
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <CenterMorphModalContent
-        ariaLabel={title}
-        closeButtonLabel={t("close")}
-        className={`flex max-h-[calc(100dvh-4rem)] flex-col ${wide ? "max-w-2xl" : "max-w-lg"}`}
-      >
-        <DialogHeader title={title} />
-        {children}
-      </CenterMorphModalContent>
-    </CenterMorphModal>
-  );
-}
-
-type ChannelHistoryMessage = {
-  id: string;
-  role: string;
-  text: string;
-  createdAt: string;
-  conversation: { id: string; title: string | null };
-};
-
-function ChannelHistory({
-  endpoint,
-  channel,
-  onClose,
-}: {
-  endpoint: string;
-  channel: Channel;
-  onClose: () => void;
-}) {
-  const t = useTranslations("console.agentMessaging");
-  const [messages, setMessages] = useState<ChannelHistoryMessage[]>([]);
-  const [error, setError] = useState("");
-  const [hasOlder, setHasOlder] = useState(false);
-  const [loadingOlder, setLoadingOlder] = useState(false);
-  const scroller = useRef<HTMLDivElement>(null);
-  const pinned = useRef(true);
-  const olderHeight = useRef<number | null>(null);
-  const latest = useRef<string | null>(null);
-  const merge = useCallback((incoming: ChannelHistoryMessage[]) => {
-    if (!incoming.length) return;
-    setMessages((current) =>
-      [
-        ...new Map([...current, ...incoming].map((m) => [m.id, m])).values(),
-      ].sort(
-        (a, b) =>
-          a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
-      ),
-    );
-  }, []);
-  useLayoutEffect(() => {
-    const node = scroller.current;
-    if (!node || !messages.length) return;
-    if (olderHeight.current !== null) {
-      node.scrollTop += node.scrollHeight - olderHeight.current;
-      olderHeight.current = null;
-    } else if (pinned.current) node.scrollTop = node.scrollHeight;
-  }, [messages]);
-  useEffect(() => {
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    let active = false;
-    async function refresh() {
-      if (active || controller.signal.aborted) return;
-      clearTimeout(timer);
-      active = true;
-      try {
-        if (!document.hidden) {
-          const response = await fetch(
-            `${endpoint}?history=${encodeURIComponent(channel.id)}${latest.current ? `&after=${encodeURIComponent(latest.current)}` : ""}`,
-            { cache: "no-store", signal: controller.signal },
-          );
-          if (!response.ok) throw new Error(t("requestFailed"));
-          const data = (await response.json()) as {
-            messages: ChannelHistoryMessage[];
-            hasMore: boolean;
-          };
-          if (!controller.signal.aborted) {
-            if (!latest.current) setHasOlder(data.hasMore);
-            latest.current = data.messages.at(-1)?.id ?? latest.current;
-            merge(data.messages);
-            setError("");
-          }
-        }
-      } catch (error) {
-        if (!controller.signal.aborted)
-          setError(error instanceof Error ? error.message : t("requestFailed"));
-      } finally {
-        active = false;
-        if (!controller.signal.aborted) timer = setTimeout(refresh, 1000);
-      }
-    }
-    void refresh();
-    document.addEventListener("visibilitychange", refresh);
-    return () => {
-      controller.abort();
-      clearTimeout(timer);
-      document.removeEventListener("visibilitychange", refresh);
-    };
-  }, [endpoint, channel.id, merge, t]);
-  async function loadOlder() {
-    if (!messages.length || loadingOlder) return;
-    setLoadingOlder(true);
-    try {
-      const response = await fetch(
-        `${endpoint}?history=${encodeURIComponent(channel.id)}&before=${encodeURIComponent(messages[0].id)}`,
-        { cache: "no-store" },
-      );
-      if (!response.ok) throw new Error(t("requestFailed"));
-      const data = (await response.json()) as {
-        messages: ChannelHistoryMessage[];
-        hasMore: boolean;
-      };
-      olderHeight.current = scroller.current?.scrollHeight ?? null;
-      setHasOlder(data.hasMore);
-      merge(data.messages);
-      setError("");
-    } catch (error) {
-      setError(error instanceof Error ? error.message : t("requestFailed"));
-    } finally {
-      setLoadingOlder(false);
-    }
-  }
-  return (
-    <ChannelDialog
-      title={`${channel.name} · ${t("conversationHistory")}`}
-      onClose={onClose}
-      wide
-    >
-      <p className="px-6 pb-3 text-xs text-muted-foreground">
-        {t("historyLiveReadOnly")}
-      </p>
-      {error ? (
-        <p role="alert" className="px-6 pb-3 text-sm text-destructive">
-          {error}
-        </p>
-      ) : null}
-      <div
-        ref={scroller}
-        role="log"
-        aria-label={t("conversationHistory")}
-        aria-live="polite"
-        className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-6"
-        onScroll={() => {
-          const node = scroller.current;
-          if (node)
-            pinned.current =
-              node.scrollHeight - node.scrollTop - node.clientHeight < 48;
-        }}
-      >
-        {hasOlder ? (
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={loadingOlder}
-            onClick={loadOlder}
-          >
-            {t("historyLoadOlder")}
-          </Button>
-        ) : null}
-        {!messages.length && !error ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            {t("historyEmpty")}
-          </p>
-        ) : null}
-        {messages.map((message) => (
-          <article
-            key={message.id}
-            className="min-w-0 rounded-lg border border-border p-3"
-          >
-            <div className="mb-2 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
-              <span>{message.conversation.title}</span>
-              <span>
-                {t(
-                  message.role === "user" ? "historyUser" : "historyAssistant",
-                )}
-              </span>
-              <RelativeTime value={message.createdAt} />
-            </div>
-            <div className="break-words text-sm [overflow-wrap:anywhere]">
-              {message.role === "assistant" ? (
-                <SafeStreamdown mode="static" parseIncompleteMarkdown={false}>
-                  {message.text}
-                </SafeStreamdown>
-              ) : (
-                <p className="whitespace-pre-wrap">
-                  {displayMessagingUserText(message.text)}
-                </p>
-              )}
-            </div>
-          </article>
-        ))}
-      </div>
-    </ChannelDialog>
-  );
-}
-
-function ChannelLogs({
-  endpoint,
-  channel,
-  onClose,
-}: {
-  endpoint: string;
-  channel: Channel;
-  onClose: () => void;
-}) {
-  const t = useTranslations("console.agentMessaging");
-  const viewer = useTranslations("console.observability.viewer");
-  const levelId = useId();
-  const searchId = useId();
-  const [logs, setLogs] = useState<AgentChannelLogEntry[]>([]);
-  const [error, setError] = useState("");
-  const [level, setLevel] = useState("");
-  const [search, setSearch] = useState("");
-  const [paused, setPaused] = useState(false);
-  const [pendingCount, setPendingCount] = useState(0);
-  const [connected, setConnected] = useState(false);
-  const pausedRef = useRef(false);
-  const displayed = useRef<AgentChannelLogEntry[]>([]);
-  const latest = useRef<AgentChannelLogEntry[]>([]);
-  const tail = useRef<HTMLDivElement>(null);
-  const requestFailed = t("requestFailed");
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const controller = new AbortController();
-    async function poll() {
-      try {
-        const response = await fetch(
-          `${endpoint}?logs=${encodeURIComponent(channel.id)}`,
-          { cache: "no-store", signal: controller.signal },
-        );
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || requestFailed);
-        if (!cancelled) {
-          const snapshot = data.logs as AgentChannelLogEntry[];
-          latest.current = snapshot;
-          if (!pausedRef.current) {
-            displayed.current = snapshot;
-            setLogs(snapshot);
-          } else {
-            const previous = new Map<string, number>();
-            for (const entry of displayed.current) {
-              const key = JSON.stringify(entry);
-              previous.set(key, (previous.get(key) ?? 0) + 1);
-            }
-            let count = 0;
-            for (const entry of snapshot) {
-              const key = JSON.stringify(entry);
-              const remaining = previous.get(key) ?? 0;
-              if (remaining) previous.set(key, remaining - 1);
-              else count++;
-            }
-            setPendingCount(count);
-          }
-          setConnected(true);
-          setError("");
-        }
-      } catch (cause) {
-        if (!cancelled) {
-          setConnected(false);
-          setError(cause instanceof Error ? cause.message : requestFailed);
-        }
-      }
-      if (!cancelled) timer = setTimeout(poll, 2000);
-    }
-    void poll();
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [endpoint, channel.id, requestFailed]);
-  const lastTimestamp = logs.at(-1)?.timestamp;
-  useEffect(() => {
-    void lastTimestamp;
-    if (!paused) tail.current?.scrollIntoView({ block: "nearest" });
-  }, [lastTimestamp, paused]);
-  const visible = logs.filter(
-    (entry) =>
-      (!level || entry.level === level) &&
-      (!search ||
-        entry.message.toLocaleLowerCase().includes(search.toLocaleLowerCase())),
-  );
-  const occurrences = new Map<string, number>();
-  const keyedLogs = visible.map((entry) => {
-    const identity = JSON.stringify(entry);
-    const occurrence = occurrences.get(identity) ?? 0;
-    occurrences.set(identity, occurrence + 1);
-    return { entry, key: `${identity}:${occurrence}` };
-  });
-  const text = visible
-    .map(
-      (entry) =>
-        `${new Date(entry.timestamp).toLocaleString()} [${entry.level.toUpperCase()}] ${entry.message}`,
-    )
-    .join("\n");
-  return (
-    <ChannelDialog
-      title={`${channel.name} · ${t("logs")}`}
-      onClose={onClose}
-      wide
-    >
-      <DialogBody>
-        <div className="flex flex-wrap items-end gap-3">
-          <DialogField
-            label={t("logLevel")}
-            htmlFor={levelId}
-            className="w-full sm:w-40"
-          >
-            <FormSelect
-              id={levelId}
-              value={level}
-              label={t("logLevel")}
-              options={[
-                { value: "", label: viewer("all") },
-                { value: "info", label: t("logInfo") },
-                { value: "error", label: t("logError") },
-              ]}
-              onValueChange={setLevel}
-              className="w-full"
-            />
-          </DialogField>
-          <DialogField
-            label={viewer("search")}
-            htmlFor={searchId}
-            className="min-w-0 flex-1 basis-48"
-          >
-            <Input
-              id={searchId}
-              value={search}
-              onChange={setSearch}
-              className="w-full"
-            />
-          </DialogField>
-          <div className="flex h-11 items-center gap-2">
-            <LiveControls
-              paused={paused}
-              count={pendingCount}
-              connected={connected}
-              onToggle={() => {
-                const next = !pausedRef.current;
-                pausedRef.current = next;
-                setPaused(next);
-                if (!next) {
-                  displayed.current = latest.current;
-                  setLogs(latest.current);
-                  setPendingCount(0);
-                }
-              }}
-            />
-            <CopyButton text={text} label={t("copyLogs")} iconOnly />
-          </div>
-        </div>
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
-        <div
-          className="h-80 overflow-auto rounded-xl border border-border"
-          role="log"
-          aria-live={paused ? "off" : "polite"}
-          aria-label={t("logs")}
-        >
-          {!visible.length && (
-            <p className="py-12 text-center text-sm text-muted-foreground">
-              {t("noLogs")}
-            </p>
-          )}
-          <ol className="divide-y divide-border">
-            {keyedLogs.map(({ entry, key }) => (
-              <li
-                key={key}
-                className="grid gap-2 p-3 text-xs sm:grid-cols-[9rem_4rem_minmax(0,1fr)]"
-              >
-                <RelativeTime value={new Date(entry.timestamp).toISOString()} />
-                <span
-                  className={
-                    entry.level === "error"
-                      ? "font-medium text-destructive"
-                      : "text-muted-foreground"
-                  }
-                >
-                  {t(entry.level === "error" ? "logError" : "logInfo")}
-                </span>
-                <p className="whitespace-pre-wrap break-words font-mono">
-                  {entry.message}
-                </p>
-              </li>
-            ))}
-          </ol>
-          <div ref={tail} />
-        </div>
-      </DialogBody>
-      <DialogFooter cancel={<DialogCancel>{t("close")}</DialogCancel>} />
-    </ChannelDialog>
-  );
-}
-
 function ChannelCommands() {
   const t = useTranslations("console.agentMessaging");
   return (
@@ -623,6 +190,8 @@ function ChannelCommands() {
 
 function ChannelEditor({
   channel,
+  endpoint,
+  view,
   agents,
   pending,
   error,
@@ -630,6 +199,8 @@ function ChannelEditor({
   onClose,
 }: {
   channel: Channel;
+  endpoint: string;
+  view: "configure" | "access";
   agents: Agent[];
   pending: boolean;
   error: string;
@@ -685,10 +256,16 @@ function ChannelEditor({
   if (!platform)
     throw new Error(`Unsupported messaging platform: ${channel.platform}`);
   const primary = PRIMARY_FIELDS[channel.platform];
-  const fields = platform.credentials.filter(
+  const permissionFields = platform.credentials.filter((field) =>
+    /ALLOWED|REQUIRE_MENTION/.test(field.name),
+  );
+  const basicFields = platform.credentials.filter(
+    (field) => !permissionFields.includes(field),
+  );
+  const fields = basicFields.filter(
     (field) => !primary || primary.includes(field.name),
   );
-  const advanced = platform.credentials.filter(
+  const advanced = basicFields.filter(
     (field) => primary && !primary.includes(field.name),
   );
   const renderField = (field: MessagingCredential) => {
@@ -768,9 +345,9 @@ function ChannelEditor({
     );
   };
   return (
-    <ChannelDialog title={channel.name} onClose={onClose}>
+    <ChannelDetailPanel title={channel.name} onClose={onClose}>
       <form
-        className="flex min-h-0 flex-col"
+        className="flex min-h-0 flex-1 flex-col"
         onSubmit={async (event) => {
           event.preventDefault();
           if (
@@ -798,226 +375,255 @@ function ChannelEditor({
         }}
       >
         <DialogBody>
-          <DialogField
-            label={t("connectionName")}
-            htmlFor={`${idPrefix}-name`}
-            dirty={name.trim() !== channel.name}
-          >
-            <Input
-              id={`${idPrefix}-name`}
-              autoFocus
-              required
-              maxLength={120}
-              onBlur={() => {
-                if (name.trim() && name.trim() !== channel.name)
-                  void update({ name: name.trim() });
-              }}
-              value={String(name)}
-              className="w-full"
-              onChange={(value) => setName(value)}
-            />
-          </DialogField>
-          <DialogField
-            label={t("bindAgent")}
-            htmlFor={`${idPrefix}-agent`}
-            dirty={!channel.sandboxId && agentId !== (channel.agentId ?? "")}
-          >
-            <FormSelect
-              id={`${idPrefix}-agent`}
-              disabled={Boolean(channel.sandboxId)}
-              value={channel.sandboxId ? (channel.agentId ?? "") : agentId}
-              label={t("bindAgent")}
-              options={[
-                { value: "", label: t("noAgent") },
-                agents.map((agent) => ({ value: agent.id, label: agent.name })),
-              ]
-                .flat()
-                .filter((option) => option != null)}
-              onValueChange={(value) => {
-                setAgentId(value);
-                void update({ agentId: value || null });
-              }}
-              className="w-full"
-            />
-          </DialogField>
-          {hasBuiltInPairingProvider(platform) && (
-            <section className="space-y-3 border-y border-border py-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs text-muted-foreground">
-                  {waiting
-                    ? t(
-                        pairing.status === "scanned"
-                          ? "statusScanned"
-                          : "statusWaiting",
-                      )
-                    : channel.missingStartCredentialNames.length
-                      ? t("qrSetup")
-                      : t("setupComplete")}
-                </span>
-                <Button
-                  type="button"
-                  disabled={pending}
-                  onClick={() =>
-                    void send({ action: "pair", connectionId: channel.id })
-                  }
-                  variant={"secondary"}
-                  size={"sm"}
+          {view === "configure" && (
+            <>
+              <div className="grid gap-5 md:grid-cols-2">
+                <DialogField
+                  label={t("connectionName")}
+                  htmlFor={`${idPrefix}-name`}
+                  dirty={name.trim() !== channel.name}
                 >
-                  {pending ? (
-                    <LoaderCircle className="size-3.5 animate-spin" />
-                  ) : (
-                    <QrCode className="size-3.5" />
-                  )}
-                  {pairing ? t("reauthenticate") : t("requestQr")}
-                </Button>
-              </div>
-              {waiting && pairing.qrPayload && (
-                <div className="mx-auto w-56 max-w-full">
-                  <QrPairingDisplay
-                    payload={pairing.qrPayload}
-                    label={t(`platforms.${channel.platform}`)}
-                    emptyLabel={t("requestQr")}
-                    errorLabel={t("qrRenderFailed")}
-                  />
-                </div>
-              )}
-              {pairing?.status === "expired" && (
-                <p
-                  role="status"
-                  className="text-xs text-muted-foreground text-muted-foreground"
-                >
-                  {t("statusExpired")}
-                </p>
-              )}
-              {pairing?.error && (
-                <p
-                  role="alert"
-                  className="break-words text-xs text-destructive"
-                >
-                  {pairing.error}
-                </p>
-              )}
-            </section>
-          )}
-          <div className="grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-2">
-            {fields.map(renderField)}
-          </div>
-          <section
-            className="space-y-4 border-t border-border pt-4"
-            aria-labelledby={`${idPrefix}-access`}
-          >
-            <h3 id={`${idPrefix}-access`} className="text-sm font-medium">
-              {t("access")}
-            </h3>
-            <div
-              className={
-                channel.access.openToAll
-                  ? "space-y-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3"
-                  : "space-y-3"
-              }
-            >
-              <DialogField label={t("openToAll")}>
-                <Switch
-                  checked={channel.access.openToAll}
-                  disabled={pending}
-                  ariaLabel={t("openToAll")}
-                  onCheckedChange={(openToAll) =>
-                    void update({ access: { openToAll } })
-                  }
-                />
-              </DialogField>
-              {channel.access.openToAll && (
-                <p
-                  role="status"
-                  className="text-xs text-amber-700 dark:text-amber-400"
-                >
-                  {t("openToAllWarning")}
-                </p>
-              )}
-            </div>
-            <DialogField
-              label={t("unauthorizedDm")}
-              htmlFor={`${idPrefix}-unauthorized-dm`}
-            >
-              <FormSelect
-                id={`${idPrefix}-unauthorized-dm`}
-                value={channel.access.unauthorizedDm}
-                disabled={pending}
-                label={t("unauthorizedDm")}
-                options={(["pair", "ignore", "decline"] as const).map(
-                  (value) => ({
-                    value,
-                    label: t(`unauthorizedDmOptions.${value}`),
-                  }),
-                )}
-                onValueChange={(value) =>
-                  void update({
-                    access: {
-                      unauthorizedDm:
-                        value as Channel["access"]["unauthorizedDm"],
-                    },
-                  })
-                }
-                className="w-full"
-              />
-            </DialogField>
-            <DialogField
-              label={t("adminUserIds")}
-              htmlFor={`${idPrefix}-admins`}
-              dirty={
-                adminIds !== null &&
-                adminIds !== channel.access.adminUserIds.join(", ")
-              }
-            >
-              <Input
-                id={`${idPrefix}-admins`}
-                value={adminIds ?? channel.access.adminUserIds.join(", ")}
-                placeholder={t("adminUserIdsPlaceholder")}
-                onChange={setAdminIds}
-                onBlur={() => void saveAdminIds()}
-                className="w-full"
-              />
-            </DialogField>
-          </section>
-          <section
-            className="space-y-4 border-t border-border pt-4"
-            aria-labelledby={`${idPrefix}-sessions`}
-          >
-            <h3 id={`${idPrefix}-sessions`} className="text-sm font-medium">
-              {t("sessions")}
-            </h3>
-            {(["groupSessionsPerUser", "threadSessionsPerUser"] as const).map(
-              (key) => (
-                <DialogField key={key} label={t(key)}>
-                  <Switch
-                    checked={channel.sessions[key]}
-                    disabled={pending}
-                    ariaLabel={t(key)}
-                    onCheckedChange={(value) =>
-                      void update({ sessions: { [key]: value } })
-                    }
+                  <Input
+                    id={`${idPrefix}-name`}
+                    required
+                    maxLength={120}
+                    onBlur={() => {
+                      if (name.trim() && name.trim() !== channel.name)
+                        void update({ name: name.trim() });
+                    }}
+                    value={String(name)}
+                    className="w-full"
+                    onChange={(value) => setName(value)}
                   />
                 </DialogField>
-              ),
-            )}
-          </section>
-          <ChannelCommands />
-          {advanced.length > 0 && (
-            <BouncyAccordion
-              items={[
-                {
-                  id: "details",
-                  title: <>{t("advanced")}</>,
-                  description: (
-                    <>
-                      <div className="mt-3 grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-2">
-                        {advanced.map(renderField)}
+                <DialogField
+                  label={t("bindAgent")}
+                  htmlFor={`${idPrefix}-agent`}
+                  dirty={
+                    !channel.sandboxId && agentId !== (channel.agentId ?? "")
+                  }
+                >
+                  <FormSelect
+                    id={`${idPrefix}-agent`}
+                    disabled={Boolean(channel.sandboxId)}
+                    value={
+                      channel.sandboxId ? (channel.agentId ?? "") : agentId
+                    }
+                    label={t("bindAgent")}
+                    options={[
+                      { value: "", label: t("noAgent") },
+                      agents.map((agent) => ({
+                        value: agent.id,
+                        label: agent.name,
+                      })),
+                    ]
+                      .flat()
+                      .filter((option) => option != null)}
+                    onValueChange={(value) => {
+                      setAgentId(value);
+                      void update({ agentId: value || null });
+                    }}
+                    className="w-full"
+                  />
+                </DialogField>
+              </div>
+              {hasBuiltInPairingProvider(platform) && (
+                <section className="space-y-3 border-y border-border py-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">
+                      {waiting
+                        ? t(
+                            pairing.status === "scanned"
+                              ? "statusScanned"
+                              : "statusWaiting",
+                          )
+                        : channel.missingStartCredentialNames.length
+                          ? t("qrSetup")
+                          : t("setupComplete")}
+                    </span>
+                    <Button
+                      type="button"
+                      disabled={pending}
+                      onClick={() =>
+                        void send({ action: "pair", connectionId: channel.id })
+                      }
+                      variant={"secondary"}
+                      size={"sm"}
+                    >
+                      {pending ? (
+                        <LoaderCircle className="size-3.5 animate-spin" />
+                      ) : (
+                        <QrCode className="size-3.5" />
+                      )}
+                      {pairing ? t("reauthenticate") : t("requestQr")}
+                    </Button>
+                  </div>
+                  {waiting && pairing.qrPayload && (
+                    <div className="mx-auto w-56 max-w-full">
+                      <QrPairingDisplay
+                        payload={pairing.qrPayload}
+                        label={t(`platforms.${channel.platform}`)}
+                        emptyLabel={t("requestQr")}
+                        errorLabel={t("qrRenderFailed")}
+                      />
+                    </div>
+                  )}
+                  {pairing?.status === "expired" && (
+                    <p
+                      role="status"
+                      className="text-xs text-muted-foreground text-muted-foreground"
+                    >
+                      {t("statusExpired")}
+                    </p>
+                  )}
+                  {pairing?.error && (
+                    <p
+                      role="alert"
+                      className="break-words text-xs text-destructive"
+                    >
+                      {pairing.error}
+                    </p>
+                  )}
+                </section>
+              )}
+              <div className="grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-2">
+                {fields.map(renderField)}
+              </div>
+              <BouncyAccordion
+                items={[
+                  {
+                    id: "details",
+                    title: <>{t("advanced")}</>,
+                    description: (
+                      <div className="space-y-5">
+                        <section
+                          className="space-y-4 border-t border-border pt-4"
+                          aria-labelledby={`${idPrefix}-sessions`}
+                        >
+                          <h3
+                            id={`${idPrefix}-sessions`}
+                            className="text-sm font-medium"
+                          >
+                            {t("sessions")}
+                          </h3>
+                          {(
+                            [
+                              "groupSessionsPerUser",
+                              "threadSessionsPerUser",
+                            ] as const
+                          ).map((key) => (
+                            <DialogField key={key} label={t(key)}>
+                              <Switch
+                                checked={channel.sessions[key]}
+                                disabled={pending}
+                                ariaLabel={t(key)}
+                                onCheckedChange={(value) =>
+                                  void update({ sessions: { [key]: value } })
+                                }
+                              />
+                            </DialogField>
+                          ))}
+                        </section>
+                        <ChannelCommands />
+                        <div className="mt-3 grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-2">
+                          {advanced.map(renderField)}
+                        </div>
                       </div>
-                    </>
-                  ),
-                },
-              ]}
-            />
+                    ),
+                  },
+                ]}
+              />
+            </>
+          )}
+          {view === "access" && (
+            <>
+              <section
+                className="space-y-4 border-t border-border pt-4"
+                aria-labelledby={`${idPrefix}-access`}
+              >
+                <h3 id={`${idPrefix}-access`} className="text-sm font-medium">
+                  {t("access")}
+                </h3>
+                <div
+                  className={
+                    channel.access.openToAll
+                      ? "space-y-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3"
+                      : "space-y-3"
+                  }
+                >
+                  <DialogField label={t("openToAll")}>
+                    <Switch
+                      checked={channel.access.openToAll}
+                      disabled={pending}
+                      ariaLabel={t("openToAll")}
+                      onCheckedChange={(openToAll) =>
+                        void update({ access: { openToAll } })
+                      }
+                    />
+                  </DialogField>
+                  {channel.access.openToAll && (
+                    <p
+                      role="status"
+                      className="text-xs text-amber-700 dark:text-amber-400"
+                    >
+                      {t("openToAllWarning")}
+                    </p>
+                  )}
+                </div>
+                <DialogField
+                  label={t("unauthorizedDm")}
+                  htmlFor={`${idPrefix}-unauthorized-dm`}
+                >
+                  <FormSelect
+                    id={`${idPrefix}-unauthorized-dm`}
+                    value={channel.access.unauthorizedDm}
+                    disabled={pending}
+                    label={t("unauthorizedDm")}
+                    options={(["pair", "ignore", "decline"] as const).map(
+                      (value) => ({
+                        value,
+                        label: t(`unauthorizedDmOptions.${value}`),
+                      }),
+                    )}
+                    onValueChange={(value) =>
+                      void update({
+                        access: {
+                          unauthorizedDm:
+                            value as Channel["access"]["unauthorizedDm"],
+                        },
+                      })
+                    }
+                    className="w-full"
+                  />
+                </DialogField>
+                <DialogField
+                  label={t("adminUserIds")}
+                  htmlFor={`${idPrefix}-admins`}
+                  dirty={
+                    adminIds !== null &&
+                    adminIds !== channel.access.adminUserIds.join(", ")
+                  }
+                >
+                  <Input
+                    id={`${idPrefix}-admins`}
+                    value={adminIds ?? channel.access.adminUserIds.join(", ")}
+                    placeholder={t("adminUserIdsPlaceholder")}
+                    onChange={setAdminIds}
+                    onBlur={() => void saveAdminIds()}
+                    className="w-full"
+                  />
+                </DialogField>
+              </section>
+              <div className="grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-2">
+                {permissionFields.map(renderField)}
+              </div>
+              <ChannelAccessPanel
+                endpoint={endpoint}
+                connectionId={channel.id}
+                pending={pending}
+                send={send}
+              />
+            </>
           )}
           {error && (
             <p role="alert" className="break-words text-sm text-destructive">
@@ -1025,14 +631,23 @@ function ChannelEditor({
             </p>
           )}
         </DialogBody>
-        <DialogFooter cancel={<DialogCancel />}>
-          <Button type="submit" aria-busy={pending} variant="primary" size="md">
+        <DialogFooter
+          className="static"
+          cancel={<ChannelPanelCancel onClick={onClose} />}
+        >
+          <Button
+            type="submit"
+            disabled={pending}
+            aria-busy={pending}
+            variant="primary"
+            size="md"
+          >
             {pending && <LoaderCircle className="size-4 animate-spin" />}
-            {t("saveCredentials")}
+            {t("saveSettings")}
           </Button>
         </DialogFooter>
       </form>
-    </ChannelDialog>
+    </ChannelDetailPanel>
   );
 }
 
@@ -1052,7 +667,11 @@ export function AgentMessagingPanel({
   const t = useTranslations("console.agentMessaging");
   const endpoint = `/api/v1/workspaces/${encodeURIComponent(slug)}/agent-channels`;
   const requestFailed = t("requestFailed");
-  const [selected, setSelected] = useState<MessagingPlatformSlug>("feishu");
+  const [selected, setSelected] = useState<MessagingPlatformSlug | "all">(
+    "all",
+  );
+  const [adding, setAdding] = useState(false);
+  const [moreId, setMoreId] = useState<string | null>(null);
   const [connections, setConnections] = useState(initialConnections);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [sandboxes, setSandboxes] = useState<Sandbox[]>([]);
@@ -1060,9 +679,9 @@ export function AgentMessagingPanel({
   const [targetSandboxId, setTargetSandboxId] = useState("");
   const targetSandboxFieldId = useId();
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [logId, setLogId] = useState<string | null>(null);
-  const [historyId, setHistoryId] = useState<string | null>(null);
-  const [accessId, setAccessId] = useState<string | null>(null);
+  const [settingsView, setSettingsView] = useState<"configure" | "access">(
+    "configure",
+  );
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [pending, setPending] = useState(0);
   const [error, setError] = useState("");
@@ -1176,7 +795,7 @@ export function AgentMessagingPanel({
     ),
   ];
   const selectedChannels = visible.filter(
-    (channel) => channel.platform === selected,
+    (channel) => selected === "all" || channel.platform === selected,
   );
   const statusText = (status: string) =>
     t(
@@ -1193,30 +812,43 @@ export function AgentMessagingPanel({
       ? t(`platforms.${platform}`)
       : (getMessagingPlatform(platform)?.label ?? platform);
   const deleteChannel = connections.find((channel) => channel.id === deleteId);
-  const logChannel = connections.find((channel) => channel.id === logId);
-  const accessChannel = connections.find((channel) => channel.id === accessId);
-  const historyChannel = connections.find(
-    (channel) => channel.id === historyId,
-  );
+
   const moveChannel = connections.find((channel) => channel.id === moveId);
   const targetSandbox = sandboxes.find(
     (sandbox) => sandbox.id === targetSandboxId,
   );
-  async function add() {
+  function closeDetails() {
+    setEditingId(null);
+    setMoveId(null);
+    setDeleteId(null);
+  }
+  function openDetail(id: string, view: string) {
+    closeDetails();
+    setError("");
+    setMoreId(null);
+    if (view === "configure" || view === "access") {
+      setSettingsView(view);
+      setEditingId(id);
+    } else if (view === "migrate") {
+      setTargetSandboxId("");
+      setMoveId(id);
+    } else if (view === "delete") setDeleteId(id);
+  }
+  async function add(platformSlug: MessagingPlatformSlug) {
     const names = new Set(
       visible
-        .filter((channel) => channel.platform === selected)
+        .filter((channel) => channel.platform === platformSlug)
         .map((channel) => channel.name),
     );
-    let name = platformName(selected);
+    let name = platformName(platformSlug);
     for (let i = 2; names.has(name); i += 1)
-      name = `${platformName(selected)} ${i}`;
-    const platform = getMessagingPlatform(selected);
+      name = `${platformName(platformSlug)} ${i}`;
+    const platform = getMessagingPlatform(platformSlug);
     if (!platform)
-      throw new Error(`Unsupported messaging platform: ${selected}`);
+      throw new Error(`Unsupported messaging platform: ${platformSlug}`);
     const created = await send({
       action: "create",
-      platform: selected,
+      platform: platformSlug,
       name,
       agentId: agentId ?? null,
       sandboxId,
@@ -1227,239 +859,27 @@ export function AgentMessagingPanel({
       ),
     });
     if (created?.connectionId) {
-      setEditingId(created.connectionId);
-      if (["feishu", "weixin"].includes(selected))
+      setAdding(false);
+      setSelected("all");
+      openDetail(created.connectionId, "configure");
+      if (["feishu", "weixin"].includes(platformSlug))
         await send({ action: "pair", connectionId: created.connectionId });
     }
   }
-  return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col">
-      <nav
-        aria-label={t("platformNavigation")}
-        className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/60 bg-muted/15 p-3"
-      >
-        {platforms.map((platform) => (
-          <Button
-            key={platform}
-            type="button"
-            aria-current={selected === platform ? "page" : undefined}
-            onClick={() => setSelected(platform)}
-            variant={selected === platform ? "secondary" : "ghost"}
-            size="sm"
-            className="shrink-0 justify-start rounded-xl text-left"
-          >
-            <PlatformIcon platform={platform} />
-            <span className="whitespace-nowrap">{platformName(platform)}</span>
-          </Button>
-        ))}
-      </nav>
-      <section className="min-h-0 w-full min-w-0 flex-1 overflow-y-auto px-6 py-5">
-        <header className="mb-6 flex items-center justify-between gap-3 border-b border-border/60 pb-5">
-          <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold tracking-tight">
-            <PlatformIcon platform={selected} />
-            {platformName(selected)}
-          </h2>
-          <Button
-            type="button"
-            disabled={Boolean(pending) || !PLATFORMS.includes(selected)}
-            onClick={() => void add()}
-            variant={"secondary"}
-            size={"sm"}
-            className="shrink-0"
-          >
-            <Plus className="size-4" />
-            {t("add")}
-          </Button>
-        </header>
-        {!ready && (
-          <p className="py-2 text-xs text-muted-foreground text-muted-foreground">
-            {t(
-              "configureAModelProviderBeforeExternalMessagesCanReceiveAgentReplies",
-            )}
-          </p>
-        )}
-        {error && !editing && (
-          <p role="alert" className="py-2 text-sm text-destructive">
-            {error}
-          </p>
-        )}
-        {!selectedChannels.length && (
-          <div className="flex flex-col items-center gap-3 py-16 text-center text-muted-foreground">
-            <Radio className="size-7 opacity-50" />
-            <p className="text-sm">
-              {t("noInstances", { platform: platformName(selected) })}
-            </p>
-          </div>
-        )}
-        <div className="divide-y divide-border/60">
-          {selectedChannels.map((channel) => {
-            const active = ["running", "starting"].includes(channel.status);
-            return (
-              <div
-                key={channel.id}
-                className="flex flex-wrap items-center gap-x-2 gap-y-2 py-3"
-              >
-                <div className="min-w-0 flex-1 basis-32">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="min-w-0 max-w-full break-words text-sm font-medium">
-                      {channel.name}
-                    </span>
-                    <AnimatedBadge
-                      status={
-                        channel.status === "running"
-                          ? "success"
-                          : channel.status === "error"
-                            ? "danger"
-                            : channel.status === "starting"
-                              ? "loading"
-                              : "neutral"
-                      }
-                    >
-                      {statusText(channel.status)}
-                    </AnimatedBadge>
-                    {channel.access.openToAll && (
-                      <AnimatedBadge status="warning">
-                        {t("openToAll")}
-                      </AnimatedBadge>
-                    )}
-                    {channel.access.pendingCount > 0 && (
-                      <AnimatedBadge status="info">
-                        {t("pendingPairingCount", {
-                          count: channel.access.pendingCount,
-                        })}
-                      </AnimatedBadge>
-                    )}
-                  </div>
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {sandboxes.find(
-                      (sandbox) => sandbox.id === channel.sandboxId,
-                    )?.name ?? t("noSandbox")}{" "}
-                    /{" "}
-                    {agents.find((agent) => agent.id === channel.agentId)
-                      ?.name ?? t("noAgent")}
-                  </p>
-                  {channel.lastError && (
-                    <p className="mt-1 break-words text-xs text-destructive text-destructive">
-                      {channel.lastError}
-                    </p>
-                  )}
-                  {channel.revisions.outdatedConversations > 0 && (
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                      <p className="text-muted-foreground">
-                        {t("outdatedConversations", {
-                          count: channel.revisions.outdatedConversations,
-                        })}
-                      </p>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        disabled={Boolean(pending)}
-                        onClick={async () => {
-                          const result = await send({
-                            action: "upgradeConversations",
-                            connectionId: channel.id,
-                          });
-                          if (
-                            result &&
-                            result.upgraded !== undefined &&
-                            result.skipped !== undefined
-                          )
-                            notify(
-                              t("conversationsUpgraded", {
-                                upgraded: result.upgraded,
-                                skipped: result.skipped,
-                              }),
-                            );
-                          else if (!result)
-                            notify(requestFailed, { severity: "error" });
-                        }}
-                      >
-                        {t("upgradeAll")}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-                <div className="ml-auto flex shrink-0 items-center gap-0.5">
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setError("");
-                      setAccessId(channel.id);
-                    }}
-                    size="icon"
-                    aria-label={t("access")}
-                  >
-                    <ShieldCheck className="size-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => setHistoryId(channel.id)}
-                    size="icon"
-                    aria-label={t("conversationHistory")}
-                  >
-                    <MessagesSquare className="size-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => setLogId(channel.id)}
-                    size="icon"
-                    aria-label={t("logs")}
-                  >
-                    {<FileText className="size-4" />}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setError("");
-                      setEditingId(channel.id);
-                    }}
-                    size="icon"
-                    aria-label={t("edit")}
-                  >
-                    {<Pencil className="size-4" />}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setError("");
-                      setTargetSandboxId("");
-                      setMoveId(channel.id);
-                    }}
-                    size="icon"
-                    aria-label={t("migrate")}
-                  >
-                    {<ArrowRightLeft className="size-4" />}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => setDeleteId(channel.id)}
-                    size="icon"
-                    aria-label={t("delete")}
-                  >
-                    {<Trash2 className="size-4" />}
-                  </Button>
-                  <Switch
-                    checked={active}
-                    disabled={Boolean(pending)}
-                    ariaLabel={`${t(active ? "stop" : "start")} ${channel.name}`}
-                    onCheckedChange={() =>
-                      void send({
-                        action: active ? "stop" : "start",
-                        connectionId: channel.id,
-                      })
-                    }
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+  const detailChannel = editing ?? moveChannel ?? deleteChannel;
+  const detailView = editing
+    ? settingsView
+    : moveChannel
+      ? "migrate"
+      : "delete";
+  const detailContent = (
+    <>
       {editing && (
         <ChannelEditor
           key={editing.id}
           channel={editing}
+          endpoint={endpoint}
+          view={settingsView}
           agents={agents}
           pending={Boolean(pending)}
           error={error}
@@ -1467,35 +887,9 @@ export function AgentMessagingPanel({
           onClose={() => setEditingId(null)}
         />
       )}
-      {accessChannel && (
-        <ChannelAccessPanel
-          key={accessChannel.id}
-          endpoint={endpoint}
-          connectionId={accessChannel.id}
-          name={accessChannel.name}
-          pending={Boolean(pending)}
-          mutationError={error}
-          send={send}
-          onClose={() => setAccessId(null)}
-        />
-      )}
-      {logChannel && (
-        <ChannelLogs
-          endpoint={endpoint}
-          channel={logChannel}
-          onClose={() => setLogId(null)}
-        />
-      )}
-      {historyChannel && (
-        <ChannelHistory
-          key={historyChannel.id}
-          endpoint={endpoint}
-          channel={historyChannel}
-          onClose={() => setHistoryId(null)}
-        />
-      )}
+
       {moveChannel && (
-        <ChannelDialog
+        <ChannelDetailPanel
           title={t("migrateTitle", { name: moveChannel.name })}
           onClose={() => {
             if (!pending) setMoveId(null);
@@ -1545,7 +939,14 @@ export function AgentMessagingPanel({
               </p>
             )}
           </DialogBody>
-          <DialogFooter cancel={<DialogCancel disabled={Boolean(pending)} />}>
+          <DialogFooter
+            cancel={
+              <ChannelPanelCancel
+                disabled={Boolean(pending)}
+                onClick={() => setMoveId(null)}
+              />
+            }
+          >
             <Button
               type="button"
               disabled={Boolean(pending) || !targetSandbox}
@@ -1566,10 +967,10 @@ export function AgentMessagingPanel({
               {t("migrate")}
             </Button>
           </DialogFooter>
-        </ChannelDialog>
+        </ChannelDetailPanel>
       )}
       {deleteChannel && (
-        <ChannelDialog
+        <ChannelDetailPanel
           title={t("deleteTitle", { name: deleteChannel.name })}
           onClose={() => setDeleteId(null)}
         >
@@ -1577,8 +978,20 @@ export function AgentMessagingPanel({
             <p className="text-sm text-muted-foreground">
               {t("deleteConfirmation")}
             </p>
+            {error && (
+              <p role="alert" className="break-words text-sm text-destructive">
+                {error}
+              </p>
+            )}
           </DialogBody>
-          <DialogFooter cancel={<DialogCancel disabled={Boolean(pending)} />}>
+          <DialogFooter
+            cancel={
+              <ChannelPanelCancel
+                disabled={Boolean(pending)}
+                onClick={() => setDeleteId(null)}
+              />
+            }
+          >
             <Button
               type="button"
               disabled={Boolean(pending)}
@@ -1599,8 +1012,327 @@ export function AgentMessagingPanel({
               {t("delete")}
             </Button>
           </DialogFooter>
-        </ChannelDialog>
+        </ChannelDetailPanel>
       )}
+    </>
+  );
+  return (
+    <div className="h-full min-h-0 min-w-0 overflow-y-auto px-4 py-5 sm:px-6">
+      <header className="mb-5 flex items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold">{t("title")}</h2>
+        <MorphPopover open={adding} onOpenChange={setAdding}>
+          <MorphPopoverTrigger>
+            <Button disabled={Boolean(pending)} variant="primary" size="sm">
+              <Plus className="size-4" />
+              {t("addChannel")}
+            </Button>
+          </MorphPopoverTrigger>
+          <MorphPopoverContent className="w-56 p-2">
+            <section className="grid gap-1" aria-label={t("choosePlatform")}>
+              {PLATFORMS.map((platform) => (
+                <Button
+                  key={platform}
+                  disabled={Boolean(pending)}
+                  variant="ghost"
+                  size="sm"
+                  className="justify-start"
+                  onClick={() => void add(platform)}
+                >
+                  <PlatformIcon platform={platform} />
+                  {platformName(platform)}
+                </Button>
+              ))}
+            </section>
+          </MorphPopoverContent>
+        </MorphPopover>
+      </header>
+      <nav
+        aria-label={t("platformNavigation")}
+        className="mb-4 flex gap-1 overflow-x-auto pb-2"
+      >
+        <Button
+          type="button"
+          aria-current={selected === "all" ? "page" : undefined}
+          onClick={() => {
+            setSelected("all");
+            closeDetails();
+          }}
+          variant={selected === "all" ? "secondary" : "ghost"}
+          size="sm"
+          className="shrink-0"
+        >
+          {t("allChannels")}{" "}
+          <span className="text-muted-foreground">{visible.length}</span>
+        </Button>
+        {platforms.map((platform) => (
+          <Button
+            key={platform}
+            type="button"
+            aria-current={selected === platform ? "page" : undefined}
+            onClick={() => {
+              setSelected(platform);
+              closeDetails();
+            }}
+            variant={selected === platform ? "secondary" : "ghost"}
+            size="sm"
+            className="shrink-0 justify-start rounded-xl text-left"
+          >
+            <span className="whitespace-nowrap">{platformName(platform)}</span>
+          </Button>
+        ))}
+      </nav>
+      <section aria-label={t("channelList")} className="min-w-0">
+        {!ready && (
+          <p className="mb-4 text-xs text-muted-foreground">
+            {t(
+              "configureAModelProviderBeforeExternalMessagesCanReceiveAgentReplies",
+            )}
+          </p>
+        )}
+        {error && !detailChannel && (
+          <p role="alert" className="py-2 text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        {!selectedChannels.length && (
+          <div className="flex flex-col items-center gap-3 py-16 text-center text-muted-foreground">
+            <Radio className="size-7 opacity-50" />
+            <p className="text-sm">
+              {selected === "all"
+                ? t("noChannels")
+                : t("noInstances", { platform: platformName(selected) })}
+            </p>
+          </div>
+        )}
+        <div className="space-y-2">
+          {selectedChannels.map((channel) => {
+            const active = ["running", "starting"].includes(channel.status);
+            const expanded = detailChannel?.id === channel.id;
+            const panelId = `${targetSandboxFieldId}-${channel.id}`;
+            return (
+              <div
+                key={channel.id}
+                className={`min-w-0 rounded-xl border ${expanded ? "border-border bg-muted/10" : "border-transparent border-b-border/60"}`}
+              >
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-3 p-3 sm:p-4">
+                  <PlatformIcon platform={channel.platform} />
+                  <div className="min-w-0 flex-1 basis-32">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="min-w-0 max-w-full break-words text-sm font-medium">
+                        {channel.name}
+                      </span>
+                      <AnimatedBadge
+                        status={
+                          channel.status === "running"
+                            ? "success"
+                            : channel.status === "error"
+                              ? "danger"
+                              : channel.status === "starting"
+                                ? "loading"
+                                : "neutral"
+                        }
+                      >
+                        {statusText(channel.status)}
+                      </AnimatedBadge>
+                      {channel.access.openToAll && (
+                        <AnimatedBadge status="warning">
+                          {t("openToAll")}
+                        </AnimatedBadge>
+                      )}
+                      {channel.access.pendingCount > 0 && (
+                        <AnimatedBadge status="info">
+                          {t("pendingPairingCount", {
+                            count: channel.access.pendingCount,
+                          })}
+                        </AnimatedBadge>
+                      )}
+                    </div>
+                    <p className="mt-1 truncate text-xs text-muted-foreground">
+                      {platformName(channel.platform)}
+                      {!agentId && (
+                        <>
+                          {" "}
+                          ·{" "}
+                          {agents.find((agent) => agent.id === channel.agentId)
+                            ?.name ?? t("noAgent")}
+                        </>
+                      )}
+                    </p>
+                    {channel.lastError && (
+                      <p className="mt-1 break-words text-xs text-destructive">
+                        {channel.lastError}
+                      </p>
+                    )}
+                    {channel.revisions.outdatedConversations > 0 && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                        <p className="text-muted-foreground">
+                          {t("outdatedConversations", {
+                            count: channel.revisions.outdatedConversations,
+                          })}
+                        </p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={Boolean(pending)}
+                          onClick={async () => {
+                            const result = await send({
+                              action: "upgradeConversations",
+                              connectionId: channel.id,
+                            });
+                            if (
+                              result &&
+                              result.upgraded !== undefined &&
+                              result.skipped !== undefined
+                            )
+                              notify(
+                                t("conversationsUpgraded", {
+                                  upgraded: result.upgraded,
+                                  skipped: result.skipped,
+                                }),
+                              );
+                            else if (!result)
+                              notify(requestFailed, { severity: "error" });
+                          }}
+                        >
+                          {t("upgradeAll")}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="ml-auto flex shrink-0 items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-expanded={expanded}
+                      aria-controls={expanded ? panelId : undefined}
+                      disabled={Boolean(pending)}
+                      onClick={() =>
+                        expanded
+                          ? closeDetails()
+                          : openDetail(channel.id, "configure")
+                      }
+                    >
+                      {t(expanded ? "collapse" : "configure")}
+                      {expanded ? (
+                        <ChevronUp className="size-4" />
+                      ) : (
+                        <ChevronDown className="size-4" />
+                      )}
+                    </Button>
+                    <MorphPopover
+                      open={moreId === channel.id}
+                      onOpenChange={(open) =>
+                        setMoreId(open ? channel.id : null)
+                      }
+                    >
+                      <MorphPopoverTrigger>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={t("moreActions", { name: channel.name })}
+                          disabled={Boolean(pending)}
+                        >
+                          <MoreHorizontal className="size-4" />
+                        </Button>
+                      </MorphPopoverTrigger>
+                      <MorphPopoverContent className="w-44 p-1">
+                        <div className="grid gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="justify-start"
+                            onClick={() => openDetail(channel.id, "migrate")}
+                          >
+                            <ArrowRightLeft className="size-4" />
+                            {t("migrate")}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="justify-start text-destructive"
+                            onClick={() => openDetail(channel.id, "delete")}
+                          >
+                            <Trash2 className="size-4" />
+                            {t("delete")}
+                          </Button>
+                        </div>
+                      </MorphPopoverContent>
+                    </MorphPopover>
+                    <Switch
+                      checked={active}
+                      disabled={Boolean(pending)}
+                      ariaLabel={`${t(active ? "stop" : "start")} ${channel.name}`}
+                      onCheckedChange={() =>
+                        void send({
+                          action: active ? "stop" : "start",
+                          connectionId: channel.id,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                {expanded && (
+                  <div id={panelId} className="min-w-0 border-t border-border">
+                    {detailView === "migrate" || detailView === "delete" ? (
+                      detailContent
+                    ) : (
+                      <Tabs
+                        variant="underline"
+                        value={detailView}
+                        onValueChange={(view) => openDetail(channel.id, view)}
+                        className="min-w-0"
+                      >
+                        <TabsList
+                          aria-label={t("channelDetails")}
+                          wrapperClassName="px-3 sm:px-4"
+                        >
+                          {(["configure", "access"] as const).map((view) => (
+                            <TabsTrigger
+                              key={view}
+                              value={view}
+                              id={`${panelId}-${view}-tab`}
+                              aria-controls={`${panelId}-settings`}
+                            >
+                              {t(view === "configure" ? "basic" : view)}
+                              {view === "access" &&
+                                channel.access.pendingCount > 0 && (
+                                  <span className="ml-1 text-xs text-amber-600">
+                                    {channel.access.pendingCount}
+                                  </span>
+                                )}
+                            </TabsTrigger>
+                          ))}
+                        </TabsList>
+                        <div
+                          id={`${panelId}-settings`}
+                          role="tabpanel"
+                          aria-labelledby={`${panelId}-${detailView}-tab`}
+                          className="mt-4 min-w-0"
+                        >
+                          <ChannelInlineDetails>
+                            {detailContent}
+                          </ChannelInlineDetails>
+                        </div>
+                        <div className="px-6 pb-4">
+                          <ButtonLink
+                            href={`/app/${encodeURIComponent(slug)}/observability?tab=channels&channelId=${encodeURIComponent(channel.id)}${channel.agentId ? `&agentId=${encodeURIComponent(channel.agentId)}` : ""}`}
+                            variant="ghost"
+                            size="sm"
+                          >
+                            {t("observe")}
+                          </ButtonLink>
+                        </div>
+                      </Tabs>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }

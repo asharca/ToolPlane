@@ -64,6 +64,8 @@ import {
 } from "@/components/dashboard/ConversationComposer";
 import { WorkComposer } from "./WorkComposer";
 import { ConversationExecution } from "./ConversationExecution";
+import { useLiveTaskOutput } from "./useLiveTaskOutput";
+import { LiveOutputStatus, LiveOutputView } from "./LiveOutputView";
 import { createWorkCompletionTransition } from "./completion-transition";
 import { useWorkCompletionNotification } from "./useWorkCompletionNotification";
 import {
@@ -140,6 +142,7 @@ import {
   type SidebarGroupPreferences,
 } from "@/lib/sidebar-groups";
 import { usePersistentSidebarGroups } from "@/lib/use-persistent-sidebar-groups";
+import { conversationTitleFromParts } from "@/lib/agents/conversation-title";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import {
   CenterMorphModal,
@@ -1331,9 +1334,47 @@ export function WorkspaceWork({
       ? selected.readOnly !== false ||
         !isExecutableAgentRuntimeKind(selected.runtimeKind)
       : !isExecutableAgentRuntimeKind(controlAgent?.runtimeKind);
-  // Channel history is written by its channel; the console only observes it
-  // and answers native extension dialogs.
+  // Channel execution remains read-only here; native dialogs use their own authorization.
   const channelConversation = Boolean(conversation?.source);
+  const observingConversation = Boolean(
+    conversation &&
+      isExecutableAgentRuntimeKind(conversation.runtimeKind) &&
+      (channelConversation || sessionReadOnly),
+  );
+  const conversationLive = useLiveTaskOutput({
+    url:
+      observingConversation && conversation
+        ? `/api/v1/agents/${encodeURIComponent(conversation.agentId)}/conversations/${encodeURIComponent(conversation.id)}/events`
+        : null,
+    onSettled: () => router.refresh(),
+    onRevoked: () => router.refresh(),
+  });
+  const conversationOutput = conversationLive.output;
+  const conversationOutputPersisted = Boolean(
+    conversationOutput &&
+      !conversationOutput.active &&
+      conversation?.messages.some((message) =>
+        message.parts.some(
+          (part) =>
+            part.type === "data-agent-task" &&
+            part.data &&
+            typeof part.data === "object" &&
+            "taskId" in part.data &&
+            part.data.taskId === conversationOutput.taskId &&
+            (conversationOutput.startedAt === undefined ||
+              ("startedAt" in part.data &&
+                part.data.startedAt === conversationOutput.startedAt)),
+        ),
+      ),
+  );
+  const conversationAccessRevoked =
+    observingConversation && conversationLive.connection === "revoked";
+  const observedTaskId = conversationOutput?.taskId;
+  const observedStartedAt = conversationOutput?.startedAt;
+  useEffect(() => {
+    // Pick up the incoming channel message once per turn, not once per token.
+    if (observedTaskId && observedStartedAt !== undefined) router.refresh();
+  }, [observedTaskId, observedStartedAt, router]);
   const unappliedDraft = Boolean(
     !selected &&
       !conversation &&
@@ -1377,6 +1418,7 @@ export function WorkspaceWork({
   useEffect(() => {
     if (
       selected ||
+      observingConversation ||
       (!conversationBusy &&
         !["copying", "provisioning"].includes(controlSandbox?.status ?? ""))
     )
@@ -1387,17 +1429,18 @@ export function WorkspaceWork({
     controlSandbox?.status,
     conversationBusy,
     router,
+    observingConversation,
     selected,
     conversation,
   ]);
 
   useEffect(() => {
-    if ((!hasChannels && !conversation?.readOnly) || conversationBusy) return;
+    if (!hasChannels || conversation || conversationBusy) return;
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") router.refresh();
-    }, 5_000);
+    }, 15_000);
     return () => window.clearInterval(interval);
-  }, [hasChannels, conversation?.readOnly, conversationBusy, router]);
+  }, [hasChannels, conversation, conversationBusy, router]);
 
   const streamText =
     streamOutput.workSessionId === selectedWorkSessionId
@@ -2118,7 +2161,7 @@ export function WorkspaceWork({
         {
           id: body.workSessionId as string,
           agentId,
-          title: null,
+          title: conversationTitleFromParts([{ type: "text", text: draft }]),
           titlePending: true,
           optimistic: true,
           task: draft.trim(),
@@ -2979,6 +3022,11 @@ export function WorkspaceWork({
               />
             ) : null}
 
+            {observingConversation ? (
+              <div className="mx-auto w-full max-w-3xl px-4 py-2 sm:px-6">
+                <LiveOutputStatus connection={conversationLive.connection} />
+              </div>
+            ) : null}
             {conversation &&
             !sessionReadOnly &&
             !channelConversation &&
@@ -3059,7 +3107,7 @@ export function WorkspaceWork({
                 key={selected?.id ?? conversation?.id ?? "new"}
                 label={t("title")}
                 data-ui="work.transcript"
-                busy={selectedActive}
+                busy={selectedActive || Boolean(conversationOutput?.active)}
                 navigation="rail"
                 className={
                   selected || conversation
@@ -3078,7 +3126,9 @@ export function WorkspaceWork({
                         null
                       }
                       messages={
-                        conversation?.messages ?? selected?.messages ?? []
+                        conversationAccessRevoked
+                          ? []
+                          : (conversation?.messages ?? selected?.messages ?? [])
                       }
                       streamText={streamText}
                       streamActivities={streamActivities}
@@ -3090,6 +3140,14 @@ export function WorkspaceWork({
                       sessionCompletedAt={selected?.completedAt}
                       streaming={selectedActive}
                     />
+                    {observingConversation &&
+                    !conversationAccessRevoked &&
+                    conversationOutput &&
+                    !conversationOutputPersisted ? (
+                      <div className="mx-auto w-full max-w-3xl px-4 pb-8 sm:px-6">
+                        <LiveOutputView output={conversationOutput} />
+                      </div>
+                    ) : null}
                     {selected?.artifacts.length ? (
                       <section className="mx-auto w-full max-w-3xl px-4 py-5">
                         <p className="flex items-center gap-2 text-xs font-semibold">
@@ -3160,11 +3218,14 @@ export function WorkspaceWork({
                 ) : null}
               </MessageScroller>
             )}
-            {conversation && channelConversation ? (
+            {conversation &&
+            channelConversation &&
+            !conversationAccessRevoked ? (
               <ConversationExecution
                 key={`${conversation.agentId}:${conversation.id}`}
                 endpoint={`/api/v1/agents/${encodeURIComponent(conversation.agentId)}/conversations/${encodeURIComponent(conversation.id)}/execution`}
                 showStatus
+                showActivities={false}
                 onBusyChange={setConversationBusy}
                 renderedActivityIds={renderedHookIds}
                 settingsHref={agentSettingsHref(

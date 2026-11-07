@@ -193,6 +193,7 @@ describe("channel upstream execution delivery", () => {
     expect(adapter.sendMessage).toHaveBeenCalledWith(
       "chat",
       "Approval code: ABCDEFGH",
+      { replyToMessageId: "message-1" },
     );
     expect(mocks.log).not.toHaveBeenCalled();
   });

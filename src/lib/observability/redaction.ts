@@ -13,13 +13,15 @@ export function redactText(
     const escaped = JSON.stringify(secret).slice(1, -1);
     if (escaped !== secret) text = text.replaceAll(escaped, OMITTED);
   }
+  // Avoid retrying the scheme regex at every character of long plain output.
+  if (text.includes("://"))
+    text = text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, `$1${OMITTED}@`);
   return text
     .replace(
       /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g,
       OMITTED,
     )
     .replace(/(\b(?:Bearer|Basic)\s+)[^\s,;"']+/gi, `$1${OMITTED}`)
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, `$1${OMITTED}@`)
     .replace(
       /((?:password|passwd|secret|token|access_token|api[_-]?key|authorization|cookie|credential|client[_-]?secret)["']?\s*[=:]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&}\]]+)/gi,
       `$1"${OMITTED}"`,

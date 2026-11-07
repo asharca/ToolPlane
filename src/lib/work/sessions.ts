@@ -3,6 +3,7 @@ import { posix } from "node:path";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { defaultConversationRuntimeSession } from "@/lib/agents/mutations";
+import { conversationTitleFromParts } from "@/lib/agents/conversation-title";
 import { deleteAgentConversationSandboxes } from "@/lib/agents/conversation-sandbox";
 import {
   AgentExecutionBusyError,
@@ -243,6 +244,7 @@ export function assertWorkPiPackageSnapshot(
 export async function createWorkSession(input: CreateWorkSessionInput) {
   const task = input.task.trim();
   if (!task || task.length > 20_000) return null;
+  const title = conversationTitleFromParts([{ type: "text", text: task }]);
   const workingDirectory = normalizeWorkDirectory(
     input.workingDirectory ?? ".",
   );
@@ -359,7 +361,7 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
         agentId: agent.id,
         agentRevisionId: revision.id,
         legacyRevisionUnresolved: false,
-        title: task.slice(0, 80),
+        title,
         ...(input.reasoningEffort && input.reasoningEffort !== "default"
           ? { reasoningEffort: input.reasoningEffort }
           : {}),
@@ -424,7 +426,7 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
         conversationId: conversation.id,
         a2aActorId: input.a2aActorId,
         task,
-        title: task.slice(0, 80),
+        title,
         acceptanceCriteria,
         runtimeKind: agent.runtimeKind,
         runtimeSnapshot: {
@@ -797,7 +799,7 @@ export async function listWorkSessions(workspaceId: string, agentId?: string) {
       status: { not: "archived" },
       ...(agentId ? { agentId } : {}),
     },
-    orderBy: { updatedAt: "desc" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     include: workSessionSummaryInclude,
   });
   return sessions.map((session) => ({

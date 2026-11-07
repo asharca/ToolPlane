@@ -46,6 +46,7 @@ import { prepareTaskFileParts, stageTaskFileTransfers } from "./task-files";
 import { assertTaskFileReadAuthority, hydrateTaskParts } from "./files";
 import { runtimeEnv } from "@/lib/runtime-env";
 import { validateSend } from "./validation";
+import { notifyTaskOutput } from "@/lib/agents/execution/live-output";
 
 async function clientFor(
   row: A2ATask,
@@ -268,6 +269,7 @@ async function recordObservation(
         : await tx.a2ATask.update({ where: { id }, data: fields });
     if (row.state !== updated.state && settled(updated.state)) return updated;
   });
+  notifyTaskOutput(id);
   if (receiveFiles) await stageTaskFileTransfers(id);
   if (committed) await recordTaskSettled(committed);
 }
