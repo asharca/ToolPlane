@@ -174,6 +174,66 @@ export async function listPlugins(
   return { items, updateCount };
 }
 
+/** Catalog-only enrichment; selectors and badge APIs retain the lightweight list. */
+export async function listPluginCards(
+  workspaceId: string,
+  userId: string,
+  options: Parameters<typeof listPlugins>[2] = {},
+) {
+  const catalog = await listPlugins(workspaceId, userId, options);
+  const installIds = catalog.items.flatMap((item) =>
+    item.install ? [item.install.id] : [],
+  );
+  const bindings = installIds.length
+    ? await db.marketInstall.findMany({
+        where: { id: { in: installIds }, targetWorkspaceId: workspaceId },
+        select: {
+          id: true,
+          _count: {
+            select: { agentPiPackages: { where: { agent: { workspaceId } } } },
+          },
+        },
+      })
+    : [];
+  const bindingCounts = new Map(
+    bindings.map((install) => [install.id, install._count.agentPiPackages]),
+  );
+  const items = catalog.items.map((listing) => {
+    // Installed cards describe their pin, never the newest catalog version.
+    const release = listing.install?.currentRelease ?? listing.latestRelease;
+    const manifest = release
+      ? parsePiPackageReleaseManifest(release.manifest, release.checksum)
+      : null;
+    const snapshot = manifest?.package;
+    return {
+      ...listing,
+      card: {
+        summary: manifest?.listing.summary ?? null,
+        version: snapshot?.version ?? null,
+        revision: release?.version ?? null,
+        runtime: snapshot?.runtime ?? null,
+        resources: snapshot
+          ? Object.entries(snapshot.resources)
+              .map(([kind, paths]) => ({
+                kind,
+                count: paths?.length ?? 0,
+              }))
+              .filter((resource) => resource.count > 0)
+          : [],
+        mcpCount: snapshot?.toolplane?.mcp.length ?? 0,
+        agentBindingCount: listing.install
+          ? (bindingCounts.get(listing.install.id) ?? 0)
+          : 0,
+        available:
+          listing.status === "published" &&
+          release?.reviewStatus === "approved",
+        revoked: release?.reviewStatus === "revoked",
+      },
+    };
+  });
+  return { ...catalog, items };
+}
+
 export async function getPlugin(
   workspaceId: string,
   userId: string,

@@ -16,7 +16,7 @@ import {
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { db } from "@/lib/db";
-import { listPlugins, visiblePluginWhere } from "@/lib/plugins/catalog";
+import { listPluginCards, visiblePluginWhere } from "@/lib/plugins/catalog";
 import { listPluginSources } from "@/lib/plugins/sources";
 
 export const dynamic = "force-dynamic";
@@ -56,19 +56,37 @@ export default async function PluginsPage({
     ...(returnAgent ? { returnAgent } : {}),
     ...(pluginChannel ? { pluginChannel } : {}),
   }).toString();
-  const hasFilters = Boolean(q || sourceId);
+  const origin = ["official", "private"].includes(value("origin"))
+    ? value("origin")
+    : "";
+  const capability = ["skills", "extensions", "mcp"].includes(
+    value("capability"),
+  )
+    ? value("capability")
+    : "";
+  const availability = ["available", "unavailable"].includes(
+    value("availability"),
+  )
+    ? value("availability")
+    : "";
+  const hasFilters = Boolean(
+    q || sourceId || origin || capability || availability,
+  );
   const tabHref = (nextTab: string, clearFilters = false) => {
     const search = new URLSearchParams(context);
     if (nextTab !== "discover") search.set("tab", nextTab);
     if (!clearFilters) {
       if (q) search.set("q", q);
       if (sourceId) search.set("source", sourceId);
+      if (origin) search.set("origin", origin);
+      if (capability) search.set("capability", capability);
+      if (availability) search.set("availability", availability);
     }
     const suffix = search.toString();
     return suffix ? `${base}?${suffix}` : base;
   };
   const [catalog, sources, membership] = await Promise.all([
-    listPlugins(workspace.id, user.id, {
+    listPluginCards(workspace.id, user.id, {
       query: q,
       sourceId: sourceId || undefined,
       installedOnly: tab === "added",
@@ -81,6 +99,28 @@ export default async function PluginsPage({
       select: { role: true },
     }),
   ]);
+  const items = catalog.items.filter((plugin) => {
+    if (
+      origin === "official" &&
+      !plugin.githubRegistryResource?.registry.official
+    )
+      return false;
+    if (
+      origin === "private" &&
+      plugin.githubRegistryResource?.registry.official
+    )
+      return false;
+    if (capability === "mcp" && !plugin.card.mcpCount) return false;
+    if (
+      capability &&
+      capability !== "mcp" &&
+      !plugin.card.resources.some((resource) => resource.kind === capability)
+    )
+      return false;
+    return (
+      !availability || plugin.card.available === (availability === "available")
+    );
+  });
   const hasInstalledPlugins =
     tab === "added" && catalog.items.length === 0 && hasFilters
       ? Boolean(
@@ -319,7 +359,14 @@ export default async function PluginsPage({
       ) : (
         <>
           <form
-            key={JSON.stringify([tab, q, sourceId])}
+            key={JSON.stringify([
+              tab,
+              q,
+              sourceId,
+              origin,
+              capability,
+              availability,
+            ])}
             action={base}
             method="get"
             className="flex flex-wrap items-end gap-3"
@@ -363,36 +410,156 @@ export default async function PluginsPage({
                 ]}
               />
             </div>
+            {(
+              [
+                {
+                  name: "origin",
+                  value: origin,
+                  options: ["official", "private"],
+                },
+                {
+                  name: "capability",
+                  value: capability,
+                  options: ["skills", "extensions", "mcp"],
+                },
+                {
+                  name: "availability",
+                  value: availability,
+                  options: ["available", "unavailable"],
+                },
+              ] as const
+            ).map((filter) => (
+              <div
+                key={filter.name}
+                className="grid min-w-0 flex-1 basis-full gap-1 text-sm sm:basis-40"
+              >
+                <label htmlFor={`plugin-${filter.name}`}>
+                  {t(`catalog.${filter.name}`)}
+                </label>
+                <FormSelect
+                  id={`plugin-${filter.name}`}
+                  name={filter.name}
+                  label={t(`catalog.${filter.name}`)}
+                  defaultValue={filter.value}
+                  className="w-full"
+                  options={[
+                    { value: "", label: t("catalog.all") },
+                    ...filter.options.map((option) => ({
+                      value: option,
+                      label: t(`catalog.${option}`),
+                    })),
+                  ]}
+                />
+              </div>
+            ))}
             <Button type="submit" variant="secondary">
               {t("search")}
             </Button>
           </form>
-          {catalog.items.length ? (
+          {items.length ? (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {catalog.items.map((plugin) => (
-                <Link
-                  href={`${base}/${encodeURIComponent(plugin.id)}${context ? `?${context}` : ""}`}
+              {items.map((plugin) => (
+                <article
                   key={plugin.id}
-                  className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40"
+                  className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-5"
                 >
                   <div className="flex items-start gap-3">
                     <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted">
                       <Puzzle className="size-5" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <h2 className="truncate font-semibold">{plugin.name}</h2>
-                      <span className="text-xs text-muted-foreground">
+                      <h2 className="break-words font-semibold [overflow-wrap:anywhere]">
+                        <Link
+                          aria-label={`${plugin.name} · #${plugin.id.slice(-12)}`}
+                          className="rounded-sm hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+                          href={`${base}/${encodeURIComponent(plugin.id)}${context ? `?${context}` : ""}`}
+                        >
+                          {plugin.name}
+                        </Link>
+                      </h2>
+                      <p className="break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
                         {plugin.githubRegistryResource?.registry.official
                           ? t("official")
-                          : (plugin.githubRegistryResource?.registry
-                              .repository ?? t("privatePlugin"))}
-                      </span>
+                          : t("privatePlugin")}
+                        {" · "}
+                        <span className="font-mono">
+                          #{plugin.id.slice(-12)}
+                        </span>
+                      </p>
                     </div>
                   </div>
-                  <p className="line-clamp-3 flex-1 text-sm leading-6 text-muted-foreground">
-                    {plugin.summary}
+                  <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">
+                    {plugin.card.summary?.trim() || t("catalog.noSummary")}
                   </p>
+                  <p className="break-words text-sm [overflow-wrap:anywhere]">
+                    {t(plugin.install ? "catalog.installedVersion" : "version")}
+                    {": "}
+                    {plugin.card.version ?? t("catalog.unnamedVersion")}
+                    {plugin.card.revision !== null
+                      ? ` · ${t("catalog.revision", { version: plugin.card.revision })}`
+                      : ""}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {plugin.card.resources.length
+                      ? plugin.card.resources
+                          .map(
+                            (resource) =>
+                              `${t(resource.kind === "extensions" ? "catalog.extensions" : resource.kind)} ${resource.count}`,
+                          )
+                          .join(" · ")
+                      : t("catalog.noCapabilities")}
+                    {plugin.card.mcpCount
+                      ? ` · ${t("mcpRequirements")} ${plugin.card.mcpCount}`
+                      : ""}
+                  </p>
+                  {plugin.install ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t("catalog.agentBindings", {
+                        count: plugin.card.agentBindingCount,
+                      })}
+                    </p>
+                  ) : null}
+                  <details className="text-xs text-muted-foreground">
+                    <summary className="cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-primary">
+                      {t("catalog.identityDetails")}
+                    </summary>
+                    <dl className="mt-2 space-y-2 break-words [overflow-wrap:anywhere]">
+                      <div>
+                        <dt>{t("catalog.listingId")}</dt>
+                        <dd className="select-text font-mono">{plugin.id}</dd>
+                      </div>
+                      {plugin.githubRegistryResource ? (
+                        <div>
+                          <dt>{t("repository")}</dt>
+                          <dd>
+                            {plugin.githubRegistryResource.registry.repository}
+                          </dd>
+                        </div>
+                      ) : null}
+                      <div>
+                        <dt>{t("catalog.snapshotRuntime")}</dt>
+                        <dd>
+                          {plugin.card.runtime
+                            ? `${plugin.card.runtime.kind} · ${"piVersion" in plugin.card.runtime ? plugin.card.runtime.piVersion : plugin.card.runtime.ompVersion} · Node ${plugin.card.runtime.nodeMajor} · ${plugin.card.runtime.platform}/${plugin.card.runtime.arch}`
+                            : t("catalog.unknownRuntime")}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="sr-only">{t("capabilities.title")}</dt>
+                        <dd>{t("catalog.runtimeHelp")}</dd>
+                      </div>
+                    </dl>
+                  </details>
                   <div className="flex flex-wrap items-center gap-2 text-xs">
+                    {!plugin.card.available ? (
+                      <span className="text-muted-foreground">
+                        {t(
+                          plugin.card.revoked
+                            ? "catalog.revoked"
+                            : "catalog.unavailable",
+                        )}
+                      </span>
+                    ) : null}
                     {plugin.install ? (
                       <span className="rounded-full bg-muted px-2 py-1">
                         {t("added")}
@@ -414,7 +581,7 @@ export default async function PluginsPage({
                       </span>
                     ) : null}
                   </div>
-                </Link>
+                </article>
               ))}
             </div>
           ) : (
