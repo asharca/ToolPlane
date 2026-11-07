@@ -477,7 +477,13 @@ export function AgentSettingsForm(props: Props) {
                   {sections.find(([id]) => id === active)?.[1]}
                 </h3>
                 <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                  {revision ? r("published") : r("unpublished")}
+                  {active === "piPackages"
+                    ? t("piPackageAppliedCount", {
+                        count: appliedConfig?.packages.length ?? 0,
+                      })
+                    : revision
+                      ? r("published")
+                      : r("unpublished")}
                 </span>
               </div>
               <p className="text-sm leading-6 text-muted-foreground">
@@ -675,6 +681,15 @@ export function AgentSettingsForm(props: Props) {
                         (entry) =>
                           entry.marketInstallId === pkg.marketInstallId,
                       );
+                      const appliedPackage = appliedConfig?.packages.find(
+                        (entry) =>
+                          entry.marketInstallId === pkg.marketInstallId,
+                      );
+                      const selectionApplied = Boolean(
+                        selectedPackage &&
+                          selectedPackage.releaseId ===
+                            appliedPackage?.releaseId,
+                      );
                       return (
                         <div
                           key={pkg.marketInstallId}
@@ -744,13 +759,23 @@ export function AgentSettingsForm(props: Props) {
                           ) : null}
                           {selectedPackage ? (
                             <p className="text-xs">
-                              {t("piPackageEnabledVersion", {
-                                version:
-                                  selectedPackage.releaseId ===
-                                  pkg.currentReleaseId
-                                    ? (pkg.currentVersion ?? "—")
-                                    : (pkg.enabledVersion ?? "—"),
-                              })}
+                              {t(
+                                selectionApplied
+                                  ? "piPackageEnabledVersion"
+                                  : "piPackageDraftVersion",
+                                {
+                                  version:
+                                    selectedPackage.releaseId ===
+                                    pkg.currentReleaseId
+                                      ? (pkg.currentVersion ?? "—")
+                                      : (pkg.enabledVersion ?? "—"),
+                                },
+                              )}
+                            </p>
+                          ) : null}
+                          {appliedPackage && !selectionApplied ? (
+                            <p className="text-xs text-muted-foreground">
+                              {t("piPackageAppliedRetained")}
                             </p>
                           ) : null}
                           {!pkg.currentAvailable ? (
@@ -761,7 +786,9 @@ export function AgentSettingsForm(props: Props) {
                               {t("piPackageSelectionUnavailable")}
                             </p>
                           ) : null}
-                          {selectedPackage && pkg.enabledReleaseId ? (
+                          {selectedPackage &&
+                          pkg.enabledReleaseId &&
+                          (selectionApplied || pkg.syncStatus !== "synced") ? (
                             <AgentPluginSyncReview
                               slug={slug}
                               agentId={agentId}
