@@ -1,27 +1,33 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getTranslations, getLocale } from "next-intl/server";
-import { Puzzle, ArrowUpCircle, GitBranch } from "lucide-react";
+import { getTranslations } from "next-intl/server";
 import {
+  ArrowUpCircle,
+  CircleCheck,
+  CircleSlash,
+  GitBranch,
+  Puzzle,
+  Search,
+} from "lucide-react";
+import {
+  DashboardEmptyState,
   DashboardPage,
-  DashboardPanel,
+  DashboardToolbar,
 } from "@/components/dashboard/DashboardUI";
-import { Button, ButtonLink } from "@/components/motion/button";
-import { FormSelect } from "@/components/ui/FormSelect";
+import { ButtonLink } from "@/components/motion/button";
+import { Input } from "@/components/motion/input";
 import {
-  PluginActionForm,
-  PluginSourceCreate,
-  PluginWebhook,
+  PluginQuickAdd,
+  PluginSourceFilter,
 } from "@/components/dashboard/plugins/PluginForms";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { db } from "@/lib/db";
-import { listPlugins } from "@/lib/plugins/catalog";
+import { listPlugins, pluginReleaseLabel } from "@/lib/plugins/catalog";
+import { releaseContents } from "@/lib/plugins/release-contents";
 import { listPluginSources } from "@/lib/plugins/sources";
 
 export const dynamic = "force-dynamic";
-const pluginFieldClass =
-  "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm";
 
 export default async function PluginsPage({
   params,
@@ -30,12 +36,11 @@ export default async function PluginsPage({
   params: Promise<{ workspace: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const [{ workspace: slug }, query, user, t, locale] = await Promise.all([
+  const [{ workspace: slug }, query, user, t] = await Promise.all([
     params,
     searchParams,
     getCurrentUser(),
     getTranslations("console.plugins"),
-    getLocale(),
   ]);
   const base = `/app/${encodeURIComponent(slug)}/plugins`;
   if (!user) redirect(`/app/login?next=${encodeURIComponent(base)}`);
@@ -43,16 +48,12 @@ export default async function PluginsPage({
   if (!workspace) redirect("/app");
   const value = (key: string) =>
     (Array.isArray(query[key]) ? query[key][0] : query[key]) ?? "";
-  const tab = ["added", "sources"].includes(value("tab"))
-    ? value("tab")
-    : "discover";
   const q = value("q").trim().slice(0, 200);
   const sourceId = value("source").slice(0, 240);
-  const [catalog, sources, membership] = await Promise.all([
+  const [{ items, updateCount }, sources, membership] = await Promise.all([
     listPlugins(workspace.id, user.id, {
       query: q,
       sourceId: sourceId || undefined,
-      installedOnly: tab === "added",
     }),
     listPluginSources(workspace.id, user.id),
     db.membership.findUnique({
@@ -66,307 +67,206 @@ export default async function PluginsPage({
     workspace.ownerId === user.id ||
     membership?.role === "admin" ||
     membership?.role === "owner";
-  const dateFormat = new Intl.DateTimeFormat(locale, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
   return (
     <DashboardPage>
-      <header className="space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <h1 className="flex items-center gap-3 text-2xl font-semibold">
-            <Puzzle className="size-6" />
-            {t("title")}
-          </h1>
-          <div className="flex flex-wrap gap-2">
-            <ButtonLink
-              href="https://github.com/asharca/toolplane-plugins/fork"
-              target="_blank"
-              rel="noopener noreferrer"
-              variant="secondary"
-              size="sm"
-            >
-              {t("createMarket")}
-            </ButtonLink>
-            <ButtonLink
-              href="https://github.com/asharca/toolplane-plugins/blob/main/CONTRIBUTING.md"
-              target="_blank"
-              rel="noopener noreferrer"
-              variant="ghost"
-              size="sm"
-            >
-              {t("contribute")}
-            </ButtonLink>
-          </div>
-        </div>
-        <nav
-          aria-label={t("title")}
-          className="flex gap-1 border-b border-border"
-        >
-          {(["discover", "added", "sources"] as const).map((item) => (
-            <Link
-              key={item}
-              href={item === "discover" ? base : `${base}?tab=${item}`}
-              aria-current={tab === item ? "page" : undefined}
-              className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm ${tab === item ? "border-primary font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-            >
-              {t(item)}
-              {item === "added" && catalog.updateCount > 0 ? (
-                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
-                  {t("updatesCount", { count: catalog.updateCount })}
-                </span>
-              ) : null}
-            </Link>
-          ))}
-        </nav>
-      </header>
-      {tab === "sources" ? (
-        <div className="space-y-5">
-          <p className="text-sm leading-6 text-muted-foreground">
-            {t("marketGuide")}
-          </p>
-          {sources.length ? (
-            sources.map((source) => (
-              <DashboardPanel
-                key={source.id}
-                title={
-                  <span className="flex items-center gap-2">
-                    {source.official ? t("officialSource") : source.name}
-                    {source.official ? (
-                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
-                        {t("official")}
-                      </span>
-                    ) : null}
-                  </span>
-                }
+      <DashboardToolbar
+        actions={
+          <ButtonLink href={`${base}/sources`} variant="secondary" size="md">
+            <GitBranch className="size-4" />
+            {t("sources")}
+          </ButtonLink>
+        }
+      >
+        <h1 className="text-xl font-semibold">{t("title")}</h1>
+        <p className="text-sm text-muted-foreground">
+          {t("availableCount", { count: items.length })}
+          {updateCount > 0 ? (
+            <>
+              {" · "}
+              <Link
+                href={`${base}/installed?filter=updates`}
+                className="text-primary hover:underline"
               >
-                <div className="space-y-4">
-                  <a
-                    className="inline-flex items-center gap-2 break-all text-sm hover:underline"
-                    href={`https://github.com/${source.repository}/tree/${encodeURIComponent(source.branch)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <GitBranch className="size-4 shrink-0" />
-                    {source.repository} · {source.branch}
-                  </a>
-                  <dl className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
-                    <div>
-                      <dt className="text-muted-foreground">{t("status")}</dt>
-                      <dd>
-                        {t.has(`sourceStatuses.${source.status}`)
-                          ? t(`sourceStatuses.${source.status}`)
-                          : source.status}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">{t("lastSync")}</dt>
-                      <dd>
-                        {source.lastSyncAt
-                          ? dateFormat.format(source.lastSyncAt)
-                          : t("neverSynced")}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">
-                        {t("lastCommit")}
-                      </dt>
-                      <dd className="break-all font-mono text-xs">
-                        {source.lastAppliedCommit ?? "—"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">
-                        {t("visibility")}
-                      </dt>
-                      <dd>
-                        {t(
-                          source.visibility === "private"
-                            ? "private"
-                            : "public",
-                        )}
-                      </dd>
-                    </div>
-                  </dl>
-                  {source.error ? (
-                    <p
-                      role="alert"
-                      className="break-words text-sm text-destructive"
-                    >
-                      {t.has(`errors.${source.error}`)
-                        ? t(`errors.${source.error}`)
-                        : t("errors.registry_sync_failed")}
+                {t("installed.subtitleUpdates", { count: updateCount })}
+              </Link>
+            </>
+          ) : null}
+        </p>
+      </DashboardToolbar>
+      <div className="flex w-full flex-wrap items-center gap-2">
+        <form action={base} className="w-full sm:w-72">
+          {sourceId ? (
+            <input type="hidden" name="source" value={sourceId} />
+          ) : null}
+          <Input
+            name="q"
+            type="search"
+            defaultValue={q}
+            maxLength={200}
+            placeholder={t("searchPlaceholder")}
+            aria-label={t("searchPlaceholder")}
+            leftIcon={<Search />}
+            className="w-full"
+          />
+        </form>
+        {sources.length > 1 ? (
+          <PluginSourceFilter
+            base={base}
+            params={{ q }}
+            value={sourceId}
+            options={sources.map((source) => ({
+              value: source.id,
+              label: source.official ? t("officialSource") : source.name,
+            }))}
+          />
+        ) : null}
+      </div>
+      {items.length ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {items.map((plugin) => {
+            const href = `${base}/${encodeURIComponent(plugin.id)}`;
+            const contents = plugin.latestRelease
+              ? releaseContents(plugin.latestRelease.releaseSummary)
+              : { counts: [], mcp: 0, omp: false };
+            const published = plugin.status === "published";
+            return (
+              <article
+                key={plugin.id}
+                className="relative flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-5 transition-colors focus-within:border-primary/40 hover:border-primary/40"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                    <Puzzle className="size-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h2 className="truncate font-semibold">
+                      <Link
+                        href={href}
+                        className="after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none"
+                      >
+                        {plugin.name}
+                      </Link>
+                    </h2>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {plugin.githubRegistryResource?.registry.official
+                        ? t("official")
+                        : (plugin.githubRegistryResource?.registry.repository ??
+                          t("privatePlugin"))}
                     </p>
-                  ) : null}
-                  {source.canSync ? (
-                    <PluginActionForm
-                      workspace={slug}
-                      operation="source-sync"
-                      id={source.id}
-                      label={t("syncNow")}
-                    />
-                  ) : null}
-                  {!source.official && canManage ? (
-                    <>
-                      <details className="rounded-lg border border-border p-3">
-                        <summary className="cursor-pointer text-sm font-medium">
-                          {t("credentials")}
-                          {source.hasCredentials ? ` · ${t("configured")}` : ""}
-                        </summary>
-                        <div className="mt-3">
-                          <PluginActionForm
-                            workspace={slug}
-                            operation="source-credentials"
-                            id={source.id}
-                            label={t("replaceCredentials")}
-                          >
-                            <label className="grid gap-1 text-sm">
-                              {t("token")}
-                              <input
-                                type="password"
-                                name="token"
-                                autoComplete="off"
-                                className={pluginFieldClass}
-                                required={source.visibility === "private"}
-                                maxLength={4096}
-                              />
-                            </label>
-                          </PluginActionForm>
-                        </div>
-                      </details>
-                      {source.webhook ? (
-                        <details className="rounded-lg border border-border p-3">
-                          <summary className="cursor-pointer text-sm font-medium">
-                            {t("webhook")}
-                          </summary>
-                          <div className="mt-3">
-                            <PluginWebhook
-                              path={source.webhook.path}
-                              secret={source.webhook.secret}
-                            />
-                          </div>
-                        </details>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">
-                          {t("webhookUnavailable")}
-                        </p>
+                  </div>
+                  {!published ? (
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                      <CircleSlash className="size-3" />
+                      {t(
+                        plugin.status === "withdrawn" ? "withdrawn" : "removed",
                       )}
-                      <PluginActionForm
-                        workspace={slug}
-                        operation="source-delete"
-                        id={source.id}
-                        label={t("deleteSource")}
-                        destructive
-                        confirm
-                      />
-                    </>
+                    </span>
+                  ) : plugin.updateAvailable ? (
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                      <ArrowUpCircle className="size-3" />
+                      {t("updateAvailable")}
+                    </span>
+                  ) : plugin.install ? (
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                      <CircleCheck className="size-3" />
+                      {t("added")}
+                    </span>
                   ) : null}
                 </div>
-              </DashboardPanel>
-            ))
-          ) : (
-            <p className="rounded-xl border border-dashed border-border p-6 text-sm text-muted-foreground">
-              {t("sourcesEmpty")}
-            </p>
-          )}
-          {canManage ? (
-            <DashboardPanel title={t("sourceAdd")}>
-              <PluginSourceCreate workspace={slug} />
-            </DashboardPanel>
-          ) : null}
-        </div>
-      ) : (
-        <>
-          <form action={base} className="flex flex-wrap items-end gap-3">
-            <input type="hidden" name="tab" value={tab} />
-            <label className="grid min-w-0 flex-1 basis-full gap-1 text-sm sm:basis-0">
-              {t("search")}
-              <input
-                name="q"
-                type="search"
-                className={pluginFieldClass}
-                defaultValue={q}
-                maxLength={200}
-                placeholder={t("searchPlaceholder")}
-              />
-            </label>
-            <div className="grid gap-1 text-sm">
-              <label htmlFor="plugin-source-filter">{t("source")}</label>
-              <FormSelect
-                id="plugin-source-filter"
-                name="source"
-                label={t("source")}
-                defaultValue={sourceId ?? ""}
-                className="w-48"
-                options={[
-                  { value: "", label: t("allSources") },
-                  ...sources.map((source) => ({
-                    value: source.id,
-                    label: source.official ? t("officialSource") : source.name,
-                  })),
-                ]}
-              />
-            </div>
-            <Button type="submit" variant="secondary">
-              {t("search")}
-            </Button>
-          </form>
-          {catalog.items.length ? (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {catalog.items.map((plugin) => (
-                <Link
-                  href={`${base}/${encodeURIComponent(plugin.id)}`}
-                  key={plugin.id}
-                  className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted">
-                      <Puzzle className="size-5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <h2 className="truncate font-semibold">{plugin.name}</h2>
-                      <span className="text-xs text-muted-foreground">
-                        {plugin.githubRegistryResource?.registry.official
-                          ? t("official")
-                          : (plugin.githubRegistryResource?.registry
-                              .repository ?? t("privatePlugin"))}
-                      </span>
-                    </div>
-                  </div>
-                  <p className="line-clamp-3 flex-1 text-sm leading-6 text-muted-foreground">
+                {plugin.summary?.trim() ? (
+                  <p className="line-clamp-2 text-sm leading-6 text-muted-foreground">
                     {plugin.summary}
                   </p>
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    {plugin.install ? (
-                      <span className="rounded-full bg-muted px-2 py-1">
-                        {t("added")}
-                      </span>
+                ) : (
+                  <p className="text-sm leading-6 text-muted-foreground/60 italic">
+                    {t("noSummary")}
+                  </p>
+                )}
+                {contents.counts.length || contents.mcp || contents.omp ? (
+                  <ul className="flex flex-wrap gap-1.5 text-xs">
+                    {contents.omp ? (
+                      <li className="rounded-md bg-amber-500/10 px-2 py-0.5 text-amber-700 dark:text-amber-400">
+                        {t("ompRetired")}
+                      </li>
                     ) : null}
-                    {plugin.updateAvailable ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-primary">
-                        <ArrowUpCircle className="size-3" />
-                        {t("updateAvailable")}
-                      </span>
+                    {contents.counts.map(({ kind, count }) => (
+                      <li
+                        key={kind}
+                        className="rounded-md bg-muted px-2 py-0.5 text-muted-foreground"
+                      >
+                        {t(kind)} {count}
+                      </li>
+                    ))}
+                    {contents.mcp ? (
+                      <li className="rounded-md bg-muted px-2 py-0.5 text-muted-foreground">
+                        MCP {contents.mcp}
+                      </li>
                     ) : null}
-                    {plugin.status !== "published" ? (
-                      <span className="text-muted-foreground">
-                        {t(
-                          plugin.status === "withdrawn"
-                            ? "withdrawn"
-                            : "removed",
-                        )}
-                      </span>
-                    ) : null}
-                  </div>
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <p className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-              {t(tab === "added" ? "addedEmpty" : "discoverEmpty")}
-            </p>
-          )}
-        </>
+                  </ul>
+                ) : null}
+                <div className="mt-auto flex min-h-8 items-center justify-between gap-3 pt-1">
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {plugin.install?.currentRelease
+                      ? `v${pluginReleaseLabel(plugin.install.currentRelease)}${
+                          plugin.updateAvailable && plugin.latestRelease
+                            ? ` → v${pluginReleaseLabel(plugin.latestRelease)}`
+                            : ""
+                        }`
+                      : plugin.latestRelease
+                        ? `v${pluginReleaseLabel(plugin.latestRelease)}`
+                        : ""}
+                  </span>
+                  {canManage && published && plugin.latestRelease ? (
+                    !plugin.install ? (
+                      contents.mcp ? (
+                        <ButtonLink
+                          href={`${href}#install`}
+                          variant="secondary"
+                          size="sm"
+                          className="relative z-10"
+                        >
+                          {t("quickAdd")}
+                        </ButtonLink>
+                      ) : (
+                        <PluginQuickAdd
+                          workspace={slug}
+                          listingId={plugin.id}
+                          name={plugin.name}
+                        />
+                      )
+                    ) : plugin.updateAvailable ? (
+                      <ButtonLink
+                        href={`${href}#install`}
+                        variant="secondary"
+                        size="sm"
+                        className="relative z-10"
+                      >
+                        {t("update")}
+                      </ButtonLink>
+                    ) : null
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <DashboardEmptyState
+          icon={Puzzle}
+          title={t("allEmpty")}
+          actions={
+            canManage ? (
+              <ButtonLink
+                href={`${base}/sources`}
+                variant="secondary"
+                size="sm"
+              >
+                <GitBranch className="size-4" />
+                {t("sources")}
+              </ButtonLink>
+            ) : null
+          }
+        />
       )}
     </DashboardPage>
   );

@@ -132,7 +132,12 @@ export async function listPlugins(
       },
       installs: {
         where: { targetWorkspaceId: workspaceId, status: "ready" },
-        include: { currentRelease: true },
+        include: {
+          currentRelease: true,
+          _count: {
+            select: { agentPiPackages: { where: { agent: { workspaceId } } } },
+          },
+        },
       },
     },
   });

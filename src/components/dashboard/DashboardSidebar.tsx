@@ -10,6 +10,7 @@ import {
   Cpu,
   LibraryBig,
   MessageSquare,
+  PackageCheck,
   Plug,
   ScrollText,
   Search,
@@ -41,6 +42,7 @@ const BUILD_ITEMS: NavItem[] = [
     segment: "knowledge",
     icon: LibraryBig,
   },
+  { labelKey: "myPlugins", segment: "plugins/installed", icon: PackageCheck },
   { labelKey: "plugins", segment: "plugins", icon: Store },
 ];
 const MANAGE_ITEMS: NavItem[] = [
@@ -69,8 +71,15 @@ export function DashboardSidebar({
   const router = useRouter();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const { open, isMobile, setOpenMobile } = useAnimatedSidebar();
-  const activeSegment = pathname.slice(`${base}/`.length).split("/")[0];
-  const activeId = activeSegment === "work" ? "agents" : activeSegment;
+  const activePath = pathname.slice(`${base}/`.length);
+  const activeSegment = activePath.split("/")[0];
+  const activeId =
+    activePath === "plugins/installed" ||
+    activePath.startsWith("plugins/installed/")
+      ? "plugins/installed"
+      : activeSegment === "work"
+        ? "agents"
+        : activeSegment;
   const [updateCount, setUpdateCount] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: navigation refreshes the update count.
   useEffect(() => {
@@ -149,7 +158,7 @@ export function DashboardSidebar({
               icon: <Icon />,
               href: `${base}/${segment}`,
               badge:
-                segment === "plugins" && updateCount > 0
+                segment === "plugins/installed" && updateCount > 0
                   ? updateCount
                   : undefined,
             })),
