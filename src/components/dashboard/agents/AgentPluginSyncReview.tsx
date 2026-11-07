@@ -5,29 +5,18 @@ import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/motion/button/base";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
-import {
-  CenterMorphModal,
-  CenterMorphModalTrigger,
-  CenterMorphModalContent,
-} from "@/components/motion/center-morph-modal";
 import { approveAgentPluginSyncAction } from "@/lib/agents/actions";
-import {
-  DialogBody,
-  DialogCancel,
-  DialogFooter,
-  DialogHeader,
-} from "@/components/dashboard/dialog";
 
 export type AgentPluginCapabilityDiff = {
   addedMcp: { key: string; tools: string[]; requirementAdded: boolean }[];
   codeChanged: boolean;
 };
 
+/** Sync badge with an inline review; it lives inside the settings dialog, so it never opens another. */
 export function AgentPluginSyncReview({
   slug,
   agentId,
   installId,
-  name,
   syncStatus,
   syncError,
   enabledVersion,
@@ -40,7 +29,6 @@ export function AgentPluginSyncReview({
   slug: string;
   agentId: string;
   installId: string;
-  name: string;
   syncStatus: string;
   syncError: string | null;
   enabledVersion: string | null;
@@ -51,7 +39,6 @@ export function AgentPluginSyncReview({
   disabled: boolean;
 }) {
   const t = useTranslations("console.agents.pluginSync");
-  const common = useTranslations("console.agents");
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -105,100 +92,84 @@ export function AgentPluginSyncReview({
           {t(status)}
         </AnimatedBadge>
         {status === "review_required" ? (
-          <CenterMorphModal open={open} onOpenChange={setOpen}>
-            <CenterMorphModalTrigger>
-              <Button type="button" variant="secondary" size="sm">
-                {t("review")}
-              </Button>
-            </CenterMorphModalTrigger>
-            <CenterMorphModalContent
-              ariaLabel={t("reviewTitle", { name })}
-              closeButtonLabel={common("close")}
-              className="flex max-h-[calc(100dvh-4rem)] max-w-xl flex-col"
-            >
-              <DialogHeader
-                title={t("reviewTitle", { name })}
-                description={t("versions", {
-                  from: enabledVersion ?? "—",
-                  to: targetVersion ?? "—",
-                })}
-              />
-              <DialogBody>
-                {capabilityDiff ? (
-                  <>
-                    <section className="space-y-2">
-                      <h3 className="text-sm font-medium">{t("addedMcp")}</h3>
-                      {capabilityDiff.addedMcp.length ? (
-                        <ul className="space-y-2 text-sm">
-                          {capabilityDiff.addedMcp.map(
-                            ({ key, tools, requirementAdded }) => (
-                              <li
-                                key={key}
-                                className="rounded-lg border border-border p-3"
-                              >
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <code>{key}</code>
-                                  {requirementAdded ? (
-                                    <span className="text-xs text-muted-foreground">
-                                      {t("newRequirement")}
-                                    </span>
-                                  ) : null}
-                                </div>
-                                {tools.length ? (
-                                  <ul className="mt-2 list-inside list-disc font-mono text-xs">
-                                    {tools.map((tool) => (
-                                      <li key={tool}>{tool}</li>
-                                    ))}
-                                  </ul>
-                                ) : null}
-                              </li>
-                            ),
-                          )}
-                        </ul>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">
-                          {t("none")}
-                        </p>
-                      )}
-                    </section>
-                    <p className="text-sm">
-                      {t("codeChanged", {
-                        changed: capabilityDiff.codeChanged
-                          ? t("yes")
-                          : t("no"),
-                      })}
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    {t("unavailable")}
-                  </p>
-                )}
-                {error ? (
-                  <p
-                    role="alert"
-                    className="break-words text-sm text-destructive"
-                  >
-                    {error}
-                  </p>
-                ) : null}
-              </DialogBody>
-              <DialogFooter cancel={<DialogCancel disabled={pending} />}>
-                {canApprove ? (
-                  <Button
-                    type="button"
-                    size="md"
-                    disabled={pending || disabled}
-                    onClick={approve}
-                  >
-                    {pending ? t("approving") : t("approve")}
-                  </Button>
-                ) : null}
-              </DialogFooter>
-            </CenterMorphModalContent>
-          </CenterMorphModal>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-expanded={open}
+            onClick={() => setOpen(!open)}
+          >
+            {t("review")} ·{" "}
+            {t("versions", {
+              from: enabledVersion ?? "—",
+              to: targetVersion ?? "—",
+            })}
+          </Button>
         ) : null}
       </div>
+      {open ? (
+        <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+          {capabilityDiff ? (
+            <>
+              <section className="space-y-2">
+                <h4 className="text-xs font-medium">{t("addedMcp")}</h4>
+                {capabilityDiff.addedMcp.length ? (
+                  <ul className="space-y-2">
+                    {capabilityDiff.addedMcp.map(
+                      ({ key, tools, requirementAdded }) => (
+                        <li
+                          key={key}
+                          className="rounded-md border border-border bg-background p-2"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <code className="text-xs">{key}</code>
+                            {requirementAdded ? (
+                              <span className="text-xs text-muted-foreground">
+                                {t("newRequirement")}
+                              </span>
+                            ) : null}
+                          </div>
+                          {tools.length ? (
+                            <ul className="mt-1 list-inside list-disc font-mono text-xs">
+                              {tools.map((tool) => (
+                                <li key={tool}>{tool}</li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-muted-foreground">{t("none")}</p>
+                )}
+              </section>
+              <p className="text-xs">
+                {t("codeChanged", {
+                  changed: capabilityDiff.codeChanged ? t("yes") : t("no"),
+                })}
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">{t("unavailable")}</p>
+          )}
+          {error ? (
+            <p role="alert" className="break-words text-xs text-destructive">
+              {error}
+            </p>
+          ) : null}
+          {canApprove ? (
+            <Button
+              type="button"
+              size="sm"
+              disabled={pending || disabled}
+              onClick={approve}
+            >
+              {pending ? t("approving") : t("approve")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {status === "failed" && syncError ? (
         <p role="alert" className="break-words text-xs text-destructive">
           {syncError}

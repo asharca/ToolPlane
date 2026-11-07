@@ -21,7 +21,11 @@ import { SettingsModal } from "@/components/dashboard/SettingsModal";
 import { db } from "@/lib/db";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 import { listPlugins } from "@/lib/plugins/catalog";
-import { buildAgentPluginOptions } from "@/lib/plugins/agent-options";
+import {
+  buildAgentPluginCatalog,
+  buildAgentPluginOptions,
+} from "@/lib/plugins/agent-options";
+import { listPluginBindingDeployments } from "@/lib/plugins/binding-deployments";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +75,8 @@ export default async function AgentDetailPage({
     skills,
     sandboxes,
     installs,
+    catalog,
+    pluginDeployments,
     current,
     externalLinks,
   ] = await Promise.all([
@@ -80,6 +86,8 @@ export default async function AgentDetailPage({
     listAgentSkillOptions(ws.id, selectedSkills),
     listSandboxes(ws.id),
     listPlugins(ws.id, user.id, { installedOnly: true }),
+    listPlugins(ws.id, user.id),
+    listPluginBindingDeployments(ws.id),
     db.agent.findFirst({
       where: { id: agentId, workspaceId: ws.id },
       select: { currentRevisionVersion: true },
@@ -178,6 +186,11 @@ export default async function AgentDetailPage({
               }),
             ),
           piPackages: buildAgentPluginOptions(installs.items, agent),
+          pluginCatalog: buildAgentPluginCatalog(
+            catalog.items,
+            agent.runtimeKind,
+          ),
+          pluginDeployments,
           ownSandbox: ownSandbox
             ? {
                 id: ownSandbox.id,

@@ -260,7 +260,6 @@ export async function intakePrivatePlugin(
     workspaceId,
     userId,
     manifest,
-    undefined,
     preserveExisting,
   );
 }
@@ -270,9 +269,9 @@ async function persistPrivatePluginManifest(
   workspaceId: string,
   userId: string,
   manifest: PiPackageManifestV1,
-  resourceMap: Prisma.InputJsonValue = { kind: "pi-package", mcpBindings: {} },
   preserveExisting = false,
 ) {
+  const resourceMap = { kind: "pi-package", mcpBindings: {} };
   if (manifest.package.runtime?.kind !== "pi-sdk")
     throw new PluginError(
       "AGENT_EXECUTION_RETIRED",
@@ -387,151 +386,6 @@ export async function createPrivatePlugin(
     },
     { timeout: 30_000 },
   );
-}
-
-export async function pluginInstallConfig(
-  workspaceId: string,
-  userId: string,
-  installId: string,
-  config?: PrivatePluginInput["config"],
-  enabledFeatures?: string[] | null,
-) {
-  await requirePluginWorkspace(workspaceId, userId, config !== undefined);
-  const install = await db.marketInstall.findFirst({
-    where: { id: installId, targetWorkspaceId: workspaceId, status: "ready" },
-    include: { currentRelease: true },
-  });
-  if (!install) throw new PluginError("not_found", "Plugin not found.", 404);
-  const manifest = parsePiPackageReleaseManifest(
-    install.currentRelease.manifest,
-    install.currentRelease.checksum,
-  );
-  if (config === undefined)
-    return {
-      config: manifest.package.toolplane?.config ?? {},
-      hooks: manifest.package.resources.hooks ?? [],
-      runtimeKind: manifest.package.runtime.kind,
-      enabledFeatures: manifest.package.toolplane?.enabledFeatures ?? null,
-    };
-  return db.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
-    await requirePluginWorkspace(workspaceId, userId, true, tx);
-    const derived = structuredClone(manifest);
-    derived.package.toolplane = {
-      ...derived.package.toolplane,
-      schemaVersion: 1,
-      mcp: derived.package.toolplane?.mcp ?? [],
-      config,
-      ...(enabledFeatures === undefined ? {} : { enabledFeatures }),
-    };
-    if (
-      enabledFeatures !== undefined &&
-      derived.package.runtime.kind === "omp"
-    ) {
-      const packageJson = derived.package.entries.find(
-        (entry) =>
-          entry.type === "file" && entry.path === "package/package.json",
-      );
-      if (packageJson?.type !== "file")
-        throw new PluginError(
-          "PLUGIN_FEATURES_UNAVAILABLE",
-          "Plugin has no frozen feature manifest.",
-        );
-      try {
-        const files = derived.package.entries
-          .filter((entry) => entry.type === "file")
-          .map((entry) => ({
-            path: entry.path.slice("package/".length),
-            content: entry.path.endsWith("/package.json")
-              ? Buffer.from(entry.content, "base64").toString("utf8")
-              : "",
-          }));
-        const resources = resolveOmpPluginResources(
-          {
-            path: "/package",
-            manifest: JSON.parse(
-              Buffer.from(packageJson.content, "base64").toString("utf8"),
-            ),
-          },
-          files,
-          { enabledFeatures },
-        );
-        derived.package.resources = {
-          ...derived.package.resources,
-          ...Object.fromEntries(
-            Object.entries(resources).map(([kind, paths]) => [
-              kind,
-              paths.map((path) => `package/${path}`),
-            ]),
-          ),
-        };
-        const metadata = z
-          .object({ omp: z.unknown().optional(), pi: z.unknown().optional() })
-          .passthrough()
-          .parse(
-            JSON.parse(
-              Buffer.from(packageJson.content, "base64").toString("utf8"),
-            ),
-          );
-        const subagents = resolveDeclaredSubagents(
-          metadata.omp ?? metadata.pi,
-          enabledFeatures,
-        );
-        if (subagents !== undefined)
-          derived.package.resources.subagents = subagents.map(
-            (path) => `package/${path}`,
-          );
-      } catch {
-        throw new PluginError(
-          "PLUGIN_FEATURES_UNAVAILABLE",
-          "Selected features are unavailable in the frozen dependency tree.",
-        );
-      }
-    }
-    parsePiPackageReleaseManifest(derived);
-    if (scanPiPackageReleaseManifest(derived).status !== "passed")
-      throw new PluginError(
-        "PLUGIN_CONTAINS_SECRET",
-        "Plugin configuration contains credentials.",
-      );
-    const result = await persistPrivatePluginManifest(
-      tx,
-      workspaceId,
-      userId,
-      derived,
-      (install.resourceMap ?? {}) as Prisma.InputJsonValue,
-    );
-    if (result.installId !== installId) {
-      const bindings = await tx.agentPiPackage.findMany({
-        where: { marketInstallId: installId, agent: { workspaceId } },
-      });
-      for (const binding of bindings) {
-        await tx.agentPiPackage.upsert({
-          where: {
-            agentId_marketInstallId: {
-              agentId: binding.agentId,
-              marketInstallId: result.installId,
-            },
-          },
-          create: {
-            agentId: binding.agentId,
-            marketInstallId: result.installId,
-            releaseId: result.releaseId,
-          },
-          update: { releaseId: result.releaseId },
-        });
-        await tx.agentPiPackage.delete({
-          where: {
-            agentId_marketInstallId: {
-              agentId: binding.agentId,
-              marketInstallId: installId,
-            },
-          },
-        });
-      }
-    }
-    return result;
-  });
 }
 
 export async function appendPrivatePluginVersion(

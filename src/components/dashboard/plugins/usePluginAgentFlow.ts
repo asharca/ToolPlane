@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { AgentPiPackageOption } from "../agents/AgentSettingsForm";
 
@@ -33,28 +33,25 @@ export function usePluginAgentFlow({
   const [result, setResult] = useState<PluginSelectionResult | null>(null);
   const select = useRef(onSelect);
   const consumed = useRef<string | null>(null);
+  const busy = useRef(false);
   useEffect(() => {
     select.current = onSelect;
   });
   useEffect(() => {
     setNonce(crypto.randomUUID());
   }, []);
-  useEffect(() => {
-    if (!nonce) return;
-    if (!listingId) consumed.current = null;
-    const controller = new AbortController();
-    let busy = false;
-    const channel =
-      typeof BroadcastChannel !== "undefined"
-        ? new BroadcastChannel(`toolplane-plugin-${nonce}`)
-        : null;
-    async function receive(id: string): Promise<PluginSelectionResult> {
-      if (busy) return "busy";
-      busy = true;
+  // Refreshes the Agent's installed-plugin options, then selects one into the local draft.
+  const receive = useCallback(
+    async (
+      id: string,
+      signal?: AbortSignal,
+    ): Promise<PluginSelectionResult> => {
+      if (busy.current) return "busy";
+      busy.current = true;
       try {
         const response = await fetch(
           `/api/v1/workspaces/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}/plugins/options`,
-          { cache: "no-store", signal: controller.signal },
+          { cache: "no-store", signal },
         );
         let outcome: PluginSelectionResult;
         if (response.status === 401 || response.status === 403)
@@ -62,22 +59,32 @@ export function usePluginAgentFlow({
         else if (!response.ok) outcome = "failed";
         else {
           const data = await response.json();
-          if (controller.signal.aborted) return "failed";
+          if (signal?.aborted) return "failed";
           outcome = Array.isArray(data.plugins)
             ? select.current(id, data.plugins)
             : "failed";
         }
-        if (!controller.signal.aborted) setResult(outcome);
+        if (!signal?.aborted) setResult(outcome);
         return outcome;
       } catch {
-        if (!controller.signal.aborted) setResult("failed");
+        if (!signal?.aborted) setResult("failed");
         return "failed";
       } finally {
-        busy = false;
+        busy.current = false;
       }
-    }
+    },
+    [slug, agentId],
+  );
+  useEffect(() => {
+    if (!nonce) return;
+    if (!listingId) consumed.current = null;
+    const controller = new AbortController();
+    const channel =
+      typeof BroadcastChannel !== "undefined"
+        ? new BroadcastChannel(`toolplane-plugin-${nonce}`)
+        : null;
     if (listingId && consumed.current !== listingId) {
-      void receive(listingId).then((outcome) => {
+      void receive(listingId, controller.signal).then((outcome) => {
         if (
           controller.signal.aborted ||
           (outcome !== "selected" && outcome !== "duplicate")
@@ -102,7 +109,7 @@ export function usePluginAgentFlow({
           typeof data.requestId !== "string"
         )
           return;
-        const outcome = await receive(data.listingId);
+        const outcome = await receive(data.listingId, controller.signal);
         if (!controller.signal.aborted)
           channel.postMessage({
             type: "ack",
@@ -115,13 +122,15 @@ export function usePluginAgentFlow({
       controller.abort();
       channel?.close();
     };
-  }, [nonce, slug, agentId, listingId]);
+  }, [nonce, slug, agentId, listingId, receive]);
   return {
     context: new URLSearchParams({
       returnAgent: agentId,
       ...(nonce ? { pluginChannel: nonce } : {}),
     }).toString(),
     result,
+    /** Selects a workspace-installed plugin into the draft, refreshing options first. */
+    add: (id: string) => receive(id),
     clearResult: () => setResult(null),
   };
 }

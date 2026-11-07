@@ -2,8 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/auth/current-user";
+import { db } from "@/lib/db";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
-import { listPlugins, PluginError } from "./catalog";
+import { listPlugins, PluginError, visiblePluginWhere } from "./catalog";
 import {
   addPlugin,
   updatePlugin,
@@ -19,6 +20,12 @@ import {
 } from "./sources";
 
 export type PluginActionState = { error?: string; success?: boolean };
+export type PluginBatchOperation = "update" | "remove";
+export type PluginBatchResult = {
+  installId: string;
+  outcome: "success" | "skipped" | "error";
+  message: string;
+};
 
 async function context(slug: string) {
   const user = await getCurrentUser();
@@ -91,4 +98,101 @@ export async function pluginAction(
       return { error: "invalid_input" };
     return { error: "operation_failed" };
   }
+}
+
+/** Each install commits independently; one failure never rolls back the rest. */
+export async function pluginBatchAction(
+  slug: string,
+  operation: PluginBatchOperation,
+  installIds: string[],
+): Promise<PluginBatchResult[]> {
+  if (
+    typeof slug !== "string" ||
+    !slug ||
+    slug.length > 200 ||
+    (operation !== "update" && operation !== "remove") ||
+    !Array.isArray(installIds) ||
+    installIds.length === 0 ||
+    installIds.length > 100 ||
+    installIds.some(
+      (id) => typeof id !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(id),
+    )
+  )
+    throw new Error("Invalid plugin selection (maximum 100 plugins).");
+  const ids = [...new Set(installIds)];
+  const ctx = await context(slug).catch(() => null);
+  if (!ctx)
+    return ids.map((installId) => ({
+      installId,
+      outcome: "error",
+      message: "not_authorized",
+    }));
+  const { workspace, user } = ctx;
+  const installs =
+    operation === "update"
+      ? new Map(
+          (
+            await db.marketInstall.findMany({
+              where: {
+                id: { in: ids },
+                targetWorkspaceId: workspace.id,
+                status: "ready",
+                listing: visiblePluginWhere(workspace.id),
+              },
+              select: {
+                id: true,
+                currentReleaseId: true,
+                listing: {
+                  select: {
+                    status: true,
+                    releases: {
+                      where: { reviewStatus: "approved" },
+                      orderBy: { version: "desc" },
+                      take: 1,
+                      select: { id: true },
+                    },
+                  },
+                },
+              },
+            })
+          ).map((install) => [install.id, install]),
+        )
+      : null;
+  const results: PluginBatchResult[] = [];
+  for (const installId of ids) {
+    const result = (
+      outcome: PluginBatchResult["outcome"],
+      message: string,
+    ): PluginBatchResult => ({ installId, outcome, message });
+    try {
+      if (operation === "remove") {
+        await removePlugin(workspace.id, user.id, installId);
+        results.push(result("success", "removed"));
+        continue;
+      }
+      const install = installs?.get(installId);
+      if (!install) {
+        results.push(result("error", "not_found"));
+        continue;
+      }
+      const latest = install.listing.releases[0];
+      if (install.listing.status !== "published")
+        results.push(result("skipped", "unavailable"));
+      else if (!latest || latest.id === install.currentReleaseId)
+        results.push(result("skipped", "up_to_date"));
+      else {
+        await updatePlugin(workspace.id, user.id, installId, latest.id);
+        results.push(result("success", "updated"));
+      }
+    } catch (error) {
+      results.push(
+        result(
+          "error",
+          error instanceof PluginError ? error.code : "operation_failed",
+        ),
+      );
+    }
+  }
+  revalidatePath(`/app/${slug}`, "layout");
+  return results;
 }

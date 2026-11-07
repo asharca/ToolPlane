@@ -20,7 +20,6 @@ export function ChannelInlineDetails({ children }: { children: ReactNode }) {
     </InlineDetailsContext.Provider>
   );
 }
-
 export function ChannelDetailPanel({
   title,
   onClose,

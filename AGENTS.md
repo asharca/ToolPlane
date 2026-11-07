@@ -173,12 +173,7 @@ Trust current code over stale architecture descriptions.
 Runtime mutations require the single-owner guard; read [runtime operations](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS)
 for upgrade/recovery and `src/lib/runtime/` before adding external operations.
 
-## Repository skill
-
-For browser verification, use `.agents/skills/playwright-cli/SKILL.md`.
-Keep repository skills in `.agents/skills/` as the single maintained copy.
-Its description controls discovery; load its references only for the requested
-browser workflow. Do not install a test framework for an ordinary UI check.
+For ordinary UI checks, do not install a test framework.
 
 <!-- Guidance reviewed 2026-09-06 against OpenAI GPT-6 Astra prompting best practices,
 https://developers.openai.com/api/docs/guides/latest-model#prompting-best-practices

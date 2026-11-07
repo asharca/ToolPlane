@@ -242,6 +242,7 @@ describe.sequential("Work conversation deletion", () => {
     });
     expect(await listedIds()).toEqual(expected);
   });
+
   it("removes the target Work and message history without deleting other or archived conversations", async () => {
     const target = await workFixture();
     const peer = await workFixture();

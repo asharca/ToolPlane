@@ -92,3 +92,32 @@ export function buildAgentPluginOptions(
     ];
   });
 }
+
+/** Published, compatible plugins not yet installed in the workspace, with the MCP requirements an install must bind. */
+export function buildAgentPluginCatalog(
+  plugins: Awaited<ReturnType<typeof listPlugins>>["items"],
+  runtimeKind: string,
+) {
+  return plugins.flatMap((plugin) => {
+    const release = plugin.latestRelease;
+    if (plugin.install || !release || plugin.status !== "published") return [];
+    const snapshot = parsePiPackageReleaseManifest(
+      release.manifest,
+      release.checksum,
+    ).package;
+    if (snapshot.runtime.kind !== runtimeKind) return [];
+    return [
+      {
+        listingId: plugin.id,
+        name: plugin.name,
+        summary: plugin.summary,
+        version: pluginReleaseLabel(release),
+        skillCount: snapshot.resources.skills.length,
+        extensionCount: snapshot.resources.extensions.length,
+        requirements: (snapshot.toolplane?.mcp ?? []).map(
+          ({ key, name, tools }) => ({ key, name, tools }),
+        ),
+      },
+    ];
+  });
+}

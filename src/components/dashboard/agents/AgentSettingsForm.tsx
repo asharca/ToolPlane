@@ -40,10 +40,13 @@ import {
 } from "./AgentResourceSelect";
 import { AgentBuiltInTools } from "./AgentBuiltInTools";
 import { SystemPromptEditor } from "../SystemPromptEditor";
+import type { AgentPluginCapabilityDiff } from "./AgentPluginSyncReview";
 import {
-  AgentPluginSyncReview,
-  type AgentPluginCapabilityDiff,
-} from "./AgentPluginSyncReview";
+  AgentPluginsPanel,
+  MAX_AGENT_PLUGINS,
+  type AgentPluginCatalogOption,
+} from "./AgentPluginsPanel";
+import type { PluginBindingDeployment } from "@/lib/plugins/binding-deployments";
 import {
   prepareAgentRevisionAction,
   publishAgentRevisionAction,
@@ -69,7 +72,10 @@ import {
   type SubagentDraft,
   type SubagentResourcesSnapshot,
 } from "./SubagentResources";
-import { usePluginAgentFlow } from "../plugins/usePluginAgentFlow";
+import {
+  usePluginAgentFlow,
+  type PluginSelectionResult,
+} from "../plugins/usePluginAgentFlow";
 
 export type AgentSettingsSection =
   | "general"
@@ -138,6 +144,8 @@ type Props = {
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
   piPackages?: AgentPiPackageOption[];
+  pluginCatalog?: AgentPluginCatalogOption[];
+  pluginDeployments?: PluginBindingDeployment[];
   ownSandbox: AgentOwnSandbox | null;
   externalSandboxes: AgentExternalSandbox[];
   publishedRevision?: {
@@ -170,13 +178,14 @@ export function AgentSettingsForm(props: Props) {
     ownSandbox,
     externalSandboxes,
     piPackages: initialPiPackages = [],
+    pluginCatalog = [],
+    pluginDeployments = [],
     publishedRevision = null,
     canManageCredentials = false,
     canApprovePluginSync = false,
   } = props;
   const t = useTranslations("console.agents");
   const r = useTranslations("console.agents.revisions");
-  const flowText = useTranslations("console.plugins.flow");
   const s = useTranslations("console.sandboxes");
   const router = useRouter();
   const closeModal = useCloseSettingsModal();
@@ -333,52 +342,54 @@ export function AgentSettingsForm(props: Props) {
     setReview(null);
     setMessage("");
   }
+  function selectPlugin(
+    listingId: string,
+    options: AgentPiPackageOption[],
+  ): PluginSelectionResult {
+    if (pending) return "busy";
+    if (runtimeKind !== "pi-sdk") return "incompatible";
+    // Refresh catalog metadata without replacing local selections or other fields.
+    setPiPackages((previous) => [
+      ...options,
+      ...previous
+        .filter(
+          (option) =>
+            packages.some(
+              (entry) => entry.marketInstallId === option.marketInstallId,
+            ) &&
+            !options.some(
+              (next) => next.marketInstallId === option.marketInstallId,
+            ),
+        )
+        .map((option) => ({ ...option, currentAvailable: false })),
+    ]);
+    const option = options.find((item) => item.listingId === listingId);
+    if (!option) return "unavailable";
+    if (
+      packages.some((entry) => entry.marketInstallId === option.marketInstallId)
+    )
+      return "duplicate";
+    if (option.capabilities && option.capabilities.runtimeKind !== "pi-sdk")
+      return "incompatible";
+    if (!option.currentAvailable || !option.currentReleaseId)
+      return "unavailable";
+    if (packages.length >= MAX_AGENT_PLUGINS) return "limit";
+    setPackages([
+      ...packages,
+      {
+        marketInstallId: option.marketInstallId,
+        releaseId: option.currentReleaseId,
+      },
+    ]);
+    changed();
+    setSection("piPackages");
+    props.onSectionChange?.("piPackages");
+    return "selected";
+  }
   const pluginFlow = usePluginAgentFlow({
     slug,
     agentId,
-    onSelect: (listingId, options) => {
-      if (pending) return "busy";
-      if (runtimeKind !== "pi-sdk") return "incompatible";
-      // Refresh catalog metadata without replacing local selections or other fields.
-      setPiPackages((previous) => [
-        ...options,
-        ...previous
-          .filter(
-            (option) =>
-              packages.some(
-                (entry) => entry.marketInstallId === option.marketInstallId,
-              ) &&
-              !options.some(
-                (next) => next.marketInstallId === option.marketInstallId,
-              ),
-          )
-          .map((option) => ({ ...option, currentAvailable: false })),
-      ]);
-      const option = options.find((item) => item.listingId === listingId);
-      if (!option) return "unavailable";
-      if (
-        packages.some(
-          (entry) => entry.marketInstallId === option.marketInstallId,
-        )
-      )
-        return "duplicate";
-      if (option.capabilities && option.capabilities.runtimeKind !== "pi-sdk")
-        return "incompatible";
-      if (!option.currentAvailable || !option.currentReleaseId)
-        return "unavailable";
-      if (packages.length >= 16) return "limit";
-      setPackages([
-        ...packages,
-        {
-          marketInstallId: option.marketInstallId,
-          releaseId: option.currentReleaseId,
-        },
-      ]);
-      changed();
-      setSection("piPackages");
-      props.onSectionChange?.("piPackages");
-      return "selected";
-    },
+    onSelect: selectPlugin,
   });
   function identity() {
     const data = new FormData();
@@ -721,221 +732,32 @@ export function AgentSettingsForm(props: Props) {
                     />
                   </DialogField>
                 </section>
-                <section hidden={active !== "piPackages"} className="space-y-3">
+                <section hidden={active !== "piPackages"}>
                   <DialogField
                     label={t("piPackages")}
                     dirty={fieldDirty.piPackages}
                   >
-                    <p className="text-sm text-muted-foreground">
-                      {t("piPackageSecurity")} {t("piPackagesNewSession")}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {flowText("steps")}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {flowText("prerequisites")}
-                    </p>
-                    {!canApprovePluginSync ? (
-                      <p role="status" className="text-sm">
-                        {flowText("unauthorized")}
-                      </p>
-                    ) : null}
-                    {runtimeKind !== "pi-sdk" ? (
-                      <p role="status" className="text-sm">
-                        {flowText("incompatible")}
-                      </p>
-                    ) : null}
-                    {pluginFlow.result ? (
-                      <p role="status" className="text-sm">
-                        {flowText(pluginFlow.result)}
-                      </p>
-                    ) : null}
-                    {packages.length >= 16 ? (
-                      <p role="status" className="text-sm">
-                        {flowText("limit")}
-                      </p>
-                    ) : null}
-                    {!piPackages.length ? <p>{t("piPackagesEmpty")}</p> : null}
-                    {piPackages.map((pkg) => {
-                      const selectedPackage = packages.find(
-                        (entry) =>
-                          entry.marketInstallId === pkg.marketInstallId,
-                      );
-                      const appliedPackage = appliedConfig?.packages.find(
-                        (entry) =>
-                          entry.marketInstallId === pkg.marketInstallId,
-                      );
-                      const selectionApplied = Boolean(
-                        selectedPackage &&
-                          selectedPackage.releaseId ===
-                            appliedPackage?.releaseId,
-                      );
-                      return (
-                        <div
-                          key={pkg.marketInstallId}
-                          className="space-y-2 rounded-lg border border-border p-3"
-                        >
-                          <label className="flex items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(selectedPackage)}
-                              disabled={
-                                !canApprovePluginSync ||
-                                (!selectedPackage &&
-                                  (!pkg.currentAvailable ||
-                                    runtimeKind !== "pi-sdk" ||
-                                    packages.length >= 16))
-                              }
-                              onChange={(event) => {
-                                pluginFlow.clearResult();
-                                setPackages((current) =>
-                                  event.target.checked && pkg.currentReleaseId
-                                    ? [
-                                        ...current,
-                                        {
-                                          marketInstallId: pkg.marketInstallId,
-                                          releaseId: pkg.currentReleaseId,
-                                        },
-                                      ]
-                                    : current.filter(
-                                        (entry) =>
-                                          entry.marketInstallId !==
-                                          pkg.marketInstallId,
-                                      ),
-                                );
-                                changed();
-                              }}
-                            />
-                            {pkg.name}
-                          </label>
-                          {pkg.summary ? (
-                            <p className="text-sm text-muted-foreground">
-                              {pkg.summary}
-                            </p>
-                          ) : null}
-                          {pkg.skillCount !== undefined &&
-                          pkg.extensionCount !== undefined &&
-                          pkg.mcpRequirementCount !== undefined ? (
-                            <p className="text-xs text-muted-foreground">
-                              {flowText("counts", {
-                                skills: pkg.skillCount,
-                                extensions: pkg.extensionCount,
-                                mcp: pkg.mcpRequirementCount,
-                              })}
-                            </p>
-                          ) : null}
-                          <p className="text-xs">
-                            {t("piPackageWorkspaceVersion", {
-                              version: pkg.currentVersion ?? "—",
-                            })}
-                          </p>
-                          {pkg.capabilities ? (
-                            <details className="text-xs">
-                              <summary className="cursor-pointer">
-                                {t("pluginCapabilities")} ·{" "}
-                                {pkg.capabilities.runtimeKind}
-                              </summary>
-                              <dl className="mt-2 space-y-2">
-                                {(
-                                  [
-                                    "hooks",
-                                    "extensions",
-                                    "tools",
-                                    "commands",
-                                  ] as const
-                                ).map((kind) => (
-                                  <div key={kind}>
-                                    <dt className="font-medium">
-                                      {t(`pluginCapabilityLabels.${kind}`)}
-                                    </dt>
-                                    <dd className="break-all font-mono text-muted-foreground">
-                                      {pkg.capabilities?.[kind].join(", ") ||
-                                        "—"}
-                                    </dd>
-                                  </div>
-                                ))}
-                              </dl>
-                            </details>
-                          ) : null}
-                          {selectedPackage ? (
-                            <p className="text-xs">
-                              {t(
-                                selectionApplied
-                                  ? "piPackageEnabledVersion"
-                                  : "piPackageDraftVersion",
-                                {
-                                  version:
-                                    selectedPackage.releaseId ===
-                                    pkg.currentReleaseId
-                                      ? (pkg.currentVersion ?? "—")
-                                      : (pkg.enabledVersion ?? "—"),
-                                },
-                              )}
-                            </p>
-                          ) : null}
-                          {appliedPackage && !selectionApplied ? (
-                            <p className="text-xs text-muted-foreground">
-                              {t("piPackageAppliedRetained")}
-                            </p>
-                          ) : null}
-                          {!pkg.currentAvailable ? (
-                            <p
-                              className="text-xs text-muted-foreground"
-                              role="status"
-                            >
-                              {t("piPackageSelectionUnavailable")}
-                            </p>
-                          ) : null}
-                          {selectedPackage &&
-                          pkg.enabledReleaseId &&
-                          (selectionApplied || pkg.syncStatus !== "synced") ? (
-                            <AgentPluginSyncReview
-                              slug={slug}
-                              agentId={agentId}
-                              installId={pkg.marketInstallId}
-                              name={pkg.name}
-                              syncStatus={pkg.syncStatus}
-                              syncError={pkg.syncError}
-                              enabledVersion={pkg.enabledVersion}
-                              targetVersion={pkg.targetVersion}
-                              targetReleaseId={pkg.targetReleaseId}
-                              capabilityDiff={pkg.capabilityDiff}
-                              canApprove={canApprovePluginSync}
-                              disabled={dirty || pending}
-                            />
-                          ) : null}
-                          <ButtonLink
-                            href={`/app/${encodeURIComponent(slug)}/plugins/${encodeURIComponent(pkg.listingId)}?${pluginFlow.context}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            variant="ghost"
-                          >
-                            {flowText("viewPlugin")}
-                          </ButtonLink>
-                          {(pkg.mcpRequirementCount ?? 0) > 0 ? (
-                            <ButtonLink
-                              href={`/app/${encodeURIComponent(slug)}/plugins/${encodeURIComponent(pkg.listingId)}?${pluginFlow.context}#plugin-install`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              variant="ghost"
-                            >
-                              {t("piPackageMcpBindings")}
-                            </ButtonLink>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                    <ButtonLink
-                      href={`/app/${encodeURIComponent(slug)}/plugins?${pluginFlow.context}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      variant="secondary"
-                    >
-                      {flowText("browseNewTab")}
-                    </ButtonLink>
-                    <p className="text-xs text-muted-foreground">
-                      {flowText("keepTab")}
-                    </p>
+                    <AgentPluginsPanel
+                      slug={slug}
+                      agentId={agentId}
+                      runtimeKind={runtimeKind}
+                      options={piPackages}
+                      catalog={pluginCatalog}
+                      deployments={pluginDeployments}
+                      packages={packages}
+                      applied={appliedConfig?.packages ?? []}
+                      canManage={canApprovePluginSync}
+                      locked={dirty || pending}
+                      flowContext={pluginFlow.context}
+                      flowResult={pluginFlow.result}
+                      clearFlowResult={pluginFlow.clearResult}
+                      onAdd={(listingId) => selectPlugin(listingId, piPackages)}
+                      onInstalled={pluginFlow.add}
+                      onChange={(next) => {
+                        setPackages(next);
+                        changed();
+                      }}
+                    />
                   </DialogField>
                 </section>
                 <section hidden={active !== "sandboxes"} className="space-y-4">
