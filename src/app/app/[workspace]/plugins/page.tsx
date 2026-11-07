@@ -48,9 +48,17 @@ export default async function PluginsPage({
     : "discover";
   const q = value("q").trim().slice(0, 200);
   const sourceId = value("source").slice(0, 240);
+  const returnAgent = value("returnAgent").slice(0, 240);
+  const pluginChannel = /^[a-f0-9-]{36}$/.test(value("pluginChannel"))
+    ? value("pluginChannel")
+    : "";
+  const context = new URLSearchParams({
+    ...(returnAgent ? { returnAgent } : {}),
+    ...(pluginChannel ? { pluginChannel } : {}),
+  }).toString();
   const hasFilters = Boolean(q || sourceId);
   const tabHref = (nextTab: string, clearFilters = false) => {
-    const search = new URLSearchParams();
+    const search = new URLSearchParams(context);
     if (nextTab !== "discover") search.set("tab", nextTab);
     if (!clearFilters) {
       if (q) search.set("q", q);
@@ -317,6 +325,12 @@ export default async function PluginsPage({
             className="flex flex-wrap items-end gap-3"
           >
             <input type="hidden" name="tab" value={tab} />
+            {returnAgent ? (
+              <input type="hidden" name="returnAgent" value={returnAgent} />
+            ) : null}
+            {pluginChannel ? (
+              <input type="hidden" name="pluginChannel" value={pluginChannel} />
+            ) : null}
             <label className="grid min-w-0 flex-1 basis-full gap-1 text-sm sm:basis-0">
               {t("search")}
               <input
@@ -357,7 +371,7 @@ export default async function PluginsPage({
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {catalog.items.map((plugin) => (
                 <Link
-                  href={`${base}/${encodeURIComponent(plugin.id)}`}
+                  href={`${base}/${encodeURIComponent(plugin.id)}${context ? `?${context}` : ""}`}
                   key={plugin.id}
                   className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40"
                 >
