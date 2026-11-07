@@ -15,10 +15,16 @@ import { getWorkspaceForUser, getDeployments } from "@/lib/workspace/queries";
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import { readMcpToolCatalog } from "@/lib/process/mcp-tool-catalog";
 import { db } from "@/lib/db";
-import { getPlugin, PluginError } from "@/lib/plugins/catalog";
+import {
+  getPlugin,
+  PluginError,
+  requirePluginWorkspace,
+} from "@/lib/plugins/catalog";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import { PluginConfiguration } from "@/components/dashboard/plugins/PluginConfiguration";
 import { PluginReadme } from "@/components/dashboard/plugins/PluginReadme";
+import { PluginAgentChooser } from "@/components/dashboard/plugins/PluginAgentChooser";
+import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +33,12 @@ export default async function PluginDetailPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string; listingId: string }>;
-  searchParams: Promise<{ version?: string; view?: string }>;
+  searchParams: Promise<{
+    version?: string;
+    view?: string;
+    returnAgent?: string;
+    pluginChannel?: string;
+  }>;
 }) {
   const [{ workspace: slug, listingId }, query, user, t, locale] =
     await Promise.all([
@@ -50,19 +61,43 @@ export default async function PluginDetailPage({
       throw error;
     },
   );
-  const [membership, deployments] = await Promise.all([
-    db.membership.findUnique({
-      where: {
-        workspaceId_userId: { workspaceId: workspace.id, userId: user.id },
-      },
-      select: { role: true },
-    }),
+  const [canManage, deployments, agents] = await Promise.all([
+    requirePluginWorkspace(workspace.id, user.id, true)
+      .then(() => true)
+      .catch((error: unknown) => {
+        if (error instanceof PluginError && error.status === 403) return false;
+        throw error;
+      }),
     getDeployments(workspace.id),
+    db.agent.findMany({
+      where: {
+        workspaceId: workspace.id,
+        ...ORDINARY_AGENT_FILTER,
+        runtimeKind: "pi-sdk",
+        retiredAt: null,
+      },
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        piPackages: { select: { marketInstallId: true } },
+      },
+    }),
   ]);
-  const canManage =
-    workspace.ownerId === user.id ||
-    membership?.role === "admin" ||
-    membership?.role === "owner";
+  const returnAgent =
+    typeof query.returnAgent === "string"
+      ? query.returnAgent.slice(0, 240)
+      : "";
+  const pluginChannel =
+    typeof query.pluginChannel === "string" &&
+    /^[a-f0-9-]{36}$/.test(query.pluginChannel)
+      ? query.pluginChannel
+      : "";
+  const context = new URLSearchParams({
+    ...(returnAgent ? { returnAgent } : {}),
+    ...(pluginChannel ? { pluginChannel } : {}),
+  }).toString();
+  const contextSuffix = context ? `&${context}` : "";
   const releases = plugin.releases.map((release) => ({
     ...release,
     snapshot: parsePiPackageReleaseManifest(release.manifest, release.checksum)
@@ -70,6 +105,12 @@ export default async function PluginDetailPage({
   }));
   const selected =
     releases.find((release) => release.id === query.version) ?? releases[0];
+  // Adding to an Agent uses the workspace's installed version, not a historical preview.
+  const targetRelease = plugin.install
+    ? releases.find(
+        (release) => release.id === plugin.install?.currentReleaseId,
+      )
+    : releases[0];
   const view =
     query.view === "resources" ||
     query.view === "settings" ||
@@ -138,7 +179,7 @@ export default async function PluginDetailPage({
     <DashboardPage>
       <Link
         className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-        href={base}
+        href={`${base}${context ? `?${context}` : ""}`}
       >
         <ArrowLeft className="size-4" />
         {t("title")}
@@ -211,7 +252,7 @@ export default async function PluginDetailPage({
               .map((item) => (
                 <Link
                   key={item}
-                  href={`${base}/${encodeURIComponent(plugin.id)}?view=${item}${selected ? `&version=${encodeURIComponent(selected.id)}` : ""}`}
+                  href={`${base}/${encodeURIComponent(plugin.id)}?view=${item}${selected ? `&version=${encodeURIComponent(selected.id)}` : ""}${contextSuffix}`}
                   aria-current={view === item ? "page" : undefined}
                   className={`shrink-0 border-b-2 px-4 py-3 text-sm ${view === item ? "border-primary font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}
                 >
@@ -417,6 +458,45 @@ export default async function PluginDetailPage({
           ) : null}
         </div>
         <aside className="min-w-0 space-y-5">
+          <DashboardPanel title={t("flow.addToAgent")}>
+            <PluginAgentChooser
+              workspace={slug}
+              listingId={plugin.id}
+              agents={agents.map((agent) => ({
+                id: agent.id,
+                name: agent.name,
+                packageCount: agent.piPackages.length,
+                selected: agent.piPackages.some(
+                  (binding) => binding.marketInstallId === plugin.install?.id,
+                ),
+              }))}
+              canManage={canManage}
+              installed={Boolean(plugin.install)}
+              compatible={targetRelease?.snapshot.runtime.kind === "pi-sdk"}
+              available={
+                plugin.status === "published" && Boolean(targetRelease)
+              }
+              returnAgent={returnAgent}
+              pluginChannel={pluginChannel}
+              version={
+                targetRelease?.snapshot.version ??
+                String(targetRelease?.version ?? "—")
+              }
+              counts={{
+                skills: targetRelease?.snapshot.resources.skills.length ?? 0,
+                extensions:
+                  targetRelease?.snapshot.resources.extensions.length ?? 0,
+                mcp: targetRelease?.snapshot.toolplane?.mcp.length ?? 0,
+              }}
+            >
+              <Link
+                href="#plugin-install"
+                className="text-sm text-primary hover:underline"
+              >
+                {t("flow.installBelow")}
+              </Link>
+            </PluginAgentChooser>
+          </DashboardPanel>
           {selected ? (
             <DashboardPanel title={t("capabilities.title")}>
               <dl className="grid gap-2 text-sm sm:grid-cols-[auto_minmax(0,1fr)]">
@@ -436,6 +516,13 @@ export default async function PluginDetailPage({
                   {selected.snapshot.runtime.arch}
                 </dd>
               </dl>
+              <p className="mt-3 text-sm text-muted-foreground">
+                {t("flow.counts", {
+                  skills: selected.snapshot.resources.skills.length,
+                  extensions: selected.snapshot.resources.extensions.length,
+                  mcp: selected.snapshot.toolplane?.mcp.length ?? 0,
+                })}
+              </p>
               <p className="mt-3 text-xs leading-5 text-muted-foreground">
                 {t("capabilities.enablementHelp")}
               </p>
@@ -450,31 +537,34 @@ export default async function PluginDetailPage({
             </DashboardPanel>
           ) : null}
           {canManage && plugin.status === "published" && releases.length ? (
-            <DashboardPanel title={t(plugin.install ? "manage" : "add")}>
-              <PluginInstallForm
-                workspace={slug}
-                listingId={plugin.id}
-                installId={plugin.install?.id}
-                currentReleaseId={plugin.install?.currentReleaseId}
-                releases={releases.map((release) => ({
-                  id: release.id,
-                  version: release.snapshot.version ?? String(release.version),
-                  requirements: release.snapshot.toolplane?.mcp ?? [],
-                }))}
-                defaults={defaults}
-                deployments={deployments.map((deployment) => ({
-                  id: deployment.id,
-                  name: deploymentLabel(deployment).name,
-                  tools: readMcpToolCatalog(deployment.installCfg)
-                    .filter(
-                      (tool) =>
-                        deployment.mcpToolExposure !== "allowlist" ||
-                        deployment.mcpAllowedTools.includes(tool.name),
-                    )
-                    .map((tool) => tool.name),
-                }))}
-              />
-            </DashboardPanel>
+            <section id="plugin-install" className="scroll-mt-4">
+              <DashboardPanel title={t(plugin.install ? "manage" : "add")}>
+                <PluginInstallForm
+                  workspace={slug}
+                  listingId={plugin.id}
+                  installId={plugin.install?.id}
+                  currentReleaseId={plugin.install?.currentReleaseId}
+                  releases={releases.map((release) => ({
+                    id: release.id,
+                    version:
+                      release.snapshot.version ?? String(release.version),
+                    requirements: release.snapshot.toolplane?.mcp ?? [],
+                  }))}
+                  defaults={defaults}
+                  deployments={deployments.map((deployment) => ({
+                    id: deployment.id,
+                    name: deploymentLabel(deployment).name,
+                    tools: readMcpToolCatalog(deployment.installCfg)
+                      .filter(
+                        (tool) =>
+                          deployment.mcpToolExposure !== "allowlist" ||
+                          deployment.mcpAllowedTools.includes(tool.name),
+                      )
+                      .map((tool) => tool.name),
+                  }))}
+                />
+              </DashboardPanel>
+            </section>
           ) : null}
           <DashboardPanel title={t("versions")}>
             {releases.length ? (
@@ -482,7 +572,7 @@ export default async function PluginDetailPage({
                 {releases.map((release) => (
                   <li key={release.id}>
                     <Link
-                      href={`${base}/${encodeURIComponent(plugin.id)}?view=${view}&version=${encodeURIComponent(release.id)}${view === "changelog" ? `#release-${release.id}` : ""}`}
+                      href={`${base}/${encodeURIComponent(plugin.id)}?view=${view}&version=${encodeURIComponent(release.id)}${contextSuffix}${view === "changelog" ? `#release-${release.id}` : ""}`}
                       aria-current={
                         selected?.id === release.id ? "true" : undefined
                       }

@@ -48,6 +48,14 @@ export default async function PluginsPage({
     : "discover";
   const q = value("q").trim().slice(0, 200);
   const sourceId = value("source").slice(0, 240);
+  const returnAgent = value("returnAgent").slice(0, 240);
+  const pluginChannel = /^[a-f0-9-]{36}$/.test(value("pluginChannel"))
+    ? value("pluginChannel")
+    : "";
+  const context = new URLSearchParams({
+    ...(returnAgent ? { returnAgent } : {}),
+    ...(pluginChannel ? { pluginChannel } : {}),
+  }).toString();
   const [catalog, sources, membership] = await Promise.all([
     listPlugins(workspace.id, user.id, {
       query: q,
@@ -106,7 +114,7 @@ export default async function PluginsPage({
           {(["discover", "added", "sources"] as const).map((item) => (
             <Link
               key={item}
-              href={item === "discover" ? base : `${base}?tab=${item}`}
+              href={`${base}?tab=${item}${context ? `&${context}` : ""}`}
               aria-current={tab === item ? "page" : undefined}
               className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm ${tab === item ? "border-primary font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
             >
@@ -279,6 +287,12 @@ export default async function PluginsPage({
         <>
           <form action={base} className="flex flex-wrap items-end gap-3">
             <input type="hidden" name="tab" value={tab} />
+            {returnAgent ? (
+              <input type="hidden" name="returnAgent" value={returnAgent} />
+            ) : null}
+            {pluginChannel ? (
+              <input type="hidden" name="pluginChannel" value={pluginChannel} />
+            ) : null}
             <label className="grid min-w-0 flex-1 basis-full gap-1 text-sm sm:basis-0">
               {t("search")}
               <input
@@ -315,7 +329,7 @@ export default async function PluginsPage({
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {catalog.items.map((plugin) => (
                 <Link
-                  href={`${base}/${encodeURIComponent(plugin.id)}`}
+                  href={`${base}/${encodeURIComponent(plugin.id)}${context ? `?${context}` : ""}`}
                   key={plugin.id}
                   className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40"
                 >
