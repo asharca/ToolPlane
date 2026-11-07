@@ -105,7 +105,11 @@ export default async function PluginsPage({
       !plugin.githubRegistryResource?.registry.official
     )
       return false;
-    if (origin === "private" && plugin.visibility !== "private") return false;
+    if (
+      origin === "private" &&
+      plugin.githubRegistryResource?.registry.official
+    )
+      return false;
     if (capability === "mcp" && !plugin.card.mcpCount) return false;
     if (
       capability &&
@@ -476,9 +480,7 @@ export default async function PluginsPage({
                       <p className="break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
                         {plugin.githubRegistryResource?.registry.official
                           ? t("official")
-                          : plugin.visibility === "private"
-                            ? t("privatePlugin")
-                            : t("public")}
+                          : t("privatePlugin")}
                         {" · "}
                         <span className="font-mono">
                           #{plugin.id.slice(-12)}
