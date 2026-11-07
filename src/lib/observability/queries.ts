@@ -69,16 +69,7 @@ export const logFilterSchema = z
     domain: z.preprocess(
       (value) => (value === "all" ? undefined : value),
       z
-        .enum([
-          "http",
-          "mcp",
-          "a2a",
-          "agent",
-          "runtime",
-          "channel",
-          "plugin",
-          "system",
-        ])
+        .enum(["http", "mcp", "a2a", "agent", "runtime", "channel", "system"])
         .optional(),
     ),
     level: z.enum(["debug", "info", "warn", "error"]).optional(),

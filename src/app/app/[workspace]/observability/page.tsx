@@ -2,7 +2,7 @@ import { FormSelect } from "@/components/ui/FormSelect";
 
 import { Input } from "@/components/motion/input";
 import { Button, ButtonLink } from "@/components/motion/button";
-import { getLocale, getTranslations } from "next-intl/server";
+import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/current-user";
@@ -11,7 +11,6 @@ import { getObservability } from "@/lib/observability/log";
 import { db } from "@/lib/db";
 import { LogExplorer } from "@/components/observability/LogExplorer";
 import { logFilterSchema } from "@/lib/observability/queries";
-import { getPluginTelemetry } from "@/lib/observability/plugin-telemetry";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { TabBar } from "@/components/dashboard/TabBar";
 import {
@@ -21,7 +20,7 @@ import {
   DashboardTable,
   DashboardToolbar,
 } from "@/components/dashboard/DashboardUI";
-import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
+import { resolveUserTimeZone } from "@/lib/timezone";
 import { WorkspaceAgentUsage } from "@/components/dashboard/AgentUsagePanel";
 import { ChannelObservability } from "@/components/observability/ChannelObservability";
 
@@ -68,9 +67,8 @@ export default async function ObservabilityPage({
   params: Promise<{ workspace: string }>;
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  const [t, locale, viewerT] = await Promise.all([
+  const [t, viewerT] = await Promise.all([
     getTranslations("console.observability"),
-    getLocale(),
     getTranslations("console.observability.viewer"),
   ]);
   const { workspace: slug } = await params;
@@ -85,7 +83,6 @@ export default async function ObservabilityPage({
     { key: "channels", label: t("channels.title") },
     { key: "internal", label: viewerT("internal") },
     { key: "usage", label: t("usage") },
-    { key: "plugin", label: t("plugin") },
     { key: "agent-usage", label: t("agentUsage") },
   ];
   const current = tabs.find((item) => item.key === tab)?.key ?? "runs";
@@ -186,10 +183,8 @@ export default async function ObservabilityPage({
     cursor,
     until,
   });
-  const pt = current === "plugin" ? await getPluginTelemetry(ws.id) : null;
   const max = Math.max(1, ...o.series.map((s) => s.total));
   const errorRate = o.total ? Math.round((o.errors / o.total) * 1000) / 10 : 0;
-  const dateLocale = locale === "zh" ? "zh-CN" : "en-US";
   const filterQuery = {
     ...(selectedDeploymentId ? { deploymentId: selectedDeploymentId } : {}),
     ...(q ? { q } : {}),
@@ -262,10 +257,6 @@ export default async function ObservabilityPage({
               ) : null}
             </div>
           </DashboardToolbar>
-        ) : current === "plugin" ? (
-          <p className="text-sm text-muted-foreground">
-            {t("pluginTelemetryDescription")}
-          </p>
         ) : null}
 
         {current === "usage" ? (
@@ -418,130 +409,6 @@ export default async function ObservabilityPage({
               )}
             </DashboardPanel>
           </>
-        ) : pt ? (
-          <div className="space-y-6">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <Stat
-                label={t("skillCalls24h")}
-                value={compact(pt.skill.total)}
-                sub={t("acrossInstalledPlugins")}
-              />
-              <Stat
-                label={t("userAgent")}
-                value={`${pt.skill.byUser} / ${pt.skill.byAgent}`}
-                sub={t("slashVsAutonomous")}
-              />
-              <Stat
-                label={t("skillErrors")}
-                value={pt.skill.errors}
-                sub={t("failedInvocations")}
-              />
-              <Stat
-                label={t("skillSyncs")}
-                value={pt.sync.applied}
-                sub={t("failedCount", { count: pt.sync.failures })}
-              />
-            </div>
-
-            <DashboardPanel title={t("recentSkillInvocations")} padded={false}>
-              {pt.skill.recent.length === 0 ? (
-                <DashboardEmptyState
-                  description={t(
-                    "noSkillInvocationsYetInstallAToolkitAsAnAutosyncPluginAndRunOneOfItsSkills",
-                  )}
-                  className="min-h-48 rounded-none border-0"
-                />
-              ) : (
-                <DashboardTable
-                  headers={[
-                    { label: t("skill") },
-                    { label: t("source") },
-                    { label: t("outcome") },
-                    { label: t("time") },
-                  ]}
-                  rows={pt.skill.recent.map((s) => ({
-                    id: s.id,
-                    cells: [
-                      s.skillSlug,
-                      s.source === "user" ? t("user") : t("agent"),
-                      <span
-                        key="outcome"
-                        className={
-                          s.outcome === "error"
-                            ? "text-destructive dark:text-destructive"
-                            : "text-(--color-success) dark:text-(--color-success)"
-                        }
-                      >
-                        {s.outcome === "error" ? t("error") : t("success")}
-                        {s.errorClass ? ` · ${s.errorClass}` : ""}
-                      </span>,
-                      formatInTimeZone(
-                        s.createdAt,
-                        timeZone,
-                        {
-                          month: "short",
-                          day: "numeric",
-                          hour: "numeric",
-                          minute: "2-digit",
-                        },
-                        dateLocale,
-                      ),
-                    ],
-                  }))}
-                />
-              )}
-            </DashboardPanel>
-
-            <DashboardPanel title={t("recentSkillSyncs")} padded={false}>
-              {pt.sync.recent.length === 0 ? (
-                <DashboardEmptyState
-                  description={t("noSyncsRecordedYet")}
-                  className="min-h-48 rounded-none border-0"
-                />
-              ) : (
-                <DashboardTable
-                  headers={[
-                    { label: t("outcome") },
-                    { label: t("added") },
-                    { label: t("updated") },
-                    { label: t("removed") },
-                    { label: t("time") },
-                  ]}
-                  rows={pt.sync.recent.map((s) => ({
-                    id: s.id,
-                    cells: [
-                      <span
-                        key="outcome"
-                        className={
-                          s.outcome === "failure"
-                            ? "text-destructive dark:text-destructive"
-                            : "text-(--color-success) dark:text-(--color-success)"
-                        }
-                      >
-                        {s.outcome === "failure"
-                          ? `${t("failure")}${s.reason ? ` · ${s.reason}` : ""}`
-                          : t("applied")}
-                      </span>,
-                      s.added,
-                      s.updated,
-                      s.removed,
-                      formatInTimeZone(
-                        s.createdAt,
-                        timeZone,
-                        {
-                          month: "short",
-                          day: "numeric",
-                          hour: "numeric",
-                          minute: "2-digit",
-                        },
-                        dateLocale,
-                      ),
-                    ],
-                  }))}
-                />
-              )}
-            </DashboardPanel>
-          </div>
         ) : null}
       </DashboardPage>
     </>

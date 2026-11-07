@@ -216,8 +216,6 @@ model Workspace {
   githubResourceRegistries GithubResourceRegistry[]
   marketInstalls         MarketInstall[]          @relation("MarketInstallWorkspace")
   agentEndpoints         AgentEndpoint[]
-  skillInvocations       SkillInvocation[]
-  syncEvents             SyncEvent[]
   createdAt              DateTime                 @default(now())
   updatedAt              DateTime                 @updatedAt
 }
@@ -501,8 +499,6 @@ model Toolkit {
   agentLinks          AgentToolkit[]
   installLinks        ToolkitInstallLink[]
   apiTokens           ApiToken[]
-  skillInvocations    SkillInvocation[]
-  syncEvents          SyncEvent[]
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 
@@ -1551,46 +1547,6 @@ model AgentApiMaintenanceLease {
   ownerId   String
   expiresAt DateTime
   updatedAt DateTime @updatedAt
-}
-
-// Plugin telemetry: a skill firing inside an installed toolkit plugin. Skills
-// live on the user's filesystem and never hit the MCP gateway, so this hook
-// POST is the only signal of skill usage. source = user|agent, outcome =
-// success|error.
-model SkillInvocation {
-  id          String    @id @default(cuid())
-  workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  toolkitId   String?
-  toolkit     Toolkit?  @relation(fields: [toolkitId], references: [id], onDelete: SetNull)
-  skillSlug   String
-  source      String
-  outcome     String
-  errorClass  String?
-  client      String?
-  createdAt   DateTime  @default(now())
-
-  @@index([workspaceId, createdAt])
-}
-
-// Plugin telemetry: one SessionStart skill-sync run. outcome = applied (with
-// added/removed/updated/total counts) or failure (with a reason class).
-model SyncEvent {
-  id          String    @id @default(cuid())
-  workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  toolkitId   String?
-  toolkit     Toolkit?  @relation(fields: [toolkitId], references: [id], onDelete: SetNull)
-  outcome     String
-  added       Int       @default(0)
-  removed     Int       @default(0)
-  updated     Int       @default(0)
-  total       Int       @default(0)
-  reason      String?
-  client      String?
-  createdAt   DateTime  @default(now())
-
-  @@index([workspaceId, createdAt])
 }
 
 // A server-assigned registration, never a hardware fingerprint or an authority

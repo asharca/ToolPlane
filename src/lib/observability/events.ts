@@ -40,15 +40,7 @@ export type LogOutcome =
   | "cancelled"
   | "denied";
 export type LogEntry = Partial<Omit<LogContext, "secrets">> & {
-  domain:
-    | "http"
-    | "mcp"
-    | "a2a"
-    | "agent"
-    | "runtime"
-    | "channel"
-    | "plugin"
-    | "system";
+  domain: "http" | "mcp" | "a2a" | "agent" | "runtime" | "channel" | "system";
   eventName: string;
   message?: string;
   level?: "debug" | "info" | "warn" | "error";
