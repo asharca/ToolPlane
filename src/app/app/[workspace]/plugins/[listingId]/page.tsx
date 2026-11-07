@@ -19,6 +19,7 @@ import { getPlugin, PluginError } from "@/lib/plugins/catalog";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import { PluginConfiguration } from "@/components/dashboard/plugins/PluginConfiguration";
 import { PluginReadme } from "@/components/dashboard/plugins/PluginReadme";
+import { previewPluginResource } from "@/lib/plugins/resource-preview";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +28,12 @@ export default async function PluginDetailPage({
   searchParams,
 }: {
   params: Promise<{ workspace: string; listingId: string }>;
-  searchParams: Promise<{ version?: string; view?: string }>;
+  searchParams: Promise<{
+    version?: string;
+    view?: string;
+    resource?: string;
+    raw?: string;
+  }>;
 }) {
   const [{ workspace: slug, listingId }, query, user, t, locale] =
     await Promise.all([
@@ -70,6 +76,17 @@ export default async function PluginDetailPage({
   }));
   const selected =
     releases.find((release) => release.id === query.version) ?? releases[0];
+  if (
+    query.version &&
+    !releases.some((release) => release.id === query.version)
+  )
+    notFound();
+  const preview =
+    selected && query.resource
+      ? previewPluginResource(selected.snapshot, query.resource)
+      : null;
+  const resourceHref = (path: string, raw = false) =>
+    `${base}/${encodeURIComponent(plugin.id)}?view=resources&version=${encodeURIComponent(selected?.id ?? "")}&resource=${encodeURIComponent(path)}${raw ? "&raw=1" : ""}`;
   const view =
     query.view === "resources" ||
     query.view === "settings" ||
@@ -328,7 +345,15 @@ export default async function PluginDetailPage({
                                 key={path}
                                 className="break-all font-mono text-xs text-muted-foreground"
                               >
-                                {path}
+                                <Link
+                                  href={resourceHref(path)}
+                                  aria-current={
+                                    query.resource === path ? "page" : undefined
+                                  }
+                                  className="text-primary underline-offset-4 hover:underline focus-visible:underline"
+                                >
+                                  {path}
+                                </Link>
                               </li>
                             ),
                           )}
@@ -341,6 +366,82 @@ export default async function PluginDetailPage({
                   {t("noVersions")}
                 </p>
               )}
+            </DashboardPanel>
+          ) : null}
+          {view === "resources" && selected ? (
+            <DashboardPanel title={t("preview.title")}>
+              <div className="min-w-0 space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  {t("preview.version", {
+                    version: selected.snapshot.version ?? selected.version,
+                  })}
+                </p>
+                {query.resource ? (
+                  <p className="break-all font-mono text-xs">
+                    {preview && "kind" in preview && preview.kind
+                      ? `${t(preview.kind)} · `
+                      : ""}
+                    {query.resource}
+                  </p>
+                ) : null}
+                {preview?.status === "ready" && query.resource ? (
+                  <>
+                    {preview.markdown ? (
+                      <nav
+                        aria-label={t("preview.mode")}
+                        className="flex gap-4 text-sm"
+                      >
+                        <Link
+                          href={resourceHref(query.resource)}
+                          aria-current={query.raw !== "1" ? "page" : undefined}
+                          className="text-primary hover:underline"
+                        >
+                          {t("preview.rendered")}
+                        </Link>
+                        <Link
+                          href={resourceHref(query.resource, true)}
+                          aria-current={query.raw === "1" ? "page" : undefined}
+                          className="text-primary hover:underline"
+                        >
+                          {t("preview.raw")}
+                        </Link>
+                      </nav>
+                    ) : null}
+                    <section
+                      className="max-h-[36rem] overflow-auto rounded-md border border-border p-4"
+                      // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users need to scroll the bounded resource preview.
+                      tabIndex={0}
+                      aria-label={t("preview.title")}
+                    >
+                      {preview.markdown && query.raw !== "1" ? (
+                        <PluginReadme text={preview.text} resourcePreview />
+                      ) : (
+                        <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-6">
+                          {preview.text}
+                        </pre>
+                      )}
+                    </section>
+                  </>
+                ) : (
+                  <p role="status" className="text-sm text-muted-foreground">
+                    {t(`preview.${preview?.status ?? "choose"}`)}
+                  </p>
+                )}
+                {preview && preview.status !== "ready" ? (
+                  <p className="text-sm text-muted-foreground">
+                    {t("preview.alternative")}
+                  </p>
+                ) : null}
+                <p className="text-sm leading-6 text-muted-foreground">
+                  {t("preview.declared")}
+                </p>
+                <pre className="whitespace-pre-wrap break-words font-mono text-xs">
+                  {JSON.stringify(selected.snapshot.runtime, null, 2)}
+                </pre>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  {t("preview.risk")}
+                </p>
+              </div>
             </DashboardPanel>
           ) : null}
           {view === "settings" && plugin.install ? (
@@ -482,7 +583,7 @@ export default async function PluginDetailPage({
                 {releases.map((release) => (
                   <li key={release.id}>
                     <Link
-                      href={`${base}/${encodeURIComponent(plugin.id)}?view=${view}&version=${encodeURIComponent(release.id)}${view === "changelog" ? `#release-${release.id}` : ""}`}
+                      href={`${base}/${encodeURIComponent(plugin.id)}?view=${view}&version=${encodeURIComponent(release.id)}${view === "resources" && query.resource ? `&resource=${encodeURIComponent(query.resource)}${query.raw === "1" ? "&raw=1" : ""}` : ""}${view === "changelog" ? `#release-${release.id}` : ""}`}
                       aria-current={
                         selected?.id === release.id ? "true" : undefined
                       }

@@ -432,3 +432,10 @@
 - **下次怎么验证**：检查原指令的 pending → completed 状态，而非只检查频道里有文字；覆盖同频道并发指令、确认按钮、权限拒绝、ACK/回复 HTTP 失败，以及错误中不泄露交互令牌。建议管理命令前先确认操作人的渠道管理员权限。
 - **依据**：[Discord 适配器](src/lib/agents/channels/adapters/discord/DiscordAdapter.ts)、[交互回归](tests/unit/discord-interaction-replies.test.ts)。
 - **确认日期**：2026-11-07。
+
+### TP-L042：可选渲染器关闭时应省略键，而不是传 undefined
+
+**规则**：向 Markdown 等组件传入可选组件映射时，未启用的覆盖应从对象中省略；显式 `img: undefined` 可能覆盖组件库的默认渲染器。
+
+- **证据（2026-11-07，#185 验收）**：资源预览禁用图片时引入条件 `img` 覆盖，普通 README 分支传入 `undefined`，已有相对图片链接回归报 `Element type is invalid`。改为条件展开映射后，资源预览和原 README 两文件共 7 项测试通过。
+- **下次怎么验证**：同一轮覆盖新模式的恶意内容／图片隔离及默认模式的真实图片、链接渲染，不能只测新增开关开启的分支。依据：`PluginReadme.tsx`、`tests/unit/plugin-readme.test.tsx`。

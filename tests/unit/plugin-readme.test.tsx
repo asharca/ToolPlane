@@ -35,4 +35,23 @@ describe("version-pinned plugin README", () => {
       page.querySelector('a[href^="javascript:"],img[src^="data:"]'),
     ).toBeNull();
   });
+
+  it("resource previews suppress remote images and keep external links isolated", () => {
+    const container = document.createElement("div");
+    container.innerHTML = renderToStaticMarkup(
+      <PluginReadme
+        resourcePreview
+        text={
+          '![tracking](https://attacker.example/pixel)\n\n<img src="https://attacker.example/raw" />\n\n[Review](https://example.com)\n\n<script>alert(1)</script>\n\n[Bad](javascript:alert(1))'
+        }
+      />,
+    );
+    expect(container.querySelector("img,script,iframe,video,audio")).toBeNull();
+    expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
+    const link =
+      container.querySelector('a[href="https://example.com/"]') ??
+      container.querySelector('a[href="https://example.com"]');
+    expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(link?.getAttribute("referrerpolicy")).toBe("no-referrer");
+  });
 });

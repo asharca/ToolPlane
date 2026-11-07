@@ -9,9 +9,11 @@ import { harden } from "rehype-harden";
 export function PluginReadme({
   text,
   sourceUrl,
+  resourcePreview = false,
 }: {
   text: string;
   sourceUrl?: string;
+  resourcePreview?: boolean;
 }) {
   const rehypePlugins = useMemo<StreamdownProps["rehypePlugins"]>(
     () => [
@@ -36,6 +38,7 @@ export function PluginReadme({
         mode="static"
         rehypePlugins={rehypePlugins}
         urlTransform={(value, key) => {
+          if (resourcePreview && key !== "href") return "";
           try {
             const url = sourceUrl ? new URL(value, sourceUrl) : new URL(value);
             return [
@@ -55,10 +58,18 @@ export function PluginReadme({
           }
         }}
         components={{
+          ...(resourcePreview
+            ? { img: ({ alt }: { alt?: string }) => <span>{alt}</span> }
+            : {}),
           a: ({ href, children }) => {
             if (!href) return <span>{children}</span>;
             return (
-              <a href={href} target="_blank" rel="noopener noreferrer">
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                referrerPolicy={resourcePreview ? "no-referrer" : undefined}
+              >
                 {children}
               </a>
             );
