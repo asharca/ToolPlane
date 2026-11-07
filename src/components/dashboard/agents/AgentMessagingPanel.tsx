@@ -812,6 +812,7 @@ export function AgentMessagingPanel({
       ? t(`platforms.${platform}`)
       : (getMessagingPlatform(platform)?.label ?? platform);
   const deleteChannel = connections.find((channel) => channel.id === deleteId);
+
   const moveChannel = connections.find((channel) => channel.id === moveId);
   const targetSandbox = sandboxes.find(
     (sandbox) => sandbox.id === targetSandboxId,
@@ -886,6 +887,7 @@ export function AgentMessagingPanel({
           onClose={() => setEditingId(null)}
         />
       )}
+
       {moveChannel && (
         <ChannelDetailPanel
           title={t("migrateTitle", { name: moveChannel.name })}

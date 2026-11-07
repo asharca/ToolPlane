@@ -32,6 +32,7 @@ import type { SpawnSpec } from "./spawn-spec";
 import { MCP_NETWORK } from "./sandbox";
 import { ensureConnectorBroker } from "@/lib/sandboxes/connector-broker";
 import {
+  getAgentConcurrencySettings,
   resolveMcpStartupTimeoutSettings,
   resolvePrivateHostsSettings,
 } from "@/lib/admin/settings";
@@ -1858,6 +1859,18 @@ async function launchProcess(
       : null;
   const remotePrivateHosts =
     managedSpec.kind === "remote" ? await resolvePrivateHostsSettings() : null;
+  // Only Agent sandboxes pin resource limits. Their sessions run concurrently
+  // up to the admin per-Agent limit, so memory and process budgets scale with
+  // it; CPU stays as pinned. Applies when the container is (re)created.
+  const pinnedLimits =
+    managedSpec.kind === "sandbox" ? managedSpec.resourceLimits : undefined;
+  const sandboxLimits = pinnedLimits
+    ? await getAgentConcurrencySettings().then(({ maxPerAgent }) => ({
+        ...pinnedLimits,
+        memoryBytes: pinnedLimits.memoryBytes * maxPerAgent,
+        pidsLimit: pinnedLimits.pidsLimit * maxPerAgent,
+      }))
+    : undefined;
   // This is deliberately generated after the SpawnSpec is built. It is never
   // stored in that spec, the runtime registry, or the captured log stream.
   const runtimeEventToken =
@@ -1926,8 +1939,8 @@ async function launchProcess(
               SANDBOX_NETWORK: managedSpec.network,
               SANDBOX_ALLOW_SUDO: String(managedSpec.allowSudo === true),
               SANDBOX_ENV_JSON: JSON.stringify(managedSpec.env ?? {}),
-              SANDBOX_RESOURCE_LIMITS_JSON: managedSpec.resourceLimits
-                ? JSON.stringify(managedSpec.resourceLimits)
+              SANDBOX_RESOURCE_LIMITS_JSON: sandboxLimits
+                ? JSON.stringify(sandboxLimits)
                 : "",
               SANDBOX_CONNECTOR_BROKER_URL: connectorBroker?.internalUrl ?? "",
               SANDBOX_CONNECTOR_BROKER_TOKEN:

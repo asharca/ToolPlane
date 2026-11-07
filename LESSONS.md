@@ -416,6 +416,14 @@
 - **下次怎么验证**：在 `tests/integration/pi-sdk-host.test.ts` 中，对短会话执行原生命令，确认返回成功、没有发出模型请求、会话没有被改写；再在真实 Work 会话中发送一次。
 - **确认日期**：2026-11-06。
 
+### TP-L039：放开同沙箱并发要用真实冷启动并发验收共享资源
+
+**规则**：把串行执行改为并发前，列出同一沙箱内被串行掩盖的共享资源（运行时安装目录、会话绑定事务、容器 pids／内存），给每项明确串行点或扩容，事务沿用 Workspace→Agent 加锁顺序。
+
+- **证据（2026-11-06，用户要求同一沙箱多会话并发）**：单元测试和集成测试都通过了，但同一智能体同时发 2–3 个新会话的真实 Work 依次暴露出四个问题：新会话初始化遇到正在进行的生命周期操作直接报错；两个安装器并发时，后一个发现运行时已装好便提前退出，宿主写 stdin 报 `EPIPE`；会话绑定事务先锁 Agent 再触碰 Workspace 外键，与 Workspace 优先的任务写入发生 `40P01` 死锁；128 个 pids 和 512MB 内存只够约两个 Pi 会话，`pids.events max` 达到 3，出现 `spawn /bin/bash EAGAIN`，还有一轮卡在准备阶段。修复：会话租约、按沙箱串行的准备与绑定、统一加锁顺序、沙箱配额按单智能体并发数倍增、`--v8-pool-size=1`（每个 node 进程从 11 个线程降到 8 个）。之后连续两批、每批 3 个会话在同一容器内并行完成，`pids.peak` 130/384，内存峰值 620MB，没有 OOM。
+- **下次怎么验证**：用伪 OpenAI 上游让 bash 工具 `sleep 15` 并回显时间戳和 `pwd`；在新建的智能体和已有沙箱上各同时发起 N 个会话，比较 START/END 是否重叠，再看 cgroup 的 `pids.peak`、`pids.events`、`memory.events`；调低管理员限额，确认超出的会话排队后成功执行。
+- **依据**：[会话租约](src/lib/agents/sandbox-execution-gate.ts)、[沙箱绑定](src/lib/agents/conversation-sandbox.ts)、[运行时准备](src/lib/agents/sandbox-runtime.ts)、[配额倍增](src/lib/process/supervisor.ts)、[Work 限额](src/lib/work/coordinator.ts)。
+- **确认日期**：2026-11-06。
 ### TP-L040：要在控制台展示的日志属性，不能挂在 Agent 范围的事件上
 
 **规则**：`recordEvent` 遇到带 `agentId`（含继承的日志上下文）的事件，会把 attributes 收窄为数值遥测，防止 Agent 内容进入元数据。需要按属性聚合展示的运维事件（如发送人 ID），要在不带 agentId 的独立上下文中记录；测试 fixture 必须和真实连接一样绑定 Agent。
@@ -435,10 +443,17 @@
 - **依据**：[Discord 适配器](src/lib/agents/channels/adapters/discord/DiscordAdapter.ts)、[交互回归](tests/unit/discord-interaction-replies.test.ts)。
 - **确认日期**：2026-11-07。
 
-### TP-L042：跨请求订阅回调必须保留观察者鉴权上下文
+### TP-L043：跨请求订阅回调必须保留观察者鉴权上下文
 
 **规则**：进程内事件总线的发布者与 SSE 观察者可能属于不同请求。读取 Cookie 等请求上下文的持续鉴权须绑定订阅建立时的异步上下文，同时继续重查当前权限，不能直接继承发布者身份或缓存一次授权结果。
 
 - **证据（2026-11-07，实时观察验收）**：真实频道执行已完成原生 `bash`，浏览器却在任务事件到来时显示“访问权限已失效”。订阅回调由带频道 Bearer 的入站请求触发，`getCurrentUser()` 读取发布者上下文而失去浏览器会话。共享 SSE 响应改用 `AsyncLocalStorage.bind` 绑定重查；新增回归修复前收到错误的 `revoked`，修复后返回最终快照，随后真正撤权仍关闭订阅。
 - **下次怎么验证**：使用两个不同的异步身份建立订阅并发布任务事件，验证不会串用身份；再撤销观察者权限，确认结果清空。真实浏览器须订阅在先、由另一入口触发执行在后，并检查连续回合、暂停恢复和最终历史切换。
 - **依据**：[SSE 响应](src/lib/agents/execution/live-output-stream.ts)、[跨请求回归](tests/unit/live-task-output.test.ts)、[频道权限回归](tests/integration/agent-channels.test.ts)。
+
+### TP-L042：可选渲染器关闭时应省略键，而不是传 undefined
+
+**规则**：向 Markdown 等组件传入可选组件映射时，未启用的覆盖应从对象中省略；显式 `img: undefined` 可能覆盖组件库的默认渲染器。
+
+- **证据（2026-11-07，#185 验收）**：资源预览禁用图片时引入条件 `img` 覆盖，普通 README 分支传入 `undefined`，已有相对图片链接回归报 `Element type is invalid`。改为条件展开映射后，资源预览和原 README 两文件共 7 项测试通过。
+- **下次怎么验证**：同一轮覆盖新模式的恶意内容／图片隔离及默认模式的真实图片、链接渲染，不能只测新增开关开启的分支。依据：`PluginReadme.tsx`、`tests/unit/plugin-readme.test.tsx`。

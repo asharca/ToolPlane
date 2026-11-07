@@ -31,8 +31,8 @@ import {
   type TaskGrant,
 } from "@/lib/a2a/principal";
 import {
-  sandboxExecutionBusy,
-  withSandboxExecutionLease,
+  sandboxSessionBusy,
+  withSandboxSessionLease,
   SandboxExecutionBusyError,
 } from "@/lib/agents/sandbox-execution-gate";
 import { PiRuntimeInterruptedError } from "@/lib/agents/pi-harness";
@@ -463,9 +463,9 @@ export function executeAgentTask(
             cleanup,
             controller.signal,
           );
-          if (sandboxExecutionBusy(sandboxId))
+          if (sandboxSessionBusy(sandboxId, sessionId))
             throw new SandboxExecutionBusyError();
-          return withSandboxExecutionLease(sandboxId, () => {
+          return withSandboxSessionLease(sandboxId, sessionId, () => {
             reserved = true;
             return run();
           });

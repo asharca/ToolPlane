@@ -60,7 +60,8 @@ async function request() {
     if (!launched) {
       const child = spawn(
         process.execPath,
-        [process.argv[1], inputPath, "serve"],
+        // Keep the driver's sandbox node flags (V8 pool) for the resident broker.
+        [...process.execArgv, process.argv[1], inputPath, "serve"],
         { detached: true, stdio: "ignore" },
       );
       child.unref();
