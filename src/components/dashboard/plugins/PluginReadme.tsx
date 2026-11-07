@@ -60,7 +60,7 @@ export function PluginReadme({
         components={{
           ...(resourcePreview
             ? {
-                img: ({ alt }: Record<string, unknown>) => (
+                img: ({ alt }: { alt?: unknown; node?: unknown }) => (
                   <span>{typeof alt === "string" ? alt : null}</span>
                 ),
               }
