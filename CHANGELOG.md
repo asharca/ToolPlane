@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.34.0](https://github.com/asharca/ToolPlane/compare/v0.33.3...v0.34.0) (2026-11-07)
+
+
+### Features
+
+* **agents:** 支持同一沙箱内多会话并发 ([#179](https://github.com/asharca/ToolPlane/issues/179)) ([3b6771a](https://github.com/asharca/ToolPlane/commit/3b6771afee34a425c1262936283a2aedcab4dd6c))
+* **console:** 优化工作区成员与通知管理 ([#180](https://github.com/asharca/ToolPlane/issues/180)) ([0e92f71](https://github.com/asharca/ToolPlane/commit/0e92f71149ed5cb309e04b305bf35a1b472fee99))
+* observe channel and A2A execution live ([#193](https://github.com/asharca/ToolPlane/issues/193)) ([3d0e3a2](https://github.com/asharca/ToolPlane/commit/3d0e3a2152aaa792a72dc8a0639fb71856859cc6))
+* **plugins:** 安全预览固定版本资源 ([#189](https://github.com/asharca/ToolPlane/issues/189)) ([814e6de](https://github.com/asharca/ToolPlane/commit/814e6de8c7c7a01438f24f7cf8b6178871e4413d))
+* **plugins:** 展示固定版本身份与能力筛选 ([#192](https://github.com/asharca/ToolPlane/issues/192)) ([95a7957](https://github.com/asharca/ToolPlane/commit/95a7957bd2fdef866b30751eb5be06a1aa590c3c))
+* **plugins:** 打通插件选择到智能体草稿流程 ([#191](https://github.com/asharca/ToolPlane/issues/191)) ([c994227](https://github.com/asharca/ToolPlane/commit/c9942274626b0388fbf11e0f0f5f46b4865e7288))
+* **plugins:** 拆分插件中心与我的插件，支持在智能体设置内添加市场插件 ([#194](https://github.com/asharca/ToolPlane/issues/194)) ([8ec062c](https://github.com/asharca/ToolPlane/commit/8ec062c9f64ac67883a288d35221e5ece7cdcbcd))
+
+
+### Bug Fixes
+
+* **channels:** 重构频道发送人准入、会话路由与持久化入站 ([#178](https://github.com/asharca/ToolPlane/issues/178)) ([59b13ed](https://github.com/asharca/ToolPlane/commit/59b13ed75446beb66ff3aa7c68a1175cda464a7f))
+* **plugins:** 保留搜索条件并修正已添加空态 ([#188](https://github.com/asharca/ToolPlane/issues/188)) ([955a5f2](https://github.com/asharca/ToolPlane/commit/955a5f273af8290699ecaeb5385990896af25e96))
+* **plugins:** 前置移动端安装与版本操作 ([#190](https://github.com/asharca/ToolPlane/issues/190)) ([00ac756](https://github.com/asharca/ToolPlane/commit/00ac756a2a7a017dd4d1695ffa52b8fee27f7ab0))
+* **plugins:** 区分草稿选择与已应用插件版本 ([#187](https://github.com/asharca/ToolPlane/issues/187)) ([56b312d](https://github.com/asharca/ToolPlane/commit/56b312da28420873bbbb7a117f0ca515c4dc2521))
+
+
+### Refactors
+
+* **observability:** 移除已失效的旧 Toolkit 插件遥测 ([#195](https://github.com/asharca/ToolPlane/issues/195)) ([4b46b07](https://github.com/asharca/ToolPlane/commit/4b46b0798c49e3955a9c634bc4ae840598998193))
+
 ## [0.33.3](https://github.com/asharca/ToolPlane/compare/v0.33.2...v0.33.3) (2026-11-04)
 
 
