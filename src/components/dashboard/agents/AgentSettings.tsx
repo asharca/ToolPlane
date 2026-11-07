@@ -13,6 +13,8 @@ import type {
   AgentPiPackageOption,
   AgentSettingsSection,
 } from "@/components/dashboard/agents/AgentSettingsForm";
+import type { AgentPluginCatalogOption } from "@/components/dashboard/agents/AgentPluginsPanel";
+import type { PluginBindingDeployment } from "@/lib/plugins/binding-deployments";
 import type { AgentChannelConnectionClientView } from "@/lib/agents/channel-connection-client";
 import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
 import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
@@ -51,6 +53,8 @@ type SettingsData = {
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
   piPackages?: AgentPiPackageOption[];
+  pluginCatalog?: AgentPluginCatalogOption[];
+  pluginDeployments?: PluginBindingDeployment[];
   ownSandbox: AgentOwnSandbox | null;
   externalSandboxes: AgentExternalSandbox[];
   publishedRevision?: {
@@ -203,7 +207,15 @@ export function AgentSettings({
               }
             >
               <AgentSettingsForm
-                key={`${settings.publishedRevision?.id ?? "draft"}:${settings.piPackages?.map((pkg) => `${pkg.marketInstallId}:${pkg.enabledReleaseId}`).join(",") ?? ""}`}
+                // Only saved bindings reset the draft; a workspace install from the panel must not.
+                key={`${settings.publishedRevision?.id ?? "draft"}:${
+                  settings.piPackages
+                    ?.filter((pkg) => pkg.enabledReleaseId)
+                    .map(
+                      (pkg) => `${pkg.marketInstallId}:${pkg.enabledReleaseId}`,
+                    )
+                    .join(",") ?? ""
+                }`}
                 slug={slug}
                 workspaceId={settings.workspaceId}
                 agentId={agentId}
@@ -218,6 +230,8 @@ export function AgentSettings({
                 deployments={settings.deployments}
                 skills={settings.skills}
                 piPackages={settings.piPackages}
+                pluginCatalog={settings.pluginCatalog}
+                pluginDeployments={settings.pluginDeployments}
                 ownSandbox={settings.ownSandbox}
                 externalSandboxes={settings.externalSandboxes}
                 runtimeKind={settings.runtimeKind}

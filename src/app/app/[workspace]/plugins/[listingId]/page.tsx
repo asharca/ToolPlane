@@ -9,9 +9,8 @@ import {
 import { PluginInstallForm } from "@/components/dashboard/plugins/PluginForms";
 import { PluginAgentChooser } from "@/components/dashboard/plugins/PluginAgentChooser";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser, getDeployments } from "@/lib/workspace/queries";
-import { deploymentLabel } from "@/lib/workspace/deployment-label";
-import { readMcpToolCatalog } from "@/lib/process/mcp-tool-catalog";
+import { getWorkspaceForUser } from "@/lib/workspace/queries";
+import { listPluginBindingDeployments } from "@/lib/plugins/binding-deployments";
 import { db } from "@/lib/db";
 import {
   getPlugin,
@@ -104,7 +103,7 @@ export default async function PluginDetailPage({
       throw error;
     });
   const [deployments, agents] = await Promise.all([
-    getDeployments(workspace.id),
+    listPluginBindingDeployments(workspace.id),
     canManage
       ? db.agent.findMany({
           where: {
@@ -352,17 +351,7 @@ export default async function PluginDetailPage({
                 requirements: release.snapshot.toolplane?.mcp ?? [],
               }))}
               defaults={defaults}
-              deployments={deployments.map((deployment) => ({
-                id: deployment.id,
-                name: deploymentLabel(deployment).name,
-                tools: readMcpToolCatalog(deployment.installCfg)
-                  .filter(
-                    (tool) =>
-                      deployment.mcpToolExposure !== "allowlist" ||
-                      deployment.mcpAllowedTools.includes(tool.name),
-                  )
-                  .map((tool) => tool.name),
-              }))}
+              deployments={deployments}
               canManage={canManage}
               status={plugin.status}
             />

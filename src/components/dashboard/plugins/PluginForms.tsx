@@ -14,6 +14,7 @@ import { DialogBody, DialogHeader } from "@/components/dashboard/dialog";
 import { notify } from "@/components/dashboard/Toaster";
 import { FormSelect } from "@/components/ui/FormSelect";
 import { pluginAction, type PluginActionState } from "@/lib/plugins/actions";
+import type { PluginBindingDeployment } from "@/lib/plugins/binding-deployments";
 
 const pluginFieldClass =
   "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm";
@@ -183,17 +184,124 @@ export function PluginListFilter({
   );
 }
 
+export type PluginMcpRequirement = {
+  key: string;
+  name: string;
+  tools: string[];
+};
 export type PluginReleaseOption = {
   id: string;
   version: string;
-  requirements: Array<{ key: string; name: string; tools: string[] }>;
+  requirements: PluginMcpRequirement[];
 };
-
-type PluginDeploymentOption = { id: string; name: string; tools: string[] };
-type PluginBindingDefaults = Record<
+export type PluginBindingDraft = Record<
   string,
   { deploymentId: string; tools: string[] }
 >;
+
+/** Submitted bindings for one release, and whether every requirement has an eligible deployment. */
+export function pluginBindingState(
+  requirements: PluginMcpRequirement[],
+  deployments: PluginBindingDeployment[],
+  bindings: PluginBindingDraft,
+) {
+  return {
+    selected: Object.fromEntries(
+      requirements.flatMap((requirement) => {
+        const binding = bindings[requirement.key];
+        return binding
+          ? [
+              [
+                requirement.key,
+                {
+                  deploymentId: binding.deploymentId,
+                  tools: requirement.tools,
+                },
+              ],
+            ]
+          : [];
+      }),
+    ),
+    ready: requirements.every((requirement) =>
+      deployments.some(
+        (deployment) =>
+          deployment.id === bindings[requirement.key]?.deploymentId &&
+          requirement.tools.every((tool) => deployment.tools.includes(tool)),
+      ),
+    ),
+  };
+}
+
+/** One select per MCP requirement, offering only deployments that expose all its tools. */
+export function PluginMcpBindingFields({
+  requirements,
+  deployments,
+  bindings,
+  onChange,
+  disabled,
+  required = false,
+}: {
+  requirements: PluginMcpRequirement[];
+  deployments: PluginBindingDeployment[];
+  bindings: PluginBindingDraft;
+  onChange: (next: PluginBindingDraft) => void;
+  disabled?: boolean;
+  /** Native validation; leave off inside a larger form that has other submit paths. */
+  required?: boolean;
+}) {
+  const t = useTranslations("console.plugins");
+  const fieldId = useId();
+  return (
+    <fieldset className="space-y-3">
+      <legend className="mb-2 text-sm font-medium">{t("mcpBindings")}</legend>
+      {requirements.map((requirement) => {
+        const eligible = deployments.filter((deployment) =>
+          requirement.tools.every((tool) => deployment.tools.includes(tool)),
+        );
+        const selected = eligible.some(
+          (item) => item.id === bindings[requirement.key]?.deploymentId,
+        )
+          ? bindings[requirement.key]?.deploymentId
+          : "";
+        const bindingId = `${fieldId}-binding-${encodeURIComponent(requirement.key)}`;
+        return (
+          <div key={requirement.key} className="grid gap-1 text-sm">
+            <label htmlFor={bindingId}>{requirement.name}</label>
+            <span className="break-all font-mono text-xs text-muted-foreground">
+              {requirement.tools.join(", ")}
+            </span>
+            <FormSelect
+              id={bindingId}
+              label={requirement.name}
+              required={required}
+              value={selected}
+              disabled={disabled}
+              onValueChange={(value) =>
+                onChange({
+                  ...bindings,
+                  [requirement.key]: {
+                    deploymentId: value,
+                    tools: requirement.tools,
+                  },
+                })
+              }
+              options={[
+                { value: "", label: t("selectMcp") },
+                ...eligible.map((deployment) => ({
+                  value: deployment.id,
+                  label: deployment.name,
+                })),
+              ]}
+            />
+            {!eligible.length ? (
+              <span className="text-destructive">{t("noMcp")}</span>
+            ) : null}
+          </div>
+        );
+      })}
+    </fieldset>
+  );
+}
 
 /** Action card body: add, update, switch version and remove for one plugin. */
 export function PluginInstallForm({
@@ -210,8 +318,8 @@ export function PluginInstallForm({
   listingId: string;
   install?: { id: string; releaseId: string; version: string };
   releases: PluginReleaseOption[];
-  deployments: PluginDeploymentOption[];
-  defaults: PluginBindingDefaults;
+  deployments: PluginBindingDeployment[];
+  defaults: PluginBindingDraft;
   canManage: boolean;
   /** Listing status: published, withdrawn or removed. */
   status: string;
@@ -317,8 +425,8 @@ function PluginReleaseForm({
   releases: PluginReleaseOption[];
   /** Set when choosing among versions; the current one cannot be resubmitted. */
   currentReleaseId?: string;
-  deployments: PluginDeploymentOption[];
-  defaults: PluginBindingDefaults;
+  deployments: PluginBindingDeployment[];
+  defaults: PluginBindingDraft;
   submitLabel: (version: string) => string;
 }) {
   const t = useTranslations("console.plugins");
@@ -340,25 +448,10 @@ function PluginReleaseForm({
   );
   const release = releases.find((item) => item.id === releaseId);
   if (!release) return null;
-  const selectedBindings = Object.fromEntries(
-    release.requirements.flatMap((requirement) => {
-      const binding = bindings[requirement.key];
-      return binding
-        ? [
-            [
-              requirement.key,
-              { deploymentId: binding.deploymentId, tools: requirement.tools },
-            ],
-          ]
-        : [];
-    }),
-  );
-  const ready = release.requirements.every((requirement) =>
-    deployments.some(
-      (deployment) =>
-        deployment.id === bindings[requirement.key]?.deploymentId &&
-        requirement.tools.every((tool) => deployment.tools.includes(tool)),
-    ),
+  const { selected: selectedBindings, ready } = pluginBindingState(
+    release.requirements,
+    deployments,
+    bindings,
   );
   return (
     <form action={action} className="space-y-4">
@@ -391,58 +484,14 @@ function PluginReleaseForm({
         </div>
       ) : null}
       {release.requirements.length ? (
-        <fieldset className="space-y-3">
-          <legend className="mb-2 text-sm font-medium">
-            {t("mcpBindings")}
-          </legend>
-          {release.requirements.map((requirement) => {
-            const eligible = deployments.filter((deployment) =>
-              requirement.tools.every((tool) =>
-                deployment.tools.includes(tool),
-              ),
-            );
-            const selected = eligible.some(
-              (item) => item.id === bindings[requirement.key]?.deploymentId,
-            )
-              ? bindings[requirement.key]?.deploymentId
-              : "";
-            const bindingId = `${fieldId}-binding-${encodeURIComponent(requirement.key)}`;
-            return (
-              <div key={requirement.key} className="grid gap-1 text-sm">
-                <label htmlFor={bindingId}>{requirement.name}</label>
-                <span className="break-all font-mono text-xs text-muted-foreground">
-                  {requirement.tools.join(", ")}
-                </span>
-                <FormSelect
-                  id={bindingId}
-                  label={requirement.name}
-                  required
-                  value={selected}
-                  disabled={pending}
-                  onValueChange={(value) =>
-                    setBindings((previous) => ({
-                      ...previous,
-                      [requirement.key]: {
-                        deploymentId: value,
-                        tools: requirement.tools,
-                      },
-                    }))
-                  }
-                  options={[
-                    { value: "", label: t("selectMcp") },
-                    ...eligible.map((deployment) => ({
-                      value: deployment.id,
-                      label: deployment.name,
-                    })),
-                  ]}
-                />
-                {!eligible.length ? (
-                  <span className="text-destructive">{t("noMcp")}</span>
-                ) : null}
-              </div>
-            );
-          })}
-        </fieldset>
+        <PluginMcpBindingFields
+          requirements={release.requirements}
+          deployments={deployments}
+          bindings={bindings}
+          onChange={setBindings}
+          disabled={pending}
+          required
+        />
       ) : null}
       <Button
         type="submit"
