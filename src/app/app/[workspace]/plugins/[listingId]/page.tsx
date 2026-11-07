@@ -19,6 +19,7 @@ import {
   getPlugin,
   PluginError,
   requirePluginWorkspace,
+  pluginReleaseLabel,
 } from "@/lib/plugins/catalog";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import { PluginConfiguration } from "@/components/dashboard/plugins/PluginConfiguration";
@@ -198,64 +199,194 @@ export default async function PluginDetailPage({
         <ArrowLeft className="size-4" />
         {t("title")}
       </Link>
-      <header className="space-y-4">
-        <div className="flex items-start gap-4">
-          <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-muted">
-            <Puzzle className="size-7" />
-          </div>
-          <div className="min-w-0 space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-semibold">{plugin.name}</h1>
-              {source?.official ? (
-                <span className="rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
-                  {t("official")}
-                </span>
-              ) : null}
-              {plugin.updateAvailable ? (
-                <span className="rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
-                  {t("updateAvailable")}
-                </span>
-              ) : null}
-            </div>
-            <p className="text-sm leading-6 text-muted-foreground">
-              {plugin.summary}
-            </p>
-          </div>
-        </div>
-        {source ? (
-          <a
-            className="block break-all font-mono text-xs text-muted-foreground hover:underline"
-            href={`https://github.com/${source.repository}${commit ? `/tree/${commit}` : ""}`}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {source.repository}
-            {commit ? `@${commit}` : ""}
-          </a>
-        ) : null}
-        {plugin.tags.length ? (
-          <div className="flex flex-wrap gap-2">
-            {plugin.tags.map((tag) => (
-              <span
-                className="rounded-full bg-muted px-2 py-1 text-xs"
-                key={tag}
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-        ) : null}
-        {plugin.status !== "published" ? (
-          <p role="status" className="text-sm text-muted-foreground">
-            {t(
-              plugin.status === "withdrawn"
-                ? "withdrawnNotice"
-                : "removedNotice",
-            )}
-          </p>
-        ) : null}
-      </header>
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <header className="min-w-0 space-y-4 [overflow-wrap:anywhere]">
+          <div className="flex items-start gap-4">
+            <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-muted">
+              <Puzzle className="size-7" />
+            </div>
+            <div className="min-w-0 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="min-w-0 text-2xl font-semibold">
+                  {plugin.name}
+                </h1>
+                {source?.official ? (
+                  <span className="rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
+                    {t("official")}
+                  </span>
+                ) : null}
+                {plugin.updateAvailable ? (
+                  <span className="rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
+                    {t("updateAvailable")}
+                  </span>
+                ) : null}
+              </div>
+              <p className="text-sm leading-6 text-muted-foreground">
+                {plugin.summary}
+              </p>
+            </div>
+          </div>
+          {source ? (
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer font-medium">
+                {t("source")}
+              </summary>
+              <a
+                className="mt-2 block break-all font-mono hover:underline"
+                href={`https://github.com/${source.repository}${commit ? `/tree/${commit}` : ""}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {source.repository}
+                {commit ? `@${commit}` : ""}
+              </a>
+            </details>
+          ) : null}
+          {plugin.tags.length ? (
+            <div className="flex flex-wrap gap-2">
+              {plugin.tags.map((tag) => (
+                <span
+                  className="rounded-full bg-muted px-2 py-1 text-xs"
+                  key={tag}
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </header>
+        <div className="min-w-0 space-y-5">
+          <section id="plugin-install" className="scroll-mt-4">
+            <DashboardPanel
+              title={t(plugin.install ? "manage" : "add")}
+              bodyClassName="space-y-4 [overflow-wrap:anywhere]"
+            >
+              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
+                <dt className="text-muted-foreground">{t("status")}</dt>
+                <dd>{t(plugin.install ? "added" : "notAdded")}</dd>
+                {plugin.install ? (
+                  <>
+                    <dt className="text-muted-foreground">
+                      {t("currentVersion")}
+                    </dt>
+                    <dd>
+                      {releases.find(
+                        (release) =>
+                          release.id === plugin.install?.currentReleaseId,
+                      )?.snapshot.version ??
+                        pluginReleaseLabel(plugin.install.currentRelease)}
+                    </dd>
+                  </>
+                ) : releases[0] ? (
+                  <>
+                    <dt className="text-muted-foreground">
+                      {t("installVersion")}
+                    </dt>
+                    <dd>
+                      {releases[0].snapshot.version ?? releases[0].version}
+                    </dd>
+                  </>
+                ) : null}
+                {selected ? (
+                  <>
+                    <dt className="text-muted-foreground">
+                      {t("viewedVersion")}
+                    </dt>
+                    <dd>{selected.snapshot.version ?? selected.version}</dd>
+                  </>
+                ) : null}
+              </dl>
+              {plugin.status !== "published" ? (
+                <p role="status" className="text-sm text-muted-foreground">
+                  {t(
+                    plugin.status === "withdrawn"
+                      ? "withdrawnNotice"
+                      : "removedNotice",
+                  )}
+                </p>
+              ) : !releases.length ? (
+                <p role="status" className="text-sm text-muted-foreground">
+                  {t("noVersions")}
+                </p>
+              ) : null}
+              {canManage && plugin.status === "published" && releases.length ? (
+                <PluginInstallForm
+                  workspace={slug}
+                  listingId={plugin.id}
+                  installId={plugin.install?.id}
+                  currentReleaseId={plugin.install?.currentReleaseId}
+                  releases={releases.map((release) => ({
+                    id: release.id,
+                    version:
+                      release.snapshot.version ?? String(release.version),
+                    requirements: release.snapshot.toolplane?.mcp ?? [],
+                  }))}
+                  defaults={defaults}
+                  deployments={deployments.map((deployment) => ({
+                    id: deployment.id,
+                    name: deploymentLabel(deployment).name,
+                    tools: readMcpToolCatalog(deployment.installCfg)
+                      .filter(
+                        (tool) =>
+                          deployment.mcpToolExposure !== "allowlist" ||
+                          deployment.mcpAllowedTools.includes(tool.name),
+                      )
+                      .map((tool) => tool.name),
+                  }))}
+                />
+              ) : null}
+              {canManage &&
+              plugin.install &&
+              plugin.status === "published" &&
+              releases.length ? (
+                <p className="text-xs leading-5 text-muted-foreground">
+                  {t("updateImpact", {
+                    count: plugin.install.agentPiPackages.length,
+                  })}
+                </p>
+              ) : null}
+            </DashboardPanel>
+          </section>
+          <DashboardPanel title={t("flow.addToAgent")}>
+            <PluginAgentChooser
+              workspace={slug}
+              listingId={plugin.id}
+              agents={agents.map((agent) => ({
+                id: agent.id,
+                name: agent.name,
+                packageCount: agent.piPackages.length,
+                selected: agent.piPackages.some(
+                  (binding) => binding.marketInstallId === plugin.install?.id,
+                ),
+              }))}
+              canManage={canManage}
+              installed={Boolean(plugin.install)}
+              compatible={targetRelease?.snapshot.runtime.kind === "pi-sdk"}
+              available={
+                plugin.status === "published" && Boolean(targetRelease)
+              }
+              returnAgent={returnAgent}
+              pluginChannel={pluginChannel}
+              version={
+                targetRelease?.snapshot.version ??
+                String(targetRelease?.version ?? "—")
+              }
+              counts={{
+                skills: targetRelease?.snapshot.resources.skills.length ?? 0,
+                extensions:
+                  targetRelease?.snapshot.resources.extensions.length ?? 0,
+                mcp: targetRelease?.snapshot.toolplane?.mcp.length ?? 0,
+              }}
+            >
+              <Link
+                href="#plugin-install"
+                className="text-sm text-primary hover:underline"
+              >
+                {t("add")}
+              </Link>
+            </PluginAgentChooser>
+          </DashboardPanel>
+        </div>
         <div className="min-w-0 space-y-5">
           <nav
             aria-label={t("detailNavigation")}
@@ -556,45 +687,6 @@ export default async function PluginDetailPage({
           ) : null}
         </div>
         <aside className="min-w-0 space-y-5">
-          <DashboardPanel title={t("flow.addToAgent")}>
-            <PluginAgentChooser
-              workspace={slug}
-              listingId={plugin.id}
-              agents={agents.map((agent) => ({
-                id: agent.id,
-                name: agent.name,
-                packageCount: agent.piPackages.length,
-                selected: agent.piPackages.some(
-                  (binding) => binding.marketInstallId === plugin.install?.id,
-                ),
-              }))}
-              canManage={canManage}
-              installed={Boolean(plugin.install)}
-              compatible={targetRelease?.snapshot.runtime.kind === "pi-sdk"}
-              available={
-                plugin.status === "published" && Boolean(targetRelease)
-              }
-              returnAgent={returnAgent}
-              pluginChannel={pluginChannel}
-              version={
-                targetRelease?.snapshot.version ??
-                String(targetRelease?.version ?? "—")
-              }
-              counts={{
-                skills: targetRelease?.snapshot.resources.skills.length ?? 0,
-                extensions:
-                  targetRelease?.snapshot.resources.extensions.length ?? 0,
-                mcp: targetRelease?.snapshot.toolplane?.mcp.length ?? 0,
-              }}
-            >
-              <Link
-                href="#plugin-install"
-                className="text-sm text-primary hover:underline"
-              >
-                {t("flow.installBelow")}
-              </Link>
-            </PluginAgentChooser>
-          </DashboardPanel>
           {selected ? (
             <DashboardPanel title={t("capabilities.title")}>
               <dl className="grid gap-2 text-sm sm:grid-cols-[auto_minmax(0,1fr)]">
@@ -634,85 +726,67 @@ export default async function PluginDetailPage({
               ) : null}
             </DashboardPanel>
           ) : null}
-          {canManage && plugin.status === "published" && releases.length ? (
-            <section id="plugin-install" className="scroll-mt-4">
-              <DashboardPanel title={t(plugin.install ? "manage" : "add")}>
-                <PluginInstallForm
-                  workspace={slug}
-                  listingId={plugin.id}
-                  installId={plugin.install?.id}
-                  currentReleaseId={plugin.install?.currentReleaseId}
-                  releases={releases.map((release) => ({
-                    id: release.id,
-                    version:
-                      release.snapshot.version ?? String(release.version),
-                    requirements: release.snapshot.toolplane?.mcp ?? [],
-                  }))}
-                  defaults={defaults}
-                  deployments={deployments.map((deployment) => ({
-                    id: deployment.id,
-                    name: deploymentLabel(deployment).name,
-                    tools: readMcpToolCatalog(deployment.installCfg)
-                      .filter(
-                        (tool) =>
-                          deployment.mcpToolExposure !== "allowlist" ||
-                          deployment.mcpAllowedTools.includes(tool.name),
-                      )
-                      .map((tool) => tool.name),
-                  }))}
-                />
-              </DashboardPanel>
-            </section>
-          ) : null}
-          <DashboardPanel title={t("versions")}>
-            {releases.length ? (
-              <ul className="space-y-3">
-                {releases.map((release) => (
-                  <li key={release.id}>
-                    <Link
-                      href={`${base}/${encodeURIComponent(plugin.id)}?view=${view}&version=${encodeURIComponent(release.id)}${contextSuffix}${view === "resources" && query.resource ? `&resource=${encodeURIComponent(query.resource)}${query.raw === "1" ? "&raw=1" : ""}` : ""}${view === "changelog" ? `#release-${release.id}` : ""}`}
-                      aria-current={
-                        selected?.id === release.id ? "true" : undefined
-                      }
-                      className={`block rounded-lg border p-3 text-sm ${selected?.id === release.id ? "border-primary/40 bg-primary/5" : "border-border hover:bg-muted"}`}
-                    >
-                      <span className="flex flex-wrap justify-between gap-2">
-                        <span className="font-medium">
-                          {release.snapshot.version ?? release.version}
-                        </span>
-                        {plugin.install?.currentReleaseId === release.id ? (
-                          <span className="text-xs text-muted-foreground">
-                            {t("currentVersion")}
+          <details className="min-w-0 rounded-xl border border-border bg-card p-5">
+            <summary className="cursor-pointer text-sm font-semibold">
+              {t("versions")}
+            </summary>
+            <div className="mt-4">
+              {releases.length ? (
+                <ul className="space-y-3">
+                  {releases.map((release) => (
+                    <li key={release.id}>
+                      <Link
+                        href={`${base}/${encodeURIComponent(plugin.id)}?view=${view}&version=${encodeURIComponent(release.id)}${contextSuffix}${view === "resources" && query.resource ? `&resource=${encodeURIComponent(query.resource)}${query.raw === "1" ? "&raw=1" : ""}` : ""}${view === "changelog" ? `#release-${release.id}` : ""}`}
+                        aria-current={
+                          selected?.id === release.id ? "true" : undefined
+                        }
+                        className={`block rounded-lg border p-3 text-sm ${selected?.id === release.id ? "border-primary/40 bg-primary/5" : "border-border hover:bg-muted"}`}
+                      >
+                        <span className="flex flex-wrap justify-between gap-2">
+                          <span className="min-w-0 font-medium [overflow-wrap:anywhere]">
+                            {release.snapshot.version ?? release.version}
                           </span>
+                          {plugin.install?.currentReleaseId === release.id ? (
+                            <span className="text-xs text-muted-foreground">
+                              {t("currentVersion")}
+                            </span>
+                          ) : null}
+                        </span>
+                        {release.publishedAt ? (
+                          <time
+                            className="mt-1 block text-xs text-muted-foreground"
+                            dateTime={release.publishedAt.toISOString()}
+                          >
+                            {new Intl.DateTimeFormat(locale, {
+                              dateStyle: "medium",
+                            }).format(release.publishedAt)}
+                          </time>
                         ) : null}
-                      </span>
-                      {release.publishedAt ? (
-                        <time
-                          className="mt-1 block text-xs text-muted-foreground"
-                          dateTime={release.publishedAt.toISOString()}
-                        >
-                          {new Intl.DateTimeFormat(locale, {
-                            dateStyle: "medium",
-                          }).format(release.publishedAt)}
-                        </time>
-                      ) : null}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-muted-foreground">{t("noVersions")}</p>
-            )}
-          </DashboardPanel>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {t("noVersions")}
+                </p>
+              )}
+            </div>
+          </details>
           {canManage && plugin.install ? (
-            <PluginActionForm
-              workspace={slug}
-              operation="remove"
-              id={plugin.install.id}
-              label={t("remove")}
-              destructive
-              confirm
-            />
+            <div className="space-y-3">
+              <p className="text-xs leading-5 text-muted-foreground">
+                {t("removeImpact")}
+              </p>
+              <PluginActionForm
+                workspace={slug}
+                operation="remove"
+                id={plugin.install.id}
+                label={t("remove")}
+                destructive
+                confirm
+              />
+            </div>
           ) : null}
         </aside>
       </div>
