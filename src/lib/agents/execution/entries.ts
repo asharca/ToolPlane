@@ -58,6 +58,7 @@ import { settled, terminal, A2A_LIMITS } from "@/lib/a2a/model";
 import { refreshTaskStorage } from "@/lib/a2a/quotas";
 import { wakeAgentWorker } from "@/lib/agents/execution/worker";
 import { assertAgentBudget } from "@/lib/agents/usage";
+import { taskOutput } from "./live-output";
 
 export type EntryMessage = { id?: string; role: string; parts: unknown };
 export type AgentEntryInput = EntryIdentity & {
@@ -486,6 +487,10 @@ export function agentEntryPromptInvocations(
 
 export type AgentEntryRuntimePart =
   | {
+      type: "data-agent-task";
+      data: { taskId: string; startedAt?: number };
+    }
+  | {
       type: typeof RUNTIME_COMMANDS_PART;
       data: { runtimeKind: "pi-sdk" | "omp"; commands: RuntimeCommand[] };
     }
@@ -520,7 +525,20 @@ const piSdkMetadataSchema = z
   .strict();
 /** Project only the public runtime metadata, never SDK state or private paths. */
 export function agentEntryRuntimeParts(task: Task): AgentEntryRuntimePart[] {
-  if (task.status?.state !== TaskState.TASK_STATE_COMPLETED) return [];
+  const replay = z
+    .object({ startedAt: z.number().finite() })
+    .safeParse(task.metadata?.toolplaneLiveOutput);
+  const startedAt =
+    taskOutput(task.id)?.startedAt ??
+    (replay.success ? replay.data.startedAt : undefined);
+  const identity: AgentEntryRuntimePart = {
+    type: "data-agent-task",
+    data: {
+      taskId: task.id,
+      ...(typeof startedAt === "number" ? { startedAt } : {}),
+    },
+  };
+  if (task.status?.state !== TaskState.TASK_STATE_COMPLETED) return [identity];
   for (let index = task.artifacts.length - 1; index >= 0; index--) {
     const artifact = task.artifacts[index];
     if (!artifact.parts.some((part) => part.content?.$case === "text"))
@@ -534,6 +552,7 @@ export function agentEntryRuntimeParts(task: Task): AgentEntryRuntimePart[] {
     if (!parsed.success) continue;
     const { commands, usage, commandResult, model } = parsed.data;
     const parts: AgentEntryRuntimePart[] = [
+      identity,
       {
         type: RUNTIME_COMMANDS_PART,
         data: { runtimeKind, commands },
@@ -545,5 +564,5 @@ export function agentEntryRuntimeParts(task: Task): AgentEntryRuntimePart[] {
       parts.push({ type: COMMAND_RESULT_PART, data: commandResult });
     return parts;
   }
-  return [];
+  return [identity];
 }

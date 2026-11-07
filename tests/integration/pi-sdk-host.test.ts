@@ -31,6 +31,15 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import {
+  startTaskOutput,
+  publishTaskText,
+  publishTaskActivity,
+  publishTaskStage,
+  finishTaskOutput,
+  taskOutput,
+} from "@/lib/agents/execution/live-output";
+import { executionOutputResponse } from "@/lib/agents/execution/live-output-stream";
 
 type SdkState = {
   sessionId: string;
@@ -398,7 +407,10 @@ export default function(pi) {
     mcpConfig: { servers: [] },
     model: config.model,
   } satisfies RequestContext;
-  async function launch(overrides = {}) {
+  async function launch(
+    overrides = {},
+    onEvent?: (event: Record<string, unknown>) => void,
+  ) {
     const configPath = join(agentDir, `config-${randomUUID()}.json`);
     await writeFile(configPath, JSON.stringify({ ...config, ...overrides }));
     const child = spawn(
@@ -428,6 +440,7 @@ export default function(pi) {
     createInterface({ input: stream }).on("line", (line) => {
       const event = JSON.parse(line);
       events.push(event);
+      onEvent?.(event);
       if (event.type === "toolplane_sdk_response") {
         pending.get(event.id)?.resolve(event);
         pending.delete(event.id);
@@ -639,6 +652,141 @@ describe("official Pi SDK headless session host", () => {
       allowText.resolve();
       allowCompletion.resolve();
       await pending;
+    }
+  }, 60000);
+  it("projects actual native bash execution, reasoning and text to SSE before the host finishes", async () => {
+    const f = await setup();
+    const id = randomUUID();
+    const release = Promise.withResolvers<void>();
+    let calls = 0;
+    f.behavior.streamCompletion = async (response) => {
+      if (calls++ === 0) {
+        completion(
+          response,
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: "live-bash",
+                type: "function",
+                function: {
+                  name: "bash",
+                  arguments: JSON.stringify({
+                    command: "sleep 1; printf 42 > live-result.txt",
+                  }),
+                },
+              },
+            ],
+          },
+          "tool_calls",
+        );
+        return;
+      }
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      const emit = (
+        delta: Record<string, unknown>,
+        finish: string | null = null,
+      ) =>
+        response.write(
+          `data: ${JSON.stringify({
+            id: "live",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "controlled",
+            choices: [{ index: 0, delta, finish_reason: finish }],
+          })}\n\n`,
+        );
+      emit({
+        role: "assistant",
+        reasoning_content: "Read the native tool result",
+      });
+      emit({ content: "FIRST_NATIVE_FRAGMENT" });
+      await release.promise;
+      emit({ content: "_FINAL" });
+      emit({}, "stop");
+      response.end("data: [DONE]\n\n");
+    };
+    startTaskOutput(id, { runtimeKind: "pi-sdk" });
+    const host = await f.launch({ defaultTools: ["bash"] }, (event) => {
+      if (event.type === "model_request") publishTaskStage(id, "waiting-model");
+      const parsed = parsePiStreamLine(JSON.stringify(event));
+      if (parsed?.delta) publishTaskText(id, parsed.delta);
+      for (const activity of parsed?.activities ?? [])
+        publishTaskActivity(id, activity);
+    });
+    const current = () => ({
+      workspaceId: "native-host-fixture",
+      userId: "fixture",
+      output: taskOutput(id),
+      settled: false,
+    });
+    const response = executionOutputResponse(
+      new Request("http://localhost/events"),
+      current(),
+      async () => current(),
+    );
+    const reader = assertDefined(response.body).getReader();
+    const frames: string[] = [];
+    const consuming = (async () => {
+      while (true) {
+        const frame = await reader.read();
+        if (frame.done) return;
+        frames.push(new TextDecoder().decode(frame.value));
+      }
+    })();
+    const pending = host.request(
+      "prompt",
+      "Run the native bash tool and report its result",
+    );
+    try {
+      await expect
+        .poll(
+          () =>
+            frames.some(
+              (frame) =>
+                frame.includes('"toolName":"bash"') &&
+                frame.includes('"status":"running"'),
+            ),
+          { timeout: 15_000 },
+        )
+        .toBe(true);
+      await expect
+        .poll(
+          () => frames.some((frame) => frame.includes("FIRST_NATIVE_FRAGMENT")),
+          { timeout: 15_000 },
+        )
+        .toBe(true);
+      expect(
+        host.events.some((event) => event.type === "toolplane_sdk_response"),
+      ).toBe(false);
+      expect(await readFile(join(f.workspace, "live-result.txt"), "utf8")).toBe(
+        "42",
+      );
+      expect(taskOutput(id)?.activities).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "tool",
+            toolName: "bash",
+            status: "completed",
+          }),
+          expect.objectContaining({
+            type: "reasoning",
+            text: "Read the native tool result",
+          }),
+        ]),
+      );
+      release.resolve();
+      expect((await pending).success).toBe(true);
+      finishTaskOutput(id, "completed");
+      await expect
+        .poll(() => frames.some((frame) => frame.includes('"done":true')))
+        .toBe(true);
+      expect(taskOutput(id)?.text).toBe("FIRST_NATIVE_FRAGMENT_FINAL");
+    } finally {
+      release.resolve();
+      await pending;
+      await reader.cancel();
+      await consuming;
     }
   }, 60000);
   it("switches the admitted model and provider URL per prompt, then restores the default without losing history", async () => {

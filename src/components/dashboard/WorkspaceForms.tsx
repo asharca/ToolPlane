@@ -19,12 +19,9 @@ import {
   createWorkspaceAction,
   renameWorkspaceAction,
   deleteWorkspaceAction,
-  removeWorkspaceMemberAction,
   leaveWorkspaceAction,
-  revokeWorkspaceInvitationAction,
   transferWorkspaceOwnershipAction,
   acceptWorkspaceInvitationAction,
-  setWorkspaceMemberRoleAction,
   type WorkspaceActionState,
 } from "@/lib/workspace/management-actions";
 
@@ -180,46 +177,24 @@ export function RenameWorkspaceForm({
   );
 }
 
-const memberActions = {
-  remove: removeWorkspaceMemberAction,
-  leave: leaveWorkspaceAction,
-  revoke: revokeWorkspaceInvitationAction,
-};
-
-export function WorkspaceMemberAction({
-  slug,
-  memberId,
-  invitationId,
-  kind,
-}: {
-  slug: string;
-  memberId?: string;
-  invitationId?: string;
-  kind: keyof typeof memberActions;
-}) {
+export function WorkspaceLeaveAction({ slug }: { slug: string }) {
   const t = useTranslations("console.workspaces");
   return (
     <BouncyAccordion
       items={[
         {
           id: "details",
-          title: <>{t(kind)}</>,
+          title: <>{t("leave")}</>,
           description: (
             <>
               <div className="mt-2 rounded-lg border border-border p-3">
                 <WorkspaceActionForm
-                  action={memberActions[kind]}
+                  action={leaveWorkspaceAction}
                   label={t("confirm")}
                   danger
                 >
                   <input type="hidden" name="workspace" value={slug} />
-                  <input type="hidden" name="memberId" value={memberId ?? ""} />
-                  <input
-                    type="hidden"
-                    name="invitationId"
-                    value={invitationId ?? ""}
-                  />
-                  <p className="text-muted-foreground">{t(`${kind}Hint`)}</p>
+                  <p className="text-muted-foreground">{t("leaveHint")}</p>
                 </WorkspaceActionForm>
               </div>
             </>
@@ -227,43 +202,6 @@ export function WorkspaceMemberAction({
         },
       ]}
     />
-  );
-}
-
-export function WorkspaceMemberRoleForm({
-  slug,
-  memberId,
-  role,
-}: {
-  slug: string;
-  memberId: string;
-  role: "admin" | "member";
-}) {
-  const t = useTranslations("console.workspaces");
-  const id = useId();
-  return (
-    <WorkspaceActionForm
-      action={setWorkspaceMemberRoleAction}
-      label={t("save")}
-    >
-      <input type="hidden" name="workspace" value={slug} />
-      <input type="hidden" name="memberId" value={memberId} />
-      <label htmlFor={id} className="block text-sm font-medium">
-        {t("memberRole")}
-      </label>
-      <FormSelect
-        key={role}
-        id={id}
-        name="role"
-        required
-        defaultValue={role}
-        label={t("memberRole")}
-        options={[
-          { value: "member", label: t("member") },
-          { value: "admin", label: t("admin") },
-        ]}
-      />
-    </WorkspaceActionForm>
   );
 }
 

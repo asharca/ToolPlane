@@ -30,6 +30,10 @@ import { requireAgentRevision } from "@/lib/agents/revisions";
 import type { AgentPromptInvocation } from "@/lib/agents/sandbox-runtime";
 import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
 import { taskDeadlineFailure } from "@/lib/agents/execution/deadline-failure";
+import {
+  taskOutput,
+  finishTaskOutput,
+} from "@/lib/agents/execution/live-output";
 import { getAgentConcurrencySettings } from "@/lib/admin/settings";
 import { runtimeEnv } from "@/lib/runtime-env";
 import {
@@ -168,6 +172,42 @@ export async function persist(
   const status = task.status;
   if (!status?.timestamp)
     throw new Error("Task status and timestamp are required.");
+  if (
+    settled(status.state) &&
+    isLocalGrant(row.grant as unknown as TaskGrant)
+  ) {
+    const output = taskOutput(row.id);
+    if (output) {
+      const outcome =
+        status.state === TaskState.TASK_STATE_CANCELED
+          ? "cancelled"
+          : status.state === TaskState.TASK_STATE_FAILED ||
+              status.state === TaskState.TASK_STATE_REJECTED
+            ? "failed"
+            : "completed";
+      output.active = false;
+      output.done = true;
+      delete output.executionStage;
+      output.activities = output.activities.map((activity) =>
+        activity.status === "running"
+          ? { ...activity, status: outcome }
+          : activity,
+      );
+      output.activities.push({
+        id: "runtime:final",
+        type: "runtime",
+        status: outcome,
+      });
+      const metadata = task.metadata;
+      task.metadata = { ...metadata, toolplaneLiveOutput: output };
+      // Existing artifacts retain priority over optional presentation replay.
+      if (
+        Buffer.byteLength(JSON.stringify(jsonTask(task)), "utf8") >
+        A2A_LIMITS.snapshotBytes
+      )
+        task.metadata = metadata;
+    }
+  }
   // Retained payloads may already exceed today's cap; still permit their stop acknowledgement.
   const failureSettlement = [
     TaskState.TASK_STATE_FAILED,
@@ -1162,6 +1202,16 @@ export async function interruptTask(
 
 /** Call only with a row returned by a successfully committed task transition. */
 export async function recordTaskSettled(row: A2ATask): Promise<void> {
+  if (settled(row.state))
+    finishTaskOutput(
+      row.id,
+      row.state === TaskState.TASK_STATE_CANCELED
+        ? "cancelled"
+        : row.state === TaskState.TASK_STATE_FAILED ||
+            row.state === TaskState.TASK_STATE_REJECTED
+          ? "failed"
+          : "completed",
+    );
   try {
     if (!settled(row.state)) return;
     const taskState = taskStateName(TaskState[row.state]);

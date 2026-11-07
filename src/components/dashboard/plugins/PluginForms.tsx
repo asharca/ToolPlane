@@ -146,35 +146,39 @@ export function PluginQuickAdd({
   );
 }
 
-/** Applies the source filter on change while keeping the other list params. */
-export function PluginSourceFilter({
+/** Applies one list filter on change while keeping the other list params. */
+export function PluginListFilter({
   base,
   params,
+  name,
+  label,
   value,
   options,
 }: {
   base: string;
   params: Record<string, string>;
+  name: string;
+  label: string;
   value: string;
+  /** Include the empty "all" option first. */
   options: Array<{ value: string; label: string }>;
 }) {
-  const t = useTranslations("console.plugins");
   const router = useRouter();
   return (
     <FormSelect
       key={value}
-      label={t("source")}
+      label={label}
       defaultValue={value}
-      className="w-full sm:w-48"
+      className="w-full sm:w-44"
       onValueChange={(next) => {
         const query = new URLSearchParams(
-          Object.entries(params).filter(([, item]) => item),
+          Object.entries(params).filter(([key, item]) => item && key !== name),
         );
-        if (next) query.set("source", next);
+        if (next) query.set(name, next);
         const search = query.toString();
         router.push(search ? `${base}?${search}` : base);
       }}
-      options={[{ value: "", label: t("allSources") }, ...options]}
+      options={options}
     />
   );
 }

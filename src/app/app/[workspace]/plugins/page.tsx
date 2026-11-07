@@ -17,17 +17,20 @@ import {
 import { ButtonLink } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import {
+  PluginListFilter,
   PluginQuickAdd,
-  PluginSourceFilter,
 } from "@/components/dashboard/plugins/PluginForms";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { db } from "@/lib/db";
-import { listPlugins, pluginReleaseLabel } from "@/lib/plugins/catalog";
-import { releaseContents } from "@/lib/plugins/release-contents";
+import { listPluginCards, pluginReleaseLabel } from "@/lib/plugins/catalog";
 import { listPluginSources } from "@/lib/plugins/sources";
 
 export const dynamic = "force-dynamic";
+
+const origins = ["official", "private"] as const;
+const capabilities = ["skills", "extensions", "mcp"] as const;
+const availabilities = ["available", "unavailable"] as const;
 
 export default async function PluginsPage({
   params,
@@ -50,8 +53,34 @@ export default async function PluginsPage({
     (Array.isArray(query[key]) ? query[key][0] : query[key]) ?? "";
   const q = value("q").trim().slice(0, 200);
   const sourceId = value("source").slice(0, 240);
-  const [{ items, updateCount }, sources, membership] = await Promise.all([
-    listPlugins(workspace.id, user.id, {
+  // Agent settings open the catalog with a target Agent and a tab channel to report back to.
+  const returnAgent = value("returnAgent").slice(0, 240);
+  const pluginChannel = /^[a-f0-9-]{36}$/.test(value("pluginChannel"))
+    ? value("pluginChannel")
+    : "";
+  const context = new URLSearchParams({
+    ...(returnAgent ? { returnAgent } : {}),
+    ...(pluginChannel ? { pluginChannel } : {}),
+  }).toString();
+  const origin = origins.find((item) => item === value("origin")) ?? "";
+  const capability =
+    capabilities.find((item) => item === value("capability")) ?? "";
+  const availability =
+    availabilities.find((item) => item === value("availability")) ?? "";
+  const filterParams = {
+    q,
+    source: sourceId,
+    origin,
+    capability,
+    availability,
+    returnAgent,
+    pluginChannel,
+  };
+  const hasFilters = Boolean(
+    q || sourceId || origin || capability || availability,
+  );
+  const [catalog, sources, membership] = await Promise.all([
+    listPluginCards(workspace.id, user.id, {
       query: q,
       sourceId: sourceId || undefined,
     }),
@@ -67,6 +96,77 @@ export default async function PluginsPage({
     workspace.ownerId === user.id ||
     membership?.role === "admin" ||
     membership?.role === "owner";
+  const items = catalog.items.filter((plugin) => {
+    const official = Boolean(plugin.githubRegistryResource?.registry.official);
+    if (origin && official !== (origin === "official")) return false;
+    if (capability === "mcp" && !plugin.card.mcpCount) return false;
+    if (
+      capability &&
+      capability !== "mcp" &&
+      !plugin.card.resources.some((resource) => resource.kind === capability)
+    )
+      return false;
+    return (
+      !availability || plugin.card.available === (availability === "available")
+    );
+  });
+  const filters = [
+    ...(sources.length > 1 || sourceId
+      ? [
+          {
+            name: "source",
+            label: t("source"),
+            value: sourceId,
+            options: [
+              { value: "", label: t("allSources") },
+              ...(sourceId && !sources.some((source) => source.id === sourceId)
+                ? [{ value: sourceId, label: t("unavailableSource") }]
+                : []),
+              ...sources.map((source) => ({
+                value: source.id,
+                label: source.official ? t("officialSource") : source.name,
+              })),
+            ],
+          },
+        ]
+      : []),
+    {
+      name: "origin",
+      label: t("catalog.origin"),
+      value: origin,
+      options: [
+        { value: "", label: t("catalog.allOrigins") },
+        ...origins.map((item) => ({
+          value: item,
+          label: t(`catalog.${item}`),
+        })),
+      ],
+    },
+    {
+      name: "capability",
+      label: t("catalog.capability"),
+      value: capability,
+      options: [
+        { value: "", label: t("catalog.allCapabilities") },
+        ...capabilities.map((item) => ({
+          value: item,
+          label: t(`catalog.${item}`),
+        })),
+      ],
+    },
+    {
+      name: "availability",
+      label: t("catalog.availability"),
+      value: availability,
+      options: [
+        { value: "", label: t("catalog.allAvailability") },
+        ...availabilities.map((item) => ({
+          value: item,
+          label: t(`catalog.${item}`),
+        })),
+      ],
+    },
+  ];
   return (
     <DashboardPage>
       <DashboardToolbar
@@ -80,24 +180,28 @@ export default async function PluginsPage({
         <h1 className="text-xl font-semibold">{t("title")}</h1>
         <p className="text-sm text-muted-foreground">
           {t("availableCount", { count: items.length })}
-          {updateCount > 0 ? (
+          {catalog.updateCount > 0 ? (
             <>
               {" · "}
               <Link
                 href={`${base}/installed?filter=updates`}
                 className="text-primary hover:underline"
               >
-                {t("installed.subtitleUpdates", { count: updateCount })}
+                {t("installed.subtitleUpdates", {
+                  count: catalog.updateCount,
+                })}
               </Link>
             </>
           ) : null}
         </p>
       </DashboardToolbar>
       <div className="flex w-full flex-wrap items-center gap-2">
-        <form action={base} className="w-full sm:w-72">
-          {sourceId ? (
-            <input type="hidden" name="source" value={sourceId} />
-          ) : null}
+        <form key={q} action={base} method="get" className="w-full sm:w-72">
+          {Object.entries(filterParams).map(([name, item]) =>
+            name !== "q" && item ? (
+              <input key={name} type="hidden" name={name} value={item} />
+            ) : null,
+          )}
           <Input
             name="q"
             type="search"
@@ -109,25 +213,22 @@ export default async function PluginsPage({
             className="w-full"
           />
         </form>
-        {sources.length > 1 ? (
-          <PluginSourceFilter
+        {filters.map((filter) => (
+          <PluginListFilter
+            key={filter.name}
             base={base}
-            params={{ q }}
-            value={sourceId}
-            options={sources.map((source) => ({
-              value: source.id,
-              label: source.official ? t("officialSource") : source.name,
-            }))}
+            params={filterParams}
+            name={filter.name}
+            label={filter.label}
+            value={filter.value}
+            options={filter.options}
           />
-        ) : null}
+        ))}
       </div>
       {items.length ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {items.map((plugin) => {
             const href = `${base}/${encodeURIComponent(plugin.id)}`;
-            const contents = plugin.latestRelease
-              ? releaseContents(plugin.latestRelease.releaseSummary)
-              : { counts: [], mcp: 0, omp: false };
             const published = plugin.status === "published";
             return (
               <article
@@ -141,7 +242,7 @@ export default async function PluginsPage({
                   <div className="min-w-0 flex-1">
                     <h2 className="truncate font-semibold">
                       <Link
-                        href={href}
+                        href={context ? `${href}?${context}` : href}
                         className="after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none"
                       >
                         {plugin.name}
@@ -182,14 +283,25 @@ export default async function PluginsPage({
                     {t("noSummary")}
                   </p>
                 )}
-                {contents.counts.length || contents.mcp || contents.omp ? (
+                {!plugin.card.available ? (
+                  <p className="text-xs text-destructive">
+                    {t(
+                      plugin.card.revoked
+                        ? "catalog.revoked"
+                        : "catalog.unavailable",
+                    )}
+                  </p>
+                ) : null}
+                {plugin.card.resources.length ||
+                plugin.card.mcpCount ||
+                plugin.card.runtime?.kind === "omp" ? (
                   <ul className="flex flex-wrap gap-1.5 text-xs">
-                    {contents.omp ? (
+                    {plugin.card.runtime?.kind === "omp" ? (
                       <li className="rounded-md bg-amber-500/10 px-2 py-0.5 text-amber-700 dark:text-amber-400">
                         {t("ompRetired")}
                       </li>
                     ) : null}
-                    {contents.counts.map(({ kind, count }) => (
+                    {plugin.card.resources.map(({ kind, count }) => (
                       <li
                         key={kind}
                         className="rounded-md bg-muted px-2 py-0.5 text-muted-foreground"
@@ -197,9 +309,9 @@ export default async function PluginsPage({
                         {t(kind)} {count}
                       </li>
                     ))}
-                    {contents.mcp ? (
+                    {plugin.card.mcpCount ? (
                       <li className="rounded-md bg-muted px-2 py-0.5 text-muted-foreground">
-                        MCP {contents.mcp}
+                        MCP {plugin.card.mcpCount}
                       </li>
                     ) : null}
                   </ul>
@@ -218,9 +330,9 @@ export default async function PluginsPage({
                   </span>
                   {canManage && published && plugin.latestRelease ? (
                     !plugin.install ? (
-                      contents.mcp ? (
+                      plugin.card.mcpCount ? (
                         <ButtonLink
-                          href={`${href}#install`}
+                          href={`${href}${context ? `?${context}` : ""}#plugin-install`}
                           variant="secondary"
                           size="sm"
                           className="relative z-10"
@@ -236,7 +348,7 @@ export default async function PluginsPage({
                       )
                     ) : plugin.updateAvailable ? (
                       <ButtonLink
-                        href={`${href}#install`}
+                        href={`${href}${context ? `?${context}` : ""}#plugin-install`}
                         variant="secondary"
                         size="sm"
                         className="relative z-10"
@@ -253,9 +365,17 @@ export default async function PluginsPage({
       ) : (
         <DashboardEmptyState
           icon={Puzzle}
-          title={t("allEmpty")}
+          title={t(hasFilters ? "discoverFilteredEmpty" : "discoverEmpty")}
           actions={
-            canManage ? (
+            hasFilters ? (
+              <ButtonLink
+                href={context ? `${base}?${context}` : base}
+                variant="secondary"
+                size="sm"
+              >
+                {t("clearFilters")}
+              </ButtonLink>
+            ) : canManage ? (
               <ButtonLink
                 href={`${base}/sources`}
                 variant="secondary"

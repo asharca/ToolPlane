@@ -18,6 +18,19 @@ export function revokeWorkspaceStreams(workspaceId: string, userId?: string) {
   }
 }
 
+/** Register read-only observers with the existing immediate workspace revoke bus. */
+export function observeWorkspaceStreamRevocation(
+  workspaceId: string,
+  userId: string,
+  close: () => void,
+) {
+  const subscription = { workspaceId, userId, close };
+  subscriptions.add(subscription);
+  return () => {
+    subscriptions.delete(subscription);
+  };
+}
+
 export function workspaceAccessResponse(
   response: Response,
   workspaceId: string,

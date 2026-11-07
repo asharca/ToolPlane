@@ -332,7 +332,7 @@ export function InstalledPluginsTable({
                   <>
                     {" "}
                     <Link
-                      href={detailHref(issue.listingId, "#install")}
+                      href={detailHref(issue.listingId, "#plugin-install")}
                       className="text-primary hover:underline"
                     >
                       {t("installed.bind")}
@@ -358,7 +358,7 @@ export function InstalledPluginsTable({
                 setFilter("all");
               }}
             >
-              {t("installed.clearFilters")}
+              {t("clearFilters")}
             </Button>
           }
         />
@@ -584,7 +584,7 @@ export function InstalledPluginsTable({
                                   <ButtonLink
                                     href={detailHref(
                                       plugin.listingId,
-                                      "#install",
+                                      "#plugin-install",
                                     )}
                                     variant="ghost"
                                     size="sm"

@@ -11,6 +11,7 @@ import {
 } from "vitest";
 import { randomUUID } from "node:crypto";
 import { Task, TaskState } from "@a2a-js/sdk";
+import { z } from "zod";
 import {
   runAgentEntry,
   submitAgentEntry,
@@ -49,6 +50,18 @@ import {
   POST as decideExecution,
 } from "@/app/api/v1/agents/[agentId]/conversations/[conversationId]/execution/route";
 
+import { GET as conversationOutputEvents } from "@/app/api/v1/agents/[agentId]/conversations/[conversationId]/events/route";
+import { GET as consoleOutputEvents } from "@/app/api/v1/workspaces/[slug]/agents/[agentId]/a2a/console/tasks/events/route";
+import { createConversation } from "@/lib/agents/mutations";
+import { agentEntryRuntimeParts } from "@/lib/agents/execution/entries";
+import { readTaskOutput } from "@/lib/agents/execution/live-output-read";
+import {
+  startTaskOutput,
+  publishTaskText,
+  publishTaskActivity,
+  publishTaskStage,
+  notifyTaskOutput,
+} from "@/lib/agents/execution/live-output";
 function executionRequest(
   agent: string,
   conversationId: string,
@@ -1747,4 +1760,275 @@ describe("channel execution delivery and conversation approvals", () => {
       cancelRequestedAt: null,
     });
   });
+});
+
+describe("read-only live execution observation", () => {
+  const eventData = z.object({
+    taskId: z.string().optional(),
+    output: z
+      .object({
+        taskId: z.string(),
+        text: z.string(),
+        active: z.boolean(),
+        done: z.boolean(),
+      })
+      .nullable()
+      .optional(),
+  });
+  type CollectedEvents = {
+    events: Array<{ event: string; data: z.infer<typeof eventData> }>;
+    close: () => Promise<void>;
+  };
+  async function liveChannel() {
+    const fixture = await piCommandChannel();
+    const conversation = assertDefined(
+      await createConversation(workspace.id, fixture.agent.id, "Live fixture", {
+        runtimeSessionKey: `channel:${fixture.channel.id}:${randomUUID()}`,
+      }),
+    );
+    const submit = () =>
+      submitAgentEntry(
+        {
+          kind: "channel",
+          sourceId: conversation.id,
+          channelId: fixture.channel.id,
+          workspaceId: workspace.id,
+          agentId: fixture.agent.id,
+          actorId: assertDefined(identity.user).id,
+          messageId: randomUUID(),
+          text: "Observe native output",
+        },
+        () => {},
+      );
+    const accepted = await submit();
+    const row = assertDefined(await claimTask(accepted.row.id));
+    startTaskOutput(row.id, { runtimeKind: "pi-sdk" });
+    return { ...fixture, conversation, row, submit };
+  }
+  async function openConversation(
+    fixture: { agent: { id: string }; conversation: { id: string } },
+    headers = {},
+    agent = fixture.agent.id,
+  ) {
+    return conversationOutputEvents(
+      new Request(
+        `http://localhost:3000/api/v1/agents/${agent}/conversations/${fixture.conversation.id}/events`,
+        { headers },
+      ),
+      {
+        params: Promise.resolve({
+          agentId: agent,
+          conversationId: fixture.conversation.id,
+        }),
+      },
+    );
+  }
+  async function collect(response: Response): Promise<CollectedEvents> {
+    const reader = assertDefined(response.body).getReader();
+    const events: CollectedEvents["events"] = [];
+    const consuming = (async () => {
+      while (true) {
+        const result = await reader.read();
+        if (result.done) return;
+        const text = new TextDecoder().decode(result.value);
+        const event = /^event: (.+)$/m.exec(text)?.[1],
+          data = /^data: (.+)$/m.exec(text)?.[1];
+        if (event && data)
+          events.push({ event, data: eventData.parse(JSON.parse(data)) });
+      }
+    })();
+    return {
+      events,
+      close: async () => {
+        await reader.cancel();
+        await consuming;
+      },
+    };
+  }
+  it("streams real leased task callbacks, persists terminal traces once, and settles only after assistant history exists across successive turns", async () => {
+    const f = await liveChannel();
+    const stream = await collect(await openConversation(f));
+    try {
+      publishTaskStage(f.row.id, "waiting-model");
+      publishTaskText(f.row.id, "First live fragment");
+      publishTaskActivity(f.row.id, {
+        type: "tool",
+        status: "running",
+        toolCallId: "native-bash",
+        toolName: "bash",
+        input: { command: "printf 42" },
+      });
+      await expect
+        .poll(() =>
+          stream.events.some(
+            (event) =>
+              event.event === "snapshot" &&
+              event.data.output?.text === "First live fragment",
+          ),
+        )
+        .toBe(true);
+      expect(
+        await db.message.count({
+          where: { conversationId: f.conversation.id, role: "assistant" },
+        }),
+      ).toBe(0);
+      publishTaskActivity(f.row.id, {
+        type: "tool",
+        status: "completed",
+        toolCallId: "native-bash",
+        toolName: "bash",
+        output: "42",
+      });
+      await finishTask(
+        f.row.id,
+        assertDefined(f.row.leaseToken),
+        TaskState.TASK_STATE_COMPLETED,
+        undefined,
+        textArtifact("First live fragment"),
+      );
+      await expect
+        .poll(() => stream.events.some((event) => event.data.output?.done))
+        .toBe(true);
+      expect(
+        stream.events.filter((event) => event.event === "settled"),
+      ).toEqual([]);
+      const stored = await db.a2ATask.findUniqueOrThrow({
+        where: { id: f.row.id },
+      });
+      expect(
+        Task.fromJSON(stored.snapshot).metadata?.toolplaneLiveOutput,
+      ).toMatchObject({
+        text: "First live fragment",
+        active: false,
+        done: true,
+        activities: expect.arrayContaining([
+          expect.objectContaining({
+            toolName: "bash",
+            output: "42",
+            status: "completed",
+          }),
+        ]),
+      });
+      await db.message.create({
+        data: {
+          conversationId: f.conversation.id,
+          role: "assistant",
+          parts: [
+            { type: "text", text: "First live fragment" },
+            ...agentEntryRuntimeParts(Task.fromJSON(stored.snapshot)),
+          ],
+        },
+      });
+      notifyTaskOutput(f.row.id);
+      await expect
+        .poll(
+          () =>
+            stream.events.filter((event) => event.event === "settled").length,
+        )
+        .toBe(1);
+      const next = await f.submit();
+      const claimed = assertDefined(await claimTask(next.row.id));
+      startTaskOutput(claimed.id, { runtimeKind: "pi-sdk" });
+      publishTaskText(claimed.id, "Second turn in same subscription");
+      await expect
+        .poll(() =>
+          stream.events.some(
+            (event) =>
+              event.data.output?.taskId === claimed.id &&
+              event.data.output.text === "Second turn in same subscription",
+          ),
+        )
+        .toBe(true);
+      await finishTask(
+        claimed.id,
+        assertDefined(claimed.leaseToken),
+        TaskState.TASK_STATE_FAILED,
+        "PI_EXECUTION_FAILED: fixture failure",
+      );
+      expect(
+        readTaskOutput(
+          await db.a2ATask.findUniqueOrThrow({ where: { id: claimed.id } }),
+        ),
+      ).toMatchObject({
+        text: "Second turn in same subscription",
+        done: true,
+        activities: expect.arrayContaining([
+          expect.objectContaining({ type: "runtime", status: "failed" }),
+        ]),
+      });
+    } finally {
+      await stream.close();
+    }
+  });
+  it("allows workspace channel observation without native dialog authority, rejects cross-agent/task IDs and explicit credentials, and continuously revokes access", async () => {
+    const f = await liveChannel();
+    const owner = assertDefined(identity.user);
+    const member = await db.user.create({
+      data: {
+        email: `observer-${randomUUID()}@test.invalid`,
+        passwordHash: "unused",
+      },
+    });
+    await db.membership.create({
+      data: { workspaceId: workspace.id, userId: member.id, role: "member" },
+    });
+    let stream: CollectedEvents | undefined;
+    try {
+      expect(
+        (
+          await openConversation(f, {
+            authorization: "Bearer not-a-browser-session",
+          })
+        ).status,
+      ).toBe(401);
+      expect(
+        (await openConversation(f, { origin: "https://foreign.invalid" }))
+          .status,
+      ).toBe(403);
+      expect((await openConversation(f, {}, foreignAgentId)).status).toBe(404);
+      identity.user = member;
+      const response = await openConversation(f);
+      expect(response.status).toBe(200);
+      stream = await collect(response);
+      expect(
+        (await executionRequest(f.agent.id, f.conversation.id)).status,
+      ).toBe(403);
+      const consoleReq = (selected = f.row.id) =>
+        consoleOutputEvents(
+          new Request(
+            `http://localhost:3000/api/v1/workspaces/${workspace.slug}/agents/${f.agent.id}/a2a/console/tasks/events?rootTaskId=${f.row.id}&selectedTaskId=${selected}`,
+          ),
+          {
+            params: Promise.resolve({
+              slug: workspace.slug,
+              agentId: f.agent.id,
+            }),
+          },
+        );
+      expect((await consoleReq()).status).toBe(404);
+      identity.user = owner;
+      expect((await consoleReq("unrelated-task-id")).status).toBe(404);
+      identity.user = member;
+      await db.membership.delete({
+        where: {
+          workspaceId_userId: { workspaceId: workspace.id, userId: member.id },
+        },
+      });
+      await expect
+        .poll(() => stream?.events.some((event) => event.event === "revoked"), {
+          timeout: 8000,
+        })
+        .toBe(true);
+    } finally {
+      await stream?.close();
+      identity.user = owner;
+      await db.user.delete({ where: { id: member.id } });
+      await finishTask(
+        f.row.id,
+        assertDefined(f.row.leaseToken),
+        TaskState.TASK_STATE_FAILED,
+        "PI_EXECUTION_FAILED: fixture cleanup",
+      );
+    }
+  }, 20_000);
 });

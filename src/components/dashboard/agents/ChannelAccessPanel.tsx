@@ -3,8 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Button } from "@/components/motion/button/base";
-import { ChannelDetailPanel } from "./ChannelDetailPanel";
-import { DialogBody } from "@/components/dashboard/dialog";
+
 import { notify } from "@/components/dashboard/Toaster";
 import { RelativeTime } from "@/components/observability/LogPrimitives";
 
@@ -46,19 +45,13 @@ type AccessData = {
 export function ChannelAccessPanel({
   endpoint,
   connectionId,
-  name,
   pending,
-  mutationError,
   send,
-  onClose,
 }: {
   endpoint: string;
   connectionId: string;
-  name: string;
   pending: boolean;
-  mutationError: string;
   send: (command: ChannelAccessCommand) => Promise<unknown | null>;
-  onClose: () => void;
 }) {
   const t = useTranslations("console.agentMessaging");
   const locale = useLocale();
@@ -157,98 +150,64 @@ export function ChannelAccessPanel({
     </p>
   );
   return (
-    <ChannelDetailPanel title={`${name} · ${t("access")}`} onClose={onClose}>
-      <DialogBody>
-        {(mutationError || error) && (
-          <p role="alert" className="break-words text-sm text-destructive">
-            {mutationError || error}
-          </p>
-        )}
-        {!data && !error && !mutationError && (
-          <p role="status" className="text-sm text-muted-foreground">
-            {t("accessLoading")}
-          </p>
-        )}
-        {data && (
-          <>
-            <section className="space-y-3">
-              <h3 className="text-sm font-medium">{t("pendingPairings")}</h3>
-              {!data.pending.length && (
-                <p className="text-sm text-muted-foreground">
-                  {t("noPendingPairings")}
-                </p>
-              )}
-              <ul className="divide-y divide-border">
-                {data.pending.map((entry) => (
-                  <li key={entry.id} className="space-y-2 py-3">
-                    {sender(entry)}
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <code className="rounded-lg bg-muted px-2 py-1 font-mono tracking-wider">
-                        {entry.code}
-                      </code>
-                      <span className="text-muted-foreground">
-                        {t("pairingExpires", {
-                          // Browser-local like RelativeTime; the intl provider formats in the server time zone.
-                          time: new Date(entry.expiresAt).toLocaleString(
-                            locale,
-                            {
-                              dateStyle: "short",
-                              timeStyle: "short",
-                            },
-                          ),
-                        })}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="primary"
-                        disabled={
-                          pending || Date.parse(entry.expiresAt) <= Date.now()
-                        }
-                        onClick={() =>
-                          void act({
-                            action: "approvePairing",
-                            requestId: entry.id,
-                          })
-                        }
-                      >
-                        {t("approvePairing")}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        disabled={pending}
-                        onClick={() =>
-                          void act({
-                            action: "dismissPairing",
-                            requestId: entry.id,
-                          })
-                        }
-                      >
-                        {t("dismissPairing")}
-                      </Button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </section>
-            <section className="space-y-3 border-t border-border pt-4">
-              <h3 className="text-sm font-medium">{t("approvedSenders")}</h3>
-              {!data.approved.length && (
-                <p className="text-sm text-muted-foreground">
-                  {t("noApprovedSenders")}
-                </p>
-              )}
-              <ul className="divide-y divide-border">
-                {data.approved.map((entry) => (
-                  <li
-                    key={entry.platformUserId}
-                    className="flex flex-wrap items-center justify-between gap-2 py-3"
-                  >
-                    <div className="min-w-0 flex-1">{sender(entry)}</div>
+    <section
+      className="space-y-5 border-t border-border pt-4"
+      aria-label={t("access")}
+    >
+      {error && (
+        <p role="alert" className="break-words text-sm text-destructive">
+          {error}
+        </p>
+      )}
+      {!data && !error && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {t("accessLoading")}
+        </p>
+      )}
+      {data && (
+        <>
+          <section className="space-y-3">
+            <h3 className="text-sm font-medium">{t("pendingPairings")}</h3>
+            {!data.pending.length && (
+              <p className="text-sm text-muted-foreground">
+                {t("noPendingPairings")}
+              </p>
+            )}
+            <ul className="divide-y divide-border">
+              {data.pending.map((entry) => (
+                <li key={entry.id} className="space-y-2 py-3">
+                  {sender(entry)}
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <code className="rounded-lg bg-muted px-2 py-1 font-mono tracking-wider">
+                      {entry.code}
+                    </code>
+                    <span className="text-muted-foreground">
+                      {t("pairingExpires", {
+                        // Browser-local like RelativeTime; the intl provider formats in the server time zone.
+                        time: new Date(entry.expiresAt).toLocaleString(locale, {
+                          dateStyle: "short",
+                          timeStyle: "short",
+                        }),
+                      })}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="primary"
+                      disabled={
+                        pending || Date.parse(entry.expiresAt) <= Date.now()
+                      }
+                      onClick={() =>
+                        void act({
+                          action: "approvePairing",
+                          requestId: entry.id,
+                        })
+                      }
+                    >
+                      {t("approvePairing")}
+                    </Button>
                     <Button
                       type="button"
                       size="sm"
@@ -256,66 +215,96 @@ export function ChannelAccessPanel({
                       disabled={pending}
                       onClick={() =>
                         void act({
-                          action: "revokeSender",
-                          platformUserId: entry.platformUserId,
+                          action: "dismissPairing",
+                          requestId: entry.id,
                         })
                       }
                     >
-                      {t("revokeSender")}
+                      {t("dismissPairing")}
                     </Button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-            <section className="space-y-3 border-t border-border pt-4">
-              <h3 className="text-sm font-medium">{t("rejectedSenders")}</h3>
-              {!data.rejected.length && (
-                <p className="text-sm text-muted-foreground">
-                  {t("noRejectedSenders")}
-                </p>
-              )}
-              <ul className="divide-y divide-border">
-                {data.rejected.map((entry) => (
-                  <li
-                    key={entry.platformUserId}
-                    className="flex flex-wrap items-center justify-between gap-2 py-3"
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+          <section className="space-y-3 border-t border-border pt-4">
+            <h3 className="text-sm font-medium">{t("approvedSenders")}</h3>
+            {!data.approved.length && (
+              <p className="text-sm text-muted-foreground">
+                {t("noApprovedSenders")}
+              </p>
+            )}
+            <ul className="divide-y divide-border">
+              {data.approved.map((entry) => (
+                <li
+                  key={entry.platformUserId}
+                  className="flex flex-wrap items-center justify-between gap-2 py-3"
+                >
+                  <div className="min-w-0 flex-1">{sender(entry)}</div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() =>
+                      void act({
+                        action: "revokeSender",
+                        platformUserId: entry.platformUserId,
+                      })
+                    }
                   >
-                    <div className="min-w-0 flex-1 space-y-1">
-                      {sender(entry)}
-                      <p className="break-words text-xs text-muted-foreground">
-                        {t.has(`rejectionRules.${entry.rule}`)
-                          ? t(`rejectionRules.${entry.rule}`)
-                          : t("rejectionUnknown")}
-                        {" · "}
-                        {t("rejectedCount", { count: entry.count })}
-                        {" · "}
-                        <RelativeTime value={entry.lastAt} />
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      disabled={pending}
-                      onClick={() =>
-                        void act({
-                          action: "allowSender",
-                          platformUserId: entry.platformUserId,
-                          ...(entry.userName
-                            ? { userName: entry.userName }
-                            : {}),
-                        })
-                      }
-                    >
-                      {t("allowSender")}
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          </>
-        )}
-      </DialogBody>
-    </ChannelDetailPanel>
+                    {t("revokeSender")}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </section>
+          <section className="space-y-3 border-t border-border pt-4">
+            <h3 className="text-sm font-medium">{t("rejectedSenders")}</h3>
+            {!data.rejected.length && (
+              <p className="text-sm text-muted-foreground">
+                {t("noRejectedSenders")}
+              </p>
+            )}
+            <ul className="divide-y divide-border">
+              {data.rejected.map((entry) => (
+                <li
+                  key={entry.platformUserId}
+                  className="flex flex-wrap items-center justify-between gap-2 py-3"
+                >
+                  <div className="min-w-0 flex-1 space-y-1">
+                    {sender(entry)}
+                    <p className="break-words text-xs text-muted-foreground">
+                      {t.has(`rejectionRules.${entry.rule}`)
+                        ? t(`rejectionRules.${entry.rule}`)
+                        : t("rejectionUnknown")}
+                      {" · "}
+                      {t("rejectedCount", { count: entry.count })}
+                      {" · "}
+                      <RelativeTime value={entry.lastAt} />
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={pending}
+                    onClick={() =>
+                      void act({
+                        action: "allowSender",
+                        platformUserId: entry.platformUserId,
+                        ...(entry.userName ? { userName: entry.userName } : {}),
+                      })
+                    }
+                  >
+                    {t("allowSender")}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </>
+      )}
+    </section>
   );
 }

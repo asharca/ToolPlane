@@ -117,6 +117,7 @@ import { executeLocalTask } from "@/lib/agents/execution/pi-executor";
 import { runSandboxAgentTurn } from "@/lib/agents/sandbox-runtime";
 import type * as AgentSandboxRuntime from "@/lib/agents/sandbox-runtime";
 import { taskRuntimeFailure } from "@/lib/agents/runtime-failure";
+import { taskOutput } from "@/lib/agents/execution/live-output";
 
 // Native process I/O is injected; Work admission, claims, tokens and child grants remain real.
 vi.mock("@/lib/agents/sandbox-runtime", async (original) => ({
@@ -2602,6 +2603,17 @@ describe("unified native ingress mappings", () => {
             status: "completed",
             toolCallId: "read",
             toolName: "read",
+          });
+          expect(taskOutput(parent.id)).toMatchObject({
+            active: true,
+            done: false,
+            text: "Parent used Work child marker 42",
+            activities: [
+              expect.objectContaining({
+                toolName: "read",
+                status: "completed",
+              }),
+            ],
           });
           await turn.onCommands?.([{ name: "compact" }]);
           return "Parent used Work child marker 42";

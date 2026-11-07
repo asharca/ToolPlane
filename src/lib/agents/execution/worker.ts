@@ -31,8 +31,8 @@ import {
   type TaskGrant,
 } from "@/lib/a2a/principal";
 import {
-  sandboxExecutionBusy,
-  withSandboxExecutionLease,
+  sandboxSessionBusy,
+  withSandboxSessionLease,
   SandboxExecutionBusyError,
 } from "@/lib/agents/sandbox-execution-gate";
 import { PiRuntimeInterruptedError } from "@/lib/agents/pi-harness";
@@ -58,6 +58,7 @@ import {
   type TaskUsage,
 } from "@/lib/agents/usage";
 import { settleAgentTriggerTask } from "@/lib/agents/triggers";
+import { startTaskOutput } from "./live-output";
 
 type ActiveExecution = {
   controller: AbortController;
@@ -145,6 +146,8 @@ export function executeAgentTask(
     }
     const row = claimed;
     const grant = row.grant as unknown as TaskGrant;
+    if (isLocalGrant(grant) && row.executionBackend === "pi-sdk")
+      startTaskOutput(row.id, { runtimeKind: "pi-sdk" });
     return withLogContext(
       {
         workspaceId: grant.workspaceId,
@@ -460,9 +463,9 @@ export function executeAgentTask(
             cleanup,
             controller.signal,
           );
-          if (sandboxExecutionBusy(sandboxId))
+          if (sandboxSessionBusy(sandboxId, sessionId))
             throw new SandboxExecutionBusyError();
-          return withSandboxExecutionLease(sandboxId, () => {
+          return withSandboxSessionLease(sandboxId, sessionId, () => {
             reserved = true;
             return run();
           });

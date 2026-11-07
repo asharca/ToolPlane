@@ -32,6 +32,7 @@ import {
   resolveAgentModelOverride,
   conversationModelOverride,
 } from "./turn-model";
+import { notifyTaskOutput } from "./execution/live-output";
 
 export class RuntimeCommandError extends Error {
   constructor(
@@ -254,6 +255,7 @@ export async function executeRuntimeCommand(input: {
           ],
         },
       });
+      notifyTaskOutput(result.task.id);
       return { kind: "output" as const, text };
     } catch (error) {
       if (error instanceof TaskNotFoundError)

@@ -69,6 +69,7 @@ import {
   type SubagentDraft,
   type SubagentResourcesSnapshot,
 } from "./SubagentResources";
+import { usePluginAgentFlow } from "../plugins/usePluginAgentFlow";
 
 export type AgentSettingsSection =
   | "general"
@@ -84,6 +85,10 @@ export type AgentPiPackageOption = {
   marketInstallId: string;
   listingId: string;
   name: string;
+  summary?: string | null;
+  skillCount?: number;
+  extensionCount?: number;
+  mcpRequirementCount?: number;
   currentReleaseId: string | null;
   currentVersion: string | null;
   currentAvailable: boolean;
@@ -164,13 +169,14 @@ export function AgentSettingsForm(props: Props) {
     skills,
     ownSandbox,
     externalSandboxes,
-    piPackages = [],
+    piPackages: initialPiPackages = [],
     publishedRevision = null,
     canManageCredentials = false,
     canApprovePluginSync = false,
   } = props;
   const t = useTranslations("console.agents");
   const r = useTranslations("console.agents.revisions");
+  const flowText = useTranslations("console.plugins.flow");
   const s = useTranslations("console.sandboxes");
   const router = useRouter();
   const closeModal = useCloseSettingsModal();
@@ -219,6 +225,7 @@ export function AgentSettingsForm(props: Props) {
             subagentDraft.nativePolicy.maxDepth !==
               subagentSnapshot.nativePolicy.maxDepth))),
   );
+  const [piPackages, setPiPackages] = useState(initialPiPackages);
   const [packages, setPackages] = useState(() =>
     piPackages.flatMap((pkg) =>
       pkg.enabledReleaseId
@@ -278,7 +285,7 @@ export function AgentSettingsForm(props: Props) {
     piPackages:
       JSON.stringify(packages) !==
       JSON.stringify(
-        piPackages.flatMap((pkg) =>
+        initialPiPackages.flatMap((pkg) =>
           pkg.enabledReleaseId
             ? [
                 {
@@ -326,6 +333,53 @@ export function AgentSettingsForm(props: Props) {
     setReview(null);
     setMessage("");
   }
+  const pluginFlow = usePluginAgentFlow({
+    slug,
+    agentId,
+    onSelect: (listingId, options) => {
+      if (pending) return "busy";
+      if (runtimeKind !== "pi-sdk") return "incompatible";
+      // Refresh catalog metadata without replacing local selections or other fields.
+      setPiPackages((previous) => [
+        ...options,
+        ...previous
+          .filter(
+            (option) =>
+              packages.some(
+                (entry) => entry.marketInstallId === option.marketInstallId,
+              ) &&
+              !options.some(
+                (next) => next.marketInstallId === option.marketInstallId,
+              ),
+          )
+          .map((option) => ({ ...option, currentAvailable: false })),
+      ]);
+      const option = options.find((item) => item.listingId === listingId);
+      if (!option) return "unavailable";
+      if (
+        packages.some(
+          (entry) => entry.marketInstallId === option.marketInstallId,
+        )
+      )
+        return "duplicate";
+      if (option.capabilities && option.capabilities.runtimeKind !== "pi-sdk")
+        return "incompatible";
+      if (!option.currentAvailable || !option.currentReleaseId)
+        return "unavailable";
+      if (packages.length >= 16) return "limit";
+      setPackages([
+        ...packages,
+        {
+          marketInstallId: option.marketInstallId,
+          releaseId: option.currentReleaseId,
+        },
+      ]);
+      changed();
+      setSection("piPackages");
+      props.onSectionChange?.("piPackages");
+      return "selected";
+    },
+  });
   function identity() {
     const data = new FormData();
     data.set("workspace", slug);
@@ -477,7 +531,13 @@ export function AgentSettingsForm(props: Props) {
                   {sections.find(([id]) => id === active)?.[1]}
                 </h3>
                 <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                  {revision ? r("published") : r("unpublished")}
+                  {active === "piPackages"
+                    ? t("piPackageAppliedCount", {
+                        count: appliedConfig?.packages.length ?? 0,
+                      })
+                    : revision
+                      ? r("published")
+                      : r("unpublished")}
                 </span>
               </div>
               <p className="text-sm leading-6 text-muted-foreground">
@@ -669,11 +729,46 @@ export function AgentSettingsForm(props: Props) {
                     <p className="text-sm text-muted-foreground">
                       {t("piPackageSecurity")} {t("piPackagesNewSession")}
                     </p>
+                    <p className="text-sm text-muted-foreground">
+                      {flowText("steps")}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {flowText("prerequisites")}
+                    </p>
+                    {!canApprovePluginSync ? (
+                      <p role="status" className="text-sm">
+                        {flowText("unauthorized")}
+                      </p>
+                    ) : null}
+                    {runtimeKind !== "pi-sdk" ? (
+                      <p role="status" className="text-sm">
+                        {flowText("incompatible")}
+                      </p>
+                    ) : null}
+                    {pluginFlow.result ? (
+                      <p role="status" className="text-sm">
+                        {flowText(pluginFlow.result)}
+                      </p>
+                    ) : null}
+                    {packages.length >= 16 ? (
+                      <p role="status" className="text-sm">
+                        {flowText("limit")}
+                      </p>
+                    ) : null}
                     {!piPackages.length ? <p>{t("piPackagesEmpty")}</p> : null}
                     {piPackages.map((pkg) => {
                       const selectedPackage = packages.find(
                         (entry) =>
                           entry.marketInstallId === pkg.marketInstallId,
+                      );
+                      const appliedPackage = appliedConfig?.packages.find(
+                        (entry) =>
+                          entry.marketInstallId === pkg.marketInstallId,
+                      );
+                      const selectionApplied = Boolean(
+                        selectedPackage &&
+                          selectedPackage.releaseId ===
+                            appliedPackage?.releaseId,
                       );
                       return (
                         <div
@@ -685,10 +780,14 @@ export function AgentSettingsForm(props: Props) {
                               type="checkbox"
                               checked={Boolean(selectedPackage)}
                               disabled={
-                                !selectedPackage &&
-                                (!pkg.currentAvailable || packages.length >= 16)
+                                !canApprovePluginSync ||
+                                (!selectedPackage &&
+                                  (!pkg.currentAvailable ||
+                                    runtimeKind !== "pi-sdk" ||
+                                    packages.length >= 16))
                               }
                               onChange={(event) => {
+                                pluginFlow.clearResult();
                                 setPackages((current) =>
                                   event.target.checked && pkg.currentReleaseId
                                     ? [
@@ -709,6 +808,22 @@ export function AgentSettingsForm(props: Props) {
                             />
                             {pkg.name}
                           </label>
+                          {pkg.summary ? (
+                            <p className="text-sm text-muted-foreground">
+                              {pkg.summary}
+                            </p>
+                          ) : null}
+                          {pkg.skillCount !== undefined &&
+                          pkg.extensionCount !== undefined &&
+                          pkg.mcpRequirementCount !== undefined ? (
+                            <p className="text-xs text-muted-foreground">
+                              {flowText("counts", {
+                                skills: pkg.skillCount,
+                                extensions: pkg.extensionCount,
+                                mcp: pkg.mcpRequirementCount,
+                              })}
+                            </p>
+                          ) : null}
                           <p className="text-xs">
                             {t("piPackageWorkspaceVersion", {
                               version: pkg.currentVersion ?? "—",
@@ -744,13 +859,23 @@ export function AgentSettingsForm(props: Props) {
                           ) : null}
                           {selectedPackage ? (
                             <p className="text-xs">
-                              {t("piPackageEnabledVersion", {
-                                version:
-                                  selectedPackage.releaseId ===
-                                  pkg.currentReleaseId
-                                    ? (pkg.currentVersion ?? "—")
-                                    : (pkg.enabledVersion ?? "—"),
-                              })}
+                              {t(
+                                selectionApplied
+                                  ? "piPackageEnabledVersion"
+                                  : "piPackageDraftVersion",
+                                {
+                                  version:
+                                    selectedPackage.releaseId ===
+                                    pkg.currentReleaseId
+                                      ? (pkg.currentVersion ?? "—")
+                                      : (pkg.enabledVersion ?? "—"),
+                                },
+                              )}
+                            </p>
+                          ) : null}
+                          {appliedPackage && !selectionApplied ? (
+                            <p className="text-xs text-muted-foreground">
+                              {t("piPackageAppliedRetained")}
                             </p>
                           ) : null}
                           {!pkg.currentAvailable ? (
@@ -761,7 +886,9 @@ export function AgentSettingsForm(props: Props) {
                               {t("piPackageSelectionUnavailable")}
                             </p>
                           ) : null}
-                          {selectedPackage && pkg.enabledReleaseId ? (
+                          {selectedPackage &&
+                          pkg.enabledReleaseId &&
+                          (selectionApplied || pkg.syncStatus !== "synced") ? (
                             <AgentPluginSyncReview
                               slug={slug}
                               agentId={agentId}
@@ -778,20 +905,37 @@ export function AgentSettingsForm(props: Props) {
                             />
                           ) : null}
                           <ButtonLink
-                            href={`/app/${encodeURIComponent(slug)}/plugins/${encodeURIComponent(pkg.listingId)}`}
+                            href={`/app/${encodeURIComponent(slug)}/plugins/${encodeURIComponent(pkg.listingId)}?${pluginFlow.context}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             variant="ghost"
                           >
-                            {t("piPackageMcpBindings")}
+                            {flowText("viewPlugin")}
                           </ButtonLink>
+                          {(pkg.mcpRequirementCount ?? 0) > 0 ? (
+                            <ButtonLink
+                              href={`/app/${encodeURIComponent(slug)}/plugins/${encodeURIComponent(pkg.listingId)}?${pluginFlow.context}#plugin-install`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              variant="ghost"
+                            >
+                              {t("piPackageMcpBindings")}
+                            </ButtonLink>
+                          ) : null}
                         </div>
                       );
                     })}
                     <ButtonLink
-                      href={`/app/${encodeURIComponent(slug)}/plugins`}
+                      href={`/app/${encodeURIComponent(slug)}/plugins?${pluginFlow.context}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       variant="secondary"
                     >
-                      {t("browsePiPackages")}
+                      {flowText("browseNewTab")}
                     </ButtonLink>
+                    <p className="text-xs text-muted-foreground">
+                      {flowText("keepTab")}
+                    </p>
                   </DialogField>
                 </section>
                 <section hidden={active !== "sandboxes"} className="space-y-4">
