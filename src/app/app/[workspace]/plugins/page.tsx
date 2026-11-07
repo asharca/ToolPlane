@@ -16,7 +16,7 @@ import {
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { db } from "@/lib/db";
-import { listPlugins } from "@/lib/plugins/catalog";
+import { listPlugins, visiblePluginWhere } from "@/lib/plugins/catalog";
 import { listPluginSources } from "@/lib/plugins/sources";
 
 export const dynamic = "force-dynamic";
@@ -48,6 +48,17 @@ export default async function PluginsPage({
     : "discover";
   const q = value("q").trim().slice(0, 200);
   const sourceId = value("source").slice(0, 240);
+  const hasFilters = Boolean(q || sourceId);
+  const tabHref = (nextTab: string, clearFilters = false) => {
+    const search = new URLSearchParams();
+    if (nextTab !== "discover") search.set("tab", nextTab);
+    if (!clearFilters) {
+      if (q) search.set("q", q);
+      if (sourceId) search.set("source", sourceId);
+    }
+    const suffix = search.toString();
+    return suffix ? `${base}?${suffix}` : base;
+  };
   const [catalog, sources, membership] = await Promise.all([
     listPlugins(workspace.id, user.id, {
       query: q,
@@ -62,6 +73,28 @@ export default async function PluginsPage({
       select: { role: true },
     }),
   ]);
+  const hasInstalledPlugins =
+    tab === "added" && catalog.items.length === 0 && hasFilters
+      ? Boolean(
+          await db.marketListing.findFirst({
+            where: {
+              ...visiblePluginWhere(workspace.id),
+              installs: {
+                some: { targetWorkspaceId: workspace.id, status: "ready" },
+              },
+            },
+            select: { id: true },
+          }),
+        )
+      : catalog.items.length > 0;
+  const emptyMessage =
+    tab === "added"
+      ? hasInstalledPlugins
+        ? "addedFilteredEmpty"
+        : "addedEmpty"
+      : hasFilters
+        ? "discoverFilteredEmpty"
+        : "discoverEmpty";
   const canManage =
     workspace.ownerId === user.id ||
     membership?.role === "admin" ||
@@ -106,7 +139,7 @@ export default async function PluginsPage({
           {(["discover", "added", "sources"] as const).map((item) => (
             <Link
               key={item}
-              href={item === "discover" ? base : `${base}?tab=${item}`}
+              href={tabHref(item)}
               aria-current={tab === item ? "page" : undefined}
               className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm ${tab === item ? "border-primary font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
             >
@@ -277,7 +310,12 @@ export default async function PluginsPage({
         </div>
       ) : (
         <>
-          <form action={base} className="flex flex-wrap items-end gap-3">
+          <form
+            key={JSON.stringify([tab, q, sourceId])}
+            action={base}
+            method="get"
+            className="flex flex-wrap items-end gap-3"
+          >
             <input type="hidden" name="tab" value={tab} />
             <label className="grid min-w-0 flex-1 basis-full gap-1 text-sm sm:basis-0">
               {t("search")}
@@ -296,10 +334,14 @@ export default async function PluginsPage({
                 id="plugin-source-filter"
                 name="source"
                 label={t("source")}
-                defaultValue={sourceId ?? ""}
+                defaultValue={sourceId}
                 className="w-48"
                 options={[
                   { value: "", label: t("allSources") },
+                  ...(sourceId &&
+                  !sources.some((source) => source.id === sourceId)
+                    ? [{ value: sourceId, label: t("unavailableSource") }]
+                    : []),
                   ...sources.map((source) => ({
                     value: source.id,
                     label: source.official ? t("officialSource") : source.name,
@@ -362,9 +404,18 @@ export default async function PluginsPage({
               ))}
             </div>
           ) : (
-            <p className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-              {t(tab === "added" ? "addedEmpty" : "discoverEmpty")}
-            </p>
+            <div className="space-y-4 rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+              <p>{t(emptyMessage)}</p>
+              {hasFilters ? (
+                <ButtonLink
+                  href={tabHref(tab, true)}
+                  variant="secondary"
+                  size="sm"
+                >
+                  {t("clearFilters")}
+                </ButtonLink>
+              ) : null}
+            </div>
           )}
         </>
       )}
