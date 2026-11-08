@@ -49,6 +49,7 @@ export function McpSharedChangeConfirmation({
       key={JSON.stringify(sorted)}
       workspace={workspace}
       impact={sorted}
+      names={impact.names}
     />
   );
 }
@@ -56,9 +57,11 @@ export function McpSharedChangeConfirmation({
 function Confirmation({
   workspace,
   impact,
+  names,
 }: {
   workspace: string;
-  impact: McpConnectionImpact;
+  impact: Pick<McpConnectionImpact, "agentIds" | "assistantIds">;
+  names: Record<string, string>;
 }) {
   const t = useTranslations("console.mcp");
   const [confirmed, setConfirmed] = useState(false);
@@ -67,14 +70,14 @@ function Confirmation({
       <legend className="px-1 text-sm font-medium">
         {t("sharedConnectionImpact")}
       </legend>
-      <ul className="space-y-1 break-all text-sm">
+      <ul className="space-y-1 break-words text-sm">
         {impact.agentIds.map((id) => (
           <li key={`agent-${id}`}>
             <Link
               className="underline"
               href={`/app/${workspace}/agents/${encodeURIComponent(id)}`}
             >
-              Agent · {id}
+              {t("impactedAgent", { name: names[id] })}
             </Link>
           </li>
         ))}
@@ -84,7 +87,7 @@ function Confirmation({
               className="underline"
               href={`/app/${workspace}/chat?assistant=${encodeURIComponent(id)}&settings=1`}
             >
-              Assistant · {id}
+              {t("impactedAssistant", { name: names[id] })}
             </Link>
           </li>
         ))}

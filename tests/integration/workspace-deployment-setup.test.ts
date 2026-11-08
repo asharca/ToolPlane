@@ -43,6 +43,7 @@ vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 import {
   cloneDeploymentAction,
   deployServerAction,
+  revealDeploymentEnvAction,
   setDeploymentEnvAction,
 } from "@/lib/workspace/actions";
 
@@ -297,5 +298,54 @@ describe("catalog MCP deployment setup", () => {
     }
     expect(mocks.stopProcess).toHaveBeenCalledTimes(2);
     expect(mocks.startProcess).not.toHaveBeenCalled();
+  });
+  it("reveals one stored variable only inside the owning workspace", async () => {
+    const deployment = await db.deployment.create({
+      data: {
+        workspaceId,
+        source: "npm",
+        sourceRef: "reveal-mcp",
+        status: "stopped",
+        installCfg: sealMcpEnvironment({}, workspaceId, {
+          TOKEN: "visible-secret",
+        }) as Prisma.InputJsonObject,
+      },
+    });
+    const reveal = (workspace: string, key = "TOKEN") =>
+      revealDeploymentEnvAction({
+        workspace,
+        deploymentId: deployment.id,
+        key,
+      });
+    expect(await reveal(workspaceSlug)).toEqual({ value: "visible-secret" });
+    expect(await reveal(workspaceSlug, "MISSING")).toEqual({
+      error: "variableNotFound",
+    });
+
+    const outsider = await db.user.create({
+      data: { email: `outsider-${email}`, passwordHash: "x" },
+    });
+    const outsiderSlug = `outsider-${workspaceSlug}`;
+    try {
+      await db.workspace.create({
+        data: {
+          slug: outsiderSlug,
+          name: "Outsider workspace",
+          ownerId: outsider.id,
+          members: { create: { userId: outsider.id, role: "owner" } },
+        },
+      });
+      mocks.getCurrentUser.mockResolvedValue({
+        id: outsider.id,
+        email: outsider.email,
+      });
+      expect(await reveal(workspaceSlug)).toEqual({ error: "notAuthorized" });
+      expect(await reveal(outsiderSlug)).toEqual({
+        error: "deploymentNotFound",
+      });
+    } finally {
+      await db.workspace.deleteMany({ where: { slug: outsiderSlug } });
+      await db.user.deleteMany({ where: { id: outsider.id } });
+    }
   });
 });

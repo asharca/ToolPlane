@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 export type McpConnectionImpact = {
   agentIds: string[];
   assistantIds: string[];
+  /** Display names by id; confirmation compares ids only. */
+  names: Record<string, string>;
 };
 
 export async function connectionImpact(
@@ -13,16 +15,20 @@ export async function connectionImpact(
   const [agents, assistants] = await Promise.all([
     db.agentServer.findMany({
       where: { deploymentId, agent: { workspaceId } },
-      select: { agentId: true },
+      select: { agentId: true, agent: { select: { name: true } } },
     }),
     db.chatAssistantMcpGrant.findMany({
       where: { deploymentId, assistant: { workspaceId } },
-      select: { assistantId: true },
+      select: { assistantId: true, assistant: { select: { name: true } } },
     }),
   ]);
   return {
     agentIds: agents.map((entry) => entry.agentId).sort(),
     assistantIds: assistants.map((entry) => entry.assistantId).sort(),
+    names: Object.fromEntries([
+      ...agents.map((entry) => [entry.agentId, entry.agent.name]),
+      ...assistants.map((entry) => [entry.assistantId, entry.assistant.name]),
+    ]),
   };
 }
 
