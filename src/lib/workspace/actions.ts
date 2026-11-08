@@ -1205,6 +1205,46 @@ export async function setDeploymentEnvAction(
   return operation.accepted ? operation.value : { error: "deploymentNotFound" };
 }
 
+export type DeploymentEnvRevealResult = {
+  value?: string;
+  error?: "notAuthorized" | "deploymentNotFound" | "variableNotFound";
+};
+
+/** Decrypts one variable on explicit request; the page itself ships keys only. */
+export async function revealDeploymentEnvAction({
+  workspace,
+  deploymentId,
+  key,
+}: {
+  workspace: string;
+  deploymentId: string;
+  key: string;
+}): Promise<DeploymentEnvRevealResult> {
+  if (!workspace || !deploymentId) return { error: "deploymentNotFound" };
+  if (!ENV_KEY.test(key)) return { error: "variableNotFound" };
+  const ctx = await authorizedWorkspace(workspace);
+  if (!ctx) return { error: "notAuthorized" };
+  const dep = await db.deployment.findFirst({
+    where: {
+      id: deploymentId,
+      workspaceId: ctx.ws.id,
+      OR: [{ source: null }, { source: { not: "sandbox" } }],
+    },
+    select: { installCfg: true },
+  });
+  if (!dep) return { error: "deploymentNotFound" };
+  let env: Record<string, string>;
+  try {
+    env = resolveMcpEnvironment(dep.installCfg, ctx.ws.id);
+  } catch {
+    // Corrupt or differently scoped ciphertext must not reach the browser.
+    return { error: "variableNotFound" };
+  }
+  return Object.hasOwn(env, key)
+    ? { value: env[key] }
+    : { error: "variableNotFound" };
+}
+
 export async function renameDeploymentAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const deploymentId = String(formData.get("deploymentId") ?? "");

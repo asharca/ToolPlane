@@ -6,8 +6,18 @@ import { Input } from "@/components/motion/input";
 
 import { useActionState, useId, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { CheckCircle2, KeyRound, Plus, Trash2, Undo2 } from "lucide-react";
 import {
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  KeyRound,
+  LoaderCircle,
+  Plus,
+  Trash2,
+  Undo2,
+} from "lucide-react";
+import {
+  revealDeploymentEnvAction,
   setDeploymentEnvAction,
   type DeploymentEnvActionState,
 } from "@/lib/workspace/actions";
@@ -24,6 +34,9 @@ type Row = InitialVariable & {
   id: number;
   isNew: boolean;
   value: string;
+  /** Stored value after an explicit reveal; unchanged values are not resubmitted. */
+  original?: string;
+  visible: boolean;
   removed: boolean;
 };
 
@@ -35,6 +48,7 @@ function rowsFromInitial(initial: InitialVariable[]): Row[] {
     id: index,
     isNew: false,
     value: "",
+    visible: false,
     removed: false,
   }));
 }
@@ -57,12 +71,14 @@ function VariablesEditorForm({
   deploymentId,
   initial,
 }: VariablesEditorProps) {
-  // Metadata only — secret values never cross the server/client boundary.
+  // Metadata only; a stored value is decrypted per variable on explicit reveal.
   const t = useTranslations("console.mcp");
   const common = useTranslations("console.common");
   const fieldId = useId();
   const [rows, setRows] = useState<Row[]>(() => rowsFromInitial(initial));
   const nextId = useRef(initial.length);
+  const [revealingId, setRevealingId] = useState<number | null>(null);
+  const [revealFailedId, setRevealFailedId] = useState<number | null>(null);
   const [state, formAction] = useActionState<
     DeploymentEnvActionState,
     FormData
@@ -78,9 +94,9 @@ function VariablesEditorForm({
         if (!row.isNew) remove.push(key);
         continue;
       }
-      // An empty value on an existing configured row means "keep it". The
-      // browser never receives that value, so clearing is always explicit.
-      if (row.value) set[key] = row.value;
+      // An empty or merely revealed value on an existing row means "keep it";
+      // clearing is always explicit through removal.
+      if (row.value && row.value !== row.original) set[key] = row.value;
     }
     return { set, remove };
   }, [rows]);
@@ -121,6 +137,46 @@ function VariablesEditorForm({
     );
   }
 
+  async function toggleVisible(row: Row) {
+    setRevealFailedId(null);
+    if (row.visible) {
+      updateRow(row.id, { visible: false });
+      return;
+    }
+    if (!row.configured || row.value) {
+      updateRow(row.id, { visible: true });
+      return;
+    }
+    if (row.original !== undefined) {
+      updateRow(row.id, { value: row.original, visible: true });
+      return;
+    }
+    setRevealingId(row.id);
+    try {
+      const result = await revealDeploymentEnvAction({
+        workspace: slug,
+        deploymentId,
+        key: row.key,
+      });
+      if (result.value === undefined) {
+        setRevealFailedId(row.id);
+        return;
+      }
+      const value = result.value;
+      setRows((current) =>
+        current.map((candidate) =>
+          candidate.id === row.id && !candidate.value
+            ? { ...candidate, value, original: value, visible: true }
+            : candidate,
+        ),
+      );
+    } catch {
+      setRevealFailedId(row.id);
+    } finally {
+      setRevealingId(null);
+    }
+  }
+
   function addRow() {
     setRows((current) => [
       ...current,
@@ -131,6 +187,7 @@ function VariablesEditorForm({
         required: false,
         isNew: true,
         value: "",
+        visible: false,
         removed: false,
       },
     ]);
@@ -213,7 +270,7 @@ function VariablesEditorForm({
                 key={row.id}
                 className={`px-5 py-4 ${row.removed ? "bg-muted/25" : ""}`}
               >
-                <div className="grid gap-3 lg:grid-cols-[minmax(10rem,0.8fr)_minmax(16rem,1.2fr)_auto] lg:items-start">
+                <div className="grid gap-3 lg:grid-cols-[minmax(10rem,0.8fr)_minmax(16rem,1.2fr)] lg:items-start">
                   <label
                     htmlFor={`${fieldId}-${row.id}-key`}
                     className="min-w-0 space-y-1.5"
@@ -258,7 +315,8 @@ function VariablesEditorForm({
                         </label>
                       )}
                       {!row.removed ? (
-                        row.configured && !row.value ? (
+                        row.configured &&
+                        (!row.value || row.value === row.original) ? (
                           <span className="inline-flex items-center gap-1 text-(--color-success) dark:text-(--color-success)">
                             <CheckCircle2 className="size-3.5" />
                             {t("configured")}
@@ -274,56 +332,92 @@ function VariablesEditorForm({
                         ) : null
                       ) : null}
                     </span>
-                    {row.removed ? (
-                      <p className="flex h-9 items-center rounded-lg border border-dashed border-border bg-background px-3 text-xs text-muted-foreground">
-                        {t("variableWillBeRemoved")}
-                      </p>
-                    ) : (
-                      <Input
-                        id={`${fieldId}-${row.id}-value`}
-                        type="password"
-                        value={row.value}
-                        onChange={(value) =>
-                          updateRow(row.id, { value: value })
-                        }
-                        autoComplete="new-password"
-                        placeholder={
-                          row.configured ? t("replaceValue") : common("value")
-                        }
-                        required={valueRequired}
-                        disabled={row.removed}
-                      />
-                    )}
-                    {row.configured && !row.removed ? (
-                      <p className="text-[11px] text-muted-foreground">
-                        {t("existingValueNeverShown")}
+                    <div className="flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
+                        {row.removed ? (
+                          <p className="flex h-9 items-center rounded-lg border border-dashed border-border bg-background px-3 text-xs text-muted-foreground">
+                            {t("variableWillBeRemoved")}
+                          </p>
+                        ) : (
+                          <Input
+                            id={`${fieldId}-${row.id}-value`}
+                            type={row.visible ? "text" : "password"}
+                            value={row.value}
+                            onChange={(value) =>
+                              updateRow(row.id, { value: value })
+                            }
+                            autoComplete="new-password"
+                            spellCheck={false}
+                            placeholder={
+                              row.configured
+                                ? t("replaceValue")
+                                : common("value")
+                            }
+                            required={valueRequired}
+                            disabled={row.removed}
+                            error={revealFailedId === row.id || undefined}
+                            rightIcon={
+                              row.configured || row.value ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => void toggleVisible(row)}
+                                  disabled={revealingId === row.id}
+                                  aria-pressed={row.visible}
+                                  aria-label={
+                                    row.visible
+                                      ? common("hideValue")
+                                      : common("showValue")
+                                  }
+                                  title={
+                                    row.visible
+                                      ? common("hideValue")
+                                      : common("showValue")
+                                  }
+                                >
+                                  {revealingId === row.id ? (
+                                    <LoaderCircle className="size-4 animate-spin" />
+                                  ) : row.visible ? (
+                                    <EyeOff className="size-4" />
+                                  ) : (
+                                    <Eye className="size-4" />
+                                  )}
+                                </Button>
+                              ) : undefined
+                            }
+                          />
+                        )}
+                      </div>
+                      {row.removed ? (
+                        <Button
+                          type="button"
+                          onClick={() => updateRow(row.id, { removed: false })}
+                          variant="secondary"
+                          size="sm"
+                          className="shrink-0"
+                        >
+                          <Undo2 className="size-3.5" />
+                          {t("undo")}
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          onClick={() => removeRow(row)}
+                          variant="secondary"
+                          size="sm"
+                          className="inline-flex shrink-0 items-center"
+                        >
+                          <Trash2 className="size-3.5" />
+                          {row.isNew ? t("discardVariable") : t("remove")}
+                        </Button>
+                      )}
+                    </div>
+                    {revealFailedId === row.id && !row.removed ? (
+                      <p role="alert" className="text-[11px] text-destructive">
+                        {t("revealSensitiveConfigFailed")}
                       </p>
                     ) : null}
-                  </div>
-
-                  <div className="flex items-end gap-2 lg:justify-end lg:pb-0.5">
-                    {row.removed ? (
-                      <Button
-                        type="button"
-                        onClick={() => updateRow(row.id, { removed: false })}
-                        variant="secondary"
-                        size="sm"
-                      >
-                        <Undo2 className="size-3.5" />
-                        {t("undo")}
-                      </Button>
-                    ) : (
-                      <Button
-                        type="button"
-                        onClick={() => removeRow(row)}
-                        variant="secondary"
-                        size="sm"
-                        className="inline-flex items-center"
-                      >
-                        <Trash2 className="size-3.5" />
-                        {row.isNew ? t("discardVariable") : t("remove")}
-                      </Button>
-                    )}
                   </div>
                 </div>
               </div>
