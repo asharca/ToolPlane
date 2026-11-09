@@ -145,40 +145,9 @@ export type CreateAgentOptions = {
 export type AgentCloneOptions = {
   copyMcp?: boolean;
   copySkills?: boolean;
-  copyToolkits?: boolean;
-  copySandboxes?: boolean;
-  copySubAgents?: boolean;
+  copyPiPackages?: boolean;
   copyConversations?: boolean;
 };
-
-export const DEFAULT_AGENT_CLONE_OPTIONS: Required<AgentCloneOptions> = {
-  copyMcp: false,
-  copySkills: false,
-  copyToolkits: false,
-  copySandboxes: false,
-  copySubAgents: false,
-  copyConversations: false,
-};
-
-function normalizeCloneOptions(
-  options: AgentCloneOptions | undefined,
-): Required<AgentCloneOptions> {
-  if (
-    options?.copyMcp ||
-    options?.copySkills ||
-    options?.copyToolkits ||
-    options?.copySandboxes ||
-    options?.copySubAgents
-  ) {
-    throw new AgentConfigurationError(
-      "Copies require fresh capability authorization and cannot inherit sandbox or runtime state.",
-    );
-  }
-  return {
-    ...DEFAULT_AGENT_CLONE_OPTIONS,
-    copyConversations: options?.copyConversations ?? false,
-  };
-}
 
 async function uniqueSandboxSlug(
   tx: Prisma.TransactionClient,
@@ -310,7 +279,30 @@ export async function cloneAgent(
   requestedName?: string,
   options?: AgentCloneOptions,
 ) {
-  const cloneOptions = normalizeCloneOptions(options);
+  const sourceResources = await db.agent.findFirst({
+    where: { id: sourceAgentId, workspaceId },
+    select: {
+      servers: { select: { deploymentId: true } },
+      skills: { select: { installedSkillId: true } },
+      piPackages: { select: { marketInstallId: true } },
+    },
+  });
+  if (!sourceResources) return null;
+  const deploymentIds = options?.copyMcp
+    ? sourceResources.servers.map(({ deploymentId }) => deploymentId)
+    : [];
+  // Same-workspace bindings only; the copy is an unpublished draft that still
+  // needs explicit revision review before it can execute.
+  const deployments = await db.deployment.findMany({
+    where: {
+      id: { in: deploymentIds },
+      workspaceId,
+      OR: [{ source: null }, { source: { not: "sandbox" } }],
+    },
+    select: { id: true },
+  });
+  for (const { id } of deployments)
+    await ensureWorkspaceMcpDeploymentPinned({ workspaceId, deploymentId: id });
   return db.$transaction(
     async (tx) => {
       const source = await tx.agent.findFirst({
@@ -352,7 +344,52 @@ export async function cloneAgent(
           maxSteps: source.maxSteps,
         },
       });
-      const conversationIds = cloneOptions.copyConversations
+      if (deployments.length) {
+        const current = await tx.deployment.findMany({
+          where: {
+            id: { in: deployments.map(({ id }) => id) },
+            workspaceId,
+          },
+          select: { id: true, installCfg: true },
+        });
+        await tx.agentServer.createMany({
+          data: current.map(({ id, installCfg }) => ({
+            agentId: cloned.id,
+            deploymentId: id,
+            allowedToolNames: catalogToolNames(installCfg),
+          })),
+        });
+      }
+      if (options?.copySkills && sourceResources.skills.length) {
+        const skills = await tx.installedSkill.findMany({
+          where: {
+            id: {
+              in: sourceResources.skills.map((s) => s.installedSkillId),
+            },
+            workspaceId,
+          },
+          select: { id: true },
+        });
+        await tx.agentSkill.createMany({
+          data: skills.map(({ id }) => ({
+            agentId: cloned.id,
+            installedSkillId: id,
+          })),
+        });
+      }
+      if (options?.copyPiPackages && sourceResources.piPackages.length) {
+        // Copies bind each plugin's current approved release, like a new Agent.
+        await validateAndWritePiPackages(
+          tx,
+          workspaceId,
+          cloned.id,
+          cloned.runtimeKind,
+          sourceResources.piPackages.map(({ marketInstallId }) => ({
+            marketInstallId,
+          })),
+        );
+      }
+      const conversationIds = options?.copyConversations
         ? await cloneAgentConversationsInTransaction(
             tx,
             workspaceId,

@@ -244,15 +244,11 @@ function externalSandboxesFromForm(
 }
 
 function cloneOptionsFromFormData(formData: FormData) {
-  // Copies never inherit authority. Historical conversations are opt-in only.
-  if (formData.get("cloneOptions") !== "1") return undefined;
   const checked = (name: string) => formData.get(name) === "on";
   return {
     copyMcp: checked("copyMcp"),
     copySkills: checked("copySkills"),
-    copyToolkits: checked("copyToolkits"),
-    copySandboxes: checked("copySandboxes"),
-    copySubAgents: checked("copySubAgents"),
+    copyPiPackages: checked("copyPiPackages"),
     copyConversations: checked("copyConversations"),
   };
 }
@@ -784,31 +780,41 @@ export async function pinAgentAction(formData: FormData) {
   revalidatePath(`/app/${slug}/work`);
 }
 
-export async function cloneAgentAction(formData: FormData) {
+export async function cloneAgentAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
   const slug = String(formData.get("workspace") ?? "");
   const sourceAgentId = String(formData.get("agentId") ?? "");
   const requestedName =
     String(formData.get("cloneName") ?? "")
       .trim()
       .slice(0, 60) || undefined;
-  const cloneOptions = cloneOptionsFromFormData(formData);
   const ctx = await authorizedWorkspace(slug);
-  if (!ctx || !sourceAgentId) return;
-  if (!(await isManageableAgent(ctx.ws.id, sourceAgentId))) return;
+  if (!ctx) return { error: "Not authorized." };
+  if (!sourceAgentId || !(await isManageableAgent(ctx.ws.id, sourceAgentId)))
+    return { error: "Agent not found." };
 
-  const cloned = await cloneAgent(
-    ctx.ws.id,
-    sourceAgentId,
-    requestedName,
-    cloneOptions,
-  );
-  if (!cloned) return;
-  const targetPath = `/app/${slug}/agents/${cloned.id}`;
+  let cloned: Awaited<ReturnType<typeof cloneAgent>>;
+  try {
+    cloned = await cloneAgent(
+      ctx.ws.id,
+      sourceAgentId,
+      requestedName,
+      cloneOptionsFromFormData(formData),
+    );
+  } catch (error) {
+    if (error instanceof McpPinningError) return { error: error.code };
+    if (error instanceof AgentConfigurationError)
+      return { error: error.message };
+    throw error;
+  }
+  if (!cloned) return { error: "Agent not found." };
   revalidatePath(`/app/${slug}/agents`);
   revalidatePath(`/app/${slug}/work`);
-  revalidatePath(targetPath);
+  revalidatePath(`/app/${slug}/agents/${cloned.id}`);
   redirect(
-    `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(cloned.id)}`,
+    `/app/${encodeURIComponent(slug)}/agents/${encodeURIComponent(cloned.id)}`,
   );
 }
 
