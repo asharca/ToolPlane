@@ -356,7 +356,7 @@ describe("agents mutations", () => {
     }
   });
 
-  it("copies historical configuration into a fresh native draft with no authority", async () => {
+  it("copies historical configuration into a fresh native draft with only opted-in bindings", async () => {
     const source = await db.agent.create({
       data: {
         workspaceId,
@@ -425,9 +425,16 @@ describe("agents mutations", () => {
     expect(
       await db.conversation.findUnique({ where: { id: history.id } }),
     ).not.toBeNull();
-    await expect(
-      cloneAgent(workspaceId, source.id, undefined, { copyMcp: true }),
-    ).rejects.toThrow("fresh capability authorization");
+    const withMcp = assertDefined(
+      await cloneAgent(workspaceId, source.id, undefined, { copyMcp: true }),
+    );
+    const copied = await db.agent.findUniqueOrThrow({
+      where: { id: withMcp.id },
+      include: { servers: true, conversations: true },
+    });
+    expect(copied.servers.map((s) => s.deploymentId)).toEqual([deploymentId]);
+    expect(copied.currentRevisionVersion).toBe(0);
+    expect(copied.conversations).toHaveLength(0);
     await expect(
       updateAgent(workspaceId, source.id, {
         name: source.name,

@@ -44,7 +44,6 @@ import {
 } from "@/components/dashboard/models/ModelPicker";
 import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
-import { CloneAgentButton } from "@/components/dashboard/agents/CloneAgentButton";
 import { DeleteAgentButton } from "@/components/dashboard/agents/DeleteAgentButton";
 import { ConnectDialog } from "@/components/dashboard/ConnectDialog";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
@@ -943,11 +942,6 @@ export function AgentsBrowser({
                         >
                           <Settings2 className="size-[18px] shrink-0" />
                         </ButtonLink>
-                        <CloneAgentButton
-                          slug={slug}
-                          agentId={agent.id}
-                          agentName={agent.name}
-                        />
                         <DeleteAgentButton slug={slug} agentId={agent.id} />
                       </div>
                     </div>

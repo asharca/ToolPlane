@@ -20,6 +20,7 @@ import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
 import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
 import { AgentTriggersPanel } from "./AgentTriggersPanel";
 import { AgentUsagePanel } from "../AgentUsagePanel";
+import { AgentClonePanel } from "./AgentClonePanel";
 
 const AgentMessagingPanel = dynamic(() =>
   import("@/components/dashboard/agents/AgentMessagingPanel").then(
@@ -76,7 +77,8 @@ type SettingsTab =
   | "a2a"
   | "changelog"
   | "triggers"
-  | "usage";
+  | "usage"
+  | "clone";
 type InitialSettingsTab = SettingsTab | "agent";
 
 const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
@@ -176,6 +178,7 @@ export function AgentSettings({
     { id: "triggers", label: automationT("triggers") },
     { id: "usage", label: usageT("title") },
     { id: "changelog", label: t("changelogTab") },
+    { id: "clone", label: t("cloneAgent") },
     ...(supportsChannelSettings
       ? [{ id: "channels" as const, label: t("channelSettingsTab") }]
       : []),
@@ -282,6 +285,24 @@ export function AgentSettings({
                   agentId={agentId}
                   runtimeKind={settings.runtimeKind}
                   initialTaskId={initialA2ATaskId}
+                />
+              </div>
+            ) : settingsTab === "clone" ? (
+              <div className="h-full overflow-y-auto">
+                <AgentClonePanel
+                  slug={slug}
+                  agentId={agentId}
+                  agentName={settings.name}
+                  mcpCount={
+                    settings.deployments.filter((item) => item.checked).length
+                  }
+                  skillCount={
+                    settings.skills.filter((item) => item.checked).length
+                  }
+                  piPackageCount={
+                    settings.piPackages?.filter((pkg) => pkg.enabledReleaseId)
+                      .length ?? 0
+                  }
                 />
               </div>
             ) : settingsTab === "changelog" ? (
