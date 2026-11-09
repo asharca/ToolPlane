@@ -1040,30 +1040,67 @@ export function AssistantConversation({
                 </span>
               </div>
             ) : null;
-          const processItems: Array<{
-            id: string;
-            type: "text";
-            content: ReactNode;
-          }> = [];
+          type ProcessItem = { id: string; type: "text"; content: ReactNode };
+          // Claude/ChatGPT layout: keep part order; consecutive reasoning and
+          // tool parts fold into one activity group between text blocks.
+          const segments: Array<
+            | {
+                kind: "process";
+                id: string;
+                items: ProcessItem[];
+                failed: boolean;
+              }
+            | { kind: "text"; id: string; text: string }
+          > = [];
+          const pushProcess = (item: ProcessItem, failed: boolean) => {
+            const last = segments.at(-1);
+            if (last?.kind === "process") {
+              last.items.push(item);
+              last.failed ||= failed;
+            } else {
+              segments.push({
+                kind: "process",
+                id: `process-${item.id}`,
+                items: [item],
+                failed,
+              });
+            }
+          };
           let processFailed = false;
           if (assistant) {
+            const lastPartIndex = message.parts.length - 1;
             message.parts.forEach((part, index) => {
               const id = `${message.id}-${index}`;
+              if (part.type === "text") {
+                if (!part.text) return;
+                const last = segments.at(-1);
+                if (last?.kind === "text") last.text += `\n\n${part.text}`;
+                else segments.push({ kind: "text", id, text: part.text });
+                return;
+              }
               if (part.type === "reasoning" && part.text.trim()) {
-                processItems.push({
-                  id,
-                  type: "text",
-                  content: (
-                    <div>
-                      <p className="text-xs text-muted-foreground">
-                        {workT(streaming && !text ? "thinking" : "thought")}
-                      </p>
-                      <pre className="whitespace-pre-wrap break-words text-xs">
-                        {part.text}
-                      </pre>
-                    </div>
-                  ),
-                });
+                pushProcess(
+                  {
+                    id,
+                    type: "text",
+                    content: (
+                      <div>
+                        <p className="text-xs text-muted-foreground">
+                          {workT(
+                            streaming && index === lastPartIndex
+                              ? "thinking"
+                              : "thought",
+                          )}
+                        </p>
+                        <pre className="whitespace-pre-wrap break-words text-xs">
+                          {part.text}
+                        </pre>
+                      </div>
+                    ),
+                  },
+                  false,
+                );
+                return;
               }
               if (
                 part.type !== "dynamic-tool" &&
@@ -1089,21 +1126,24 @@ export function AssistantConversation({
                   : tool.state === "output-available"
                     ? "succeeded"
                     : "executing");
-              if (status !== "succeeded" && status !== "executing")
-                processFailed = true;
-              processItems.push({
-                id: tool.toolCallId ?? id,
-                type: "text",
-                content: (
-                  <AssistantToolResult
-                    toolName={tool.toolName ?? tool.type.slice(5)}
-                    input={receipt?.input ?? tool.input}
-                    result={receipt?.result ?? tool.output}
-                    error={receipt?.error ?? tool.errorText}
-                    status={status}
-                  />
-                ),
-              });
+              const failed = status !== "succeeded" && status !== "executing";
+              processFailed ||= failed;
+              pushProcess(
+                {
+                  id: tool.toolCallId ?? id,
+                  type: "text",
+                  content: (
+                    <AssistantToolResult
+                      toolName={tool.toolName ?? tool.type.slice(5)}
+                      input={receipt?.input ?? tool.input}
+                      result={receipt?.result ?? tool.output}
+                      error={receipt?.error ?? tool.errorText}
+                      status={status}
+                    />
+                  ),
+                },
+                failed,
+              );
             });
             if (
               message.id ===
@@ -1123,18 +1163,27 @@ export function AssistantConversation({
                   )
                 )
                   continue;
-                if (
+                const failed =
                   receipt.status !== "succeeded" &&
-                  receipt.status !== "executing"
-                )
-                  processFailed = true;
-                processItems.push({
-                  id: receipt.id,
-                  type: "text",
-                  content: <AssistantToolResult {...receipt} />,
-                });
+                  receipt.status !== "executing";
+                processFailed ||= failed;
+                pushProcess(
+                  {
+                    id: receipt.id,
+                    type: "text",
+                    content: <AssistantToolResult {...receipt} />,
+                  },
+                  failed,
+                );
               }
             }
+            if (streaming && segments.length === 0)
+              segments.push({
+                kind: "process",
+                id: "process-pending",
+                items: [],
+                failed: false,
+              });
           }
           const messageBody = (
             <>
@@ -1156,33 +1205,48 @@ export function AssistantConversation({
                   </a>
                 ) : null,
               )}
-              {assistant && (streaming || processItems.length > 0) ? (
-                <div data-ui="assistant-process" className="w-full">
-                  <ConversationActivity
-                    contentType="text"
-                    status={streaming ? "working" : "complete"}
-                    defaultOpen={processFailed}
-                    collapseOnComplete={!processFailed}
-                    activeLabel={
-                      streaming ? executionLabel : workT("processing")
-                    }
-                    summary={
-                      streaming
-                        ? executionLabel
-                        : workT(processFailed ? "processFailed" : "processed")
-                    }
-                    items={processItems}
-                  />
-                </div>
-              ) : null}
-              {text ? (
-                assistant ? (
-                  <AssistantMarkdown text={text} streaming={streaming} />
-                ) : (
-                  <p className="whitespace-pre-wrap text-sm leading-6">
-                    {text}
-                  </p>
-                )
+              {assistant ? (
+                segments.map((segment, segmentIndex) => {
+                  if (segment.kind === "text")
+                    return (
+                      <AssistantMarkdown
+                        key={segment.id}
+                        text={segment.text}
+                        streaming={
+                          streaming && segmentIndex === segments.length - 1
+                        }
+                      />
+                    );
+                  const working =
+                    streaming && segmentIndex === segments.length - 1;
+                  return (
+                    <div
+                      key={segment.id}
+                      data-ui="assistant-process"
+                      className="w-full"
+                    >
+                      <ConversationActivity
+                        contentType="text"
+                        status={working ? "working" : "complete"}
+                        defaultOpen={segment.failed}
+                        collapseOnComplete={!segment.failed}
+                        activeLabel={
+                          working ? executionLabel : workT("processing")
+                        }
+                        summary={
+                          working
+                            ? executionLabel
+                            : workT(
+                                segment.failed ? "processFailed" : "processed",
+                              )
+                        }
+                        items={segment.items}
+                      />
+                    </div>
+                  );
+                })
+              ) : text ? (
+                <p className="whitespace-pre-wrap text-sm leading-6">{text}</p>
               ) : null}
             </>
           );
