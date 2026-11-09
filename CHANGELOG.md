@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.35.0](https://github.com/asharca/ToolPlane/compare/v0.34.0...v0.35.0) (2026-11-09)
+
+
+### Features
+
+* **mcp:** 支持查看已保存的环境变量值，受影响对象显示名称 ([#197](https://github.com/asharca/ToolPlane/issues/197)) ([2f88450](https://github.com/asharca/ToolPlane/commit/2f88450d6af8c4a8823d3add7be7bb5e5293cd19))
+
+
+### Bug Fixes
+
+* **agents:** 在设置中克隆智能体并可选复制 MCP、技能和插件 ([#199](https://github.com/asharca/ToolPlane/issues/199)) ([a1cb27c](https://github.com/asharca/ToolPlane/commit/a1cb27c9144250bdc034934c4343a4873152d8fc))
+
 ## [0.34.0](https://github.com/asharca/ToolPlane/compare/v0.33.3...v0.34.0) (2026-11-07)
 
 
