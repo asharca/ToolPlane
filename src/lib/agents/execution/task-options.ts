@@ -47,7 +47,7 @@ import {
   recordLocalPromptInvocation,
 } from "@/lib/a2a/store";
 
-const LOCAL_FILE_INSTRUCTIONS = `Files: for large MCP results use mcp_result_to_file with the authorized tool name and its unchanged arguments. It saves the complete result (maximum 10 MiB) and returns only a local path; normal MCP calls are unchanged. Publish deliverable files with a2a_publish_artifact parts:[{path,mediaType}] or [{fileId}], not pasted bytes or private URLs. Never replay a tool after an unknown outcome or a result-save failure.`;
+const LOCAL_FILE_INSTRUCTIONS = `Files: for large MCP results use mcp_result_to_file with the authorized tool name and its unchanged arguments. It saves the complete result (up to the administrator-configured file limit) and returns only a local path; normal MCP calls are unchanged. Publish deliverable files with a2a_publish_artifact parts:[{path,mediaType}] or [{fileId}], not pasted bytes or private URLs. Never replay a tool after an unknown outcome or a result-save failure.`;
 function workSystemPrompt(displayPath: string): string {
   return [
     "You are working in a durable multi-turn session inside an authorized sandbox.",

@@ -465,3 +465,12 @@
 
 - **证据（2026-11-10，用户反馈“工具调用和输出堆在一起、窗口一直跳动”）**：共享渲染器让过程组运行时展开、完成后收起，每轮工具后正文开始又触发一次收起；vendored `ToolResult` 在状态变为 running 时也会自动展开。连续同名工具行只显示“bash Completed”，无法区分。改为默认折叠、仅点击切换（用捕获阶段标记过滤组件自身的状态驱动回调）、工具行显示参数摘要、思考两行预览后，真实 Work 三次 `bash` 回合测得 CLS 0、`aria-expanded` 自动变化 0 次、滚动高度回缩 0 次。另发现展开披露会暂停 `MessageScroller` 跟随，助手和 Work 发送新消息后未恢复；已与智能体对话一样在发送时恢复跟随。
 - **下次怎么验证**：真实回合中用 `PerformanceObserver('layout-shift')`、`aria-expanded` 变更计数和滚动容器高度回缩次数取证；先展开一个旧披露再发送，确认新输出仍跟到底部。依据：`ConversationContentBlocks.tsx`、`tests/unit/workspace-work-failures.test.tsx`。
+
+### TP-L045：可配置上限必须贯穿数据流的每一跳
+
+**规则**：把固定上限改成管理员设置时，先搜出同一数据流上所有同值常量（包括沙箱内脚本和生成的扩展源码），全部改为由调用方传入当前设置；已接收的数据按其校验过的实际大小继续流转，不因之后调低设置而被卡住。
+
+- **证据（2026-11-10，用户验收）**：约 50 MiB 的 PDF 已按管理员设置的 A2A 文件上限接收入库，但暂存进沙箱时 `scripts/a2a-sandbox-files.mjs` 仍写死 `MAX_FILE_BYTES = 10 MiB`，报 `File exceeds 10 MiB.`，Python 尚未启动；沙箱文件回传与 `mcp_result_to_file` 也各自写死 10 MiB。`20261105010000_a2a_file_size_limit` 只改了下载、存储与数据库约束。
+- **修复与验证**：脚本去掉默认值，要求调用方传入 `maxBytes`：回传和 MCP 结果文件使用当前 `a2aFileBytes`，暂存使用已存储文件的大小。在真实沙箱镜像中，通过 `docker exec -i` 暂存 50 MiB 用时 0.4 秒，Python 读取得到相同的 SHA-256；10 MiB 上限的回传被拒绝。
+- **下次怎么验证**：`grep` 旧上限的数值和常量名，覆盖 `scripts/` 与生成源码；用大于旧上限的真实文件走完接收 → 沙箱 → 程序读取，不能只验证入口接收成功。依据：[沙箱文件脚本](scripts/a2a-sandbox-files.mjs)、[暂存与回传](src/lib/a2a/local-sandbox.ts)、[限值回归](tests/unit/a2a-sandbox-files.test.ts)。
+- **确认日期**：2026-11-10（用户报告）。

@@ -6,7 +6,16 @@ import { pipeline } from "node:stream/promises";
 import { Transform, Writable } from "node:stream";
 import { pathToFileURL } from "node:url";
 
-export const MAX_FILE_BYTES = 10 * 1024 * 1024;
+// Callers supply the per-file byte limit; the helper has no built-in default.
+function fileLimit(maxBytes) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
+    throw new Error("Invalid sandbox file size limit.");
+  return maxBytes;
+}
+
+function exceeds(maxBytes) {
+  return `File exceeds the ${Number((maxBytes / 1024 ** 2).toFixed(2))} MiB file limit.`;
+}
 
 // Pin each directory inode, never resolve a model-controlled symlink. Linux's
 // /proc/self/fd permits openat-style traversal without a native addon.
@@ -57,7 +66,13 @@ async function parentDirectory(root, path, create = false) {
   }
 }
 
-export async function readWorkspaceFile(root, path, destination, signal) {
+export async function readWorkspaceFile(
+  root,
+  path,
+  destination,
+  { maxBytes, signal } = {},
+) {
+  const limit = fileLimit(maxBytes);
   const parent = await parentDirectory(root, path);
   let file;
   try {
@@ -66,20 +81,18 @@ export async function readWorkspaceFile(root, path, destination, signal) {
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
     const info = await file.stat();
-    if (!info.isFile() || info.nlink !== 1 || info.size > MAX_FILE_BYTES)
+    if (!info.isFile() || info.nlink !== 1)
       throw new Error(
-        "Only regular, single-linked workspace files up to 10 MiB can be shared.",
+        "Only regular, single-linked workspace files can be shared.",
       );
+    if (info.size > limit) throw new Error(exceeds(limit));
     let bytes = 0;
     await pipeline(
       file.createReadStream({ autoClose: true }),
       new Transform({
         transform(chunk, _encoding, callback) {
           bytes += chunk.length;
-          callback(
-            bytes > MAX_FILE_BYTES ? new Error("File exceeds 10 MiB.") : null,
-            chunk,
-          );
+          callback(bytes > limit ? new Error(exceeds(limit)) : null, chunk);
         },
       }),
       destination,
@@ -95,9 +108,9 @@ export async function writeWorkspaceFile(
   root,
   path,
   source,
-  expectedHash,
-  signal,
+  { maxBytes, expectedHash, signal } = {},
 ) {
+  const limit = fileLimit(maxBytes);
   const parent = await parentDirectory(root, path, true);
   const temporary = `${parent.path}.${randomUUID()}.tmp`;
   let file;
@@ -120,8 +133,8 @@ export async function writeWorkspaceFile(
       new Writable({
         write(chunk, _encoding, callback) {
           bytes += chunk.length;
-          if (bytes > MAX_FILE_BYTES) {
-            callback(new Error("File exceeds 10 MiB."));
+          if (bytes > limit) {
+            callback(new Error(exceeds(limit)));
             return;
           }
           hash.update(chunk);
@@ -154,12 +167,16 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  const [action, path, hash] = process.argv.slice(2);
+  const [action, path, maxBytes, hash] = process.argv.slice(2);
   try {
+    const options = { maxBytes: Number(maxBytes) };
     if (action === "read")
-      await readWorkspaceFile("/workspace", path, process.stdout);
+      await readWorkspaceFile("/workspace", path, process.stdout, options);
     else if (action === "write")
-      await writeWorkspaceFile("/workspace", path, process.stdin, hash);
+      await writeWorkspaceFile("/workspace", path, process.stdin, {
+        ...options,
+        expectedHash: hash,
+      });
     else throw new Error("Invalid file operation.");
   } catch (error) {
     process.stderr.write(`${error.message}\n`);

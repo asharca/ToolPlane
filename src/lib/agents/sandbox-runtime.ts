@@ -23,6 +23,7 @@ import { StringDecoder } from "node:string_decoder";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { db } from "@/lib/db";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import { effectiveStatus } from "@/lib/process/supervisor";
 import { sandboxContainerName } from "@/lib/sandboxes/runtime";
@@ -538,6 +539,7 @@ export function buildPiModelsConfig(options: {
 
 export function buildPiMcpConfig(
   servers: readonly SandboxRuntimeMcpServer[],
+  resultFileBytes: number,
 ): string {
   return JSON.stringify({
     servers: servers.map((server, index) => ({
@@ -547,6 +549,7 @@ export function buildPiMcpConfig(
       ...(server.label ? { label: server.label.slice(0, 80) } : {}),
       ...(server.timeoutMs ? { timeoutMs: server.timeoutMs } : {}),
     })),
+    resultFileBytes,
   });
 }
 
@@ -681,15 +684,17 @@ function errorText(content) {
   return content.map((part) => part && part.type === 'text' ? String(part.text || '') : '').filter(Boolean).join('\n');
 }
 
-const MAX_RESULT_FILE_BYTES = 10 * 1024 * 1024;
+function mib(bytes) {
+  return Number((bytes / (1024 * 1024)).toFixed(2)) + ' MiB';
+}
 
 // Calls one authorized MCP tool once and streams its complete JSON result into
 // the sandbox workspace; the model receives only a bounded file summary.
-function resultToFileTool(fileTools) {
+function resultToFileTool(fileTools, maxBytes) {
   return {
     name: ${JSON.stringify(MCP_RESULT_TO_FILE_TOOL)},
     label: 'Save MCP result to file',
-    description: 'Call an authorized MCP tool with its exact original arguments and save the complete JSON result in a sandbox file (10 MiB maximum, no truncation). Returns only a bounded file summary, never result bytes. Use the path for file-aware tools, pi_a2a_submit files or a2a_publish_artifact. The selected MCP tool remains subject to its resource authorization; a failure after execution must never be automatically retried. Ordinary MCP tools remain unchanged.',
+    description: 'Call an authorized MCP tool with its exact original arguments and save the complete JSON result in a sandbox file (administrator-configured size limit, no truncation). Returns only a bounded file summary, never result bytes. Use the path for file-aware tools, pi_a2a_submit files or a2a_publish_artifact. The selected MCP tool remains subject to its resource authorization; a failure after execution must never be automatically retried. Ordinary MCP tools remain unchanged.',
     parameters: {
       type: 'object',
       properties: {
@@ -716,15 +721,15 @@ function resultToFileTool(fileTools) {
       }) + '\n');
       let result;
       try {
-        result = await rpc(tool.server, 'tools/call', { name: tool.wireName, arguments: params.arguments }, signal, MAX_RESULT_FILE_BYTES + 64 * 1024);
+        result = await rpc(tool.server, 'tools/call', { name: tool.wireName, arguments: params.arguments }, signal, maxBytes + 64 * 1024);
       } catch (error) {
         throw new Error('MCP invocation failed; its external outcome is unknown. Do not replay the tool blindly.', { cause: error });
       }
       let file;
       try {
         const serialized = JSON.stringify(result);
-        if (Buffer.byteLength(serialized) > MAX_RESULT_FILE_BYTES) {
-          throw new Error('The full MCP result exceeds the 10 MiB file limit; no truncated file was saved.');
+        if (Buffer.byteLength(serialized) > maxBytes) {
+          throw new Error('The full MCP result exceeds the ' + mib(maxBytes) + ' file limit; no truncated file was saved.');
         }
         const { writeWorkspaceFile } = await import(new URL('./a2a-sandbox-files.mjs', import.meta.url).href);
         const { Readable } = await import('node:stream');
@@ -734,11 +739,10 @@ function resultToFileTool(fileTools) {
           ${JSON.stringify(options.workspaceRoot ?? "/workspace")},
           join(process.cwd(), '.a2a-files', 'tool-results', callId + '-' + filename),
           Readable.from([serialized]),
-          undefined,
-          signal,
+          { maxBytes, signal },
         );
       } catch (error) {
-        const limit = error && String(error.message).includes('10 MiB') ? ': result exceeds the 10 MiB file limit' : '';
+        const limit = error && String(error.message).includes('file limit') ? ': result exceeds the ' + mib(maxBytes) + ' file limit' : '';
         throw new Error('MCP tool already executed, but saving its complete result failed' + limit + '. Do not replay the tool blindly.', { cause: error });
       }
       const summary = { ...file, mediaType: 'application/json' };
@@ -809,7 +813,10 @@ export async function createPiMcpTools(config) {
       registeredTools += 1;
     }
   }
-  if (fileTools.size) definitions.push(resultToFileTool(fileTools));
+  if (fileTools.size) {
+    if (!Number.isSafeInteger(config.resultFileBytes) || config.resultFileBytes <= 0) throw new Error('Invalid ToolPlane Pi MCP config');
+    definitions.push(resultToFileTool(fileTools, config.resultFileBytes));
+  }
   return definitions;
 }
 
@@ -2600,7 +2607,13 @@ async function runPiSdk(
       configPath,
       hostSourceChecksum: hostSources.digest("hex"),
       packageSetChecksum,
-      mcpConfig: JSON.parse(buildPiMcpConfig(mcpServers)),
+      // Live administrator setting, read for every turn; not part of the revision.
+      mcpConfig: JSON.parse(
+        buildPiMcpConfig(
+          mcpServers,
+          (await getTransportSettings()).a2aFileBytes,
+        ),
+      ),
       model: sessionModel,
     },
     {
