@@ -475,6 +475,7 @@ for (const [entry, description] of [
   ["scripts/mcp-server.mjs", "built-in MCP runtime"],
   ["scripts/mcp-http-bridge.mjs", "remote MCP runtime"],
   ["scripts/sandbox-mcp-server.mjs", "sandbox MCP runtime"],
+  ["scripts/sandbox-environment.sh", "sandbox package list replay"],
   ["scripts/ssh-sandbox-adapter.mjs", "SSH sandbox OpenSSH adapter"],
   ["scripts/ssh-sandbox-worker.py", "SSH sandbox remote worker"],
   ["scripts/pi-sdk-ui.mjs", "native Pi extension UI transport"],

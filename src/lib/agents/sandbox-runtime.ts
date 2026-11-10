@@ -26,7 +26,10 @@ import { db } from "@/lib/db";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import { effectiveStatus } from "@/lib/process/supervisor";
-import { sandboxContainerName } from "@/lib/sandboxes/runtime";
+import {
+  sandboxContainerName,
+  syncDockerSandboxEnvironment,
+} from "@/lib/sandboxes/runtime";
 import {
   buildInstalledSkillMarkdown,
   installedSkillExtraFiles,
@@ -2740,14 +2743,21 @@ async function runSessionSandboxAgentTurn(
   );
   if (options.piVersion !== undefined && options.piVersion !== "0.87.1")
     throw new Error("PI_SDK_VERSION_MISMATCH");
-  return runPiSdk(
-    options,
-    container,
-    workdir,
-    skillRoot,
-    workspaceRoot,
-    mcpServers,
-  );
+  try {
+    return await runPiSdk(
+      options,
+      container,
+      workdir,
+      skillRoot,
+      workspaceRoot,
+      mcpServers,
+    );
+  } finally {
+    // Commands of this turn may have installed packages into the shared rootfs.
+    void syncDockerSandboxEnvironment(options.sandboxId, {
+      replay: true,
+    }).catch(() => undefined);
+  }
 }
 
 export type PiHarnessOperationResult = {

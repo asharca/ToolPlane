@@ -6,6 +6,7 @@ import {
 } from "@/lib/runtime/ownership-state";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
 export { DEFAULT_SANDBOX_IMAGE } from "./images";
 
@@ -737,9 +738,36 @@ export async function removeDockerSandboxRuntime(
   await removeDockerVolume(volumeName || sandboxVolumeName(sandboxId));
 }
 
+/**
+ * Record packages installed into the container rootfs in the sandbox volume
+ * (scripts/sandbox-environment.sh). With `replay`, a recreated container gets
+ * the recorded packages reinstalled in the background.
+ */
+export async function syncDockerSandboxEnvironment(
+  sandboxId: string,
+  options: { replay: boolean },
+): Promise<void> {
+  const container = sandboxContainerName(sandboxId);
+  const script = await readFile(
+    `${process.cwd()}/scripts/sandbox-environment.sh`,
+    "utf8",
+  );
+  const environment = ["sh", "-c", script, "toolplane-env"];
+  const output = await runDocker(
+    ["exec", container, ...environment, "sync"],
+    120_000,
+  );
+  if (options.replay && output.split("\n").includes("replay"))
+    await runDocker(["exec", "-d", container, ...environment, "replay"]);
+}
+
 export async function removeDockerSandboxContainer(
   sandboxId: string,
 ): Promise<void> {
+  // The volume outlives the container; keep its package list current.
+  await syncDockerSandboxEnvironment(sandboxId, { replay: false }).catch(
+    () => undefined,
+  );
   await dockerBestEffort(["rm", "-f", sandboxContainerName(sandboxId)]);
 }
 
