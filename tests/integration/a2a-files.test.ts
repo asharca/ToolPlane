@@ -28,41 +28,45 @@ const io = vi.hoisted(() => ({
   gate: null as null | Promise<void>,
   entered: null as null | (() => void),
 }));
-vi.mock("@/lib/attachments/storage", async (original) => ({
-  ...(await original<typeof AttachmentStorage>()),
-  writeWorkspaceAttachment: vi.fn(
-    async (input: {
-      workspaceId: string;
-      objectId: string;
-      filename: string;
-      body: ReadableStream<Uint8Array>;
-      maxBytes: number;
-    }) => {
-      const bytes = new Uint8Array(
-        await new Response(input.body).arrayBuffer(),
-      );
-      if (bytes.length > input.maxBytes) throw new Error("File too large");
-      io.entered?.();
-      if (io.gate) await io.gate;
-      const storagePath = `objects/${input.objectId}-${input.filename}`;
-      io.blobs.set(`${input.workspaceId}/${storagePath}`, bytes);
-      return {
-        storagePath,
-        size: bytes.length,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
-      };
+vi.mock("@/lib/attachments/storage", async (original) => {
+  const actual = await original<typeof AttachmentStorage>();
+  return {
+    ...actual,
+    writeWorkspaceAttachment: vi.fn(
+      async (input: {
+        workspaceId: string;
+        objectId: string;
+        filename: string;
+        body: ReadableStream<Uint8Array>;
+        maxBytes: number;
+      }) => {
+        const bytes = new Uint8Array(
+          await new Response(input.body).arrayBuffer(),
+        );
+        if (bytes.length > input.maxBytes)
+          throw new actual.AttachmentTooLargeError(input.maxBytes);
+        io.entered?.();
+        if (io.gate) await io.gate;
+        const storagePath = `objects/${input.objectId}-${input.filename}`;
+        io.blobs.set(`${input.workspaceId}/${storagePath}`, bytes);
+        return {
+          storagePath,
+          size: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        };
+      },
+    ),
+    readWorkspaceAttachment: (workspace: string, path: string) => {
+      const bytes = io.blobs.get(`${workspace}/${path}`);
+      if (!bytes) throw new Error("Stored attachment missing");
+      return new Blob([Uint8Array.from(bytes)]).stream();
     },
-  ),
-  readWorkspaceAttachment: (workspace: string, path: string) => {
-    const bytes = io.blobs.get(`${workspace}/${path}`);
-    if (!bytes) throw new Error("Stored attachment missing");
-    return new Blob([Uint8Array.from(bytes)]).stream();
-  },
-  deleteWorkspaceAttachmentFile: async (workspace: string, path: string) => {
-    await io.remove();
-    io.blobs.delete(`${workspace}/${path}`);
-  },
-}));
+    deleteWorkspaceAttachmentFile: async (workspace: string, path: string) => {
+      await io.remove();
+      io.blobs.delete(`${workspace}/${path}`);
+    },
+  };
+});
 vi.mock("@/lib/agents/execution/worker", () => ({ wakeAgentWorker: vi.fn() }));
 vi.mock("@/lib/runtime/ownership-state", async (original) => ({
   ...(await original<typeof RuntimeOwnership>()),
@@ -107,7 +111,7 @@ async function seed(
     data: Array.from({ length: count }, () => ({
       taskId,
       workspaceId: workspace,
-      sourceKey: randomUUID(),
+      sourceKey: `input:${randomUUID()}`,
       filename: "seed.txt",
       mimeType: "text/plain",
       status: "ready",
@@ -346,13 +350,19 @@ describe("PostgreSQL task file invariants with streaming storage boundary", () =
         Promise.withResolvers<void>();
       io.gate = gate;
       io.entered = markEntered;
-      const first = storeTaskFile(a.id, "one", "a.txt", "text/plain", body());
+      const first = storeTaskFile(
+        a.id,
+        "input:one",
+        "a.txt",
+        "text/plain",
+        body(),
+      );
       try {
         await entered;
         await expect(
           storeTaskFile(
             b.id,
-            "two",
+            "input:two",
             "b.txt",
             "text/plain",
             new Blob([new Uint8Array(5 * 1024 * 1024)]).stream(),
@@ -450,7 +460,13 @@ describe("PostgreSQL task file invariants with streaming storage boundary", () =
       Promise.withResolvers<void>();
     io.gate = gate;
     io.entered = markEntered;
-    const first = storeTaskFile(t.id, "first", "a.txt", "text/plain", body());
+    const first = storeTaskFile(
+      t.id,
+      "input:first",
+      "a.txt",
+      "text/plain",
+      body(),
+    );
     try {
       await entered;
       await db.systemSetting.update({
@@ -463,12 +479,76 @@ describe("PostgreSQL task file invariants with streaming storage boundary", () =
         },
       });
       await expect(
-        storeTaskFile(t.id, "second", "b.txt", "text/plain", body()),
-      ).rejects.toThrow("storage limit");
+        storeTaskFile(t.id, "input:second", "b.txt", "text/plain", body()),
+      ).rejects.toThrow("Task input files exceed the 100 MiB total limit.");
     } finally {
       release();
     }
     await first;
+  });
+
+  it("limits only admitted input bytes per task and reports the exceeded limit", async () => {
+    const t = await task();
+    await seed(t.id, 9, DEFAULT_A2A_FILE_BYTES);
+    await seed(t.id, 1, 5 * 1024 ** 2);
+    const sixMiB = () => new Blob([new Uint8Array(6 * 1024 ** 2)]).stream();
+    await expect(
+      storeTaskFile(t.id, "input:over", "in.bin", "text/plain", sixMiB()),
+    ).rejects.toThrow("Task input files exceed the 100 MiB total limit.");
+    expect(
+      (
+        await db.a2ATaskFile.findUniqueOrThrow({
+          where: {
+            taskId_sourceKey: { taskId: t.id, sourceKey: "input:over" },
+          },
+        })
+      ).errorCode,
+    ).toBe("TASK_INPUT_BYTES_EXCEEDED");
+    for (const key of ["artifact:a:0", "artifact:a:1"])
+      expect(
+        (await storeTaskFile(t.id, key, "out.bin", "text/plain", sixMiB()))
+          .size,
+      ).toBe(6 * 1024 ** 2);
+    await expect(
+      storeTaskFile(
+        t.id,
+        "artifact:big:0",
+        "big.bin",
+        "text/plain",
+        new Blob([new Uint8Array(DEFAULT_A2A_FILE_BYTES + 1)]).stream(),
+      ),
+    ).rejects.toThrow("File exceeds the 10 MiB per-file limit.");
+  });
+
+  it("applies administrator task input and file count limits", async () => {
+    const t = await task();
+    await seed(t.id, 9, DEFAULT_A2A_FILE_BYTES);
+    await seed(t.id, 1, 5 * 1024 ** 2);
+    await db.systemSetting.create({
+      data: {
+        key: TRANSPORT_SETTINGS_KEY,
+        value: JSON.stringify({
+          ...DEFAULT_TRANSPORT_POLICY,
+          a2aTaskInputBytes: 200 * 1024 ** 2,
+          a2aTaskFiles: 11,
+        }),
+      },
+    });
+    const sixMiB = () => new Blob([new Uint8Array(6 * 1024 ** 2)]).stream();
+    expect(
+      (
+        await storeTaskFile(
+          t.id,
+          "input:more",
+          "in.bin",
+          "text/plain",
+          sixMiB(),
+        )
+      ).size,
+    ).toBe(6 * 1024 ** 2);
+    await expect(
+      storeTaskFile(t.id, "artifact:a:0", "out.bin", "text/plain", body()),
+    ).rejects.toThrow("Task files exceed the 11-file limit.");
   });
 
   it("binds capabilities to signature, expiry and live revocation without execution lease", async () => {

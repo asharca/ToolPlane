@@ -125,6 +125,8 @@
 
 ### TP-L009：运行失败要带原因，零权限授权不能进入执行
 
+**已提升规范**：[AGENTS.md 代码地图](AGENTS.md#code-and-documentation-map)。
+
 **规则**：运行时失败不能只留一个通用错误码；能定位到具体资源时，错误要写明哪个资源、因为哪条固定拒绝码失败，控制台翻译成可操作的提示。不授予任何工具的 MCP 授权不进入会话；MCP 绑定默认开放全部工具，避免出现“已绑定却没有工具”的状态。
 
 - **错误与原因**：智能体在设置里绑定 MCP 后没有开放任何工具，修订中的授权为空；会话启动时 Pi MCP 扩展列工具被拒（`MCP_TOOL_FORBIDDEN`，403），整个会话中止，控制台只显示 `PI_SDK_REQUEST_FAILED` 对应的“Pi SDK 执行失败”，要查容器和数据库才能定位。
@@ -132,7 +134,8 @@
 - **证据**：[会话 MCP 过滤](src/lib/agents/pi-session-packages.ts)、[扩展与宿主事件](src/lib/agents/sandbox-runtime.ts)、[运行时路由](src/app/api/v1/agent-runtime/mcp/[deploymentId]/rpc/route.ts)、[错误文案](src/components/dashboard/useRuntimeErrorText.ts)。
 - **2026-11-05 复发（用户要求提示更清晰）**：宿主已产生已翻译的 `PI_SDK_MODEL_FAILED`，但 worker 的错误码白名单把它压成 `PI_EXECUTION_FAILED`，`agentEntryResult` 再改写成 `Agent execution did not complete (4)`；`PI_MCP_TOOLS_UNAVAILABLE` 同样被吞。首次修复后真实 Work 仍缺原因：常驻 broker `native-runtime-session.mjs` 会重新序列化宿主响应并丢掉新字段，而直连宿主的测试绕过了它。现由 [`runtime-failure.ts`](src/lib/agents/runtime-failure.ts) 统一“错误码＋白名单原因”（`HTTP_nnn`／`UNREACHABLE`／`TIMEOUT`），broker 源码纳入常驻会话签名。下次改宿主协议字段，须经真实 broker 回归（[`native-runtime-session.test.ts`](tests/integration/native-runtime-session.test.ts)，修复前失败）并在真实 Work 页面核对文案，不能只测宿主进程。
 - **任务时限补充（2026-11-05，用户反馈线上频繁超时）**：指定任务从提交到过期一直为 `SUBMITTED`，没有执行或沙箱绑定证据，却只显示 `Task deadline exceeded.`；其他执行中到期又可能被通用 `PI_EXECUTION_FAILED` 覆盖。任务总时限包含排队、准备和执行，必须按最后已记录阶段说明，不能把它直接解释为供应商单次请求或工具自身超时。阶段投影与 UI、终态共用任务锁，保留租约校验和显式取消优先级；列表只投影固定错误码，不带正文。修复前两项真实数据库回归分别缺码、返回泛化错误；修复后相关 131 项通过。独立数据库 HTTP 烟测覆盖排队、准备、等待模型、生成、工具五阶段的持久化和日志列表／详情，并验证未授权返回 401；实际组件在中英文、390px 和桌面浏览器核对文案。下次同时验证阶段不会被 UI 更新、过期或旧租约回调覆盖；旧记录无证据时只说明阶段未知，不推断根因。
-- **确认日期**：2026-10-31（用户报告）；2026-11-05（用户报告）。
+- **A2A 文件上限补充（2026-11-10，用户报告远端测试）**：外部平台单件 512 MiB 的文件发给 ToolPlane 时，超限输入在 `receiveTransfers` 被统一记成 `FILE_DOWNLOAD_FAILED`，任务停在 `SUBMITTED`／`file-transfer-failed` 等待重试或截止；超限输出在存储层被包装成通用错误，经运行时工具返回 `Agent runtime tool operation failed.`。任务 100 MiB 合计还把发布的输出计入。现由 [`file-limits.ts`](src/lib/a2a/file-limits.ts) 给出固定原因码与文案（`UnsupportedOperationError` 的 metadata，不派生子类，见 TP-L022），只统计 `input:` 来源的任务合计；输入超限直接失败任务并写入 `toolplaneFileDelivery.reason`。下次改文件链路时，经存储层包装后核对原因仍在（[`a2a-files.test.ts`](tests/integration/a2a-files.test.ts)），并验证输入超限任务终止（[`a2a-remote.test.ts`](tests/integration/a2a-remote.test.ts)）。
+- **确认日期**：2026-10-31（用户报告）；2026-11-05（用户报告）；2026-11-10（用户报告）。
 
 ### TP-L010：工具失败是工具结果，不是整轮失败
 

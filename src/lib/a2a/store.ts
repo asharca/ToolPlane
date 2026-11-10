@@ -78,6 +78,7 @@ import {
 import { logHealth, recordEvent } from "@/lib/observability/events";
 import { isEntryRootGrant } from "@/lib/observability/views/task-origin";
 import { prepareTaskFileParts, retryTaskFileTransfers } from "./task-files";
+import { TASK_INPUT_SOURCE_PREFIX } from "./file-limits";
 
 import { assertCollaborationAdmission } from "./collaboration-policy";
 type Tx = Prisma.TransactionClient;
@@ -606,7 +607,7 @@ export async function submitTaskInTransaction(
     id,
     grant.workspaceId,
     accepted.parts,
-    `input:${digest(message.messageId)}`,
+    `${TASK_INPUT_SOURCE_PREFIX}${digest(message.messageId)}`,
     context.expiresAt,
     isWorkspaceGrant(grant) ? (grant.parentTaskId ?? id) : id,
     deferredFiles,

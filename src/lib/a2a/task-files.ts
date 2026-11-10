@@ -2,7 +2,7 @@ import "server-only";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { permitsTransportProtocol } from "@/lib/transport-policy";
 import { createHash, randomUUID } from "node:crypto";
-import { Part, Task, type TaskState } from "@a2a-js/sdk";
+import { Part, Task, TaskState } from "@a2a-js/sdk";
 import type { A2ATask, Prisma } from "@prisma/client";
 import {
   RequestMalformedError,
@@ -34,6 +34,7 @@ import {
   copyAdmittedTaskFile,
   storeAdmittedTaskFile,
 } from "./files";
+import { taskFileLimit, taskFileLimitError } from "./file-limits";
 import { fetchRemoteFile } from "./remote-network";
 import { refreshRemoteTaskFileSources } from "./remote-executor";
 import { wakeAgentWorker } from "@/lib/agents/execution/worker";
@@ -162,8 +163,8 @@ export async function prepareTaskFileParts(
       );
       continue;
     }
-    if (!previous && ++count > 20)
-      throw new UnsupportedOperationError("Task file count limit exceeded.");
+    if (!previous && ++count > policy.a2aTaskFiles)
+      throw taskFileLimitError("TASK_FILE_COUNT_EXCEEDED", policy.a2aTaskFiles);
     const sourceEnvelope = encryptSecretText(
       JSON.stringify({ taskId, sourceKey, source }),
     );
@@ -235,6 +236,7 @@ async function receiveTransfers(
     where: { taskId, status: { not: "ready" } },
     orderBy: { createdAt: "asc" },
   });
+  let limitFailure: { reason: string; message: string } | undefined;
   for (const file of files) {
     try {
       abort.throwIfAborted();
@@ -302,12 +304,16 @@ async function receiveTransfers(
             abort,
           );
       }
-    } catch {
-      // Fixed diagnostic only: exception strings and URLs may contain signed capabilities.
+    } catch (error) {
+      // Fixed diagnostics only: exception strings and URLs may contain signed capabilities.
+      const reason = taskFileLimit(error);
+      if (reason && !limitFailure)
+        limitFailure = { reason, message: (error as Error).message };
       await db.a2ATaskFile.updateMany({
         where: { id: file.id, status: { in: ["pending", "failed"] } },
-        data: { status: "failed", errorCode: "FILE_DOWNLOAD_FAILED" },
+        data: { status: "failed", errorCode: reason ?? "FILE_DOWNLOAD_FAILED" },
       });
+      if (reason && !output) break;
     }
   }
   let completed: A2ATask | undefined;
@@ -327,9 +333,19 @@ async function receiveTransfers(
       ...task.metadata,
       toolplaneFileDelivery: {
         state: pending ? "failed" : "ready",
+        ...(pending && limitFailure ? { reason: limitFailure.reason } : {}),
         ...(output ? { remoteState: current.remoteObservedState } : {}),
       },
     };
+    if (pending && !output && limitFailure) {
+      // Retrying cannot satisfy a size or count limit; end the input stage now.
+      transition(task, TaskState.TASK_STATE_FAILED, limitFailure.message);
+      completed = await persist(tx, current, task, taskEvent(task), {
+        remoteFilesStatus: "failed",
+        leaseToken: null,
+      });
+      return false;
+    }
     if (pending) {
       await persist(tx, current, task, taskEvent(task), {
         remoteFilesStatus: "failed",

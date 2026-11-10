@@ -10,23 +10,33 @@ import { Switch } from "@/components/motion/switch";
 import type { AdminSettingsActionState } from "@/lib/admin/settings-actions";
 import { updateTransportSettingsAction } from "@/lib/admin/transport-settings-actions";
 import {
+  A2A_FILE_LIMIT_RANGES,
+  DEFAULT_A2A_FILE_LIMITS,
   DEFAULT_A2A_INLINE_BYTES,
   MAX_A2A_INLINE_BYTES,
   MIN_A2A_INLINE_BYTES,
-  DEFAULT_A2A_FILE_BYTES,
-  MIN_A2A_FILE_BYTES,
-  MAX_A2A_FILE_BYTES,
+  type A2AFileLimits,
 } from "@/lib/transport-policy";
+
+const FILE_LIMIT_FIELDS = [
+  { key: "a2aFileBytes", name: "a2aFileMiB", unit: 1024 ** 2 },
+  { key: "a2aTaskInputBytes", name: "a2aTaskInputMiB", unit: 1024 ** 2 },
+  { key: "a2aTaskFiles", name: "a2aTaskFiles", unit: 1 },
+  {
+    key: "a2aWorkspaceFileBytes",
+    name: "a2aWorkspaceFileGiB",
+    unit: 1024 ** 3,
+  },
+] as const;
 
 export function TransportSettingsForm({
   allowHttp: initialAllowHttp,
   a2aInlineBytes,
-  a2aFileBytes,
   source,
-}: {
+  ...limits
+}: A2AFileLimits & {
   allowHttp: boolean;
   a2aInlineBytes: number;
-  a2aFileBytes: number;
   source: "database" | "default";
 }) {
   const t = useTranslations("admin");
@@ -100,30 +110,35 @@ export function TransportSettingsForm({
             })}
           </p>
         </div>
-        <div className="space-y-1.5">
-          <label htmlFor="a2a-file-mib" className="block text-sm font-medium">
-            {t("a2aFileMiB")}
-          </label>
-          <Input
-            id="a2a-file-mib"
-            name="a2aFileMiB"
-            type="number"
-            min={MIN_A2A_FILE_BYTES / 1024 ** 2}
-            max={MAX_A2A_FILE_BYTES / 1024 ** 2}
-            step={1}
-            required
-            defaultValue={String(a2aFileBytes / 1024 ** 2)}
-            disabled={pending}
-            aria-describedby="a2a-file-mib-hint"
-          />
-          <p id="a2a-file-mib-hint" className="text-sm text-muted-foreground">
-            {t("a2aFileMiBHint", {
-              min: MIN_A2A_FILE_BYTES / 1024 ** 2,
-              max: MAX_A2A_FILE_BYTES / 1024 ** 2,
-              default: DEFAULT_A2A_FILE_BYTES / 1024 ** 2,
-            })}
-          </p>
-        </div>
+        {FILE_LIMIT_FIELDS.map(({ key, name, unit }) => {
+          const [min, max] = A2A_FILE_LIMIT_RANGES[key];
+          return (
+            <div key={key} className="space-y-1.5">
+              <label htmlFor={name} className="block text-sm font-medium">
+                {t(name)}
+              </label>
+              <Input
+                id={name}
+                name={name}
+                type="number"
+                min={min / unit}
+                max={max / unit}
+                step={1}
+                required
+                defaultValue={String(limits[key] / unit)}
+                disabled={pending}
+                aria-describedby={`${name}-hint`}
+              />
+              <p id={`${name}-hint`} className="text-sm text-muted-foreground">
+                {t(`${name}Hint`, {
+                  min: min / unit,
+                  max: max / unit,
+                  default: DEFAULT_A2A_FILE_LIMITS[key] / unit,
+                })}
+              </p>
+            </div>
+          );
+        })}
         <p className="text-sm text-muted-foreground">
           {t("transportSettingsSafety")}
         </p>

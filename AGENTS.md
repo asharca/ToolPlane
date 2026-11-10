@@ -172,6 +172,8 @@ confirmation recovery and subscription lifecycles remain separate.
 A tool error the model can read (non-zero exit, MCP error result) is a failed tool
 result, never a failed turn: it must not fail the run, its persisted status, or the
 process summary, and a failed turn still saves its session history.
+Failures reaching users, peers, or models carry a fixed, allowlisted reason code and
+safe text; never collapse them into a generic error or forward raw exception strings.
 Trust current code over stale architecture descriptions.
 Runtime mutations require the single-owner guard; read [runtime operations](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS)
 for upgrade/recovery and `src/lib/runtime/` before adding external operations.

@@ -27,6 +27,7 @@ import {
   type A2ALogMetadata,
 } from "@/lib/observability/a2a-log";
 import type { LogOutcome } from "@/lib/observability/events";
+import { taskFileLimitError } from "./file-limits";
 
 export const REMOTE_RESPONSE_BYTES = 524_288;
 export const REMOTE_REQUEST_BYTES = 262_144;
@@ -510,34 +511,41 @@ export async function fetchRemoteFile(
         headers: { accept: "*/*", "accept-encoding": "identity" },
       },
       (res) => {
-        if (
-          (res.statusCode ?? 0) !== 200 ||
-          (res.headers["content-encoding"] &&
-            res.headers["content-encoding"] !== "identity") ||
-          Number(res.headers["content-length"]) > policy.a2aFileBytes
-        ) {
+        const refuse = (error: Error) => {
           res.destroy();
           req.destroy();
           release();
-          reject(new RemoteA2AError("File download was rejected."));
+          reject(error);
+        };
+        if (
+          (res.statusCode ?? 0) !== 200 ||
+          (res.headers["content-encoding"] &&
+            res.headers["content-encoding"] !== "identity")
+        ) {
+          refuse(new RemoteA2AError("File download was rejected."));
+          return;
+        }
+        if (Number(res.headers["content-length"]) > policy.a2aFileBytes) {
+          refuse(taskFileLimitError("FILE_TOO_LARGE", policy.a2aFileBytes));
           return;
         }
         let bytes = 0;
         let ended = false;
         const body = new ReadableStream<Uint8Array>({
           start(controller) {
-            const fail = () => {
+            const end = (error: Error) => {
               if (!ended) {
                 ended = true;
                 release();
-                controller.error(new RemoteA2AError("File download failed."));
+                controller.error(error);
               }
             };
+            const fail = () => end(new RemoteA2AError("File download failed."));
             res.on("data", (chunk: Buffer) => {
               if (ended) return;
               bytes += chunk.byteLength;
               if (bytes > policy.a2aFileBytes) {
-                fail();
+                end(taskFileLimitError("FILE_TOO_LARGE", policy.a2aFileBytes));
                 res.destroy();
                 req.destroy();
                 return;
