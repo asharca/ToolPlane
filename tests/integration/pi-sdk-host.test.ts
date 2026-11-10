@@ -41,6 +41,7 @@ import {
 } from "@/lib/agents/execution/live-output";
 import { executionOutputResponse } from "@/lib/agents/execution/live-output-stream";
 
+const RESULT_FILE_BYTES = 10 * 1024 * 1024;
 type SdkState = {
   sessionId: string;
   sessionFile: string;
@@ -1132,12 +1133,15 @@ describe("official Pi SDK headless session host", () => {
       {
         ...f.context,
         mcpConfig: JSON.parse(
-          buildPiMcpConfig([
-            {
-              deploymentId: "toolplane-runtime",
-              url: f.config.model.baseUrl.replace("/v1", "/mcp"),
-            },
-          ]),
+          buildPiMcpConfig(
+            [
+              {
+                deploymentId: "toolplane-runtime",
+                url: f.config.model.baseUrl.replace("/v1", "/mcp"),
+              },
+            ],
+            RESULT_FILE_BYTES,
+          ),
         ),
       },
     );
@@ -1167,7 +1171,7 @@ describe("official Pi SDK headless session host", () => {
     };
     const context = {
       ...f.context,
-      mcpConfig: JSON.parse(buildPiMcpConfig([server])),
+      mcpConfig: JSON.parse(buildPiMcpConfig([server], RESULT_FILE_BYTES)),
     };
     f.behavior.tool = nativePiMcpToolName(0, 0, "current_mcp");
     const host = await f.launch();
@@ -1233,7 +1237,7 @@ describe("official Pi SDK headless session host", () => {
     const first = {
       ...f.context,
       runtimeToken: "test-runtime-first",
-      mcpConfig: JSON.parse(buildPiMcpConfig([server])),
+      mcpConfig: JSON.parse(buildPiMcpConfig([server], RESULT_FILE_BYTES)),
       model: f.config.model,
     };
     expect((await host.request("prompt", "Call MCP", first)).success).toBe(
@@ -1244,7 +1248,10 @@ describe("official Pi SDK headless session host", () => {
       ...first,
       runtimeToken: "test-runtime-replacement",
       mcpConfig: JSON.parse(
-        buildPiMcpConfig([{ ...server, url: `${server.url}-next` }]),
+        buildPiMcpConfig(
+          [{ ...server, url: `${server.url}-next` }],
+          RESULT_FILE_BYTES,
+        ),
       ),
     };
     expect((await host.request("prompt", "Continue", second)).success).toBe(

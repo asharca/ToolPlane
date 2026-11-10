@@ -17,10 +17,11 @@ import { Readable, Writable } from "node:stream";
 import {
   readWorkspaceFile,
   writeWorkspaceFile,
-  MAX_FILE_BYTES,
 } from "../../scripts/a2a-sandbox-files.mjs";
 import { afterEach, describe, expect, it } from "vitest";
 
+const MiB = 1024 * 1024;
+const limit = { maxBytes: MiB };
 const roots: string[] = [];
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), "a2a-file-safety-"));
@@ -50,11 +51,15 @@ async function runCli(
   input = Buffer.alloc(0),
   sha256 = "",
 ) {
-  const child = spawn(process.execPath, [script, action, path, sha256], {
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 5000,
-    killSignal: "SIGKILL",
-  });
+  const child = spawn(
+    process.execPath,
+    [script, action, path, String(MiB), sha256],
+    {
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5000,
+      killSignal: "SIGKILL",
+    },
+  );
   const stdout: Buffer[] = [],
     stderr: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -145,11 +150,11 @@ describe("sandbox file descriptor traversal and bounded atomic writes", () => {
       workspace,
       path,
       Readable.from([bytes]),
-      sha256,
+      { ...limit, expectedHash: sha256 },
     );
     expect(stored).toMatchObject({ path, size: bytes.length, sha256 });
     const { chunks, output } = sink();
-    await readWorkspaceFile(workspace, path, output);
+    await readWorkspaceFile(workspace, path, output, limit);
     expect(Buffer.concat(chunks)).toEqual(bytes);
   });
 
@@ -161,10 +166,10 @@ describe("sandbox file descriptor traversal and bounded atomic writes", () => {
   ])("rejects unauthorized path %j", async (path) => {
     const { workspace } = await setup();
     await expect(
-      writeWorkspaceFile(workspace, path, Readable.from(["no"])),
+      writeWorkspaceFile(workspace, path, Readable.from(["no"]), limit),
     ).rejects.toThrow();
     await expect(
-      readWorkspaceFile(workspace, path, sink().output),
+      readWorkspaceFile(workspace, path, sink().output, limit),
     ).rejects.toThrow();
   });
 
@@ -177,10 +182,15 @@ describe("sandbox file descriptor traversal and bounded atomic writes", () => {
     await link(secret, join(workspace, "secret-hardlink"));
     for (const path of ["escape/secret", "secret-link", "secret-hardlink"])
       await expect(
-        readWorkspaceFile(workspace, path, sink().output),
+        readWorkspaceFile(workspace, path, sink().output, limit),
       ).rejects.toThrow();
     await expect(
-      writeWorkspaceFile(workspace, "escape/overwrite", Readable.from(["no"])),
+      writeWorkspaceFile(
+        workspace,
+        "escape/overwrite",
+        Readable.from(["no"]),
+        limit,
+      ),
     ).rejects.toThrow();
     expect(await readdir(outside)).toEqual(["secret"]);
     expect(await readFile(secret, "utf8")).toBe("private");
@@ -192,7 +202,7 @@ describe("sandbox file descriptor traversal and bounded atomic writes", () => {
     await writeFile(secret, "private");
     const path = join(workspace, "destination");
     await symlink(secret, path);
-    await writeWorkspaceFile(workspace, path, Readable.from(["public"]));
+    await writeWorkspaceFile(workspace, path, Readable.from(["public"]), limit);
     expect(await readFile(path, "utf8")).toBe("public");
     expect(await readFile(secret, "utf8")).toBe("private");
   });
@@ -202,28 +212,47 @@ describe("sandbox file descriptor traversal and bounded atomic writes", () => {
     const path = join(workspace, "result");
     await writeFile(path, "previous");
     await expect(
-      writeWorkspaceFile(
-        workspace,
-        path,
-        Readable.from(["changed"]),
-        "0".repeat(64),
-      ),
+      writeWorkspaceFile(workspace, path, Readable.from(["changed"]), {
+        ...limit,
+        expectedHash: "0".repeat(64),
+      }),
     ).rejects.toThrow("checksum");
     await expect(
       writeWorkspaceFile(
         workspace,
         path,
-        Readable.from([Buffer.alloc(MAX_FILE_BYTES + 1)]),
+        Readable.from([Buffer.alloc(MiB + 1)]),
+        limit,
       ),
-    ).rejects.toThrow("10 MiB");
+    ).rejects.toThrow("1 MiB file limit");
     async function* broken() {
       yield Buffer.from("partial");
       throw new Error("source interrupted");
     }
     await expect(
-      writeWorkspaceFile(workspace, path, Readable.from(broken())),
+      writeWorkspaceFile(workspace, path, Readable.from(broken()), limit),
     ).rejects.toThrow("source interrupted");
     expect(await readFile(path, "utf8")).toBe("previous");
     expect(await readdir(workspace)).toEqual(["result"]);
+  });
+
+  it("enforces the caller's limit for reads and writes, not a fixed 10 MiB", async () => {
+    const { workspace } = await setup();
+    const path = join(workspace, "large.pdf");
+    const bytes = Buffer.alloc(10 * MiB + 1, 7);
+    const maxBytes = { maxBytes: bytes.length };
+    await writeWorkspaceFile(workspace, path, Readable.from([bytes]), maxBytes);
+    const { chunks, output } = sink();
+    await readWorkspaceFile(workspace, path, output, maxBytes);
+    // Deep equality over 10 MiB is pathologically slow; compare bytes natively.
+    expect(Buffer.concat(chunks).equals(bytes)).toBe(true);
+    await expect(
+      readWorkspaceFile(workspace, path, sink().output, {
+        maxBytes: bytes.length - 1,
+      }),
+    ).rejects.toThrow("file limit");
+    await expect(
+      writeWorkspaceFile(workspace, path, Readable.from(["x"]), {}),
+    ).rejects.toThrow("Invalid sandbox file size limit");
   });
 });

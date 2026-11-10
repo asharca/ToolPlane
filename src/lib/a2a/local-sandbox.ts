@@ -27,6 +27,7 @@ import {
 } from "@/lib/agents/conversation-sandbox";
 import { assertLiveGrant, isLocalGrant, type TaskGrant } from "./principal";
 import { settled } from "./model";
+import { getTransportSettings } from "@/lib/admin/transport-settings";
 export class SandboxFileStagingError extends Error {
   readonly code = "A2A_SANDBOX_FILE_STAGING_FAILED";
   constructor(cause: unknown) {
@@ -112,6 +113,7 @@ async function fileProcess(
   row: A2ATask,
   action: "read" | "write",
   path: string,
+  maxBytes: number,
   signal?: AbortSignal,
   hash?: string,
 ) {
@@ -126,10 +128,11 @@ async function fileProcess(
     `${process.cwd()}/scripts/a2a-sandbox-files.mjs`,
     "utf8",
   );
+  const root = JSON.stringify(mapping.workspaceRoot);
   const command =
     action === "read"
-      ? `\nawait readWorkspaceFile(${JSON.stringify(mapping.workspaceRoot)}, process.argv[1], process.stdout);`
-      : `\nawait writeWorkspaceFile(${JSON.stringify(mapping.workspaceRoot)}, process.argv[1], process.stdin, process.argv[2]);`;
+      ? `\nawait readWorkspaceFile(${root}, process.argv[1], process.stdout, { maxBytes: ${maxBytes} });`
+      : `\nawait writeWorkspaceFile(${root}, process.argv[1], process.stdin, { maxBytes: ${maxBytes}, expectedHash: process.argv[2] });`;
   const child = spawn(
     "docker",
     [
@@ -175,7 +178,9 @@ export async function storeSandboxTaskFile(
   signal?: AbortSignal,
 ) {
   return trackRuntimeOperation(async () => {
-    const transfer = await fileProcess(row, "read", path, signal);
+    // Sandbox output becomes new task storage: the current administrator limit applies.
+    const { a2aFileBytes } = await getTransportSettings();
+    const transfer = await fileProcess(row, "read", path, a2aFileBytes, signal);
     transfer.child.stdin.end();
     async function* bytes() {
       for await (const chunk of transfer.child.stdout) yield chunk as Buffer;
@@ -251,10 +256,13 @@ export async function stageLocalTaskFiles(
     const path = `${mapping.workspaceRoot}/.a2a-files/${row.id}/${file.id}-${file.filename}`;
     await trackRuntimeOperation(async () => {
       const { body } = await openTaskFile(row.id, file.id);
+      // Already-stored files are bound by their verified size and hash, so a
+      // later lower administrator limit never strands an accepted file.
       const transfer = await fileProcess(
         row,
         "write",
         path,
+        file.size,
         signal,
         file.sha256,
       );
