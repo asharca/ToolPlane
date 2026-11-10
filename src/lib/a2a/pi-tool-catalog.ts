@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { A2A_LIMITS } from "./model";
+import { MAX_A2A_TASK_FILES } from "@/lib/transport-policy";
 
 import { LocalFileInput } from "@/lib/agents/execution/tool-inputs";
 
@@ -17,7 +18,7 @@ export const PiCommunicationInputs = {
       target: Target,
       message: z.string().min(1).max(A2A_LIMITS.inputCharacters),
       messageId: Id,
-      files: z.array(LocalFileInput).max(20).optional(),
+      files: z.array(LocalFileInput).max(MAX_A2A_TASK_FILES).optional(),
       wait: z.boolean().optional(),
     })
     .strict(),
@@ -39,7 +40,7 @@ export const piCommunicationCatalog = [
   {
     name: "pi_a2a_submit",
     description:
-      "Delegate one idempotent request and, by default, wait up to 4.5 minutes for the child's result; returns taskId with the child task and received files, or pending:true if it is still running (then use pi_a2a_status). Set wait:false to start several children before collecting their results with pi_a2a_status. Attach real sandbox files with files:[{path}] or task-owned files:[{fileId}] (20 files, 100 MiB per task); the receiver gets its own copy, never a shared path.",
+      "Delegate one idempotent request and, by default, wait up to 4.5 minutes for the child's result; returns taskId with the child task and received files, or pending:true if it is still running (then use pi_a2a_status). Set wait:false to start several children before collecting their results with pi_a2a_status. Attach real sandbox files with files:[{path}] or task-owned files:[{fileId}] (administrator-configured per child task, default 20 files and 100 MiB of input); the receiver gets its own copy, never a shared path.",
     schema: PiCommunicationInputs.submit,
   },
   {

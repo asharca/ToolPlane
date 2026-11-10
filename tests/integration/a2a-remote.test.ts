@@ -41,6 +41,8 @@ import {
 import { retryTaskFileReception } from "@/lib/a2a/store";
 import { stageTaskFileTransfers } from "@/lib/a2a/task-files";
 import { listTaskFiles, openTaskFile } from "@/lib/a2a/files";
+import { taskFileLimitError } from "@/lib/a2a/file-limits";
+import { DEFAULT_A2A_FILE_BYTES } from "@/lib/transport-policy";
 import {
   requestLocalWait,
   reconcileLocalWaits,
@@ -405,6 +407,49 @@ describe("registered remote Agents in the native task core", () => {
     expect((await submitTask(grant, request)).id).toBe(row.id);
     expect(await claimTask(row.id)).not.toBeNull();
     expect(network.rpc).not.toHaveBeenCalled();
+  });
+  it("fails the task with the specific reason when an input file exceeds a limit", async () => {
+    const row = await submitTask(
+      grant,
+      SendMessageRequest.fromJSON({
+        message: {
+          messageId: randomUUID(),
+          role: "ROLE_USER",
+          parts: [
+            {
+              url: "https://files.example/large.bin",
+              filename: "large.bin",
+              mediaType: "application/octet-stream",
+            },
+          ],
+        },
+        configuration: { returnImmediately: true },
+      }),
+    );
+    network.files.mockRejectedValueOnce(
+      taskFileLimitError("FILE_TOO_LARGE", DEFAULT_A2A_FILE_BYTES),
+    );
+    expect(await stageTaskFileTransfers(row.id)).toBe(false);
+    const failed = await db.a2ATask.findUniqueOrThrow({
+      where: { id: row.id },
+    });
+    expect(failed).toMatchObject({
+      state: TaskState.TASK_STATE_FAILED,
+      phase: "done",
+    });
+    const task = Task.fromJSON(failed.snapshot);
+    expect(task.status?.message?.parts[0]?.content).toMatchObject({
+      value: "File exceeds the 10 MiB per-file limit.",
+    });
+    expect(task.metadata?.toolplaneFileDelivery).toMatchObject({
+      state: "failed",
+      reason: "FILE_TOO_LARGE",
+    });
+    expect(
+      (await db.a2ATaskFile.findFirstOrThrow({ where: { taskId: row.id } }))
+        .errorCode,
+    ).toBe("FILE_TOO_LARGE");
+    expect(await claimTask(row.id)).toBeNull();
   });
   it("refuses unsupported file input or output MIME requirements before dispatch to a text-only peer", async () => {
     const parent = await root();

@@ -29,7 +29,7 @@ export const A2A_FILE_DELIVERY_EXTENSION = {
       effect: "Retry failed file reception only; never replay SendMessage.",
     },
     metadata:
-      "toolplaneFileDelivery: {state: pending|failed|ready, remoteState?: TaskState number}",
+      "toolplaneFileDelivery: {state: pending|failed|ready, reason?: FILE_TOO_LARGE|TASK_INPUT_BYTES_EXCEEDED|TASK_FILE_COUNT_EXCEEDED|WORKSPACE_FILE_BYTES_EXCEEDED, remoteState?: TaskState number}",
   },
 };
 export const LOCAL_OUTPUT_MODES = [

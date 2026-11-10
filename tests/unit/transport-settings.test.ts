@@ -34,6 +34,9 @@ function form(allowHttp = "true", limit = "512", intent = "save") {
   data.set("a2aInlineKiB", limit);
   data.set("intent", intent);
   data.set("a2aFileMiB", "10");
+  data.set("a2aTaskInputMiB", "100");
+  data.set("a2aTaskFiles", "20");
+  data.set("a2aWorkspaceFileGiB", "1");
   return data;
 }
 
@@ -75,17 +78,42 @@ describe("administrator transport security boundaries", () => {
       expect(state.save).not.toHaveBeenCalled();
     },
   );
-  it.each(["0", "101", "1.5", "1e2", "", "Infinity"])(
-    "rejects an invalid file limit without changing settings (%s)",
-    async (value) => {
+  it.each([
+    ...["0", "101", "1.5", "1e2", "", "Infinity"].map((value) => [
+      "a2aFileMiB",
+      value,
+    ]),
+    ["a2aTaskInputMiB", "0"],
+    ["a2aTaskInputMiB", "10241"],
+    ["a2aTaskFiles", "0"],
+    ["a2aTaskFiles", "101"],
+    ["a2aWorkspaceFileGiB", "0"],
+    ["a2aWorkspaceFileGiB", "1025"],
+  ])(
+    "rejects an invalid file limit without changing settings (%s=%s)",
+    async (field, value) => {
       const data = form();
-      data.set("a2aFileMiB", value);
+      data.set(field, value);
       expect(await updateTransportSettingsAction({}, data)).toHaveProperty(
         "error",
       );
       expect(state.save).not.toHaveBeenCalled();
     },
   );
+
+  it("saves administrator file limits in bytes", async () => {
+    const data = form();
+    data.set("a2aTaskInputMiB", "512");
+    data.set("a2aTaskFiles", "50");
+    data.set("a2aWorkspaceFileGiB", "8");
+    expect(await updateTransportSettingsAction({}, data)).toEqual({ ok: true });
+    expect(JSON.parse(state.save.mock.calls[0][1])).toMatchObject({
+      a2aFileBytes: 10 * 1024 ** 2,
+      a2aTaskInputBytes: 512 * 1024 ** 2,
+      a2aTaskFiles: 50,
+      a2aWorkspaceFileBytes: 8 * 1024 ** 3,
+    });
+  });
 
   it("keeps existing HTTP and inline settings when upgrading a policy without a file limit", async () => {
     state.findUnique.mockResolvedValue({
@@ -95,6 +123,9 @@ describe("administrator transport security boundaries", () => {
       allowHttp: true,
       a2aInlineBytes: 524288,
       a2aFileBytes: 10 * 1024 * 1024,
+      a2aTaskInputBytes: 100 * 1024 * 1024,
+      a2aTaskFiles: 20,
+      a2aWorkspaceFileBytes: 1024 * 1024 * 1024,
       source: "database",
     });
   });
@@ -123,6 +154,8 @@ describe("administrator transport security boundaries", () => {
     '{"allowHttp":true,"a2aInlineBytes":10485761}',
     '{"allowHttp":true,"a2aInlineBytes":32768,"a2aFileBytes":104857601}',
     '{"allowHttp":true,"a2aInlineBytes":32768,"a2aFileBytes":"26214400"}',
+    '{"allowHttp":true,"a2aInlineBytes":32768,"a2aTaskFiles":0}',
+    '{"allowHttp":true,"a2aInlineBytes":32768,"a2aTaskInputBytes":1.5}',
   ])(
     "never enables plaintext from invalid persisted policy (%s)",
     async (value) => {

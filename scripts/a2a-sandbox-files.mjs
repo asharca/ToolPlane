@@ -13,8 +13,14 @@ function fileLimit(maxBytes) {
   return maxBytes;
 }
 
+// EFBIG lets the host report the size limit without parsing stderr.
 function exceeds(maxBytes) {
-  return `File exceeds the ${Number((maxBytes / 1024 ** 2).toFixed(2))} MiB file limit.`;
+  return Object.assign(
+    new Error(
+      `File exceeds the ${Number((maxBytes / 1024 ** 2).toFixed(2))} MiB file limit.`,
+    ),
+    { code: "EFBIG" },
+  );
 }
 
 // Pin each directory inode, never resolve a model-controlled symlink. Linux's
@@ -85,14 +91,14 @@ export async function readWorkspaceFile(
       throw new Error(
         "Only regular, single-linked workspace files can be shared.",
       );
-    if (info.size > limit) throw new Error(exceeds(limit));
+    if (info.size > limit) throw exceeds(limit);
     let bytes = 0;
     await pipeline(
       file.createReadStream({ autoClose: true }),
       new Transform({
         transform(chunk, _encoding, callback) {
           bytes += chunk.length;
-          callback(bytes > limit ? new Error(exceeds(limit)) : null, chunk);
+          callback(bytes > limit ? exceeds(limit) : null, chunk);
         },
       }),
       destination,
@@ -134,7 +140,7 @@ export async function writeWorkspaceFile(
         write(chunk, _encoding, callback) {
           bytes += chunk.length;
           if (bytes > limit) {
-            callback(new Error(exceeds(limit)));
+            callback(exceeds(limit));
             return;
           }
           hash.update(chunk);
@@ -163,6 +169,12 @@ export async function writeWorkspaceFile(
   }
 }
 
+/** Exit status 27 (EFBIG) marks a size limit; other failures exit 1. */
+export function reportFailure(error) {
+  process.stderr.write(`${error?.message ?? error}\n`);
+  process.exitCode = error?.code === "EFBIG" ? 27 : 1;
+}
+
 if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
@@ -179,7 +191,6 @@ if (
       });
     else throw new Error("Invalid file operation.");
   } catch (error) {
-    process.stderr.write(`${error.message}\n`);
-    process.exitCode = 1;
+    reportFailure(error);
   }
 }

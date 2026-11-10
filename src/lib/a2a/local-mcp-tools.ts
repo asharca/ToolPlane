@@ -1,5 +1,6 @@
 import "server-only";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
+import { MAX_A2A_TASK_FILES } from "@/lib/transport-policy";
 import { z } from "zod";
 import { SendMessageRequest, Task, Part, Role } from "@a2a-js/sdk";
 import { db } from "@/lib/db";
@@ -30,7 +31,8 @@ import { stageLocalTaskFiles, storeSandboxTaskFile } from "./local-sandbox";
 
 const Id = z.string().min(1).max(200);
 const Empty = z.object({}).strict();
-const Files = z.array(LocalFileInput).max(20).optional();
+// The configured per-task count is enforced at admission; the schema only bounds the range.
+const Files = z.array(LocalFileInput).max(MAX_A2A_TASK_FILES).optional();
 const Send = z
   .object({
     agentId: Id,

@@ -1,7 +1,9 @@
 import {
+  DEFAULT_A2A_TASK_FILES,
   DEFAULT_TRANSPORT_POLICY,
   MAX_A2A_INLINE_BYTES,
   permitsTransportProtocol,
+  type A2AFileLimits,
   type TransportPolicy,
 } from "@/lib/transport-policy";
 import { z } from "zod";
@@ -17,6 +19,9 @@ import {
   ExtensionSupportRequiredError,
 } from "@a2a-js/sdk/errors";
 import { SendMessageRequest, Role } from "@a2a-js/sdk";
+
+type SendPolicy = TransportPolicy &
+  Partial<Pick<A2AFileLimits, "a2aTaskFiles">>;
 
 const Id = z.string().min(1).max(200);
 const OptionalId = Id.or(z.literal("")).optional();
@@ -144,7 +149,7 @@ export function validateParams(
   method: string,
   raw: unknown,
   outputModes: readonly string[] = ["text/plain"],
-  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+  policy: SendPolicy = DEFAULT_TRANSPORT_POLICY,
 ) {
   const schema =
     method === "SendMessage" || method === "SendStreamingMessage"
@@ -167,7 +172,7 @@ export function validateParams(
 export function validateSend(
   request: SendMessageRequest,
   outputModes: readonly string[] = ["text/plain"],
-  policy: TransportPolicy = DEFAULT_TRANSPORT_POLICY,
+  policy: SendPolicy = DEFAULT_TRANSPORT_POLICY,
 ) {
   const message = request.message;
   if (
@@ -269,7 +274,7 @@ export function validateSend(
         (part) => part.content?.$case === "text" && part.content.value.trim(),
       )) ||
     characters > A2A_LIMITS.inputCharacters ||
-    files > 20
+    files > (policy.a2aTaskFiles ?? DEFAULT_A2A_TASK_FILES)
   )
     throw new RequestMalformedError(
       "Input is empty or exceeds the service input limit.",

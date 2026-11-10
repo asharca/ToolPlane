@@ -19,6 +19,7 @@ import {
   openTaskFile,
   storeTaskFile,
 } from "./files";
+import { taskFileLimitError } from "./file-limits";
 import { db } from "@/lib/db";
 import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
 import {
@@ -131,8 +132,8 @@ async function fileProcess(
   const root = JSON.stringify(mapping.workspaceRoot);
   const command =
     action === "read"
-      ? `\nawait readWorkspaceFile(${root}, process.argv[1], process.stdout, { maxBytes: ${maxBytes} });`
-      : `\nawait writeWorkspaceFile(${root}, process.argv[1], process.stdin, { maxBytes: ${maxBytes}, expectedHash: process.argv[2] });`;
+      ? `\nawait readWorkspaceFile(${root}, process.argv[1], process.stdout, { maxBytes: ${maxBytes} }).catch(reportFailure);`
+      : `\nawait writeWorkspaceFile(${root}, process.argv[1], process.stdin, { maxBytes: ${maxBytes}, expectedHash: process.argv[2] }).catch(reportFailure);`;
   const child = spawn(
     "docker",
     [
@@ -161,7 +162,11 @@ async function fileProcess(
   child.once("close", (code) =>
     code === 0
       ? resolve()
-      : reject(new Error(detail.trim() || "Sandbox file transfer failed.")),
+      : reject(
+          code === 27 && action === "read"
+            ? taskFileLimitError("FILE_TOO_LARGE", maxBytes)
+            : new Error(detail.trim() || "Sandbox file transfer failed."),
+        ),
   );
   // A producer can fail before a consumer attaches; retain the original rejection.
   void done.catch(() => undefined);
