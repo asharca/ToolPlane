@@ -5,6 +5,7 @@
 // sandbox operations through the in-process connector broker.
 import http from "node:http";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import pty from "node-pty";
@@ -86,6 +87,12 @@ const DOCKER_SANDBOX_CAPS = [
   "SETUID",
   "KILL",
 ];
+// Records rootfs package installs in the volume and replays them into a new
+// container; same contract as syncDockerSandboxEnvironment in src/lib/sandboxes/runtime.ts.
+const ENVIRONMENT_SCRIPT = readFileSync(
+  new URL("./sandbox-environment.sh", import.meta.url),
+  "utf8",
+);
 
 const TOOLS = [
   {
@@ -578,10 +585,45 @@ async function createDockerContainer() {
     );
 }
 
+async function syncDockerEnvironment({ replay }) {
+  const environment = ["sh", "-c", ENVIRONMENT_SCRIPT, "toolplane-env"];
+  const synced = await run(
+    "docker",
+    ["exec", CONTAINER, ...environment, "sync"],
+    {
+      env: dockerEnv(),
+      timeoutMs: 120_000,
+    },
+  );
+  if (synced.exitCode !== 0) {
+    process.stderr.write(
+      `sandbox-mcp-server: environment sync failed: ${synced.stderr.trim() || synced.exitCode}\n`,
+    );
+    return;
+  }
+  if (!replay || !synced.stdout.split("\n").includes("replay")) return;
+  const started = await run(
+    "docker",
+    ["exec", "-d", CONTAINER, ...environment, "replay"],
+    { env: dockerEnv(), timeoutMs: 30_000 },
+  );
+  if (started.exitCode !== 0)
+    process.stderr.write(
+      `sandbox-mcp-server: environment replay failed to start: ${started.stderr.trim() || started.exitCode}\n`,
+    );
+}
+
 async function ensureDockerContainer() {
   const info = await dockerInspectJson();
   if (info) {
     if (!hasExpectedDockerSandboxCaps(info)) {
+      // Capture packages installed in the old rootfs before it is discarded.
+      if (info.State?.Running !== true)
+        await run("docker", ["start", CONTAINER], {
+          env: dockerEnv(),
+          timeoutMs: 30_000,
+        });
+      await syncDockerEnvironment({ replay: false });
       const removed = await run("docker", ["rm", "-f", CONTAINER], {
         env: dockerEnv(),
         timeoutMs: 30_000,
@@ -641,6 +683,7 @@ async function ensureRuntime() {
   if (SSH) return SSH.ready();
   if (KIND === "connector") return;
   await ensureDockerContainer();
+  await syncDockerEnvironment({ replay: true });
 }
 
 function workspacePath(raw) {
