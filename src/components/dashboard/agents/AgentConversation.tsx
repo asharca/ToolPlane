@@ -30,19 +30,13 @@ import {
   ConversationComposer as PromptInput,
   conversationComposerDockClassName,
 } from "@/components/dashboard/ConversationComposer";
-import { StreamingResponse } from "@/components/agents/streaming-response";
-import { ToolResult } from "@/components/agents/tool-result";
 import { createPortal } from "react-dom";
 import {
-  AssistantMarkdown,
-  ConversationActivity,
   ConversationMessageShell,
   conversationUserBubbleClassName,
-  ToolPayload,
-  toolOutputText,
-  toolResultUnboundedHeight,
 } from "@/components/dashboard/ConversationMessage";
 import { ConversationFilePreview } from "@/components/dashboard/ConversationComposer";
+import { ConversationContentBlocks } from "@/components/dashboard/ConversationContentBlocks";
 import { CopyButton } from "@/components/dashboard/CopyButton";
 
 import { AgentPromptProvenance } from "@/components/dashboard/agents/AgentPromptProvenance";
@@ -61,20 +55,10 @@ import {
 import { useTranslations } from "next-intl";
 import { useChat } from "@ai-sdk/react";
 import {
-  AssistantRuntimeProvider,
-  useAui,
-  useAuiState,
-  type AppendMessage,
-  type AssistantRuntime,
-  type AttachmentAdapter,
-  type CompleteAttachment,
-} from "@assistant-ui/react";
-import { useAISDKRuntime } from "@assistant-ui/react-ai-sdk";
-import {
   DefaultChatTransport,
   generateId,
   type CreateUIMessage,
-  type UIMessage,
+  type FileUIPart,
 } from "ai";
 import {
   Bot,
@@ -86,6 +70,7 @@ import {
   Globe2,
   Paperclip,
   SlidersHorizontal,
+  RotateCcw,
   TerminalSquare,
 } from "lucide-react";
 
@@ -105,69 +90,19 @@ import {
   type RuntimeCommand,
 } from "@/lib/agents/runtime-commands";
 import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
-import {
-  SubagentActivity,
-  SubagentActivitySchema,
-  subagentSourceKey,
-} from "./SubagentActivity";
+import { SubagentActivity, SubagentActivitySchema } from "./SubagentActivity";
 import { HookActivity, HookActivitySchema } from "./HookActivity";
 
 const MAX_ATTACHMENTS = 5;
-const ATTACHMENT_ERROR_PART = "data-toolplane-attachment-error";
 
-type AttachmentContentPart = CompleteAttachment["content"][number];
+type DraftAttachment = {
+  id: string;
+  file: File;
+};
 type DraftSnapshot = {
   text: string;
-  files: File[];
+  attachments: DraftAttachment[];
 };
-
-function toChatCreateMessage<UI_MESSAGE extends UIMessage = UIMessage>(
-  message: AppendMessage,
-): CreateUIMessage<UI_MESSAGE> {
-  const inputParts = [
-    ...message.content.filter((part) => part.type !== "file"),
-    ...(message.attachments?.flatMap((attachment) =>
-      attachment.content.map((part) => ({
-        ...part,
-        filename: attachment.name,
-      })),
-    ) ?? []),
-  ];
-  const parts = inputParts.map((part) => {
-    if (part.type === "text") return { type: "text", text: part.text };
-    if (part.type === "image") {
-      return {
-        type: "file",
-        url: part.image,
-        mediaType: "image/png",
-        ...(part.filename ? { filename: part.filename } : {}),
-      };
-    }
-    if (part.type === "file") {
-      return {
-        type: "file",
-        url: part.data,
-        mediaType: part.mimeType,
-        ...(part.filename ? { filename: part.filename } : {}),
-      };
-    }
-    if (part.type === "data")
-      return { type: `data-${part.name}`, data: part.data };
-    throw new Error(`Unsupported message part: ${part.type}`);
-  });
-  return {
-    role: message.role,
-    parts,
-    metadata: message.sourceId
-      ? {
-          ...(message.metadata && typeof message.metadata === "object"
-            ? message.metadata
-            : {}),
-          toolplaneEditMessageId: message.sourceId,
-        }
-      : message.metadata,
-  } as unknown as CreateUIMessage<UI_MESSAGE>;
-}
 
 function mergeDraftText(current: string, restored: string) {
   if (!restored) return current;
@@ -175,83 +110,6 @@ function mergeDraftText(current: string, restored: string) {
   if (current === restored || current.startsWith(`${restored}\n`))
     return current;
   return `${restored}\n${current}`;
-}
-
-async function restoreDraftSnapshot(
-  runtime: AssistantRuntime,
-  snapshot: DraftSnapshot,
-) {
-  const composer = runtime.thread.composer;
-  const current = composer.getState();
-  composer.setText(mergeDraftText(current.text, snapshot.text));
-  const existingFiles = new Set(
-    current.attachments.flatMap((attachment) =>
-      attachment.file
-        ? [
-            `${attachment.file.name}:${attachment.file.size}:${attachment.file.lastModified}`,
-          ]
-        : [],
-    ),
-  );
-  for (const file of snapshot.files) {
-    const key = `${file.name}:${file.size}:${file.lastModified}`;
-    if (existingFiles.has(key)) continue;
-    await composer.addAttachment(file);
-    existingFiles.add(key);
-  }
-}
-
-async function restoreCreateMessageDraft(
-  runtime: AssistantRuntime | null,
-  message: unknown,
-) {
-  if (!runtime || !message || typeof message !== "object") return;
-  const candidate = message as {
-    text?: unknown;
-    parts?: Array<{
-      type?: unknown;
-      text?: unknown;
-      url?: unknown;
-      mediaType?: unknown;
-      filename?: unknown;
-    }>;
-  };
-  const parts = Array.isArray(candidate.parts) ? candidate.parts : [];
-  const text = [
-    typeof candidate.text === "string" ? candidate.text : "",
-    ...parts.flatMap((part) =>
-      part.type === "text" && typeof part.text === "string" ? [part.text] : [],
-    ),
-  ]
-    .filter(Boolean)
-    .join("\n");
-  const composer = runtime.thread.composer;
-  const current = composer.getState();
-  composer.setText(mergeDraftText(current.text, text));
-
-  for (const part of parts) {
-    if (
-      part.type !== "file" ||
-      typeof part.url !== "string" ||
-      typeof part.mediaType !== "string"
-    )
-      continue;
-    const name =
-      typeof part.filename === "string" ? part.filename : "attachment";
-    await composer.addAttachment({
-      name,
-      type: part.mediaType.startsWith("image/") ? "image" : "file",
-      contentType: part.mediaType,
-      content: [
-        {
-          type: "file",
-          data: part.url,
-          mimeType: part.mediaType,
-          filename: name,
-        },
-      ],
-    });
-  }
 }
 
 const TOOLBAR_STORAGE_KEY = "toolplane.conversation.composer.toolbar";
@@ -276,31 +134,35 @@ function readToolbar() {
 
 function ConversationTools({
   attachmentsEnabled,
+  composerText,
   disabled,
   mcpPromptApiPath,
   mcpResourceApiPath,
+  onAddAttachment,
   onError,
   onNewConversation,
   runtimeCommands,
+  onTextChange,
   webSearchAvailable,
   webSearchEnabled,
   onWebSearchChange,
 }: {
   attachmentsEnabled: boolean;
+  composerText: string;
   disabled: boolean;
   mcpPromptApiPath?: string;
   mcpResourceApiPath?: string;
+  onAddAttachment: (file: File) => void;
   onError: (message: string | null) => void;
   onNewConversation?: () => void | Promise<void>;
   runtimeCommands: readonly RuntimeCommand[];
+  onTextChange: (text: string) => void;
   webSearchAvailable: boolean;
   webSearchEnabled: boolean;
   onWebSearchChange: (enabled: boolean) => void;
 }) {
   const t = useTranslations("console.runtimeCommands");
   const agentsT = useTranslations("console.agents");
-  const aui = useAui();
-  const composerText = useAuiState((state) => state.composer.text);
   const [customizing, setCustomizing] = useState(false);
   const [container, setContainer] = useState<HTMLElement | null>(null);
   const attachmentInputId = useId();
@@ -323,12 +185,12 @@ function ConversationTools({
   }, []);
 
   const addAttachments = useCallback(
-    async (event: ChangeEvent<HTMLInputElement>) => {
+    (event: ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(event.currentTarget.files ?? []);
       event.currentTarget.value = "";
       for (const file of files) {
         try {
-          await aui.composer.addAttachment(file);
+          onAddAttachment(file);
         } catch (cause) {
           onError(
             cause instanceof Error
@@ -339,7 +201,7 @@ function ConversationTools({
       }
       textareaRef.current?.focus();
     },
-    [agentsT, aui.composer, onError],
+    [agentsT, onAddAttachment, onError],
   );
   const openAttachmentPicker = useCallback(() => {
     if (!attachmentsEnabled) {
@@ -429,7 +291,7 @@ function ConversationTools({
 
   const menu = useComposerMenu({
     text: composerText,
-    setText: (value) => aui.composer.setText(value),
+    setText: onTextChange,
     textareaRef,
     containerRef,
     disabled,
@@ -531,7 +393,8 @@ function ConversationTools({
         type="file"
         multiple
         hidden
-        onChange={(event) => void addAttachments(event)}
+        disabled={disabled || !attachmentsEnabled}
+        onChange={addAttachments}
       />
       {toolbarItems.map((item) => {
         const Icon = item.icon;
@@ -579,85 +442,74 @@ function ConversationTools({
   );
 }
 
-function useAgentAttachmentAdapter({
-  attachmentUploadUrl,
-  onError,
-  onUploadingChange,
-  runtimeRef,
-  draftSnapshotRef,
-  recoveryErrorRef,
-}: {
-  attachmentUploadUrl?: string;
-  onError: (message: string | null) => void;
-  onUploadingChange: (uploading: boolean) => void;
-  runtimeRef: { current: AssistantRuntime | null };
-  draftSnapshotRef: { current: DraftSnapshot | null };
-  recoveryErrorRef: { current: string | null };
-}) {
+function useAgentAttachments(attachmentUploadUrl?: string) {
   const t = useTranslations("console.agents");
-  const activeAttachmentIds = useRef(new Set<string>());
-  const activeSends = useRef(0);
-
-  return useMemo<AttachmentAdapter>(
-    () => ({
-      accept: "*",
-      async add({ file }) {
-        if (!attachmentUploadUrl) {
-          const message = t("attachmentRuntimeRequired");
-          onError(message);
-          throw new Error(message);
-        }
-        if (activeAttachmentIds.current.size >= MAX_ATTACHMENTS) {
-          const message = t("attachmentLimitReached", {
-            count: MAX_ATTACHMENTS,
-          });
-          onError(message);
-          throw new Error(message);
-        }
-
-        const id = generateId();
-        activeAttachmentIds.current.add(id);
-        return {
-          id,
-          type: file.type.startsWith("image/") ? "image" : "file",
-          name: file.name,
-          file,
-          contentType: file.type || "application/octet-stream",
-          content: [],
-          status: { type: "requires-action", reason: "composer-send" },
-        };
-      },
-      async remove(attachment) {
-        activeAttachmentIds.current.delete(attachment.id);
-      },
-      async send(attachment) {
-        if (!draftSnapshotRef.current) {
-          const state = runtimeRef.current?.thread.composer.getState();
-          if (state) {
-            draftSnapshotRef.current = {
-              text: state.text,
-              files: state.attachments.flatMap((item) =>
-                item.file ? [item.file] : [],
-              ),
-            };
-          }
-        }
-        activeSends.current += 1;
-        onUploadingChange(true);
-        onError(null);
-        try {
-          if (!attachmentUploadUrl)
-            throw new Error(t("attachmentRuntimeRequired"));
+  const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const attachmentsRef = useRef(attachments);
+  const updateAttachments = useCallback((next: DraftAttachment[]) => {
+    attachmentsRef.current = next;
+    setAttachments(next);
+  }, []);
+  const addAttachment = useCallback(
+    (file: File) => {
+      if (!attachmentUploadUrl) throw new Error(t("attachmentRuntimeRequired"));
+      if (attachmentsRef.current.length >= MAX_ATTACHMENTS)
+        throw new Error(
+          t("attachmentLimitReached", { count: MAX_ATTACHMENTS }),
+        );
+      updateAttachments([
+        ...attachmentsRef.current,
+        { id: generateId(), file },
+      ]);
+    },
+    [attachmentUploadUrl, t, updateAttachments],
+  );
+  const removeAttachment = useCallback(
+    (id: string) => {
+      updateAttachments(
+        attachmentsRef.current.filter((item) => item.id !== id),
+      );
+    },
+    [updateAttachments],
+  );
+  const takeAttachments = useCallback(() => {
+    const snapshot = attachmentsRef.current;
+    updateAttachments([]);
+    return snapshot;
+  }, [updateAttachments]);
+  const restoreAttachments = useCallback(
+    (snapshot: DraftAttachment[]) => {
+      const fileKey = ({ file }: DraftAttachment) =>
+        `${file.name}:${file.size}:${file.lastModified}`;
+      const existingFiles = new Set(attachmentsRef.current.map(fileKey));
+      const restored = snapshot.filter((attachment) => {
+        const key = fileKey(attachment);
+        if (existingFiles.has(key)) return false;
+        existingFiles.add(key);
+        return true;
+      });
+      updateAttachments([...restored, ...attachmentsRef.current]);
+    },
+    [updateAttachments],
+  );
+  const uploadAttachments = useCallback(
+    async (snapshot: DraftAttachment[]): Promise<FileUIPart[]> => {
+      if (!snapshot.length) return [];
+      setUploading(true);
+      try {
+        if (!attachmentUploadUrl)
+          throw new Error(t("attachmentRuntimeRequired"));
+        const parts: FileUIPart[] = [];
+        for (const { file } of snapshot) {
           const url = new URL(attachmentUploadUrl, window.location.origin);
-          url.searchParams.set("filename", attachment.file.name);
-          const uploadUrl = `${url.pathname}${url.search}`;
-          const response = await fetch(uploadUrl, {
+          url.searchParams.set("filename", file.name);
+          const response = await fetch(`${url.pathname}${url.search}`, {
             method: "POST",
             headers: {
-              "content-type":
-                attachment.contentType || "application/octet-stream",
+              "content-type": file.type || "application/octet-stream",
             },
-            body: attachment.file,
+            body: file,
           });
           const result = (await response.json().catch(() => ({}))) as {
             name?: string;
@@ -665,106 +517,40 @@ function useAgentAttachmentAdapter({
             url?: string;
             error?: string;
           };
-          const location = result.url;
-          if (!response.ok || !location) {
+          if (!response.ok || !result.url)
             throw new Error(result.error || t("attachmentUploadFailed"));
-          }
-          const name = result.name || attachment.name;
-          const content: AttachmentContentPart[] = [
-            {
-              type: "file",
-              data: location,
-              mimeType:
-                result.mimeType ||
-                attachment.contentType ||
-                "application/octet-stream",
-              filename: name,
-            },
-          ];
-
-          return {
-            ...attachment,
-            status: { type: "complete" },
-            content,
-          };
-        } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message === "conversation"
-                ? t("couldNotCreateConversation")
-                : error.message
-              : t("attachmentUploadFailed");
-          recoveryErrorRef.current = message;
-          onError(message);
-          return {
-            ...attachment,
-            status: { type: "complete" },
-            content: [
-              {
-                type: "data",
-                name: ATTACHMENT_ERROR_PART.slice(5),
-                data: { message },
-              },
-            ],
-          };
-        } finally {
-          activeAttachmentIds.current.delete(attachment.id);
-          activeSends.current = Math.max(0, activeSends.current - 1);
-          onUploadingChange(activeSends.current > 0);
-          if (activeSends.current === 0 && !recoveryErrorRef.current) {
-            draftSnapshotRef.current = null;
-          }
+          parts.push({
+            type: "file",
+            url: result.url,
+            filename: result.name || file.name,
+            mediaType:
+              result.mimeType || file.type || "application/octet-stream",
+          });
         }
-      },
-    }),
-    [
-      attachmentUploadUrl,
-      draftSnapshotRef,
-      onError,
-      onUploadingChange,
-      recoveryErrorRef,
-      runtimeRef,
-      t,
-    ],
+        return parts;
+      } catch (cause) {
+        throw new Error(
+          cause instanceof Error
+            ? cause.message === "conversation"
+              ? t("couldNotCreateConversation")
+              : cause.message
+            : t("attachmentUploadFailed"),
+        );
+      } finally {
+        setUploading(false);
+      }
+    },
+    [attachmentUploadUrl, t],
   );
-}
-
-function ConversationReasoning({
-  text,
-  working,
-}: {
-  text: string;
-  working: boolean;
-}) {
-  const work = useTranslations("console.work");
-  const startedAt = useRef<number | null>(null);
-  const [duration, setDuration] = useState<number>();
-  useEffect(() => {
-    if (working) {
-      startedAt.current = performance.now();
-      return;
-    }
-    if (startedAt.current === null) return;
-    const elapsed = (performance.now() - startedAt.current) / 1000;
-    const frame = requestAnimationFrame(() => setDuration(elapsed));
-    return () => cancelAnimationFrame(frame);
-  }, [working]);
-  return (
-    <ConversationActivity
-      contentType="text"
-      status={working ? "working" : "complete"}
-      duration={duration}
-      summary={!working && duration === undefined ? work("thought") : undefined}
-      items={text
-        .split("\n")
-        .map((content, line) => ({
-          id: String(line),
-          type: "text" as const,
-          content,
-        }))
-        .filter((item) => item.content.length > 0)}
-    />
-  );
+  return {
+    attachments,
+    addAttachment,
+    removeAttachment,
+    takeAttachments,
+    restoreAttachments,
+    uploadAttachments,
+    uploading,
+  };
 }
 
 export function AgentConversation({
@@ -884,16 +670,23 @@ export function AgentConversation({
   };
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [followingOutput, setFollowingOutput] = useState(true);
-  const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [composerText, setComposerText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const submissionInFlight = useRef(false);
+  const {
+    attachments,
+    addAttachment,
+    removeAttachment,
+    takeAttachments,
+    restoreAttachments,
+    uploadAttachments,
+    uploading: uploadingAttachments,
+  } = useAgentAttachments(attachmentUploadUrl);
   const [commandBusy, setCommandBusy] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
     initialReasoningEffort,
   );
-  const assistantRuntimeRef = useRef<AssistantRuntime | null>(null);
-  const sendConversationIdRef = useRef<string | null>(null);
-  const attachmentDraftSnapshotRef = useRef<DraftSnapshot | null>(null);
-  const attachmentRecoveryErrorRef = useRef<string | null>(null);
   const { transport, getServerResponse } = useMemo(() => {
     let serverResponse: Promise<Response> | null = null;
     return {
@@ -918,25 +711,14 @@ export function AgentConversation({
                 messageId,
                 messages,
                 trigger,
-              }) => {
-                const editMessageId = (
-                  messages.at(-1)?.metadata as
-                    | { toolplaneEditMessageId?: unknown }
-                    | undefined
-                )?.toolplaneEditMessageId;
-                return {
-                  body: {
-                    ...body,
-                    messageId:
-                      messageId ??
-                      (typeof editMessageId === "string"
-                        ? editMessageId
-                        : undefined),
-                    messages: messages.slice(-1),
-                    trigger,
-                  },
-                };
-              },
+              }) => ({
+                body: {
+                  ...body,
+                  messageId,
+                  messages: messages.slice(-1),
+                  trigger,
+                },
+              }),
             }
           : {}),
       }),
@@ -984,7 +766,7 @@ export function AgentConversation({
   const configurationError = /no configured model/i.test(
     submitError || chat.error?.message || "",
   );
-  const busy = chatBusy || commandBusy;
+  const busy = chatBusy || commandBusy || submitting;
   useEffect(() => {
     onBusyChange?.(busy);
     return () => onBusyChange?.(false);
@@ -1006,10 +788,15 @@ export function AgentConversation({
     ],
   );
 
-  const displayMessages = useMemo(
-    () => expandAssistantMessages(chat.messages),
-    [chat.messages],
-  );
+  const { displayMessages, sourceMessagesById } = useMemo(() => {
+    const sources = new Map<string, AgentUIMessage>();
+    const messages = chat.messages.flatMap((message) => {
+      const expanded = expandAssistantMessages([message]);
+      for (const displayed of expanded) sources.set(displayed.id, message);
+      return expanded;
+    });
+    return { displayMessages: messages, sourceMessagesById: sources };
+  }, [chat.messages]);
   const renderedActivityIds = useMemo(
     () =>
       chat.messages.flatMap((message) =>
@@ -1046,41 +833,15 @@ export function AgentConversation({
   }, [chatBusy, initialMessages, initialMessagesSignature, setChatMessages]);
   const sendChatMessage = chat.sendMessage;
   const regenerateChat = chat.regenerate;
-  const sendMessage = useCallback<typeof chat.sendMessage>(
-    async (message, options) => {
+  const sendMessage = useCallback(
+    async (
+      message: CreateUIMessage<AgentUIMessage>,
+      editMessageId?: string,
+    ) => {
       if (!ready || branchBusy || commandBusy) return;
       setSubmitError(null);
-      const messageParts =
-        message &&
-        typeof message === "object" &&
-        "parts" in message &&
-        Array.isArray(message.parts)
-          ? (message.parts as Array<{ type: string; text?: unknown }>)
-          : [];
-      const attachmentFailed = messageParts.some(
-        (part) => part.type === ATTACHMENT_ERROR_PART,
-      );
-      if (attachmentFailed) {
-        const snapshot = attachmentDraftSnapshotRef.current;
-        const errorMessage =
-          attachmentRecoveryErrorRef.current ?? t("attachmentUploadFailed");
-        attachmentDraftSnapshotRef.current = null;
-        attachmentRecoveryErrorRef.current = null;
-        sendConversationIdRef.current = null;
-        if (snapshot && assistantRuntimeRef.current) {
-          await restoreDraftSnapshot(assistantRuntimeRef.current, snapshot);
-        } else {
-          await restoreCreateMessageDraft(assistantRuntimeRef.current, message);
-        }
-        setSubmitError(errorMessage);
-        return;
-      }
-      const commandLine = messageParts
-        .filter(
-          (part): part is { type: string; text: string } =>
-            part.type === "text" && typeof part.text === "string",
-        )
-        .map((part) => part.text)
+      const commandLine = message.parts
+        .flatMap((part) => (part.type === "text" ? [part.text] : []))
         .join("");
       const command = runtimeCommands.length
         ? parseRuntimeCommand(commandLine, runtimeKind ?? "")
@@ -1089,23 +850,21 @@ export function AgentConversation({
         if (
           !isExecutableAgentRuntimeKind(runtimeKind) &&
           !runtimeCommands.some((item) => item.name === command.name)
-        ) {
-          setSubmitError(commandsT("unsupportedCommand"));
-          await restoreCreateMessageDraft(assistantRuntimeRef.current, message);
-          return;
-        }
-        if (messageParts.some((part) => part.type !== "text")) {
-          setSubmitError(commandsT("noAttachments"));
-          await restoreCreateMessageDraft(assistantRuntimeRef.current, message);
-          return;
-        }
+        )
+          throw new Error(commandsT("unsupportedCommand"));
+        if (message.parts.some((part) => part.type !== "text"))
+          throw new Error(commandsT("noAttachments"));
+      }
+      let nextConversationId: string;
+      try {
+        nextConversationId =
+          activeConversationId ?? (await ensureConversation());
+      } catch {
+        throw new Error(t("couldNotCreateConversation"));
+      }
+      if (command) {
         setCommandBusy(true);
         try {
-          const nextConversationId =
-            activeConversationId ??
-            sendConversationIdRef.current ??
-            (await ensureConversation());
-          sendConversationIdRef.current = null;
           const response = await fetch(
             `/api/v1/agents/${encodeURIComponent(agentId)}/conversations/${encodeURIComponent(nextConversationId)}/commands`,
             {
@@ -1129,46 +888,29 @@ export function AgentConversation({
             );
           }
           void onConversationChanged?.();
-        } catch (cause) {
-          sendConversationIdRef.current = null;
-          setSubmitError(
-            cause instanceof Error ? cause.message : commandsT("failed"),
-          );
-          await restoreCreateMessageDraft(assistantRuntimeRef.current, message);
         } finally {
           setCommandBusy(false);
         }
         return;
       }
-      let nextConversationId: string;
-      try {
-        nextConversationId =
-          activeConversationId ??
-          sendConversationIdRef.current ??
-          (await ensureConversation());
-        sendConversationIdRef.current = null;
-      } catch {
-        sendConversationIdRef.current = null;
-        setSubmitError(t("couldNotCreateConversation"));
-        await restoreCreateMessageDraft(assistantRuntimeRef.current, message);
-        return;
-      }
       setFollowingOutput(true);
-      await sendChatMessage(message, {
-        ...options,
-        body: {
-          ...options?.body,
-          ...(modelOverride ? { modelOverride } : {}),
-          ...(includeConversationIdInBody
-            ? { conversationId: nextConversationId }
-            : {}),
-          ...(workSessionId ? { workSessionId } : {}),
-          ...(webSearchAvailable !== undefined
-            ? { webSearchEnabled: webSearchAvailable && webSearchEnabled }
-            : {}),
-          ...(reasoningAvailable ? { reasoningEffort } : {}),
+      // AI SDK replaces this user turn and truncates its descendants atomically.
+      await sendChatMessage(
+        { ...message, ...(editMessageId ? { messageId: editMessageId } : {}) },
+        {
+          body: {
+            ...(modelOverride ? { modelOverride } : {}),
+            ...(includeConversationIdInBody
+              ? { conversationId: nextConversationId }
+              : {}),
+            ...(workSessionId ? { workSessionId } : {}),
+            ...(webSearchAvailable !== undefined
+              ? { webSearchEnabled: webSearchAvailable && webSearchEnabled }
+              : {}),
+            ...(reasoningAvailable ? { reasoningEffort } : {}),
+          },
         },
-      });
+      );
     },
     [
       agentId,
@@ -1194,37 +936,54 @@ export function AgentConversation({
   );
   const regenerate = useCallback<typeof chat.regenerate>(
     async (options) => {
-      if (!ready || !allowRegenerate || branchBusy) return;
-      setSubmitError(null);
-      let nextConversationId: string;
-      try {
-        nextConversationId =
-          activeConversationId ?? (await ensureConversation());
-      } catch {
-        setSubmitError(t("couldNotCreateConversation"));
+      if (
+        !ready ||
+        !allowRegenerate ||
+        branchBusy ||
+        chatBusy ||
+        commandBusy ||
+        submissionInFlight.current
+      )
         return;
+      submissionInFlight.current = true;
+      setSubmitting(true);
+      setSubmitError(null);
+      try {
+        let nextConversationId: string;
+        try {
+          nextConversationId =
+            activeConversationId ?? (await ensureConversation());
+        } catch {
+          setSubmitError(t("couldNotCreateConversation"));
+          return;
+        }
+        setFollowingOutput(true);
+        await regenerateChat({
+          ...options,
+          body: {
+            ...options?.body,
+            ...(modelOverride ? { modelOverride } : {}),
+            ...(includeConversationIdInBody
+              ? { conversationId: nextConversationId }
+              : {}),
+            ...(workSessionId ? { workSessionId } : {}),
+            ...(webSearchAvailable !== undefined
+              ? { webSearchEnabled: webSearchAvailable && webSearchEnabled }
+              : {}),
+            ...(reasoningAvailable ? { reasoningEffort } : {}),
+          },
+        });
+      } finally {
+        submissionInFlight.current = false;
+        setSubmitting(false);
       }
-      setFollowingOutput(true);
-      await regenerateChat({
-        ...options,
-        body: {
-          ...options?.body,
-          ...(modelOverride ? { modelOverride } : {}),
-          ...(includeConversationIdInBody
-            ? { conversationId: nextConversationId }
-            : {}),
-          ...(workSessionId ? { workSessionId } : {}),
-          ...(webSearchAvailable !== undefined
-            ? { webSearchEnabled: webSearchAvailable && webSearchEnabled }
-            : {}),
-          ...(reasoningAvailable ? { reasoningEffort } : {}),
-        },
-      });
     },
     [
       activeConversationId,
       allowRegenerate,
       branchBusy,
+      chatBusy,
+      commandBusy,
       ensureConversation,
       includeConversationIdInBody,
       modelOverride,
@@ -1238,43 +997,6 @@ export function AgentConversation({
       workSessionId,
     ],
   );
-  const attachmentAdapter = useAgentAttachmentAdapter({
-    attachmentUploadUrl,
-    onError: setSubmitError,
-    onUploadingChange: setUploadingAttachments,
-    runtimeRef: assistantRuntimeRef,
-    draftSnapshotRef: attachmentDraftSnapshotRef,
-    recoveryErrorRef: attachmentRecoveryErrorRef,
-  });
-  const assistantChat = useMemo(
-    () => ({
-      ...chat,
-      messages: displayMessages,
-      sendMessage,
-      regenerate,
-      stop,
-    }),
-    [chat, displayMessages, regenerate, sendMessage, stop],
-  );
-  const runtime = useAISDKRuntime(assistantChat, {
-    adapters: { attachments: attachmentAdapter },
-    isSendDisabled:
-      !ready ||
-      branchBusy ||
-      commandBusy ||
-      creatingConversation ||
-      uploadingAttachments,
-    joinStrategy: "none",
-    // Preserve internal attachment URLs; the default converter treats relative paths as base64.
-    toCreateMessage: toChatCreateMessage,
-  });
-  useEffect(() => {
-    assistantRuntimeRef.current = runtime;
-    return () => {
-      if (assistantRuntimeRef.current === runtime)
-        assistantRuntimeRef.current = null;
-    };
-  }, [runtime]);
 
   const composerDisabled =
     branchBusy || commandBusy || creatingConversation || uploadingAttachments;
@@ -1288,16 +1010,6 @@ export function AgentConversation({
       : !activeConversationId
         ? t("conversationWillBeCreated")
         : null;
-  const composer = useSyncExternalStore(
-    runtime.thread.composer.subscribe,
-    runtime.thread.composer.getState,
-    runtime.thread.composer.getState,
-  );
-  const thread = useSyncExternalStore(
-    runtime.thread.subscribe,
-    runtime.thread.getState,
-    runtime.thread.getState,
-  );
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [belowEditorElement, setBelowEditorElement] =
@@ -1312,633 +1024,541 @@ export function AgentConversation({
       );
     }
   };
-  const formatToolValue = (value: unknown) =>
-    typeof value === "string" ? value : JSON.stringify(value ?? null, null, 2);
-  const safeAttachmentUrl = (url: string) =>
-    url.startsWith("/api/v1/attachments/") ||
-    /^data:[\w.+-]+\/[\w.+-]+;base64,/.test(url);
+  const submitDraft = async () => {
+    if (
+      blocked ||
+      submissionInFlight.current ||
+      (!composerText.trim() && !attachments.length)
+    )
+      return;
+    const snapshot: DraftSnapshot = {
+      text: composerText,
+      attachments: takeAttachments(),
+    };
+    submissionInFlight.current = true;
+    setSubmitting(true);
+    setSubmitError(null);
+    setComposerText("");
+    try {
+      if (
+        snapshot.attachments.length &&
+        runtimeCommands.length &&
+        parseRuntimeCommand(snapshot.text, runtimeKind ?? "")
+      )
+        throw new Error(commandsT("noAttachments"));
+      const files = await uploadAttachments(snapshot.attachments);
+      await sendMessage({
+        role: "user",
+        parts: [
+          ...(snapshot.text.trim()
+            ? [{ type: "text" as const, text: snapshot.text }]
+            : []),
+          ...files,
+        ],
+      });
+    } catch (cause) {
+      setComposerText((current) => mergeDraftText(current, snapshot.text));
+      restoreAttachments(snapshot.attachments);
+      setSubmitError(
+        cause instanceof Error ? cause.message : work("processFailed"),
+      );
+    } finally {
+      submissionInFlight.current = false;
+      setSubmitting(false);
+    }
+  };
+  const submitEdit = async (message: AgentUIMessage) => {
+    if (blocked || submissionInFlight.current || !editText.trim()) return;
+    const submittedText = editText;
+    submissionInFlight.current = true;
+    setSubmitting(true);
+    setEditingId(null);
+    setEditText("");
+    try {
+      await sendMessage(
+        {
+          role: "user",
+          metadata: message.metadata,
+          parts: [
+            { type: "text", text: submittedText },
+            ...message.parts.filter((part) => part.type !== "text"),
+          ],
+        },
+        message.id,
+      );
+    } catch (cause) {
+      setEditingId(message.id);
+      setEditText(submittedText);
+      setSubmitError(
+        cause instanceof Error ? cause.message : work("processFailed"),
+      );
+    } finally {
+      submissionInFlight.current = false;
+      setSubmitting(false);
+    }
+  };
   const messageActionClassName =
     "size-7 rounded-lg border-0 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5";
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <div className="flex min-h-0 flex-1 flex-col">
-        {!readOnly &&
-        activeConversationId &&
-        agentRevisionVersion &&
-        currentRevisionVersion &&
-        agentRevisionVersion < currentRevisionVersion ? (
-          <RevisionUpgradeNotice
-            url={`/api/v1/agents/${agentId}/conversations/${activeConversationId}/revision`}
-            fromVersion={agentRevisionVersion}
-            targetVersion={currentRevisionVersion}
-            disabled={busy || branchBusy}
-            onUpgraded={() => {
-              router.refresh();
-              void onConversationChanged?.();
-            }}
-          />
-        ) : null}
-        <MessageScroller
-          label={agentName}
-          busy={chatBusy}
-          followOutput={followingOutput}
-          onFollowChange={setFollowingOutput}
-          navigation="rail"
-          className={
-            thread.messages.length
-              ? "min-h-0 flex-1"
-              : "mt-auto min-h-0 flex-none"
-          }
-          contentClassName="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6"
-        >
-          {thread.messages.length ? (
-            <MessageGroup spacing="default" className="gap-6">
-              {thread.messages.map((message, messageIndex) => {
-                const from = message.role === "user" ? "user" : "assistant";
-                const turnModelPart = chat.messages
-                  .find((entry) => entry.id === message.id)
-                  ?.parts.find((part) => part.type === "data-agent-turn-model");
-                const turnModelData =
-                  turnModelPart && "data" in turnModelPart
-                    ? turnModelPart.data
-                    : null;
-                const turnModel =
-                  turnModelData &&
-                  typeof turnModelData === "object" &&
-                  "model" in turnModelData &&
-                  typeof turnModelData.model === "string"
-                    ? turnModelData.model
-                    : null;
-                const messageRuntime = runtime.thread.getMessageById(
-                  message.id,
-                );
-                const streaming =
-                  message.role === "assistant" &&
-                  message.status.type === "running";
-                const text = message.content
-                  .filter((part) => part.type === "text")
-                  .map((part) => part.text)
-                  .join("\n");
-                const branch = branchNavigation.find(
-                  (item) => item.messageId === message.id,
-                );
-                const actionVisibility =
-                  messageIndex === thread.messages.length - 1
-                    ? ""
-                    : "opacity-0 pointer-events-none transition-opacity group-hover/message:opacity-100 group-hover/message:pointer-events-auto group-focus-within/message:opacity-100 group-focus-within/message:pointer-events-auto [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto motion-reduce:transition-none";
-                const branchActions =
-                  branch && onBranchChange ? (
-                    <fieldset
-                      aria-label={t("conversationBranch")}
-                      className="m-0 flex min-w-0 items-center gap-0.5 border-0 p-0 text-xs text-muted-foreground"
-                    >
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className={messageActionClassName}
-                        disabled={blocked}
-                        aria-label={common("previous")}
-                        onClick={() =>
-                          void runAction(() =>
-                            onBranchChange(branch.previousMessageId),
-                          )
-                        }
-                      >
-                        <ChevronLeft className="size-3.5" />
-                      </Button>
-                      <span>
-                        {branch.position}/{branch.total}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className={messageActionClassName}
-                        disabled={blocked}
-                        aria-label={common("next")}
-                        onClick={() =>
-                          void runAction(() =>
-                            onBranchChange(branch.nextMessageId),
-                          )
-                        }
-                      >
-                        <ChevronRight className="size-3.5" />
-                      </Button>
-                    </fieldset>
-                  ) : null;
-                const messageBody = (
-                  <>
-                    {from === "assistant" && turnModel ? (
-                      <div className="mb-1 text-[11px] text-muted-foreground">
-                        {turnModel}
-                      </div>
-                    ) : null}
-                    {from === "user" ? (
-                      <AgentPromptProvenance
-                        parts={
-                          chat.messages.find((entry) => entry.id === message.id)
-                            ?.parts ?? []
-                        }
-                      />
-                    ) : null}
-                    {message.content.map((part, index) => {
-                      if (
-                        part.type === "data" &&
-                        part.name === "hook-activity"
-                      ) {
-                        const hook = HookActivitySchema.safeParse(part.data);
-                        return hook.success ? (
-                          <HookActivity key={hook.data.id} value={hook.data} />
-                        ) : null;
-                      }
-                      if (
-                        part.type === "data" &&
-                        part.name === "subagent-activity"
-                      ) {
-                        const activity = SubagentActivitySchema.safeParse(
-                          part.data,
-                        );
-                        if (!activity.success) return null;
-                        const activityPart = displayMessages
-                          .find((entry) => entry.id === message.id)
-                          ?.parts.find(
-                            (candidate) =>
-                              candidate.type === "data-subagent-activity" &&
-                              candidate.data === part.data,
-                          );
-                        const activityId =
-                          activityPart && "id" in activityPart
-                            ? activityPart.id
-                            : undefined;
-                        return (
-                          <SubagentActivity
-                            key={
-                              activityId ??
-                              JSON.stringify([
-                                message.id,
-                                subagentSourceKey(activity.data.source),
-                                activity.data.type,
-                                activity.data.toolCallId,
-                              ])
-                            }
-                            value={part.data}
-                          />
-                        );
-                      }
-                      if (part.type === "text")
-                        return from === "user" ? (
-                          // biome-ignore lint/suspicious/noArrayIndexKey: ID-less message parts occupy persistent stream slots; text changes and duplicates are valid.
-                          <span key={index} className="whitespace-pre-wrap">
-                            {displayMessagingUserText(part.text)}
-                          </span>
-                        ) : (
-                          <AssistantMarkdown
-                            // biome-ignore lint/suspicious/noArrayIndexKey: Stable stream slots preserve markdown state while text grows; content-derived keys remount it.
-                            key={index}
-                            text={part.text}
-                            streaming={streaming}
-                          />
-                        );
-                      if (part.type === "reasoning")
-                        return (
-                          <ConversationReasoning
-                            // biome-ignore lint/suspicious/noArrayIndexKey: Reasoning stream slots have no IDs and must retain their disclosure state as text grows.
-                            key={`${message.id}:${index}`}
-                            text={part.text}
-                            working={
-                              messageRuntime
-                                .getMessagePartByIndex(index)
-                                .getState().status.type === "running"
-                            }
-                          />
-                        );
-                      if (part.type === "file" && safeAttachmentUrl(part.data))
-                        return (
-                          <ConversationFilePreview
-                            // biome-ignore lint/suspicious/noArrayIndexKey: ID-less attachment slots can repeat URLs and must retain preview state.
-                            key={index}
-                            name={part.filename ?? t("attachment")}
-                            url={part.data}
-                            mimeType={part.mimeType}
-                          />
-                        );
-                      if (
-                        part.type === "image" &&
-                        safeAttachmentUrl(part.image)
-                      )
-                        return (
-                          <ConversationFilePreview
-                            // biome-ignore lint/suspicious/noArrayIndexKey: ID-less image slots can repeat URLs and must retain preview state.
-                            key={index}
-                            name={t("attachment")}
-                            url={part.image}
-                            mimeType="image/png"
-                          />
-                        );
-                      if (part.type !== "tool-call") return null;
-                      const partRuntime =
-                        messageRuntime.getMessagePartByIndex(index);
-                      const partState = partRuntime.getState();
-                      const tool =
-                        /^(?:mcp__)?tp_\d+_[A-Za-z0-9_-]+__(.+)$/.exec(
-                          part.toolName,
-                        )?.[1] ?? part.toolName;
-                      const failed =
-                        part.isError ||
-                        (partState.status.type === "incomplete" &&
-                          partState.status.reason === "error");
-                      const cancelled =
-                        partState.status.type === "incomplete" &&
-                        partState.status.reason === "cancelled";
-                      const runningTool = partState.status.type === "running";
-                      return (
-                        <ToolResult
-                          key={part.toolCallId}
-                          className="w-full rounded-2xl border border-border/60 bg-muted/20 shadow-none"
-                          tool={tool}
-                          title={
-                            runningTool
-                              ? t("toolRunning")
-                              : failed
-                                ? t("toolFailed")
-                                : t("toolCompleted")
-                          }
-                          status={
-                            failed
-                              ? "error"
-                              : cancelled
-                                ? "cancelled"
-                                : runningTool
-                                  ? "running"
-                                  : "success"
-                          }
-                          defaultOpen={runningTool || failed}
-                          copyText={
-                            toolOutputText(part.result) ??
-                            formatToolValue(part.result)
-                          }
-                          maxHeight={toolResultUnboundedHeight}
-                        >
-                          <ToolPayload label={t("toolInput")} language="json">
-                            {part.argsText?.trim() ||
-                              formatToolValue(part.args)}
-                          </ToolPayload>
-                          {part.result !== undefined ? (
-                            <ToolPayload
-                              label={t("toolOutput")}
-                              language={
-                                toolOutputText(part.result) !== undefined
-                                  ? "text"
-                                  : "json"
-                              }
-                            >
-                              {toolOutputText(part.result) ??
-                                formatToolValue(part.result)}
-                            </ToolPayload>
-                          ) : null}
-                        </ToolResult>
-                      );
-                    })}
-                    {message.attachments?.map((attachment) => {
-                      const content = attachment.content.find(
-                        (part) => part.type === "file" || part.type === "image",
-                      );
-                      const url =
-                        content?.type === "file"
-                          ? content.data
-                          : content?.type === "image"
-                            ? content.image
-                            : undefined;
-                      return (
-                        <ConversationFilePreview
-                          key={attachment.id}
-                          name={attachment.name}
-                          url={url && safeAttachmentUrl(url) ? url : undefined}
-                          mimeType={attachment.contentType}
-                        />
-                      );
-                    })}
-                    {streaming &&
-                    !message.content.some(
-                      (part) => part.type !== "text" || part.text.length > 0,
-                    ) ? (
-                      <MessageTyping label={work("generatingReply")} />
-                    ) : null}
-                  </>
-                );
-                return (
-                  <ConversationMessageShell
-                    key={message.id}
-                    id={`chat-message-${message.id}`}
-                    from={from}
-                    name={agentName}
-                    showIdentity={
-                      messageIndex === 0 ||
-                      thread.messages[messageIndex - 1]?.role !== "assistant"
-                    }
-                    aria-busy={streaming || undefined}
+    <div className="flex min-h-0 flex-1 flex-col">
+      {!readOnly &&
+      activeConversationId &&
+      agentRevisionVersion &&
+      currentRevisionVersion &&
+      agentRevisionVersion < currentRevisionVersion ? (
+        <RevisionUpgradeNotice
+          url={`/api/v1/agents/${agentId}/conversations/${activeConversationId}/revision`}
+          fromVersion={agentRevisionVersion}
+          targetVersion={currentRevisionVersion}
+          disabled={busy || branchBusy}
+          onUpgraded={() => {
+            router.refresh();
+            void onConversationChanged?.();
+          }}
+        />
+      ) : null}
+      <MessageScroller
+        label={agentName}
+        busy={chatBusy}
+        followOutput={followingOutput}
+        onFollowChange={setFollowingOutput}
+        navigation="rail"
+        className={
+          displayMessages.length
+            ? "min-h-0 flex-1"
+            : "mt-auto min-h-0 flex-none"
+        }
+        contentClassName="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6"
+      >
+        {displayMessages.length ? (
+          <MessageGroup spacing="default" className="gap-6">
+            {displayMessages.map((message, messageIndex) => {
+              const from = message.role === "user" ? "user" : "assistant";
+              const sourceMessage =
+                sourceMessagesById.get(message.id) ?? message;
+              const turnModelPart = sourceMessage.parts.find(
+                (part) => part.type === "data-agent-turn-model",
+              );
+              const turnModelData =
+                turnModelPart && "data" in turnModelPart
+                  ? turnModelPart.data
+                  : null;
+              const turnModel =
+                turnModelData &&
+                typeof turnModelData === "object" &&
+                "model" in turnModelData &&
+                typeof turnModelData.model === "string"
+                  ? turnModelData.model
+                  : null;
+              const streaming =
+                message.role === "assistant" &&
+                chat.status === "streaming" &&
+                messageIndex === displayMessages.length - 1;
+              const text = message.parts
+                .flatMap((part) => (part.type === "text" ? [part.text] : []))
+                .join("\n");
+              const branch = branchNavigation.find(
+                (item) => item.messageId === sourceMessage.id,
+              );
+              const actionVisibility =
+                messageIndex === displayMessages.length - 1
+                  ? ""
+                  : "opacity-0 pointer-events-none transition-opacity group-hover/message:opacity-100 group-hover/message:pointer-events-auto group-focus-within/message:opacity-100 group-focus-within/message:pointer-events-auto [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto motion-reduce:transition-none";
+              const branchActions =
+                branch && onBranchChange ? (
+                  <fieldset
+                    aria-label={t("conversationBranch")}
+                    className="m-0 flex min-w-0 items-center gap-0.5 border-0 p-0 text-xs text-muted-foreground"
                   >
-                    {editingId === message.id ? (
-                      <div className="w-full">
-                        <PromptInput
-                          value={editText}
-                          autoFocus
-                          disabled={blocked}
-                          aria-label={t("messageThisAgent")}
-                          onValueChange={(value) => {
-                            setEditText(value);
-                            messageRuntime.composer.setText(value);
-                          }}
-                          onSubmit={() => {
-                            messageRuntime.composer.send();
-                            setEditingId(null);
-                          }}
-                          leadingAction={
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                messageRuntime.composer.cancel();
-                                setEditingId(null);
-                              }}
-                            >
-                              {common("cancel")}
-                            </Button>
-                          }
-                        />
-                      </div>
-                    ) : from === "assistant" ? (
-                      <StreamingResponse
-                        status={
-                          streaming
-                            ? "streaming"
-                            : message.status?.type === "incomplete" &&
-                                message.status.reason === "error"
-                              ? "error"
-                              : "complete"
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className={messageActionClassName}
+                      disabled={blocked}
+                      aria-label={common("previous")}
+                      onClick={() =>
+                        void runAction(() =>
+                          onBranchChange(branch.previousMessageId),
+                        )
+                      }
+                    >
+                      <ChevronLeft className="size-3.5" />
+                    </Button>
+                    <span>
+                      {branch.position}/{branch.total}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className={messageActionClassName}
+                      disabled={blocked}
+                      aria-label={common("next")}
+                      onClick={() =>
+                        void runAction(() =>
+                          onBranchChange(branch.nextMessageId),
+                        )
+                      }
+                    >
+                      <ChevronRight className="size-3.5" />
+                    </Button>
+                  </fieldset>
+                ) : null;
+              const messageBody = (
+                <>
+                  {from === "assistant" && turnModel ? (
+                    <div className="mb-1 text-[11px] text-muted-foreground">
+                      {turnModel}
+                    </div>
+                  ) : null}
+                  {from === "user" ? (
+                    <>
+                      <AgentPromptProvenance parts={sourceMessage.parts} />
+                      {message.parts.map((part, index) => {
+                        if (part.type === "text")
+                          return (
+                            // biome-ignore lint/suspicious/noArrayIndexKey: Message parts occupy stable stream slots, including duplicate text.
+                            <span key={index} className="whitespace-pre-wrap">
+                              {displayMessagingUserText(part.text)}
+                            </span>
+                          );
+                        if (part.type === "file")
+                          return (
+                            <ConversationFilePreview
+                              // biome-ignore lint/suspicious/noArrayIndexKey: Duplicate attachment URLs occupy independent persistent part slots.
+                              key={index}
+                              name={part.filename ?? t("attachment")}
+                              url={part.url}
+                              mimeType={part.mediaType}
+                            />
+                          );
+                        return null;
+                      })}
+                    </>
+                  ) : (
+                    <ConversationContentBlocks
+                      messageId={message.id}
+                      parts={message.parts}
+                      streaming={streaming}
+                      processDataTypes={[
+                        "data-subagent-activity",
+                        "data-hook-activity",
+                      ]}
+                      renderDataStep={(step) => {
+                        if (step.type === "data-hook-activity") {
+                          const hook = HookActivitySchema.safeParse(step.data);
+                          return hook.success ? (
+                            <HookActivity value={hook.data} />
+                          ) : null;
                         }
-                        copyText={text}
-                        onRetry={
-                          allowRegenerate && !blocked
-                            ? () =>
-                                void runAction(() =>
-                                  includeConversationIdInBody
-                                    ? messageRuntime.reload()
-                                    : regenerate({ messageId: message.id }),
-                                )
-                            : undefined
+                        if (step.type === "data-subagent-activity") {
+                          const activity = SubagentActivitySchema.safeParse(
+                            step.data,
+                          );
+                          return activity.success ? (
+                            <SubagentActivity value={activity.data} />
+                          ) : null;
                         }
-                        announce={false}
-                        actionsClassName={actionVisibility}
-                        actions={
-                          <>
-                            {branchActions}
-                            {onStartBranch ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className={messageActionClassName}
-                                disabled={blocked}
-                                aria-label={chatAssistants("newBranch")}
-                                onClick={() =>
-                                  void runAction(() =>
-                                    onStartBranch(message.id),
-                                  )
-                                }
-                              >
-                                <GitBranch className="size-3.5" />
-                              </Button>
-                            ) : null}
-                          </>
-                        }
-                      >
-                        {messageBody}
-                      </StreamingResponse>
-                    ) : (
-                      <MessageBubble
-                        variant="soft"
-                        className={conversationUserBubbleClassName}
-                      >
-                        <MessageBubbleContent>
-                          {messageBody}
-                        </MessageBubbleContent>
-                      </MessageBubble>
-                    )}
-                    {from === "user" && editingId !== message.id ? (
-                      <MessageFooter className={`gap-0.5 ${actionVisibility}`}>
-                        {branchActions}
-                        {text ? (
-                          <CopyButton
-                            text={displayMessagingUserText(text)}
-                            label={common("copy")}
-                            className={messageActionClassName}
-                            iconOnly
-                          />
-                        ) : null}
-                        {allowEdit ? (
+                        return null;
+                      }}
+                    />
+                  )}
+                </>
+              );
+              return (
+                <ConversationMessageShell
+                  key={message.id}
+                  id={`chat-message-${message.id}`}
+                  from={from}
+                  name={agentName}
+                  showIdentity={
+                    messageIndex === 0 ||
+                    displayMessages[messageIndex - 1]?.role !== "assistant"
+                  }
+                  aria-busy={streaming || undefined}
+                >
+                  {editingId === message.id ? (
+                    <div className="w-full">
+                      <PromptInput
+                        value={editText}
+                        autoFocus
+                        disabled={blocked}
+                        aria-label={t("messageThisAgent")}
+                        onValueChange={setEditText}
+                        onSubmit={() => void submitEdit(sourceMessage)}
+                        leadingAction={
                           <Button
                             type="button"
                             variant="ghost"
-                            size="icon"
-                            className={messageActionClassName}
-                            disabled={blocked}
-                            aria-label={common("edit")}
+                            size="sm"
                             onClick={() => {
-                              messageRuntime.composer.beginEdit();
-                              setEditText(text);
-                              setEditingId(message.id);
+                              setEditingId(null);
+                              setEditText("");
                             }}
                           >
-                            <Pencil className="size-3.5" />
+                            {common("cancel")}
                           </Button>
-                        ) : null}
-                      </MessageFooter>
-                    ) : null}
-                  </ConversationMessageShell>
-                );
-              })}
-            </MessageGroup>
-          ) : (
-            <div className="flex items-center justify-center pb-2 pt-8 text-center">
-              <div className="max-w-lg">
-                <span className="mx-auto mb-4 grid size-12 place-items-center rounded-2xl bg-muted ring-1 ring-border/50">
-                  <Bot className="size-6" />
-                </span>
-                <p className="mb-2 text-sm font-medium text-muted-foreground">
-                  {agentName}
-                </p>
-                <h3 className="text-2xl font-medium tracking-tight sm:text-3xl">
-                  {work("emptyTitle")}
-                </h3>
-                {workSessionId ? (
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {t("startWorkConversationDescription")}
-                  </p>
-                ) : null}
-                {mcpToolsUpdated ? (
-                  <McpToolsUpdatedNote {...mcpToolsUpdated} />
-                ) : null}
-              </div>
-            </div>
-          )}
-          {chat.status === "submitted" &&
-          !thread.messages.some(
-            (message) =>
-              message.role === "assistant" && message.status.type === "running",
-          ) ? (
-            <MessageTyping label={work("preparingReply")} />
-          ) : null}
-        </MessageScroller>
-        <div
-          className={`${conversationComposerDockClassName} ${!thread.messages.length ? "mb-auto" : ""}`}
-        >
-          {typeof composerNotice === "function"
-            ? composerNotice(
-                runtime.thread.composer.setText,
-                belowEditorElement,
-                renderedActivityIds,
-              )
-            : composerNotice}
-          {submitError || chat.error?.message ? (
-            <div
-              role="alert"
-              className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
-            >
-              <span>
-                {configurationError
-                  ? work("configureAgent")
-                  : runtimeError
-                    ? runtimeError.text
-                    : submitError || chat.error?.message}
-              </span>
-              {(configurationError ||
-                runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE") &&
-              settingsHref ? (
-                <Link
-                  href={settingsHref}
-                  className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-                >
-                  {t("configureAgent")}
-                </Link>
-              ) : null}
-            </div>
-          ) : null}
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: Non-focusable drop zone wraps the accessible composer; keyboard attachments use its upload control. */}
-          <div
-            data-ui="chat.composer"
-            className="relative"
-            onDragOver={(event) => {
-              if (
-                attachmentsEnabled &&
-                !blocked &&
-                event.dataTransfer.types.includes("Files")
-              )
-                event.preventDefault();
-            }}
-            onDrop={(event) => {
-              if (
-                !attachmentsEnabled ||
-                blocked ||
-                !event.dataTransfer.files.length
-              )
-                return;
-              event.preventDefault();
-              for (const file of event.dataTransfer.files)
-                void runAction(() =>
-                  runtime.thread.composer.addAttachment(file),
-                );
-            }}
-          >
-            <PromptInput
-              attachments={
-                composer.attachments.length ? (
-                  <div className="mb-2 flex flex-wrap gap-3">
-                    {composer.attachments.map((attachment, index) => (
-                      <ConversationFilePreview
-                        key={attachment.id}
-                        file={attachment.file}
-                        name={attachment.name}
-                        mimeType={attachment.contentType}
-                        progress={
-                          attachment.status.type === "running"
-                            ? attachment.status.progress
-                            : undefined
-                        }
-                        removeLabel={t("removeAttachment", {
-                          name: attachment.name,
-                        })}
-                        onRemove={() =>
-                          void runAction(() =>
-                            runtime.thread.composer
-                              .getAttachmentByIndex(index)
-                              .remove(),
-                          )
                         }
                       />
-                    ))}
-                  </div>
-                ) : null
-              }
-              value={composer.text}
-              onValueChange={runtime.thread.composer.setText}
-              onSubmit={() => runtime.thread.composer.send()}
-              disabled={!ready || composerDisabled}
-              loading={busy}
-              onStop={chatBusy ? () => void stop() : undefined}
-              aria-label={t("messageThisAgent")}
-              placeholder={t("messageThisAgent")}
-              minRows={1}
-              maxRows={12}
-              leadingAction={
-                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-                  <ConversationTools
-                    attachmentsEnabled={attachmentsEnabled}
-                    disabled={blocked}
-                    mcpPromptApiPath={scopeApiPath(mcpPromptApiPath)}
-                    mcpResourceApiPath={scopeApiPath(mcpResourceApiPath)}
-                    onError={setSubmitError}
-                    onNewConversation={onNewConversation}
-                    runtimeCommands={runtimeCommands}
-                    webSearchAvailable={Boolean(webSearchAvailable)}
-                    webSearchEnabled={webSearchEnabled}
-                    onWebSearchChange={setWebSearchEnabled}
-                  />
-                  <span className="flex-1" />
-                  <ConversationContextUsage busy={busy} usage={contextUsage} />
-                  {reasoningAvailable ? (
-                    <ReasoningEffortControl
-                      value={reasoningEffort}
-                      disabled={blocked}
-                      onChange={setReasoningEffort}
-                    />
-                  ) : null}
-                  {!composer.text.trim() && composer.attachments.length ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={blocked}
-                      onClick={() => runtime.thread.composer.send()}
+                    </div>
+                  ) : from === "assistant" ? (
+                    <>
+                      {messageBody}
+                      {!streaming ? (
+                        <MessageFooter
+                          className={`gap-0.5 ${actionVisibility}`}
+                        >
+                          {text ? (
+                            <CopyButton
+                              text={text}
+                              label={common("copy")}
+                              className={messageActionClassName}
+                              iconOnly
+                            />
+                          ) : null}
+                          {allowRegenerate ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className={messageActionClassName}
+                              disabled={blocked}
+                              aria-label={t("retryResponse")}
+                              onClick={() =>
+                                void runAction(() =>
+                                  regenerate({ messageId: sourceMessage.id }),
+                                )
+                              }
+                            >
+                              <RotateCcw className="size-3.5" />
+                            </Button>
+                          ) : null}
+                          {branchActions}
+                          {onStartBranch ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className={messageActionClassName}
+                              disabled={blocked}
+                              aria-label={chatAssistants("newBranch")}
+                              onClick={() =>
+                                void runAction(() =>
+                                  onStartBranch(sourceMessage.id),
+                                )
+                              }
+                            >
+                              <GitBranch className="size-3.5" />
+                            </Button>
+                          ) : null}
+                        </MessageFooter>
+                      ) : null}
+                    </>
+                  ) : (
+                    <MessageBubble
+                      variant="soft"
+                      className={conversationUserBubbleClassName}
                     >
-                      {t("send")}
-                    </Button>
+                      <MessageBubbleContent>{messageBody}</MessageBubbleContent>
+                    </MessageBubble>
+                  )}
+                  {from === "user" && editingId !== message.id ? (
+                    <MessageFooter className={`gap-0.5 ${actionVisibility}`}>
+                      {branchActions}
+                      {text ? (
+                        <CopyButton
+                          text={displayMessagingUserText(text)}
+                          label={common("copy")}
+                          className={messageActionClassName}
+                          iconOnly
+                        />
+                      ) : null}
+                      {allowEdit ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className={messageActionClassName}
+                          disabled={blocked}
+                          aria-label={common("edit")}
+                          onClick={() => {
+                            setEditText(text);
+                            setEditingId(message.id);
+                          }}
+                        >
+                          <Pencil className="size-3.5" />
+                        </Button>
+                      ) : null}
+                    </MessageFooter>
                   ) : null}
-                  {modelPicker}
-                </div>
-              }
-            />
+                </ConversationMessageShell>
+              );
+            })}
+          </MessageGroup>
+        ) : (
+          <div className="flex items-center justify-center pb-2 pt-8 text-center">
+            <div className="max-w-lg">
+              <span className="mx-auto mb-4 grid size-12 place-items-center rounded-2xl bg-muted ring-1 ring-border/50">
+                <Bot className="size-6" />
+              </span>
+              <p className="mb-2 text-sm font-medium text-muted-foreground">
+                {agentName}
+              </p>
+              <h3 className="text-2xl font-medium tracking-tight sm:text-3xl">
+                {work("emptyTitle")}
+              </h3>
+              {workSessionId ? (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {t("startWorkConversationDescription")}
+                </p>
+              ) : null}
+              {mcpToolsUpdated ? (
+                <McpToolsUpdatedNote {...mcpToolsUpdated} />
+              ) : null}
+            </div>
           </div>
-          {composerStatus ? (
-            <p role="status" className="mt-2 text-xs text-muted-foreground">
-              {composerStatus}
-            </p>
-          ) : null}
-          <div ref={setBelowEditorElement} className="space-y-3 empty:hidden" />
+        )}
+        {chat.status === "submitted" ? (
+          <MessageTyping label={work("preparingReply")} />
+        ) : null}
+      </MessageScroller>
+      <div
+        className={`${conversationComposerDockClassName} ${!displayMessages.length ? "mb-auto" : ""}`}
+      >
+        {typeof composerNotice === "function"
+          ? composerNotice(
+              setComposerText,
+              belowEditorElement,
+              renderedActivityIds,
+            )
+          : composerNotice}
+        {submitError || chat.error?.message ? (
+          <div
+            role="alert"
+            className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
+          >
+            <span>
+              {configurationError
+                ? work("configureAgent")
+                : runtimeError
+                  ? runtimeError.text
+                  : submitError || chat.error?.message}
+            </span>
+            {(configurationError ||
+              runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE") &&
+            settingsHref ? (
+              <Link
+                href={settingsHref}
+                className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+              >
+                {t("configureAgent")}
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: Non-focusable drop zone wraps the accessible composer; keyboard attachments use its upload control. */}
+        <div
+          data-ui="chat.composer"
+          className="relative"
+          onDragOver={(event) => {
+            if (
+              attachmentsEnabled &&
+              !blocked &&
+              event.dataTransfer.types.includes("Files")
+            )
+              event.preventDefault();
+          }}
+          onDrop={(event) => {
+            if (
+              !attachmentsEnabled ||
+              blocked ||
+              !event.dataTransfer.files.length
+            )
+              return;
+            event.preventDefault();
+            for (const file of event.dataTransfer.files)
+              void runAction(() => addAttachment(file));
+          }}
+        >
+          <PromptInput
+            attachments={
+              attachments.length ? (
+                <div className="mb-2 flex flex-wrap gap-3">
+                  {attachments.map((attachment) => (
+                    <ConversationFilePreview
+                      key={attachment.id}
+                      file={attachment.file}
+                      name={attachment.file.name}
+                      mimeType={attachment.file.type}
+                      removeLabel={t("removeAttachment", {
+                        name: attachment.file.name,
+                      })}
+                      onRemove={() => removeAttachment(attachment.id)}
+                    />
+                  ))}
+                </div>
+              ) : null
+            }
+            value={composerText}
+            onValueChange={setComposerText}
+            onSubmit={() => void submitDraft()}
+            disabled={!ready || composerDisabled}
+            loading={busy}
+            onStop={chatBusy ? () => void stop() : undefined}
+            aria-label={t("messageThisAgent")}
+            placeholder={t("messageThisAgent")}
+            minRows={1}
+            maxRows={12}
+            leadingAction={
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                <ConversationTools
+                  attachmentsEnabled={attachmentsEnabled}
+                  composerText={composerText}
+                  disabled={blocked}
+                  mcpPromptApiPath={scopeApiPath(mcpPromptApiPath)}
+                  mcpResourceApiPath={scopeApiPath(mcpResourceApiPath)}
+                  onAddAttachment={addAttachment}
+                  onError={setSubmitError}
+                  onNewConversation={onNewConversation}
+                  runtimeCommands={runtimeCommands}
+                  onTextChange={setComposerText}
+                  webSearchAvailable={Boolean(webSearchAvailable)}
+                  webSearchEnabled={webSearchEnabled}
+                  onWebSearchChange={setWebSearchEnabled}
+                />
+                <span className="flex-1" />
+                <ConversationContextUsage busy={busy} usage={contextUsage} />
+                {reasoningAvailable ? (
+                  <ReasoningEffortControl
+                    value={reasoningEffort}
+                    disabled={blocked}
+                    onChange={setReasoningEffort}
+                  />
+                ) : null}
+                {!composerText.trim() && attachments.length ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={blocked}
+                    onClick={() => void submitDraft()}
+                  >
+                    {t("send")}
+                  </Button>
+                ) : null}
+                {modelPicker}
+              </div>
+            }
+          />
         </div>
+        {composerStatus ? (
+          <p role="status" className="mt-2 text-xs text-muted-foreground">
+            {composerStatus}
+          </p>
+        ) : null}
+        <div ref={setBelowEditorElement} className="space-y-3 empty:hidden" />
       </div>
-    </AssistantRuntimeProvider>
+    </div>
   );
 }

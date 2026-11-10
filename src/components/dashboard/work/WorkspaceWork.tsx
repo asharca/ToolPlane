@@ -81,11 +81,10 @@ import {
   AssistantMarkdown,
   ConversationMessageShell,
   conversationUserBubbleClassName,
-  ConversationActivity,
-  ToolPayload,
-  toolOutputText,
-  toolResultUnboundedHeight,
 } from "@/components/dashboard/ConversationMessage";
+import { WorkContentBlocks } from "@/components/dashboard/ConversationContentBlocks";
+import { formatContentDuration as formatWorkDuration } from "@/lib/conversation/content-blocks";
+import { HookActivitySchema } from "../agents/HookActivity";
 import {
   MessageBubble,
   MessageBubbleContent,
@@ -94,7 +93,6 @@ import {
 } from "@/components/agents/message";
 import { StreamingResponse } from "@/components/agents/streaming-response";
 import { MessageScroller } from "@/components/agents/message-scroller";
-import { ToolResult } from "@/components/agents/tool-result";
 import { SandboxConsole } from "@/components/dashboard/sandboxes/SandboxConsole";
 import { resolveContextUsage } from "@/lib/context-usage";
 import {
@@ -103,11 +101,7 @@ import {
   pinAgentAction,
 } from "@/lib/agents/actions";
 import type { ReasoningEffort } from "@/lib/agents/constants";
-import {
-  SubagentActivity,
-  type SubagentSource,
-} from "../agents/SubagentActivity";
-import { HookActivity, HookActivitySchema } from "../agents/HookActivity";
+import type { SubagentSource } from "../agents/SubagentActivity";
 import {
   displayMessagingUserText,
   type ParsedMessagingSession,
@@ -403,26 +397,6 @@ function agentSidebarStatus(
   return { tone, issues, running };
 }
 
-function runtimeLabel(kind: string | null | undefined): string {
-  if (kind === "pi-sdk") return "Pi";
-  if (kind === "omp") return "OMP";
-  if (kind === "claude-code") return "Claude Code";
-  if (kind === "dsh") return "DeepSeek Harness";
-  return kind === "pi" ? "Pi" : "—";
-}
-
-function formatWorkDuration(durationMs: number | undefined): string | null {
-  if (
-    durationMs === undefined ||
-    !Number.isFinite(durationMs) ||
-    durationMs < 0
-  )
-    return null;
-  if (durationMs < 1_000) return `${Math.round(durationMs)} ms`;
-  const seconds = durationMs / 1_000;
-  return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} s`;
-}
-
 function parseWorkTiming(value: unknown): WorkTiming | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const data = value as Record<string, unknown>;
@@ -537,14 +511,6 @@ function WorkElapsed({
   ) : null;
 }
 
-function workToolLabel(
-  part: Pick<WorkPart, "deploymentName" | "originalToolName" | "toolName">,
-): string {
-  if (part.deploymentName && part.originalToolName)
-    return `${part.deploymentName} · ${part.originalToolName}`;
-  return part.originalToolName ?? part.toolName ?? "Tool";
-}
-
 function formatWorkMessageTime(
   value: string | undefined,
 ): { label: string; title: string } | null {
@@ -573,18 +539,6 @@ function agentSettingsHref(
   section = "agent",
 ) {
   return `/app/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}?settings=${encodeURIComponent(section)}&returnTo=${encodeURIComponent(returnTo)}`;
-}
-
-function formatValue(value: unknown) {
-  if (typeof value === "string") return value;
-  try {
-    const text = JSON.stringify(value, null, 2);
-    return text.length > 20_000
-      ? `${text.slice(0, 20_000)}\n[truncated]`
-      : text;
-  } catch {
-    return String(value);
-  }
 }
 
 function CompactionNote({ message }: { message: WorkMessage }) {
@@ -790,44 +744,8 @@ function WorkTranscript({
             : isStreamingMessage
               ? rawText
               : rawText.trim();
-        const hookRecords = message.parts.flatMap((part) => {
-          if (
-            part.type !== "hook-activity" &&
-            part.type !== "data-hook-activity"
-          )
-            return [];
-          const parsed = HookActivitySchema.safeParse(part.data);
-          return parsed.success ? [parsed.data] : [];
-        });
-        const processParts = message.parts
-          .filter(
-            (part) =>
-              part.type === "reasoning" ||
-              part.type === "work-tool" ||
-              (part.type === "work-runtime" &&
-                (part.status === "failed" || part.status === "cancelled")),
-          )
-          .map(
-            (part): WorkPart =>
-              !isStreamingMessage && part.status === "running"
-                ? {
-                    ...part,
-                    status:
-                      part.type === "reasoning" ? "completed" : "cancelled",
-                  }
-                : part,
-          );
-        const visibleProcessParts = processParts.filter(
-          (part) =>
-            part.type !== "work-runtime" ||
-            !isStreamingMessage ||
-            part.status !== "running",
-        );
-        const processFailed = visibleProcessParts.some(
+        const processFailed = message.parts.some(
           (part) => part.isError || part.status === "failed",
-        );
-        const processCancelled = visibleProcessParts.some(
-          (part) => part.status === "cancelled",
         );
         const fileParts = message.parts.filter(
           (part) =>
@@ -884,140 +802,39 @@ function WorkTranscript({
                   </details>
                 ) : null,
               )}
-            {message.role !== "user" &&
-            (isStreamingMessage || visibleProcessParts.length) ? (
-              <div data-ui="work-process" className="w-full">
-                <ConversationActivity
-                  status={isStreamingMessage ? "working" : "complete"}
-                  defaultOpen={processFailed || processCancelled}
-                  collapseOnComplete={!processFailed && !processCancelled}
-                  activeLabel={
-                    <>
-                      {t(executionStageKeys[executionStage])}{" "}
-                      <WorkElapsed
-                        timing={messageTiming}
-                        live
-                        dataUi="work-process-duration"
-                      />
-                    </>
-                  }
-                  summary={
-                    <>
-                      {isStreamingMessage
-                        ? t(executionStageKeys[executionStage])
-                        : processFailed
-                          ? t("processFailed")
-                          : processCancelled
-                            ? t("processCancelled")
-                            : t("processed")}{" "}
+            {message.role === "user" ? (
+              text ? (
+                <span className="whitespace-pre-wrap">{text}</span>
+              ) : null
+            ) : (
+              <>
+                <div data-ui="work-process" className="w-full">
+                  <WorkContentBlocks
+                    messageId={message.id}
+                    parts={message.parts}
+                    streaming={isStreamingMessage}
+                    activeLabel={t(executionStageKeys[executionStage])}
+                    headerExtra={
                       <WorkElapsed
                         timing={messageTiming}
                         live={isStreamingMessage}
                         dataUi="work-process-duration"
                       />
-                    </>
-                  }
-                  items={visibleProcessParts.map((part, index) => ({
-                    id: part.toolCallId ?? `${message.id}:${index}`,
-                    type: "text" as const,
-                    content: part.source ? (
-                      <SubagentActivity
-                        value={{
-                          ...part,
-                          type:
-                            part.type === "reasoning" ? "reasoning" : "tool",
-                        }}
-                      />
-                    ) : part.type === "reasoning" ? (
-                      <div>
-                        <p className="text-xs text-muted-foreground">
-                          {part.status === "running"
-                            ? t("thinking")
-                            : t("thought")}
-                        </p>
-                        <pre className="whitespace-pre-wrap break-words text-xs">
-                          {part.text}
-                        </pre>
-                      </div>
-                    ) : part.type === "work-runtime" ? (
-                      <p className="text-xs text-muted-foreground">
-                        {part.status === "cancelled"
-                          ? t("runtimeCancelled", {
-                              runtime: runtimeLabel(part.runtimeKind),
-                            })
-                          : runtimeLabel(part.runtimeKind)}
-                      </p>
-                    ) : (
-                      <ToolResult
-                        className="rounded-xl border-border/60 bg-background"
-                        tool={workToolLabel(part)}
-                        title={
-                          part.status === "running"
-                            ? t("toolRunning")
-                            : part.isError || part.status === "failed"
-                              ? t("toolFailed")
-                              : part.status === "cancelled"
-                                ? t("toolCancelled")
-                                : t("toolCompleted")
-                        }
-                        status={
-                          part.isError || part.status === "failed"
-                            ? "error"
-                            : part.status === "cancelled"
-                              ? "cancelled"
-                              : part.status === "running"
-                                ? "running"
-                                : "success"
-                        }
-                        meta={formatWorkDuration(part.durationMs)}
-                        defaultOpen={
-                          part.status === "running" ||
-                          part.isError ||
-                          part.status === "failed"
-                        }
-                        copyText={
-                          part.output === undefined
-                            ? undefined
-                            : (toolOutputText(part.output) ??
-                              formatValue(part.output))
-                        }
-                        maxHeight={toolResultUnboundedHeight}
-                      >
-                        <ToolPayload
-                          label={agentsT("toolInput")}
-                          language="json"
-                        >
-                          {formatValue(part.input)}
-                        </ToolPayload>
-                        {part.output !== undefined ? (
-                          <ToolPayload
-                            label={agentsT("toolOutput")}
-                            language={
-                              toolOutputText(part.output) !== undefined
-                                ? "text"
-                                : "json"
-                            }
-                          >
-                            {toolOutputText(part.output) ??
-                              formatValue(part.output)}
-                          </ToolPayload>
-                        ) : null}
-                      </ToolResult>
-                    ),
-                  }))}
-                />
-              </div>
-            ) : null}
-            {hookRecords.map((hook) => (
-              <HookActivity key={hook.id} value={hook} />
-            ))}
-            {text ? (
-              message.role === "user" ? (
-                <span className="whitespace-pre-wrap">{text}</span>
-              ) : (
-                <AssistantMarkdown text={text} streaming={isStreamingMessage} />
-              )
-            ) : null}
+                    }
+                  />
+                </div>
+                {!rawText ||
+                message.parts.some(
+                  (part) =>
+                    part.type === "text" && !part.reference && part.text,
+                ) ? null : (
+                  <AssistantMarkdown
+                    text={text}
+                    streaming={isStreamingMessage}
+                  />
+                )}
+              </>
+            )}
           </>
         );
         const showIdentity =
@@ -1273,6 +1090,7 @@ export function WorkspaceWork({
   const commandsT = useTranslations("console.runtimeCommands");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [followingOutput, setFollowingOutput] = useState(true);
   const [desktopPanel, setDesktopPanel] = useState<WorkPanel | null>(null);
   const [mobilePanel, setMobilePanel] = useState<WorkPanel | null>(null);
   const [streamOutput, setStreamOutput] = useState<{
@@ -2228,6 +2046,8 @@ export function WorkspaceWork({
       return;
     const input = draft.trim();
     if (!input) return;
+    // Opening a disclosure pauses following; a new turn returns to the live edge.
+    setFollowingOutput(true);
     const command = parseRuntimeCommand(input, commandRuntimeKind);
     if (command && command.name !== "new") {
       if (
@@ -3108,6 +2928,8 @@ export function WorkspaceWork({
                 label={t("title")}
                 data-ui="work.transcript"
                 busy={selectedActive || Boolean(conversationOutput?.active)}
+                followOutput={followingOutput}
+                onFollowChange={setFollowingOutput}
                 navigation="rail"
                 className={
                   selected || conversation

@@ -33,9 +33,6 @@ import { ToolResultOutput } from "@/components/agents/tool-result";
 
 export const conversationUserBubbleClassName =
   "w-auto max-w-[85%] sm:max-w-[80%] [&>div]:max-w-none [&>div]:rounded-3xl [&>div]:px-4 [&>div]:py-2.5";
-export const conversationMessageListClassName = "gap-6";
-export const conversationActivityClassName =
-  "w-full rounded-2xl border border-border/60 bg-muted/20 shadow-none";
 
 /**
  * Process/thinking disclosure without a card. Keep the full list in the
@@ -134,7 +131,7 @@ export function ToolPayload({
 }) {
   return (
     <div className="space-y-1">
-      <p className="text-xs text-muted-foreground">{label}</p>
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div className="max-h-80 overflow-auto overscroll-contain rounded-lg [scrollbar-width:thin] [scrollbar-color:color-mix(in_srgb,var(--foreground)_25%,transparent)_transparent]">
         <ToolResultOutput language={language}>{children}</ToolResultOutput>
       </div>

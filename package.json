@@ -32,9 +32,6 @@
   "dependencies": {
     "@a2a-js/sdk": "1.2.0",
     "@ai-sdk/react": "4.0.96",
-    "@assistant-ui/react": "0.15.18",
-    "@assistant-ui/react-ai-sdk": "1.4.9",
-    "@assistant-ui/react-streamdown": "0.3.13",
     "@dagrejs/dagre": "^3.0.0",
     "@earendil-works/pi-agent-core": "0.87.1",
     "@earendil-works/pi-ai": "^0.87.1",
