@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.35.2](https://github.com/asharca/ToolPlane/compare/v0.35.1...v0.35.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **a2a:** 文件超限返回具体原因，任务文件限额改由管理后台配置 ([#206](https://github.com/asharca/ToolPlane/issues/206)) ([c7036df](https://github.com/asharca/ToolPlane/commit/c7036df32bf614e3ed0ffeb9d74af1eeab88e162))
+* **work:** 工具错误仅记为失败结果，正文与工具调用按序穿插展示 ([#205](https://github.com/asharca/ToolPlane/issues/205)) ([3421f85](https://github.com/asharca/ToolPlane/commit/3421f85f3aa8edee83eb02bbbc3482869300a618))
+
 ## [0.35.1](https://github.com/asharca/ToolPlane/compare/v0.35.0...v0.35.1) (2026-11-10)
 
 
