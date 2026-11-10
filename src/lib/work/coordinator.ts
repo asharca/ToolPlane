@@ -93,6 +93,7 @@ type WorkTracePart =
       state: "done";
       source?: SandboxRuntimeActivity["source"];
     }
+  | { type: "text"; text: string; state: "done" }
   | {
       type: "work-runtime";
       runtimeKind: string;
@@ -183,7 +184,10 @@ async function appendAssistantResult(
       conversationId,
       role: "assistant",
       parts,
-      textCharacters: text.length,
+      textCharacters: trace.reduce(
+        (total, part) => total + (part.type === "text" ? part.text.length : 0),
+        text.length,
+      ),
     },
   });
 }
@@ -515,9 +519,24 @@ async function executeWork(workSessionId: string) {
       });
     }
   };
-  const traceParts = (): WorkTracePart[] => {
-    const parts: WorkTracePart[] = [...trace];
-    return runtimeStatus === "completed" && parts.length
+  /** The final reply text comes from the committed task; streamed segments only
+   * place it among the process parts. Without a matching stream, keep it last. */
+  const traceParts = (replyText = ""): WorkTracePart[] => {
+    const streamed = trace
+      .map((part) => (part.type === "text" ? part.text : ""))
+      .join("");
+    const compact = (value: string) => value.replace(/\s+/g, "");
+    const interleaved =
+      Boolean(replyText) && compact(streamed) === compact(replyText);
+    const parts = trace.flatMap<WorkTracePart>((part) => {
+      if (part.type !== "text") return [part];
+      const text = part.text.trim();
+      return interleaved && text ? [{ ...part, text }] : [];
+    });
+    if (replyText && !interleaved)
+      parts.push({ type: "text", text: replyText, state: "done" });
+    return runtimeStatus === "completed" &&
+      parts.some((part) => part.type !== "text")
       ? parts
       : [
           ...parts,
@@ -598,6 +617,9 @@ async function executeWork(workSessionId: string) {
       const stopObserving = observeWorkRuntime(work.id, {
         onTextDelta: (delta) => {
           finishReasoning();
+          const last = trace.at(-1);
+          if (last?.type === "text") last.text += delta;
+          else trace.push({ type: "text", text: delta, state: "done" });
           publishWorkOutput(work.id, delta);
         },
         onActivity,
@@ -663,8 +685,8 @@ async function executeWork(workSessionId: string) {
 
     await appendAssistantResult(
       work.conversationId,
-      fallbackText,
-      traceParts(),
+      "",
+      traceParts(fallbackText),
       contextUsage,
       turnTiming(),
       [...runtimeMetadata(), ...(await hookMetadata())],

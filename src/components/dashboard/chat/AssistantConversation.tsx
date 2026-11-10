@@ -727,6 +727,8 @@ export function AssistantConversation({
       input: receipt.input,
       ...(receipt.result != null ? { output: receipt.result } : {}),
       ...(errorText ? { errorText } : {}),
+      // Confirmed executions settle outside the model's view.
+      ...(status === "failed" ? { platformFailure: true } : {}),
     };
     confirmationOverrides.set(toolCallId, override);
     receiptSteps.push({

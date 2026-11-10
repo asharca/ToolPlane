@@ -17,6 +17,8 @@ export type ContentStep =
       output?: unknown;
       errorText?: string;
       durationMs?: number;
+      /** Failed outside the model's view (e.g. a confirmed execution receipt). */
+      platformFailure?: boolean;
     }
   | {
       kind: "data";
@@ -77,7 +79,13 @@ export function contentProcessStatus(
         : step.kind === "data"
           ? dataStatus(step.data)
           : undefined;
-    if (status === "failed") return "failed";
+    // Tool errors are results the model reads and handles (including a subagent's
+    // tool); only runtime or platform-level failures fail the whole process.
+    const modelResult =
+      (step.kind === "tool" && !step.platformFailure) ||
+      (step.kind === "data" &&
+        (step.data as { type?: unknown } | null)?.type === "tool");
+    if (status === "failed" && !modelResult) return "failed";
     if (status === "cancelled") cancelled = true;
     if (status === "running" || status === "awaiting") pending = true;
     if (status === "awaiting") awaiting = true;
@@ -283,6 +291,33 @@ export function workContentParts(
     if (part.type === "text" && !part.reference) return part;
     return { type: "work-metadata" };
   });
+}
+
+/** Live Work output streams text separately from activities; each activity
+ * records the text length when it began, so the reply can be read in order.
+ */
+export function interleaveLiveText<
+  T extends { type: string; textOffset?: number },
+>(
+  activities: readonly T[],
+  text: string,
+): Array<T | { type: "text"; text: string }> {
+  const parts: Array<T | { type: "text"; text: string }> = [];
+  let cursor = 0;
+  for (const activity of activities) {
+    const offset =
+      typeof activity.textOffset === "number" &&
+      Number.isFinite(activity.textOffset)
+        ? Math.min(Math.max(activity.textOffset, cursor), text.length)
+        : cursor;
+    const segment = text.slice(cursor, offset);
+    if (segment.trim()) parts.push({ type: "text", text: segment });
+    cursor = offset;
+    parts.push(activity);
+  }
+  const rest = text.slice(cursor);
+  if (rest.trim()) parts.push({ type: "text", text: rest });
+  return parts;
 }
 
 export function formatContentDuration(

@@ -4,6 +4,7 @@ import { useTranslations } from "next-intl";
 import type { LiveTaskOutput } from "@/lib/agents/execution/live-output-types";
 import { StreamingResponse } from "@/components/agents/streaming-response";
 import { WorkContentBlocks } from "@/components/dashboard/ConversationContentBlocks";
+import { interleaveLiveText } from "@/lib/conversation/content-blocks";
 import type { LiveOutputConnection } from "./useLiveTaskOutput";
 
 const stageKeys = {
@@ -38,8 +39,9 @@ export function LiveOutputView({
   const t = useTranslations("console.work");
   const liveT = useTranslations("console.liveOutput");
   const active = output.active && !output.done;
+  // Tool errors are results the model handles; only the runtime outcome fails a run.
   const failed = output.activities.some(
-    (activity) => activity.isError || activity.status === "failed",
+    (activity) => activity.type === "runtime" && activity.status === "failed",
   );
   const stage = output.executionStage
     ? t(stageKeys[output.executionStage])
@@ -57,12 +59,11 @@ export function LiveOutputView({
       >
         <WorkContentBlocks
           messageId={`live-${output.taskId}`}
-          parts={[
-            ...output.activities,
-            ...(!hideText && output.text
-              ? [{ type: "text", text: output.text }]
-              : []),
-          ]}
+          parts={
+            hideText
+              ? output.activities
+              : interleaveLiveText(output.activities, output.text)
+          }
           streaming={active}
           activeLabel={stage}
         />

@@ -30,6 +30,8 @@ function completedOutput(
     }
   }
   const text: string[] = [];
+  // Offsets index the joined reply below, so a replayed snapshot keeps its order.
+  let textLength = 0;
   const activities: WorkOutputActivity[] = [];
   const toolIndexes = new Map<string, number>();
   let reasoningSequence = 0;
@@ -43,14 +45,17 @@ function completedOutput(
     for (const [index, part] of message.parts.entries()) {
       if (!part || typeof part !== "object" || !("type" in part)) continue;
       const value = part as Record<string, unknown>;
-      if (value.type === "text" && typeof value.text === "string")
+      if (value.type === "text" && typeof value.text === "string") {
+        textLength += (text.length ? 2 : 0) + value.text.length;
         text.push(value.text);
+      }
       if (value.type === "reasoning" && typeof value.text === "string") {
         activities.push({
           id: `reasoning:${++reasoningSequence}`,
           type: "reasoning",
           status: "completed",
           text: value.text,
+          textOffset: textLength,
         });
       }
       if (
@@ -67,6 +72,7 @@ function completedOutput(
                 ? "cancelled"
                 : "completed",
           runtimeKind: value.runtimeKind,
+          textOffset: textLength,
         });
       }
       if (value.type === "work-tool") {
@@ -103,7 +109,7 @@ function completedOutput(
         const previousIndex = toolIndexes.get(id);
         if (previousIndex === undefined) {
           toolIndexes.set(id, activities.length);
-          activities.push(activity);
+          activities.push({ ...activity, textOffset: textLength });
         } else {
           activities[previousIndex] = {
             ...activities[previousIndex],
@@ -137,7 +143,7 @@ function completedOutput(
     }
   }
   return {
-    text: text.join("\n"),
+    text: text.join("\n\n"),
     activities,
     active: false,
     done: true,

@@ -169,6 +169,9 @@ uses the pinned Pi revision and its session directory in an Agent-owned sandbox.
 conversation ownership, immutable artifacts, live authorization narrowing,
 tool-source deduplication, and A2A depth/cycle guards. Assistant Run persistence,
 confirmation recovery and subscription lifecycles remain separate.
+A tool error the model can read (non-zero exit, MCP error result) is a failed tool
+result, never a failed turn: it must not fail the run, its persisted status, or the
+process summary, and a failed turn still saves its session history.
 Trust current code over stale architecture descriptions.
 Runtime mutations require the single-owner guard; read [runtime operations](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS)
 for upgrade/recovery and `src/lib/runtime/` before adding external operations.
