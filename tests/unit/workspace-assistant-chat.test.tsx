@@ -51,6 +51,10 @@ describe("WorkspaceAssistantChat", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+      configurable: true,
+      value: vi.fn(),
+    });
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -576,10 +580,13 @@ describe("WorkspaceAssistantChat", () => {
       await screen.findByText("Saved readable answer"),
     ).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Outcome unknown");
+    await userEvent.click(
+      screen.getByRole("button", { name: /remote_lookup/ }),
+    );
     expect(
       screen.getByText(/Durably committed result before output publication/),
     ).toBeInTheDocument();
-    expect(screen.getByText("Saved tool result")).toBeInTheDocument();
+    expect(screen.getByText("Output")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Approve this tool call" }),
     ).not.toBeInTheDocument();

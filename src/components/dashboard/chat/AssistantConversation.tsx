@@ -10,7 +10,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type ReactNode,
   type Dispatch,
   type SetStateAction,
 } from "react";
@@ -24,6 +23,7 @@ import {
   Loader2,
   Paperclip,
   Pencil,
+  RotateCcw,
   Square,
   ScrollText,
   SlidersHorizontal,
@@ -33,15 +33,19 @@ import {
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/motion/button";
 import {
-  AssistantMarkdown,
   ConversationMessageShell,
-  ConversationActivity,
   conversationUserBubbleClassName,
-  ToolPayload,
-  toolResultUnboundedHeight,
-  toolOutputText,
 } from "@/components/dashboard/ConversationMessage";
 import {
+  ConversationContentBlocks,
+  type ContentToolOverride,
+} from "@/components/dashboard/ConversationContentBlocks";
+import type {
+  ContentStep,
+  ToolBlockStatus,
+} from "@/lib/conversation/content-blocks";
+import {
+  ConversationFilePreview,
   conversationComposerDockClassName,
   conversationComposerSurfaceClassName,
 } from "@/components/dashboard/ConversationComposer";
@@ -55,10 +59,8 @@ import {
   MessageBubbleContent,
   MessageFooter,
 } from "@/components/agents/message";
-import { ToolResult } from "@/components/agents/tool-result";
 import { MessageScroller } from "@/components/agents/message-scroller";
-import { StreamingResponse } from "@/components/agents/streaming-response";
-import { CopyButton, copyText } from "@/components/dashboard/CopyButton";
+import { CopyButton } from "@/components/dashboard/CopyButton";
 import { cn } from "@/lib/utils";
 import type { AgentUIMessage } from "@/lib/agents/message-segments";
 import {
@@ -181,68 +183,6 @@ export function reconcileAssistantMessages(
   return Array.from(merged.values());
 }
 
-function AssistantToolResult({
-  toolName,
-  input,
-  result,
-  error,
-  status,
-}: Omit<Confirmation, "id" | "toolCallId">) {
-  const t = useTranslations("console.chatAssistants");
-  const toolT = useTranslations("console.agents");
-  const common = useTranslations("common");
-  const output = toolOutputText(result);
-  return (
-    <ToolResult
-      tool={null}
-      title={toolName}
-      kind="request"
-      status={
-        status === "succeeded"
-          ? "success"
-          : status === "executing"
-            ? "running"
-            : "error"
-      }
-      defaultOpen={status !== "succeeded" && status !== "executing"}
-      maxHeight={toolResultUnboundedHeight}
-      className="my-2 w-full"
-    >
-      <div className="space-y-3">
-        {result !== undefined && result !== null && (
-          <CopyButton
-            text={output ?? JSON.stringify(result, null, 2)}
-            label={common("copy")}
-          />
-        )}
-        {input !== undefined && (
-          <ToolPayload label={toolT("toolInput")} language="json">
-            {JSON.stringify(input, null, 2)}
-          </ToolPayload>
-        )}
-        {result !== undefined && result !== null && (
-          <ToolPayload
-            label={t("toolResult")}
-            language={output === undefined ? "json" : "text"}
-          >
-            {output ?? JSON.stringify(result, null, 2)}
-          </ToolPayload>
-        )}
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
-        {status === "execution_unknown" && (
-          <p role="alert" className="text-sm text-destructive">
-            {t("unknownOutcome")}
-          </p>
-        )}
-      </div>
-    </ToolResult>
-  );
-}
-
 /** An Assistant observes a server-owned Run; disconnecting never cancels it. */
 export function AssistantConversation({
   threadId,
@@ -292,7 +232,6 @@ export function AssistantConversation({
   const composerT = useTranslations("console.agents");
   const common = useTranslations("common");
   const workT = useTranslations("console.work");
-  const copyT = useTranslations("console.common");
   const [editMessageId, setEditMessageId] = useState<string | undefined>();
   const [files, setFiles] = useState<FileUIPart[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -321,6 +260,7 @@ export function AssistantConversation({
     useState<ChatExecutionProgress | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [followingOutput, setFollowingOutput] = useState(true);
   const [restored, setRestored] = useState(false);
   const pending = useRef<Submission | null>(null);
   const admittedBody = useRef<{
@@ -645,6 +585,8 @@ export function AssistantConversation({
     }
     const request = pending.current;
     if (!request) return;
+    // Opening a disclosure pauses following; a new turn returns to the live edge.
+    setFollowingOutput(true);
     try {
       // A transport retry reuses the exact user message ID and idempotency key.
       if (request.regenerateId)
@@ -760,6 +702,57 @@ export function AssistantConversation({
           },
         ]
       : messages;
+  const confirmationOverrides = new Map<string, ContentToolOverride>();
+  const receiptSteps: ContentStep[] = [];
+  for (const receipt of snapshot?.confirmations ?? []) {
+    const status: ToolBlockStatus =
+      receipt.status === "succeeded"
+        ? "succeeded"
+        : receipt.status === "executing"
+          ? running
+            ? "running"
+            : "cancelled"
+          : receipt.status === "awaiting_user"
+            ? "awaiting"
+            : receipt.status === "cancelled"
+              ? "cancelled"
+              : "failed";
+    const toolCallId = receipt.toolCallId ?? receipt.id;
+    const errorText =
+      receipt.status === "execution_unknown"
+        ? [receipt.error, t("unknownOutcome")].filter(Boolean).join("\n")
+        : receipt.error;
+    const override = {
+      status,
+      input: receipt.input,
+      ...(receipt.result != null ? { output: receipt.result } : {}),
+      ...(errorText ? { errorText } : {}),
+    };
+    confirmationOverrides.set(toolCallId, override);
+    receiptSteps.push({
+      kind: "tool",
+      id: `confirmation:${receipt.id}`,
+      toolCallId,
+      toolName: receipt.toolName,
+      ...override,
+    });
+  }
+  const knownToolCallIds = new Set(
+    messages.flatMap((message) =>
+      message.parts.flatMap((part) =>
+        "toolCallId" in part && typeof part.toolCallId === "string"
+          ? [part.toolCallId]
+          : [],
+      ),
+    ),
+  );
+  const orphanReceiptSteps = receiptSteps.filter(
+    (step) => step.kind === "tool" && !knownToolCallIds.has(step.toolCallId),
+  );
+  const lastReceiptMessageId =
+    snapshot?.messages.findLast((message) => message.role === "assistant")
+      ?.id ??
+    displayMessages.findLast((message) => message.role === "assistant")?.id;
   const empty = displayMessages.length === 0;
   const messageActionClassName =
     "size-7 rounded-lg border-0 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5";
@@ -965,6 +958,8 @@ export function AssistantConversation({
         className="min-h-0 flex-1"
         label={assistantName}
         busy={running}
+        followOutput={followingOutput}
+        onFollowChange={setFollowingOutput}
         contentClassName={cn(
           "px-4 sm:px-6",
           empty
@@ -1040,212 +1035,35 @@ export function AssistantConversation({
                 </span>
               </div>
             ) : null;
-          type ProcessItem = { id: string; type: "text"; content: ReactNode };
-          // Claude/ChatGPT layout: keep part order; consecutive reasoning and
-          // tool parts fold into one activity group between text blocks.
-          const segments: Array<
-            | {
-                kind: "process";
-                id: string;
-                items: ProcessItem[];
-                failed: boolean;
+          const messageBody = assistant ? (
+            <ConversationContentBlocks
+              messageId={message.id}
+              parts={message.parts}
+              streaming={streaming}
+              activeLabel={streaming ? executionLabel : undefined}
+              toolOverride={(toolCallId) =>
+                confirmationOverrides.get(toolCallId)
               }
-            | { kind: "text"; id: string; text: string }
-          > = [];
-          const pushProcess = (item: ProcessItem, failed: boolean) => {
-            const last = segments.at(-1);
-            if (last?.kind === "process") {
-              last.items.push(item);
-              last.failed ||= failed;
-            } else {
-              segments.push({
-                kind: "process",
-                id: `process-${item.id}`,
-                items: [item],
-                failed,
-              });
-            }
-          };
-          let processFailed = false;
-          if (assistant) {
-            const lastPartIndex = message.parts.length - 1;
-            message.parts.forEach((part, index) => {
-              const id = `${message.id}-${index}`;
-              if (part.type === "text") {
-                if (!part.text) return;
-                const last = segments.at(-1);
-                if (last?.kind === "text") last.text += `\n\n${part.text}`;
-                else segments.push({ kind: "text", id, text: part.text });
-                return;
+              extraSteps={
+                message.id === lastReceiptMessageId
+                  ? orphanReceiptSteps
+                  : undefined
               }
-              if (part.type === "reasoning" && part.text.trim()) {
-                pushProcess(
-                  {
-                    id,
-                    type: "text",
-                    content: (
-                      <div>
-                        <p className="text-xs text-muted-foreground">
-                          {workT(
-                            streaming && index === lastPartIndex
-                              ? "thinking"
-                              : "thought",
-                          )}
-                        </p>
-                        <pre className="whitespace-pre-wrap break-words text-xs">
-                          {part.text}
-                        </pre>
-                      </div>
-                    ),
-                  },
-                  false,
-                );
-                return;
-              }
-              if (
-                part.type !== "dynamic-tool" &&
-                !part.type.startsWith("tool-")
-              )
-                return;
-              const tool = part as {
-                type: string;
-                toolName?: string;
-                toolCallId?: string;
-                state?: string;
-                input?: unknown;
-                output?: unknown;
-                errorText?: string;
-              };
-              const receipt = snapshot?.confirmations.find(
-                (item) => item.toolCallId === tool.toolCallId,
-              );
-              const status =
-                receipt?.status ??
-                (tool.state === "output-error"
-                  ? "failed"
-                  : tool.state === "output-available"
-                    ? "succeeded"
-                    : "executing");
-              const failed = status !== "succeeded" && status !== "executing";
-              processFailed ||= failed;
-              pushProcess(
-                {
-                  id: tool.toolCallId ?? id,
-                  type: "text",
-                  content: (
-                    <AssistantToolResult
-                      toolName={tool.toolName ?? tool.type.slice(5)}
-                      input={receipt?.input ?? tool.input}
-                      result={receipt?.result ?? tool.output}
-                      error={receipt?.error ?? tool.errorText}
-                      status={status}
-                    />
-                  ),
-                },
-                failed,
-              );
-            });
-            if (
-              message.id ===
-              (snapshot?.messages.findLast((item) => item.role === "assistant")
-                ?.id ??
-                displayMessages.findLast((item) => item.role === "assistant")
-                  ?.id)
-            ) {
-              for (const receipt of snapshot?.confirmations ?? []) {
-                if (
-                  messages.some((item) =>
-                    item.parts.some(
-                      (part) =>
-                        "toolCallId" in part &&
-                        part.toolCallId === receipt.toolCallId,
-                    ),
-                  )
-                )
-                  continue;
-                const failed =
-                  receipt.status !== "succeeded" &&
-                  receipt.status !== "executing";
-                processFailed ||= failed;
-                pushProcess(
-                  {
-                    id: receipt.id,
-                    type: "text",
-                    content: <AssistantToolResult {...receipt} />,
-                  },
-                  failed,
-                );
-              }
-            }
-            if (streaming && segments.length === 0)
-              segments.push({
-                kind: "process",
-                id: "process-pending",
-                items: [],
-                failed: false,
-              });
-          }
-          const messageBody = (
+            />
+          ) : (
             <>
               {message.parts.map((part, index) =>
                 part.type === "file" ? (
-                  <a
-                    // biome-ignore lint/suspicious/noArrayIndexKey: Streamed attachments are append-only; retain duplicate URLs as separate items.
+                  <ConversationFilePreview
+                    // biome-ignore lint/suspicious/noArrayIndexKey: Attachment slots are append-only and may contain duplicate URLs.
                     key={`${message.id}-${index}`}
-                    href={part.url}
-                    className="my-1 inline-flex max-w-full items-center gap-2 rounded-xl border border-border/60 bg-background px-3 py-2 text-xs underline-offset-4 hover:underline"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <Paperclip
-                      className="size-3.5 shrink-0"
-                      aria-hidden="true"
-                    />
-                    {part.filename ?? part.mediaType}
-                  </a>
+                    name={part.filename ?? composerT("attachment")}
+                    url={part.url}
+                    mimeType={part.mediaType}
+                  />
                 ) : null,
               )}
-              {assistant ? (
-                segments.map((segment, segmentIndex) => {
-                  if (segment.kind === "text")
-                    return (
-                      <AssistantMarkdown
-                        key={segment.id}
-                        text={segment.text}
-                        streaming={
-                          streaming && segmentIndex === segments.length - 1
-                        }
-                      />
-                    );
-                  const working =
-                    streaming && segmentIndex === segments.length - 1;
-                  return (
-                    <div
-                      key={segment.id}
-                      data-ui="assistant-process"
-                      className="w-full"
-                    >
-                      <ConversationActivity
-                        contentType="text"
-                        status={working ? "working" : "complete"}
-                        defaultOpen={segment.failed}
-                        collapseOnComplete={!segment.failed}
-                        activeLabel={
-                          working ? executionLabel : workT("processing")
-                        }
-                        summary={
-                          working
-                            ? executionLabel
-                            : workT(
-                                segment.failed ? "processFailed" : "processed",
-                              )
-                        }
-                        items={segment.items}
-                      />
-                    </div>
-                  );
-                })
-              ) : text ? (
+              {text ? (
                 <p className="whitespace-pre-wrap text-sm leading-6">{text}</p>
               ) : null}
             </>
@@ -1278,39 +1096,37 @@ export function AssistantConversation({
             >
               {showIdentity ? null : replyMetadata}
               {assistant ? (
-                <StreamingResponse
-                  status={
-                    streaming
-                      ? "streaming"
-                      : processFailed
-                        ? "error"
-                        : "complete"
-                  }
-                  copyText={text}
-                  onCopy={
-                    text
-                      ? async () => {
-                          if (!(await copyText(text))) {
-                            const message = copyT("copyFailed");
-                            setError(message);
-                            throw new Error(message);
-                          }
-                        }
-                      : undefined
-                  }
-                  onRetry={
-                    !readOnly &&
-                    !running &&
-                    snapshot?.phase !== "execution_unknown"
-                      ? () => void regenerate(message.id)
-                      : undefined
-                  }
-                  announce={false}
-                  actionsClassName={actionVisibility}
-                  actions={branchAction}
-                >
+                <>
                   {messageBody}
-                </StreamingResponse>
+                  {!streaming ? (
+                    <MessageFooter className={cn("gap-0.5", actionVisibility)}>
+                      {text ? (
+                        <CopyButton
+                          text={text}
+                          label={common("copy")}
+                          iconOnly
+                          className={messageActionClassName}
+                        />
+                      ) : null}
+                      {!readOnly &&
+                      !running &&
+                      snapshot?.phase !== "execution_unknown" ? (
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          aria-label={composerT("retryResponse")}
+                          title={composerT("retryResponse")}
+                          className={messageActionClassName}
+                          onClick={() => void regenerate(message.id)}
+                        >
+                          <RotateCcw className="size-3.5" />
+                        </Button>
+                      ) : null}
+                      {branchAction}
+                    </MessageFooter>
+                  ) : null}
+                </>
               ) : (
                 <>
                   <MessageBubble

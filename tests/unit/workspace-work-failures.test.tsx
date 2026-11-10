@@ -479,6 +479,12 @@ describe("Work attachment transaction failures", () => {
       });
     });
     await screen.findByText("Recovered partial");
+    // Recovered reasoning stays in its collapsed process group until the reader opens it.
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Thought/ }));
     expect(screen.getByText("Checking constraints")).toBeInTheDocument();
     act(() => events.emit("delta", { delta: " plus delta" }));
     await screen.findByText("Recovered partial plus delta");

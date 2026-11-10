@@ -458,3 +458,10 @@
 
 - **证据（2026-11-07，#185 验收）**：资源预览禁用图片时引入条件 `img` 覆盖，普通 README 分支传入 `undefined`，已有相对图片链接回归报 `Element type is invalid`。改为条件展开映射后，资源预览和原 README 两文件共 7 项测试通过。
 - **下次怎么验证**：同一轮覆盖新模式的恶意内容／图片隔离及默认模式的真实图片、链接渲染，不能只测新增开关开启的分支。依据：`PluginReadme.tsx`、`tests/unit/plugin-readme.test.tsx`。
+
+### TP-L044：流式输出中的折叠状态只由读者改变
+
+**规则**：对话输出的过程组、工具步骤等披露不随运行状态自动展开或收起；运行中用一行标题反映当前步骤，内容只在读者点击后挂载。验收看真实流式回合的布局指标，不只看完成后的截图。
+
+- **证据（2026-11-10，用户反馈“工具调用和输出堆在一起、窗口一直跳动”）**：共享渲染器让过程组运行时展开、完成后收起，每轮工具后正文开始又触发一次收起；vendored `ToolResult` 在状态变为 running 时也会自动展开。连续同名工具行只显示“bash Completed”，无法区分。改为默认折叠、仅点击切换（用捕获阶段标记过滤组件自身的状态驱动回调）、工具行显示参数摘要、思考两行预览后，真实 Work 三次 `bash` 回合测得 CLS 0、`aria-expanded` 自动变化 0 次、滚动高度回缩 0 次。另发现展开披露会暂停 `MessageScroller` 跟随，助手和 Work 发送新消息后未恢复；已与智能体对话一样在发送时恢复跟随。
+- **下次怎么验证**：真实回合中用 `PerformanceObserver('layout-shift')`、`aria-expanded` 变更计数和滚动容器高度回缩次数取证；先展开一个旧披露再发送，确认新输出仍跟到底部。依据：`ConversationContentBlocks.tsx`、`tests/unit/workspace-work-failures.test.tsx`。

@@ -1,6 +1,6 @@
 import { assertDefined } from "../assert-defined";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { AgentConversation } from "@/components/dashboard/agents/AgentConversation";
@@ -23,23 +23,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@ai-sdk/react", () => ({
-  useChat: (options: { id?: string }) => ({
-    ...chatMocks.useChat(options),
-    id: options.id ?? "test-chat",
-  }),
+  useChat: (options: unknown) => chatMocks.useChat(options),
 }));
-
-vi.mock("@assistant-ui/react-streamdown", async () => {
-  const assistantUi = await vi.importActual<
-    typeof import("@assistant-ui/react")
-  >("@assistant-ui/react");
-  return {
-    StreamdownTextPrimitive: () => {
-      const part = assistantUi.useMessagePartText();
-      return <div>{part.text}</div>;
-    },
-  };
-});
 
 vi.mock("streamdown", () => ({
   defaultRehypePlugins: {},
@@ -107,9 +92,6 @@ describe("AgentConversation", () => {
       setMessages: chatMocks.setMessages,
       stop: chatMocks.stop,
       regenerate: chatMocks.regenerate,
-      addToolResult: vi.fn(),
-      addToolOutput: vi.fn(),
-      addToolApprovalResponse: vi.fn(),
       status: "ready",
       error: undefined,
     });
@@ -227,6 +209,172 @@ describe("AgentConversation", () => {
     });
   });
 
+  it("clears the submitted draft immediately and keeps the next draft when execution ends", async () => {
+    const { promise: pendingSend, resolve: finishSend } =
+      Promise.withResolvers<void>();
+    chatMocks.sendMessage.mockReturnValueOnce(pendingSend);
+    renderConversation();
+    const input = screen.getByPlaceholderText("Message this agent");
+    await userEvent.type(input, "Run this request");
+    await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
+
+    expect(input).toHaveValue("");
+    await waitFor(() => expect(chatMocks.sendMessage).toHaveBeenCalledOnce());
+    await userEvent.type(input, "Draft the next request");
+    await act(async () => finishSend());
+
+    expect(input).toHaveValue("Draft the next request");
+    expect(chatMocks.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parts: [{ type: "text", text: "Run this request" }],
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("merges a rejected submission back without overwriting a newer draft", async () => {
+    const { promise: pendingCreation, reject: rejectCreation } =
+      Promise.withResolvers<string>();
+    const ensureConversation = vi.fn().mockReturnValue(pendingCreation);
+    renderConversation({ activeConversationId: null, ensureConversation });
+    const input = screen.getByPlaceholderText("Message this agent");
+    await userEvent.type(input, "Keep the rejected request");
+    await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
+    expect(input).toHaveValue("");
+    await userEvent.type(input, "Newer draft");
+    await act(async () => {
+      rejectCreation(new Error("Forbidden"));
+    });
+
+    await waitFor(() =>
+      expect(input).toHaveValue("Keep the rejected request\nNewer draft"),
+    );
+    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("replaces an edited user turn through AI SDK while retaining its files and the next draft", async () => {
+    const file = {
+      type: "file" as const,
+      filename: "notes.txt",
+      mediaType: "text/plain",
+      url: "/api/v1/attachments/notes",
+    };
+    const messages: AgentUIMessage[] = [
+      {
+        id: "user-edit",
+        role: "user",
+        parts: [{ type: "text", text: "Original request" }, file],
+      },
+      ...initialMessages,
+    ];
+    chatMocks.useChat.mockReturnValue({ ...chatMocks.useChat(), messages });
+    renderConversation({ initialMessages: messages, allowEdit: true });
+    const composer = screen.getByPlaceholderText("Message this agent");
+    await userEvent.type(composer, "Next draft");
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const message = within(
+      assertDefined(document.getElementById("chat-message-user-edit")),
+    );
+    const cancelledEditor = message.getByRole("textbox");
+    await userEvent.clear(cancelledEditor);
+    await userEvent.type(cancelledEditor, "Discard this edit");
+    await userEvent.click(message.getByRole("button", { name: "Cancel" }));
+    expect(message.getByText("Original request")).toBeInTheDocument();
+    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+    expect(composer).toHaveValue("Next draft");
+    await userEvent.click(message.getByRole("button", { name: "Edit" }));
+    const editor = message.getByRole("textbox");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "Revised request");
+    await userEvent.click(message.getByRole("button", { name: "Send prompt" }));
+
+    await waitFor(() =>
+      expect(chatMocks.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          role: "user",
+          messageId: "user-edit",
+          parts: [{ type: "text", text: "Revised request" }, file],
+        }),
+        expect.objectContaining({ body: { conversationId: "conv-1" } }),
+      ),
+    );
+    expect(composer).toHaveValue("Next draft");
+    expect(message.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("regenerates the original AI SDK message when an expanded response is selected", async () => {
+    const messages: AgentUIMessage[] = [
+      {
+        id: "response-original",
+        role: "assistant",
+        parts: [
+          {
+            type: "data-assistant-messages",
+            data: {
+              segments: [
+                { id: "first", text: "First response" },
+                { id: "second", text: "Second response" },
+              ],
+            },
+          },
+        ],
+      },
+    ];
+    chatMocks.useChat.mockReturnValue({ ...chatMocks.useChat(), messages });
+    renderConversation({ initialMessages: messages });
+    await userEvent.click(
+      assertDefined(
+        screen.getAllByRole("button", { name: "Retry response" }).at(-1),
+      ),
+    );
+
+    await waitFor(() =>
+      expect(chatMocks.regenerate).toHaveBeenCalledWith({
+        messageId: "response-original",
+        body: { conversationId: "conv-1" },
+      }),
+    );
+  });
+
+  it("preserves branch selection and branch creation callbacks", async () => {
+    const messages: AgentUIMessage[] = [
+      {
+        id: "user-branch",
+        role: "user",
+        parts: [{ type: "text", text: "Ask" }],
+      },
+      ...initialMessages,
+    ];
+    const onBranchChange = vi.fn();
+    const onStartBranch = vi.fn();
+    chatMocks.useChat.mockReturnValue({ ...chatMocks.useChat(), messages });
+    renderConversation({
+      initialMessages: messages,
+      onBranchChange,
+      onStartBranch,
+      branchNavigation: [
+        {
+          messageId: "user-branch",
+          position: 2,
+          total: 3,
+          previousMessageId: "branch-previous",
+          nextMessageId: "branch-next",
+        },
+      ],
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Previous" }));
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start a new branch" }),
+    );
+
+    expect(onBranchChange.mock.calls).toEqual([
+      ["branch-previous"],
+      ["branch-next"],
+    ]);
+    expect(onStartBranch).toHaveBeenCalledWith("m1");
+  });
+
   it("enables attachments only for configured native uploads", async () => {
     const { props, rerender } = renderConversation();
 
@@ -249,66 +397,74 @@ describe("AgentConversation", () => {
     ).toBeEnabled();
   });
 
-  it("uploads a native attachment as an internal file part", async () => {
-    apiMocks.fetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          id: "attachment-1",
-          name: "notes.txt",
-          mimeType: "text/plain",
-          size: 5,
-          url: "/api/v1/attachments/attachment-1",
-        }),
-        {
-          status: 201,
-          headers: { "content-type": "application/json" },
-        },
-      ),
-    );
-    renderConversation({
-      attachmentUploadUrl: "/api/v1/workspaces/workspace-1/attachments",
-      runtimeKind: "pi-sdk",
-    });
+  it.each(["Read this", ""])(
+    "uploads a native attachment with draft %j as an internal file part",
+    async (text) => {
+      apiMocks.fetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: "attachment-1",
+            name: "notes.txt",
+            mimeType: "text/plain",
+            size: 5,
+            url: "/api/v1/attachments/attachment-1",
+          }),
+          {
+            status: 201,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      );
+      renderConversation({
+        attachmentUploadUrl: "/api/v1/workspaces/workspace-1/attachments",
+        runtimeKind: "pi-sdk",
+      });
 
-    await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
-    await userEvent.click(
-      screen.getByRole("option", { name: /Add attachment/ }),
-    );
-    const fileInput =
-      document.querySelector<HTMLInputElement>('input[type="file"]');
-    expect(fileInput).not.toBeNull();
-    await userEvent.upload(
-      assertDefined(fileInput),
-      new File(["notes"], "notes.txt", { type: "text/plain" }),
-    );
-    await userEvent.type(
-      screen.getByPlaceholderText("Message this agent"),
-      "Read this",
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-
-    await waitFor(() =>
-      expect(apiMocks.fetch).toHaveBeenCalledWith(
-        "/api/v1/workspaces/workspace-1/attachments?filename=notes.txt",
-        expect.objectContaining({ method: "POST", body: expect.any(File) }),
-      ),
-    );
-    await waitFor(() =>
-      expect(chatMocks.sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          parts: expect.arrayContaining([
-            expect.objectContaining({
-              type: "file",
-              filename: "notes.txt",
-              mediaType: "text/plain",
-              url: "/api/v1/attachments/attachment-1",
-            }),
-          ]),
+      await userEvent.click(screen.getByRole("button", { name: "Open tools" }));
+      await userEvent.click(
+        screen.getByRole("option", { name: /Add attachment/ }),
+      );
+      const fileInput =
+        document.querySelector<HTMLInputElement>('input[type="file"]');
+      expect(fileInput).not.toBeNull();
+      await userEvent.upload(
+        assertDefined(fileInput),
+        new File(["notes"], "notes.txt", { type: "text/plain" }),
+      );
+      if (text)
+        await userEvent.type(
+          screen.getByPlaceholderText("Message this agent"),
+          text,
+        );
+      await userEvent.click(
+        screen.getByRole("button", {
+          name: text ? "Send prompt" : "Send",
         }),
-        expect.objectContaining({ body: { conversationId: "conv-1" } }),
-      ),
-    );
-  });
+      );
+
+      await waitFor(() =>
+        expect(apiMocks.fetch).toHaveBeenCalledWith(
+          "/api/v1/workspaces/workspace-1/attachments?filename=notes.txt",
+          expect.objectContaining({ method: "POST", body: expect.any(File) }),
+        ),
+      );
+      await waitFor(() =>
+        expect(chatMocks.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            parts: expect.arrayContaining([
+              expect.objectContaining({
+                type: "file",
+                filename: "notes.txt",
+                mediaType: "text/plain",
+                url: "/api/v1/attachments/attachment-1",
+              }),
+            ]),
+          }),
+          expect.objectContaining({ body: { conversationId: "conv-1" } }),
+        ),
+      );
+    },
+  );
 
   it("restores the composer when a native attachment upload fails", async () => {
     apiMocks.fetch.mockResolvedValueOnce(
@@ -363,9 +519,6 @@ describe("AgentConversation", () => {
       setMessages: chatMocks.setMessages,
       stop: chatMocks.stop,
       regenerate: chatMocks.regenerate,
-      addToolResult: vi.fn(),
-      addToolOutput: vi.fn(),
-      addToolApprovalResponse: vi.fn(),
       status: "streaming",
       error: undefined,
     });
@@ -573,9 +726,6 @@ describe("AgentConversation", () => {
       screen.getByPlaceholderText("Message this agent"),
       "/compact",
     );
-    apiMocks.fetch.mockResolvedValueOnce(
-      Response.json({ url: "/api/v1/attachments/notes" }),
-    );
     await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
     await screen.findByText(
       "Send attachments and references in a regular message, separately from commands.",
@@ -586,6 +736,8 @@ describe("AgentConversation", () => {
       ),
     );
     expect(chatMocks.sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByText("notes.txt")).toBeInTheDocument();
+    expect(apiMocks.fetch).not.toHaveBeenCalled();
   });
 
   it("shows a regeneration creation error without losing persisted history", async () => {
