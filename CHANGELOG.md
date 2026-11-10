@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.35.1](https://github.com/asharca/ToolPlane/compare/v0.35.0...v0.35.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **a2a:** 沙箱文件与 MCP 结果文件改用管理员配置的上限 ([#203](https://github.com/asharca/ToolPlane/issues/203)) ([ec62777](https://github.com/asharca/ToolPlane/commit/ec627774cdf6857d29e2c070bf02dccd52e2e033))
+* **chat:** 助手消息按实际顺序穿插显示处理过程与正文 ([#201](https://github.com/asharca/ToolPlane/issues/201)) ([f40a44d](https://github.com/asharca/ToolPlane/commit/f40a44da54db24b72f45c250b133537eed62c2ac))
+* **chat:** 对话处理过程默认折叠，流式输出不再跳动 ([#202](https://github.com/asharca/ToolPlane/issues/202)) ([d5920fc](https://github.com/asharca/ToolPlane/commit/d5920fcd0050e89c9cc773ad02c7a0b4cb39ce04))
+
 ## [0.35.0](https://github.com/asharca/ToolPlane/compare/v0.34.0...v0.35.0) (2026-11-09)
 
 
