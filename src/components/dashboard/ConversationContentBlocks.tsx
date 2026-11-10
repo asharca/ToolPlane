@@ -33,6 +33,7 @@ export type ContentToolOverride = {
   input?: unknown;
   output?: unknown;
   errorText?: string;
+  platformFailure?: boolean;
 };
 
 type Props = {
@@ -135,8 +136,11 @@ function ConversationToolStep({ step }: { step: ToolStep }) {
   const work = useTranslations("console.work");
   const common = useTranslations("common");
   // Only the reader opens or closes a step; status changes never resize the transcript.
+  // Model-visible tool errors are ordinary results, so only approvals and
+  // platform-level failures start open.
   const [open, setOpen] = useState(
-    step.status === "failed" || step.status === "awaiting",
+    step.status === "awaiting" ||
+      (step.status === "failed" && step.platformFailure === true),
   );
   const userToggle = useRef(false);
   // Collapsed steps skip payload formatting and code highlighting entirely.
@@ -151,9 +155,11 @@ function ConversationToolStep({ step }: { step: ToolStep }) {
     <div
       onClickCapture={() => {
         userToggle.current = true;
-        queueMicrotask(() => {
+        // React runs capture and bubble handlers from separate root listeners, and
+        // a real click drains microtasks between them; reset after the whole event.
+        setTimeout(() => {
           userToggle.current = false;
-        });
+        }, 0);
       }}
     >
       <ToolResult

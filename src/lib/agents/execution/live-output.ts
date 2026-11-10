@@ -118,6 +118,15 @@ export function taskOutput(taskId: string): LiveTaskOutput | null {
       ...(activity.text
         ? { text: redactText(activity.text, capture.secrets) }
         : {}),
+      // Offsets index the raw text; map them onto the redacted text.
+      ...(activity.textOffset === undefined
+        ? {}
+        : {
+            textOffset: redactText(
+              capture.output.text.slice(0, activity.textOffset),
+              capture.secrets,
+            ).length,
+          }),
     })),
   };
 }
@@ -216,6 +225,9 @@ export function publishTaskActivity(
       status: activity.status,
       text: text.length > MAX_VALUE ? `${text.slice(0, MAX_VALUE - 1)}…` : text,
       ...(source ? { source } : {}),
+      ...(previous?.textOffset === undefined
+        ? {}
+        : { textOffset: previous.textOffset }),
     };
     if (activity.status !== "running") capture.reasoningId = undefined;
   } else {
@@ -249,7 +261,7 @@ export function publishTaskActivity(
   const index = activities.findIndex((item) => item.id === next.id);
   if (index < 0) {
     if (activities.length >= MAX_ACTIVITIES) activities.shift();
-    activities.push(next);
+    activities.push({ ...next, textOffset: capture.output.text.length });
   } else activities[index] = next;
   notify(taskId);
 }
@@ -276,6 +288,7 @@ export function finishTaskOutput(
     id: "runtime:final",
     type: "runtime",
     status,
+    textOffset: capture.output.text.length,
   };
   if (capture.output.activities.length >= MAX_ACTIVITIES)
     capture.output.activities.shift();

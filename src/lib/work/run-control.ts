@@ -44,6 +44,8 @@ export type WorkOutputActivity = {
   input?: unknown;
   output?: unknown;
   isError?: boolean;
+  /** Length of the streamed reply text when this activity began. */
+  textOffset?: number;
 };
 
 export type WorkOutputEvent =
@@ -184,7 +186,9 @@ export function publishWorkActivity(
   channel.cleanup = undefined;
   const index = channel.activities.findIndex((item) => item.id === activity.id);
   const next =
-    index < 0 ? activity : { ...channel.activities[index], ...activity };
+    index < 0
+      ? { ...activity, textOffset: channel.text.length }
+      : { ...channel.activities[index], ...activity };
   if (index < 0) channel.activities.push(next);
   else channel.activities[index] = next;
   channel.active = true;

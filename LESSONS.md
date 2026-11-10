@@ -136,13 +136,14 @@
 
 ### TP-L010：工具失败是工具结果，不是整轮失败
 
-**规则**：模型能读到并处理的工具错误（命令非零退出、MCP 工具返回错误）只记录为失败的工具结果，不让整轮失败；整轮失败时也要保存已写入的会话历史，避免下一条消息变成 `PI_SDK_SESSION_MISSING`。
+**已提升规范**：[AGENTS.md 代码地图](AGENTS.md#code-and-documentation-map)。模型能读到并处理的工具错误（命令非零退出、MCP 工具返回错误）只记录为失败的工具结果，不让整轮失败；整轮失败时也要保存已写入的会话历史，避免下一条消息变成 `PI_SDK_SESSION_MISSING`。
 
 - **错误与原因**：`pi-sdk-session.mjs` 在任一 `tool_execution_end.isError` 时设置 `PI_SDK_TOOL_FAILED`，模型已经正常回答也判整轮失败；失败分支不写状态文件，下一轮因 `historyRequired` 直接报会话丢失。用户看到的是“调用 MCP 老是失败”，实际是 `grep` 没匹配到返回 1 就让任务失败。旧测试把“工具失败即整轮失败”固定成了契约。
 - **下次怎么验证**：在 Node 26 下运行 `tests/integration/pi-sdk-host.test.ts`：失败工具后本轮成功且会话已保存；停止后的下一条消息能在同一会话继续。改动失败分支时，先临时去掉修复确认回归测试会失败。
 - **证据**：[会话宿主](scripts/pi-sdk-session.mjs)、[宿主集成测试](tests/integration/pi-sdk-host.test.ts)。
 - **2026-11-04 首次失败补充（用户反馈）**：首次接纳失败后，Work 保存的 assistant 模型标签、`work-runtime: failed` 和耗时元数据被消息条数及“存在 assistant”双重判定误认为原生历史，下一次显式请求因空 OMP session 继续失败。入口和 Pi／OMP 启动统一使用实质历史判定，仅跳过已知的展示元数据；正文、推理、工具活动、完成记录及未知内容仍保守要求恢复。原失败 Work 真实 bash 返回 `NATIVE_HISTORY_RECOVERED_OK`，同智能体新 Work 首轮真实 bash 返回 `FRESH_NATIVE_OK`。回归：[上下文边界测试](tests/unit/conversation-context.test.ts)；实现：[共享历史判定](src/lib/agents/conversation-context.ts)、[入口参数](src/lib/agents/execution/task-options.ts)、[沙箱宿主配置](src/lib/agents/sandbox-runtime.ts)。
-- **确认日期**：2026-10-31、2026-11-04（用户报告）。
+- **2026-11-10 展示层复发（用户反馈线上“处理失败 159 s，实际已完成”）**：Work 状态为 `idle`、无错误，但 13 次 SSH MCP 调用中有几次返回 `SSH_CONNECTION_FAILED`；共享渲染器 `contentProcessStatus` 遇到任一失败工具即把整个过程组标为“处理失败”，失败工具还默认展开。改为只有运行时（`data-work-runtime`）或平台级失败（助手确认回执，`platformFailure`）才使过程组失败；工具行仍显示 Failed。真实 Work 中 `ls` 失败（`isError: true`）后过程组显示“使用了 1 个工具”。依据：[过程状态](src/lib/conversation/content-blocks.ts)。
+- **确认日期**：2026-10-31、2026-11-04（用户报告）、2026-11-10（用户报告）。
 
 ### TP-L011：设置放在拥有它的对象上，复用已有控件
 
@@ -465,6 +466,8 @@
 
 - **证据（2026-11-10，用户反馈“工具调用和输出堆在一起、窗口一直跳动”）**：共享渲染器让过程组运行时展开、完成后收起，每轮工具后正文开始又触发一次收起；vendored `ToolResult` 在状态变为 running 时也会自动展开。连续同名工具行只显示“bash Completed”，无法区分。改为默认折叠、仅点击切换（用捕获阶段标记过滤组件自身的状态驱动回调）、工具行显示参数摘要、思考两行预览后，真实 Work 三次 `bash` 回合测得 CLS 0、`aria-expanded` 自动变化 0 次、滚动高度回缩 0 次。另发现展开披露会暂停 `MessageScroller` 跟随，助手和 Work 发送新消息后未恢复；已与智能体对话一样在发送时恢复跟随。
 - **下次怎么验证**：真实回合中用 `PerformanceObserver('layout-shift')`、`aria-expanded` 变更计数和滚动容器高度回缩次数取证；先展开一个旧披露再发送，确认新输出仍跟到底部。依据：`ConversationContentBlocks.tsx`、`tests/unit/workspace-work-failures.test.tsx`。
+- **点击切换复发（2026-11-10，线上用户反馈“工具调用不能正常折叠展开”）**：上述捕获阶段标记用 `queueMicrotask` 复位。React 的捕获与冒泡处理分属根节点上的两个原生监听器，真实点击在两者之间会清空微任务，`onOpenChange` 到达时标记已复位，工具行永远打不开；单元测试的程序化 `click()` 在同一脚本栈内执行，微任务不会提前运行，所以测试通过。改为 `setTimeout(0)` 复位。本地真实浏览器（CDP 输入）先复现微任务版点击后 `aria-expanded` 仍为 false，修复后打开／收起均生效。下次凡依赖事件阶段之间的时序，必须用真实浏览器输入验收，不能只用 Testing Library。
+- **正文顺序补充（同日）**：#201 只修了助手对话；Work 的实时视图把全部正文拼在活动之后，持久化又只存任务最终结果为末尾一段文本，于是工具调用和正文各自堆在一起。实时活动现记录开始时的正文偏移，`interleaveLiveText` 按偏移穿插；协调器按到达顺序记录正文片段，与最终结果去空白后一致时按序持久化，否则仍追加在末尾。已持久化的旧消息无法可靠拆分，保持原样。真实 Work 两次 bash 回合的实时和刷新后结构均为“思考｜正文｜工具｜正文｜工具｜正文”。依据：[协调器](src/lib/work/coordinator.ts)、[输出通道](src/lib/work/run-control.ts)。
 
 ### TP-L045：可配置上限必须贯穿数据流的每一跳
 

@@ -74,6 +74,7 @@ import {
   type ModelSelection,
 } from "@/components/dashboard/ComposerModelSelect";
 import type { ComposerReference } from "@/lib/work/composer-types";
+import { interleaveLiveText } from "@/lib/conversation/content-blocks";
 import { CopyButton } from "@/components/dashboard/CopyButton";
 import { SidebarGroupDialog } from "@/components/dashboard/SidebarGroupDialog";
 import { sidebarHoverActionsClassName } from "@/components/dashboard/sidebarHoverActions";
@@ -222,6 +223,7 @@ type WorkActivity = {
   output?: unknown;
   isError?: boolean;
   source?: SubagentSource;
+  textOffset?: number;
 };
 
 type WorkMessage = {
@@ -615,38 +617,40 @@ function WorkTranscript({
               ? { createdAt: new Date(streamStartedAt).toISOString() }
               : {}),
             parts: [
-              ...streamActivities.map((activity): WorkPart => {
-                if (activity.type === "tool") {
+              ...interleaveLiveText(streamActivities, streamText).map(
+                (activity): WorkPart => {
+                  if (activity.type === "text") return activity;
+                  if (activity.type === "tool") {
+                    return {
+                      type: "work-tool",
+                      source: activity.source,
+                      toolCallId: activity.toolCallId,
+                      toolName: activity.toolName,
+                      deploymentName: activity.deploymentName,
+                      originalToolName: activity.originalToolName,
+                      durationMs: activity.durationMs,
+                      input: activity.input,
+                      output: activity.output,
+                      isError: activity.isError,
+                      status: activity.status,
+                    };
+                  }
+                  if (activity.type === "reasoning") {
+                    return {
+                      type: "reasoning",
+                      source: activity.source,
+                      text: activity.text,
+                      status: activity.status,
+                    };
+                  }
                   return {
-                    type: "work-tool",
+                    type: "work-runtime",
                     source: activity.source,
-                    toolCallId: activity.toolCallId,
-                    toolName: activity.toolName,
-                    deploymentName: activity.deploymentName,
-                    originalToolName: activity.originalToolName,
-                    durationMs: activity.durationMs,
-                    input: activity.input,
-                    output: activity.output,
-                    isError: activity.isError,
+                    runtimeKind: activity.runtimeKind,
                     status: activity.status,
                   };
-                }
-                if (activity.type === "reasoning") {
-                  return {
-                    type: "reasoning",
-                    source: activity.source,
-                    text: activity.text,
-                    status: activity.status,
-                  };
-                }
-                return {
-                  type: "work-runtime",
-                  source: activity.source,
-                  runtimeKind: activity.runtimeKind,
-                  status: activity.status,
-                };
-              }),
-              ...(streamText ? [{ type: "text", text: streamText }] : []),
+                },
+              ),
               ...(streamStartedAt
                 ? [
                     {
@@ -736,7 +740,7 @@ function WorkTranscript({
                 !part.reference,
             )
             .map((part) => part.text)
-            .join("\n") ||
+            .join("\n\n") ||
           (typeof commandResult?.text === "string" ? commandResult.text : "");
         const text =
           message.role === "user"
@@ -744,8 +748,9 @@ function WorkTranscript({
             : isStreamingMessage
               ? rawText
               : rawText.trim();
+        // Tool errors are results the model handles; only the runtime outcome fails a turn.
         const processFailed = message.parts.some(
-          (part) => part.isError || part.status === "failed",
+          (part) => part.type === "work-runtime" && part.status === "failed",
         );
         const fileParts = message.parts.filter(
           (part) =>
