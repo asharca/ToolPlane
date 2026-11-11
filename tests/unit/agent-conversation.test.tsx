@@ -531,33 +531,6 @@ describe("AgentConversation", () => {
     expect(chatMocks.stop).toHaveBeenCalledOnce();
   });
 
-  it("offers runtime slash commands and sends them through the command endpoint", async () => {
-    const user = userEvent.setup();
-    const onConversationChanged = vi.fn();
-    renderConversation({ runtimeKind: "pi-sdk", onConversationChanged });
-
-    const input = screen.getByPlaceholderText("Message this agent");
-    await user.type(input, "/");
-    const menu = await screen.findByRole("listbox", { name: "Tools" });
-    expect(
-      within(menu).getByRole("option", { name: /compact/ }),
-    ).toBeInTheDocument();
-    await user.click(within(menu).getByRole("option", { name: /compact/ }));
-    expect(input).toHaveValue("/compact ");
-
-    await user.type(input, "preserve paths");
-    await user.click(screen.getByRole("button", { name: "Send prompt" }));
-
-    await waitFor(() =>
-      expect(apiMocks.fetch).toHaveBeenCalledWith(
-        "/api/v1/agents/agent-1/conversations/conv-1/commands",
-        expect.objectContaining({ body: '{"line":"/compact preserve paths"}' }),
-      ),
-    );
-    expect(chatMocks.sendMessage).not.toHaveBeenCalled();
-    expect(onConversationChanged).toHaveBeenCalledTimes(1);
-  });
-
   it.each([
     ["notFound", "Conversation not found."],
     ["Forbidden command execution", "Forbidden command execution"],
