@@ -3205,6 +3205,17 @@
       "restoreBranchPanel": "还原分支视图"
     },
     "work": {
+      "a2a": {
+        "group": "A2A",
+        "title": "A2A 会话",
+        "openConversation": "打开 A2A 会话",
+        "readOnly": "此会话仅供只读查看，不提供回复或执行控制。",
+        "loading": "正在读取 A2A 会话…",
+        "loadFailed": "无法读取 A2A 会话，请刷新或重新登录。",
+        "unavailable": "此 A2A 会话暂不可用，访问权限可能已变更或保留期已结束。",
+        "loadMore": "加载更多会话",
+        "task": "任务 {number}"
+      },
       "completionNotificationTitle": "ToolPlane · 本轮已结束",
       "completionNotificationEnable": "启用此 Work 页面不活跃时的完成通知",
       "completionNotificationDisable": "关闭页面不活跃时的完成通知",

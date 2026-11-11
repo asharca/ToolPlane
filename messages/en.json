@@ -3205,6 +3205,17 @@
       "restoreBranchPanel": "Restore branch view"
     },
     "work": {
+      "a2a": {
+        "group": "A2A",
+        "title": "A2A conversation",
+        "openConversation": "Open A2A conversation",
+        "readOnly": "Read-only conversation. Replies and execution controls are not available here.",
+        "loading": "Loading A2A conversation…",
+        "loadFailed": "Could not load A2A conversations. Refresh or sign in again.",
+        "unavailable": "This A2A conversation is unavailable. Access may have changed or its retention period may have expired.",
+        "loadMore": "Load more conversations",
+        "task": "Task {number}"
+      },
       "completionNotificationTitle": "ToolPlane · Turn finished",
       "completionNotificationEnable": "Enable notifications when this Work page is inactive",
       "completionNotificationDisable": "Disable inactive-page completion notifications",

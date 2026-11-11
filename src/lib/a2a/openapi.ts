@@ -194,6 +194,43 @@ export const a2aOpenApi = {
   },
   schemas: {
     AgentA2APolicy: z.toJSONSchema(AgentA2APolicySchema),
+    A2AConsoleContexts: z.toJSONSchema(
+      z
+        .object({
+          items: z
+            .array(
+              z
+                .object({
+                  contextId: z.string(),
+                  peer: z
+                    .object({
+                      kind: z.enum(["agent", "remote", "client"]),
+                      name: z.string(),
+                    })
+                    .strict(),
+                  title: z.string().max(120),
+                  state: z.string(),
+                  updatedAt: z.iso.datetime(),
+                  tasks: z
+                    .array(
+                      z
+                        .object({
+                          taskId: z.string(),
+                          rootTaskId: z.string(),
+                          rootAgentId: z.string(),
+                          createdAt: z.iso.datetime(),
+                        })
+                        .strict(),
+                    )
+                    .max(20),
+                })
+                .strict(),
+            )
+            .max(20),
+          nextCursor: z.string().nullable(),
+        })
+        .strict(),
+    ),
     A2ASendParams: {
       ...z.toJSONSchema(documentedSendSchema),
       description:
@@ -422,6 +459,46 @@ export const a2aOpenApi = {
         summary: "Try A2A with your login session",
         security: [{ consoleSession: [] }],
         description: `${rpcOperation.description} Same-origin console endpoint: the browser sends your existing login cookie. Sign in first; no Bearer token is accepted. Specify a workspace slug and accessible Agent ID.`,
+      },
+    },
+    "/api/v1/workspaces/{slug}/agents/{agentId}/a2a/console/contexts": {
+      parameters: [pathParameter("slug"), pathParameter("agentId")],
+      get: {
+        tags: ["A2A · Console"],
+        operationId: "listConsoleA2AContexts",
+        summary: "List received A2A conversations for Work",
+        description:
+          "Read-only, same-origin browser endpoint using the signed-in session cookie; Authorization headers are rejected. Lists unexpired executing contexts visible to this actor through their authorized root task trees, excluding ordinary chat/channel/work/trigger/control entry roots. Delegated children of those roots remain eligible. Console RPC roots use peer client/Console; local delegations use the sending Agent name. Published-service grants without workspace actor authority are not visible. Results are ordered by latest task update, newest first, in pages of 20. Tasks are the latest 20, ordered by creation ascending. Transcripts use the existing console/tasks endpoint on rootAgentId with rootTaskId and selectedTaskId; this endpoint creates no Conversation or Message records.",
+        security: [{ consoleSession: [] }],
+        parameters: [
+          {
+            name: "taskId",
+            in: "query",
+            description:
+              "Return only the context containing this authorized task, or an empty list.",
+            schema: { type: "string", minLength: 1, maxLength: 200 },
+          },
+          {
+            name: "cursor",
+            in: "query",
+            description: "Opaque nextCursor from the previous page.",
+            schema: { type: "string", minLength: 1, maxLength: 1024 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Received A2A contexts visible to this session actor.",
+            content: jsonContent(ref("A2AConsoleContexts")),
+          },
+          default: {
+            description:
+              "Session, origin, membership, validation or safe console operation failure.",
+            content: jsonContent({
+              type: "object",
+              properties: { error: { type: "string" } },
+            }),
+          },
+        },
       },
     },
     "/api/v1/agent-endpoints/{endpointId}/a2a/.well-known/agent-card.json": {

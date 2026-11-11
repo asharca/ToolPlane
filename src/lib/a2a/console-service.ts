@@ -187,110 +187,120 @@ export async function mutateA2AConsole(
   ctx: ConsoleActor,
   input: A2AConsoleAction,
 ): Promise<Record<string, never>> {
-  return db.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${ctx.workspaceId} FOR UPDATE`;
-    if (!(await canManage(tx, ctx)))
-      throw new A2AHttpError(403, "Workspace owner or administrator required.");
-    const agent = await tx.agent.findFirst({
-      where: {
-        ...ORDINARY_AGENT_FILTER,
-        id: ctx.agentId,
-        workspaceId: ctx.workspaceId,
-      },
-      select: {
-        id: true,
-        runtimeKind: true,
-        currentRevisionVersion: true,
-        subagentMode: true,
-        nativeSubagentMaxConcurrency: true,
-        nativeSubagentMaxDepth: true,
-      },
-    });
-    if (!agent) throw new A2AHttpError(404, "Agent unavailable.");
-    if (input.action === "set-inbound" || input.action === "set-outbound") {
-      if (agent.runtimeKind !== "pi-sdk")
-        throw new A2AHttpError(409, "Retired Agent execution is read-only.");
-      const inbound = input.action === "set-inbound";
-      await tx.agent.update({
-        where: { id: agent.id },
-        data: inbound
-          ? { a2aInboundEnabled: input.enabled }
-          : { a2aOutboundEnabled: input.enabled },
+  return db.$transaction(
+    async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${ctx.workspaceId} FOR UPDATE`;
+      if (!(await canManage(tx, ctx)))
+        throw new A2AHttpError(
+          403,
+          "Workspace owner or administrator required.",
+        );
+      const agent = await tx.agent.findFirst({
+        where: {
+          ...ORDINARY_AGENT_FILTER,
+          id: ctx.agentId,
+          workspaceId: ctx.workspaceId,
+        },
+        select: {
+          id: true,
+          runtimeKind: true,
+          currentRevisionVersion: true,
+          subagentMode: true,
+          nativeSubagentMaxConcurrency: true,
+          nativeSubagentMaxDepth: true,
+        },
       });
-      if (agent.runtimeKind === "pi-sdk" && agent.currentRevisionVersion > 0) {
-        const revision = await requireAgentRevision(tx, agent.id);
-        // Direction changes cannot apply a pending mode or widen native limits.
-        const nativePolicy = revision.config.nativeSubagentPolicy;
+      if (!agent) throw new A2AHttpError(404, "Agent unavailable.");
+      if (input.action === "set-inbound" || input.action === "set-outbound") {
+        if (agent.runtimeKind !== "pi-sdk")
+          throw new A2AHttpError(409, "Retired Agent execution is read-only.");
+        const inbound = input.action === "set-inbound";
+        await tx.agent.update({
+          where: { id: agent.id },
+          data: inbound
+            ? { a2aInboundEnabled: input.enabled }
+            : { a2aOutboundEnabled: input.enabled },
+        });
         if (
-          (revision.config.subagentMode ?? "platform") === agent.subagentMode &&
-          (!nativePolicy ||
-            (nativePolicy.maxConcurrency <=
-              agent.nativeSubagentMaxConcurrency &&
-              nativePolicy.maxDepth <= agent.nativeSubagentMaxDepth))
+          agent.runtimeKind === "pi-sdk" &&
+          agent.currentRevisionVersion > 0
         ) {
-          await publishAgentRevisionInTransaction(
-            tx,
-            ctx.workspaceId,
-            agent.id,
-            {
-              expectedRevisionId: revision.id,
-              config: {
-                ...revision.config,
-                a2a: {
-                  ...revision.config.a2a,
-                  ...(inbound
-                    ? { inboundEnabled: input.enabled }
-                    : { outboundEnabled: input.enabled }),
+          const revision = await requireAgentRevision(tx, agent.id);
+          // Direction changes cannot apply a pending mode or widen native limits.
+          const nativePolicy = revision.config.nativeSubagentPolicy;
+          if (
+            (revision.config.subagentMode ?? "platform") ===
+              agent.subagentMode &&
+            (!nativePolicy ||
+              (nativePolicy.maxConcurrency <=
+                agent.nativeSubagentMaxConcurrency &&
+                nativePolicy.maxDepth <= agent.nativeSubagentMaxDepth))
+          ) {
+            await publishAgentRevisionInTransaction(
+              tx,
+              ctx.workspaceId,
+              agent.id,
+              {
+                expectedRevisionId: revision.id,
+                config: {
+                  ...revision.config,
+                  a2a: {
+                    ...revision.config.a2a,
+                    ...(inbound
+                      ? { inboundEnabled: input.enabled }
+                      : { outboundEnabled: input.enabled }),
+                  },
                 },
               },
-            },
-          );
-          if (inbound && input.enabled)
-            await localTarget(tx, ctx.workspaceId, agent.id);
+            );
+            if (inbound && input.enabled)
+              await localTarget(tx, ctx.workspaceId, agent.id);
+          }
         }
+        await writeAudit(tx, {
+          actorId: ctx.actorId,
+          workspaceId: ctx.workspaceId,
+          action: "agent.a2a.collaboration.configure",
+          targetType: "Agent",
+          targetId: agent.id,
+          changes: inbound
+            ? { inboundEnabled: input.enabled }
+            : { outboundEnabled: input.enabled },
+        });
+        return {};
       }
-      await writeAudit(tx, {
-        actorId: ctx.actorId,
-        workspaceId: ctx.workspaceId,
-        action: "agent.a2a.collaboration.configure",
-        targetType: "Agent",
-        targetId: agent.id,
-        changes: inbound
-          ? { inboundEnabled: input.enabled }
-          : { outboundEnabled: input.enabled },
+      const endpoint = await tx.agentEndpoint.findFirst({
+        where: { workspaceId: ctx.workspaceId, sourceAgentId: agent.id },
+        select: { id: true },
       });
+      if (!endpoint)
+        throw new A2AHttpError(404, "Retained endpoint unavailable.");
+      await tx.$queryRaw`SELECT id FROM "AgentEndpoint" WHERE id=${endpoint.id} FOR UPDATE`;
+      const key = await tx.agentApiKey.findFirst({
+        where: { id: input.keyId, client: { endpointId: endpoint.id } },
+        select: {
+          id: true,
+          revokedAt: true,
+          client: { select: { scopes: true } },
+        },
+      });
+      if (!key || !isA2AClient(key.client.scopes))
+        throw new A2AHttpError(404, "A2A key unavailable.");
+      if (!key.revokedAt) {
+        await tx.agentApiKey.update({
+          where: { id: key.id },
+          data: { revokedAt: new Date() },
+        });
+        await writeAudit(tx, {
+          actorId: ctx.actorId,
+          workspaceId: ctx.workspaceId,
+          action: "agentApiKey.revoked",
+          targetType: "agentApiKey",
+          targetId: key.id,
+        });
+      }
       return {};
-    }
-    const endpoint = await tx.agentEndpoint.findFirst({
-      where: { workspaceId: ctx.workspaceId, sourceAgentId: agent.id },
-      select: { id: true },
-    });
-    if (!endpoint)
-      throw new A2AHttpError(404, "Retained endpoint unavailable.");
-    await tx.$queryRaw`SELECT id FROM "AgentEndpoint" WHERE id=${endpoint.id} FOR UPDATE`;
-    const key = await tx.agentApiKey.findFirst({
-      where: { id: input.keyId, client: { endpointId: endpoint.id } },
-      select: {
-        id: true,
-        revokedAt: true,
-        client: { select: { scopes: true } },
-      },
-    });
-    if (!key || !isA2AClient(key.client.scopes))
-      throw new A2AHttpError(404, "A2A key unavailable.");
-    if (!key.revokedAt) {
-      await tx.agentApiKey.update({
-        where: { id: key.id },
-        data: { revokedAt: new Date() },
-      });
-      await writeAudit(tx, {
-        actorId: ctx.actorId,
-        workspaceId: ctx.workspaceId,
-        action: "agentApiKey.revoked",
-        targetType: "agentApiKey",
-        targetId: key.id,
-      });
-    }
-    return {};
-  });
+    },
+    { timeout: 120_000 },
+  );
 }
