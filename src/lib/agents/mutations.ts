@@ -32,8 +32,6 @@ import {
   isExternalSandboxCandidate,
   MAX_EXTERNAL_SANDBOXES,
 } from "@/lib/sandboxes/external";
-import { sandboxExecutionBusy } from "./sandbox-execution-gate";
-import { TERMINAL } from "@/lib/a2a/model";
 import {
   pinCurrentAgentRevision,
   captureAgentRevisionConfig,
@@ -628,30 +626,6 @@ async function validateAndWritePiPackages(
     )
   )
     return;
-  const sandboxes = await tx.agentSandbox.findMany({
-    where: { agentId },
-    select: { sandboxId: true },
-  });
-  if (sandboxes.some(({ sandboxId }) => sandboxExecutionBusy(sandboxId))) {
-    throw new AgentConfigurationError("pi_package_agent_busy");
-  }
-  // Check agent is not busy (no active A2A task, Work, or execution lease)
-  const busyTask = await tx.a2ATask.findFirst({
-    where: {
-      context: { agentId, workspaceId },
-      state: { notIn: TERMINAL },
-    },
-    select: { id: true },
-  });
-  if (busyTask) throw new AgentConfigurationError("pi_package_agent_busy");
-  const busyWork = await tx.workSession.findFirst({
-    where: {
-      agentId,
-      status: { in: ["queued", "running", "cancelling"] },
-    },
-    select: { id: true },
-  });
-  if (busyWork) throw new AgentConfigurationError("pi_package_agent_busy");
   await tx.agentPiPackage.deleteMany({
     where: {
       agentId,
@@ -728,27 +702,9 @@ async function requireAgentWorkspaceResource(
       publicRuntimeAllocation: null,
       workspace: { status: "active" },
     },
-    select: { sandboxes: { select: { sandboxId: true } } },
+    select: { id: true },
   });
   if (!agent) throw new AgentConfigurationError("resource_binding_unavailable");
-  if (agent.sandboxes.some(({ sandboxId }) => sandboxExecutionBusy(sandboxId)))
-    throw new AgentConfigurationError("resource_binding_busy");
-  const task = await tx.a2ATask.findFirst({
-    where: {
-      context: { agentId, workspaceId },
-      state: { notIn: TERMINAL },
-    },
-    select: { id: true },
-  });
-  const work = await tx.workSession.findFirst({
-    where: {
-      agentId,
-      workspaceId,
-      status: { in: ["queued", "running", "cancelling"] },
-    },
-    select: { id: true },
-  });
-  if (task || work) throw new AgentConfigurationError("resource_binding_busy");
   const selected =
     resource.kind === "skill"
       ? await tx.installedSkill.findFirst({
@@ -770,7 +726,8 @@ export async function bindAgentWorkspaceResource(
   agentId: string,
   resource: { kind: "skill" | "mcp"; id: string },
 ) {
-  return withAgentMaintenanceLease(agentId, async () => {
+  // Draft bindings only shape the next revision; pinned sessions keep running.
+  return withAgentDraftLease(agentId, async () => {
     if (resource.kind === "mcp") {
       await db.$transaction((tx) =>
         requireAgentWorkspaceResource(tx, workspaceId, agentId, resource),
@@ -781,7 +738,7 @@ export async function bindAgentWorkspaceResource(
       });
     }
     return db.$transaction(async (tx) => {
-      // Recheck ownership and busy state after metadata resolution, before attaching.
+      // Recheck ownership after metadata resolution, before attaching.
       await requireAgentWorkspaceResource(tx, workspaceId, agentId, resource);
       if (resource.kind === "skill") {
         await tx.agentSkill.upsert({

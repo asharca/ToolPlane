@@ -837,7 +837,6 @@
       "piPackageNotEnabled": "Not enabled for this Agent",
       "piPackageUnavailable": "This plugin release is unavailable or revoked. Remove its binding or update it in Plugin Center.",
       "piPackageErrors": {
-        "pi_package_agent_busy": "Package bindings were not saved: this Agent is busy. Finish or cancel active tasks and Work, wait for sandbox execution to stop, then try again.",
         "pi_package_release_not_current": "The workspace version changed. Refresh settings and try again.",
         "pi_packages_runtime_unsupported": "Only Pi Agents can use Pi packages. Create a new Pi Agent; the current runtime cannot be changed.",
         "pi_packages_invalid": "Select at most 16 different installed packages, each with a valid release. Refresh settings and try again.",

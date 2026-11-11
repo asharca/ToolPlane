@@ -5,7 +5,10 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { createAgent, setAgentPiPackages } from "@/lib/agents/mutations";
 import { resolvePiSessionPackages } from "@/lib/agents/pi-session-packages";
-import { withAgentMaintenanceLease } from "@/lib/agents/agent-execution-gate";
+import {
+  withAgentExecutionLease,
+  withAgentMaintenanceLease,
+} from "@/lib/agents/agent-execution-gate";
 import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 import { addPlugin, updatePlugin, removePlugin } from "@/lib/plugins/installs";
 import { getPlugin, listPlugins } from "@/lib/plugins/catalog";
@@ -250,8 +253,24 @@ it("derives legacy changelogs read-only from each frozen release and keeps lates
   ).toEqual(before);
 });
 
-it("auto-publishes unchanged capabilities while existing sessions retain their old release", async () => {
-  await updatePlugin(workspaceId, userId, installId, v2);
+it("auto-publishes unchanged capabilities during active execution while existing sessions retain their old release", async () => {
+  const running = await db.workSession.create({
+    data: {
+      workspaceId,
+      agentId,
+      conversationId: (await db.conversation.create({ data: { agentId } })).id,
+      runtimeKind: "pi-sdk",
+      status: "running",
+    },
+  });
+  await withAgentExecutionLease(
+    { agentId, sessionId: oldSession.conversationId },
+    () => updatePlugin(workspaceId, userId, installId, v2),
+  );
+  await db.workSession.update({
+    where: { id: running.id },
+    data: { status: "completed" },
+  });
   expect(await binding()).toMatchObject({
     releaseId: v2,
     syncStatus: "synced",
@@ -365,7 +384,7 @@ it("pauses code changes without a revision, preserves review through draft edits
   ).rejects.toMatchObject({ code: "plugin_review_conflict", status: 409 });
 });
 
-it("queues busy agents and retries with the updating administrator", async () => {
+it("queues syncs blocked by agent maintenance and retries with the updating administrator", async () => {
   const unrelated = new AsyncResource("plugin-test-unrelated");
   try {
     await withAgentMaintenanceLease(agentId, () =>

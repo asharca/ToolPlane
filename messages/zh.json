@@ -837,7 +837,6 @@
       "piPackageNotEnabled": "未对此 Agent 启用",
       "piPackageUnavailable": "此插件版本已不可用或已撤销批准。请先移除绑定或在插件中心更新。",
       "piPackageErrors": {
-        "pi_package_agent_busy": "绑定未保存：此 Agent 正在运行。请完成或取消活动任务及 Work，等待沙箱执行停止后重试。",
         "pi_package_release_not_current": "工作区版本已改变，请刷新设置后重试。",
         "pi_packages_runtime_unsupported": "仅 Pi Agent 可使用能力包。请新建 Pi Agent；不能改变当前运行时。",
         "pi_packages_invalid": "最多选择 16 个不同的已安装包，每个包须有有效版本。请刷新设置后重试。",

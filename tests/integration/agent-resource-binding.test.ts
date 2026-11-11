@@ -187,11 +187,11 @@ it("rejects a foreign Agent or resource without touching either workspace", asyn
     }),
   ).toBe(0);
 });
-it("does not mutate a selected Agent while Work is running", async () => {
+it("binds a draft resource to a selected Agent while Work is running", async () => {
   const conversation = await db.conversation.create({
     data: { agentId: other },
   });
-  const work = await db.workSession.create({
+  await db.workSession.create({
     data: {
       workspaceId,
       agentId: other,
@@ -199,17 +199,6 @@ it("does not mutate a selected Agent while Work is running", async () => {
       runtimeKind: "pi-sdk",
       status: "running",
     },
-  });
-  await expect(
-    bindAgentWorkspaceResource(workspaceId, other, {
-      kind: "skill",
-      id: firstSkill,
-    }),
-  ).rejects.toThrow("resource_binding_busy");
-  expect(await db.agentSkill.count({ where: { agentId: other } })).toBe(0);
-  await db.workSession.update({
-    where: { id: work.id },
-    data: { status: "completed" },
   });
   await bindAgentWorkspaceResource(workspaceId, other, {
     kind: "skill",
