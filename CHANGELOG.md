@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.2](https://github.com/asharca/ToolPlane/compare/v0.36.1...v0.36.2) (2026-11-11)
+
+
+### Bug Fixes
+
+* **a2a:** 恢复任务结束后的工具调用过程记录 ([#215](https://github.com/asharca/ToolPlane/issues/215)) ([c3abe03](https://github.com/asharca/ToolPlane/commit/c3abe0355b79ea2b2f8b2ff539f327b31db7609a))
+
 ## [0.36.1](https://github.com/asharca/ToolPlane/compare/v0.36.0...v0.36.1) (2026-11-11)
 
 
