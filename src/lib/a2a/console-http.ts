@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "@/lib/db";
 import { z } from "zod";
 import { getConsoleTaskTree } from "./console-tasks";
+import { getConsoleContexts } from "./console-contexts";
 import { retryTaskFileReception } from "./store";
 import type { TaskGrant } from "./principal";
 import { resolveRequestPrincipal } from "@/lib/auth/request-user";
@@ -211,6 +212,36 @@ export async function handleA2AConsoleTasks(
           parsed.data.historyLength ?? 0,
         ),
       );
+    } catch (error) {
+      return failure(error);
+    }
+  });
+}
+
+/** Session-only, read-only inbound A2A context discovery for Work. */
+export async function handleA2AConsoleContexts(
+  req: Request,
+  slug: string,
+  agentId: string,
+) {
+  return withLogContext({ suppressPayload: true }, async () => {
+    try {
+      if (req.method !== "GET")
+        return reply({ error: "Method not allowed." }, 405);
+      const ctx = await sessionActor(req, slug, agentId);
+      const query = new URL(req.url).searchParams;
+      if ([...query.keys()].some((key) => query.getAll(key).length !== 1))
+        throw new A2AHttpError(400, "Invalid context query.");
+      const parsed = z
+        .object({
+          taskId: z.string().min(1).max(200).optional(),
+          cursor: z.string().min(1).max(1024).optional(),
+        })
+        .strict()
+        .safeParse(Object.fromEntries(query));
+      if (!parsed.success)
+        throw new A2AHttpError(400, "Invalid context query.");
+      return reply(await getConsoleContexts(ctx, parsed.data));
     } catch (error) {
       return failure(error);
     }

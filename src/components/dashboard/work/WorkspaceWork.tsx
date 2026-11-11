@@ -66,6 +66,12 @@ import { WorkComposer } from "./WorkComposer";
 import { ConversationExecution } from "./ConversationExecution";
 import { useLiveTaskOutput } from "./useLiveTaskOutput";
 import { LiveOutputStatus, LiveOutputView } from "./LiveOutputView";
+import {
+  A2AContextView,
+  useA2AContexts,
+  a2aStateKey,
+  type A2AContextSummary,
+} from "./A2AContextView";
 import { createWorkCompletionTransition } from "./completion-transition";
 import { useWorkCompletionNotification } from "./useWorkCompletionNotification";
 import {
@@ -102,7 +108,10 @@ import {
   pinAgentAction,
 } from "@/lib/agents/actions";
 import type { ReasoningEffort } from "@/lib/agents/constants";
-import type { SubagentSource } from "../agents/SubagentActivity";
+import {
+  SubagentConversationScope,
+  type SubagentSource,
+} from "../agents/SubagentActivity";
 import {
   displayMessagingUserText,
   type ParsedMessagingSession,
@@ -261,6 +270,7 @@ type WorkSidebarAgent = {
   agent: WorkAgent;
   sessions: WorkItem[];
   channels: Array<ConversationSummary & { label: string }>;
+  a2aContexts: A2AContextSummary[];
 };
 type WorkTiming = {
   startedAt: number;
@@ -946,6 +956,7 @@ export function WorkspaceWork({
   selectedWorkSessionId,
   selectedSession,
   requestedAgentId,
+  requestedA2ATaskId,
   conversations = [],
   selectedConversation = null,
   hasChannels = false,
@@ -961,6 +972,7 @@ export function WorkspaceWork({
   selectedWorkSessionId: string | null;
   selectedSession?: WorkItem | null;
   requestedAgentId?: string;
+  requestedA2ATaskId?: string;
   conversations?: ConversationSummary[];
   selectedConversation?: ConversationDetail | null;
   hasChannels?: boolean;
@@ -974,6 +986,7 @@ export function WorkspaceWork({
   const operationsT = useTranslations("console.conversationOperations");
   const tSandboxes = useTranslations("console.sandboxes");
   const common = useTranslations("common");
+  const taskStates = useTranslations("console.observability.viewer");
   const router = useRouter();
   const { control: completionNotificationControl, notifyCompletion } =
     useWorkCompletionNotification(workspaceId, slug);
@@ -1016,14 +1029,17 @@ export function WorkspaceWork({
     });
   }
   const [liveSelected, setLiveSelected] = useState<WorkItem | null>(null);
-  const selectionKey = selectedConversation?.id ?? selectedWorkSessionId;
+  const selectionKey = requestedA2ATaskId
+    ? `a2a:${requestedAgentId ?? ""}:${requestedA2ATaskId}`
+    : (selectedConversation?.id ?? selectedWorkSessionId);
   const [draftSelectionKey, setDraftSelectionKey] = useState<string | null>(
     null,
   );
   if (draftSelectionKey && draftSelectionKey !== selectionKey)
     setDraftSelectionKey(null);
   const creatingMode = !selectionKey || draftSelectionKey === selectionKey;
-  const conversation = creatingMode ? null : selectedConversation;
+  const viewingA2A = Boolean(!creatingMode && requestedA2ATaskId);
+  const conversation = creatingMode || viewingA2A ? null : selectedConversation;
   const [conversationBusy, setConversationBusy] = useState(false);
   const [listOptionsOpen, setListOptionsOpen] = useState(false);
   const [sidebarSearch, setSidebarSearch] = useState("");
@@ -1051,7 +1067,7 @@ export function WorkspaceWork({
     workAgentGroupPreferencesCookieName(workspaceId),
   );
   const selected =
-    creatingMode || conversation
+    creatingMode || conversation || viewingA2A
       ? null
       : liveSelected?.id === selectedWorkSessionId
         ? liveSelected
@@ -1111,8 +1127,9 @@ export function WorkspaceWork({
     () => agents.find((item) => item.id === agentId) ?? null,
     [agents, agentId],
   );
-  const selectedAgent =
-    selected || conversation
+  const selectedAgent = viewingA2A
+    ? (agents.find((item) => item.id === (requestedAgentId ?? agentId)) ?? null)
+    : selected || conversation
       ? (agents.find(
           (item) => item.id === (conversation?.agentId ?? selected?.agentId),
         ) ?? null)
@@ -1150,13 +1167,15 @@ export function WorkspaceWork({
     : selected
       ? selected.runtimeKind
       : (controlAgent?.runtimeKind ?? "");
-  const sessionReadOnly = conversation
-    ? conversation.readOnly ||
-      !isExecutableAgentRuntimeKind(conversation.runtimeKind)
-    : selected
-      ? selected.readOnly !== false ||
-        !isExecutableAgentRuntimeKind(selected.runtimeKind)
-      : !isExecutableAgentRuntimeKind(controlAgent?.runtimeKind);
+  const sessionReadOnly = viewingA2A
+    ? true
+    : conversation
+      ? conversation.readOnly ||
+        !isExecutableAgentRuntimeKind(conversation.runtimeKind)
+      : selected
+        ? selected.readOnly !== false ||
+          !isExecutableAgentRuntimeKind(selected.runtimeKind)
+        : !isExecutableAgentRuntimeKind(controlAgent?.runtimeKind);
   // Channel execution remains read-only here; native dialogs use their own authorization.
   const channelConversation = Boolean(conversation?.source);
   const observingConversation = Boolean(
@@ -1199,7 +1218,8 @@ export function WorkspaceWork({
     if (observedTaskId && observedStartedAt !== undefined) router.refresh();
   }, [observedTaskId, observedStartedAt, router]);
   const unappliedDraft = Boolean(
-    !selected &&
+    !viewingA2A &&
+      !selected &&
       !conversation &&
       isExecutableAgentRuntimeKind(agent?.runtimeKind) &&
       agent?.currentRevisionVersion === 0,
@@ -1223,19 +1243,22 @@ export function WorkspaceWork({
   const activeWorkingDirectory = conversation
     ? "."
     : (selected?.workingDirectory ?? workingDirectory);
-  const workReturnTo = conversation
-    ? `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(conversation.agentId)}&c=${encodeURIComponent(conversation.id)}`
-    : selected
-      ? workHref(slug, selected.id)
-      : `/app/${encodeURIComponent(slug)}/work`;
+  const workReturnTo = viewingA2A
+    ? `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(requestedAgentId ?? agentId)}&a2a=${encodeURIComponent(requestedA2ATaskId ?? "")}`
+    : conversation
+      ? `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(conversation.agentId)}&c=${encodeURIComponent(conversation.id)}`
+      : selected
+        ? workHref(slug, selected.id)
+        : `/app/${encodeURIComponent(slug)}/work`;
   const selectedStatus = selected?.status;
   const visibleError = error ?? selected?.error;
   const describeRuntimeError = useRuntimeErrorText();
   const runtimeError = describeRuntimeError(visibleError);
   const configurationError = /no configured model/i.test(visibleError ?? "");
   const showConfigurationNotice =
-    configurationError ||
-    (!selected && !conversation && agent && !agent.ready && !unappliedDraft);
+    !viewingA2A &&
+    (configurationError ||
+      (!selected && !conversation && agent && !agent.ready && !unappliedDraft));
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: Selection changes reset the existing provisioning poll.
   useEffect(() => {
@@ -1339,9 +1362,24 @@ export function WorkspaceWork({
       streamText,
     ],
   );
-  const workspacePanelOpen = Boolean(desktopPanel);
+  const workspacePanelOpen = !viewingA2A && Boolean(desktopPanel);
 
-  const activeAgentId = conversation?.agentId ?? selected?.agentId ?? agentId;
+  const activeAgentId = viewingA2A
+    ? (requestedAgentId ?? agentId)
+    : (conversation?.agentId ?? selected?.agentId ?? agentId);
+  const a2a = useA2AContexts(
+    slug,
+    agents
+      .filter(
+        (item) =>
+          item.id === activeAgentId ||
+          (expandedAgents[item.id] ??
+            conversations.some((entry) => entry.agentId === item.id)),
+      )
+      .map((item) => item.id),
+    viewingA2A ? activeAgentId : undefined,
+    viewingA2A ? requestedA2ATaskId : undefined,
+  );
   const visibleAgents = useMemo<WorkSidebarAgent[]>(
     () =>
       sortSidebarItems(agents, groupPreferences.entityOrder).map((item) => {
@@ -1362,16 +1400,31 @@ export function WorkspaceWork({
             : platform;
           return { ...entry, label: `${platformLabel} · ${chatId}` };
         });
+        const receivedContexts = a2a.pages[item.id]?.items ?? [];
+        const a2aContexts =
+          a2a.context &&
+          item.id === activeAgentId &&
+          !receivedContexts.some(
+            (entry) => entry.contextId === a2a.context?.contextId,
+          )
+            ? [...receivedContexts, a2a.context].sort((a, b) =>
+                b.updatedAt.localeCompare(a.updatedAt),
+              )
+            : receivedContexts;
         return {
           agent: item,
           sessions: agentSessions,
           channels: agentChannels,
+          a2aContexts,
         };
       }),
     [
       agents,
       items,
       conversations,
+      a2a.pages,
+      a2a.context,
+      activeAgentId,
       groupPreferences.entityOrder,
       groupPreferences.conversationOrder,
       tChannels,
@@ -1401,7 +1454,12 @@ export function WorkspaceWork({
   const sidebarResources = useMemo<SidebarResource[]>(() => {
     const agentResources = (entries: WorkSidebarAgent[]): SidebarResource[] =>
       entries.map(
-        ({ agent: itemAgent, sessions: agentSessions, channels }) => ({
+        ({
+          agent: itemAgent,
+          sessions: agentSessions,
+          channels,
+          a2aContexts,
+        }) => ({
           id: `agent:${itemAgent.id}`,
           label: itemAgent.name,
           kind: "project",
@@ -1416,8 +1474,33 @@ export function WorkspaceWork({
               label: item.label,
               kind: "bookmark" as const,
             })),
+            ...(a2aContexts.length
+              ? [
+                  {
+                    id: `a2a-group:${itemAgent.id}`,
+                    label: t("a2a.group"),
+                    kind: "folder" as const,
+                    children: a2aContexts
+                      .filter(
+                        (item, index) =>
+                          sidebarSearch.trim() ||
+                          fullConversationLists[`a2a:${itemAgent.id}`] ||
+                          index < 5 ||
+                          item.contextId === a2a.context?.contextId,
+                      )
+                      .map((item) => ({
+                        id: `a2a:${item.contextId}`,
+                        label: item.title
+                          ? `${item.peer.name} · ${item.title}`
+                          : item.peer.name,
+                        kind: "bookmark" as const,
+                      })),
+                  },
+                ]
+              : []),
           ].filter(
             (item, index) =>
+              item.kind === "folder" ||
               sidebarSearch.trim() ||
               fullConversationLists[itemAgent.id] ||
               index < 5 ||
@@ -1450,6 +1533,7 @@ export function WorkspaceWork({
     fullConversationLists,
     selectedWorkSessionId,
     conversation?.id,
+    a2a.context?.contextId,
   ]);
   const filteredSidebarResources = useMemo(() => {
     const query = sidebarSearch.trim().toLocaleLowerCase();
@@ -1463,11 +1547,14 @@ export function WorkspaceWork({
       });
     return filter(sidebarResources);
   }, [sidebarResources, sidebarSearch]);
-  const activeResourceId = conversation
-    ? `conversation:${conversation.id}`
-    : selected
-      ? `session:${selected.id}`
-      : null;
+  const activeResourceId =
+    viewingA2A && a2a.context
+      ? `a2a:${a2a.context.contextId}`
+      : conversation
+        ? `conversation:${conversation.id}`
+        : selected
+          ? `session:${selected.id}`
+          : null;
   const activeResourceIdRef = useRef(activeResourceId);
   activeResourceIdRef.current = activeResourceId;
   const expandedResourceIds = useMemo(
@@ -1495,6 +1582,12 @@ export function WorkspaceWork({
                   (itemAgent.id === activeAgentId || channels.length > 0),
               )
               .map(({ agent: itemAgent }) => `agent:${itemAgent.id}`),
+            ...visibleAgents
+              .filter(
+                ({ agent: itemAgent }) =>
+                  expandedAgents[`a2a:${itemAgent.id}`] ?? true,
+              )
+              .map(({ agent: itemAgent }) => `a2a-group:${itemAgent.id}`),
           ],
     [
       activeAgentId,
@@ -1516,7 +1609,10 @@ export function WorkspaceWork({
     const expanded = new Set(ids);
     setExpandedAgents(
       Object.fromEntries(
-        agents.map((item) => [item.id, expanded.has(`agent:${item.id}`)]),
+        agents.flatMap((item) => [
+          [item.id, expanded.has(`agent:${item.id}`)],
+          [`a2a:${item.id}`, expanded.has(`a2a-group:${item.id}`)],
+        ]),
       ),
     );
     setGroupPreferences((current) => ({
@@ -2267,7 +2363,12 @@ export function WorkspaceWork({
 
   function setAllAgentSections(collapsed: boolean) {
     setExpandedAgents(
-      Object.fromEntries(agents.map((item) => [item.id, !collapsed])),
+      Object.fromEntries(
+        agents.flatMap((item) => [
+          [item.id, !collapsed],
+          [`a2a:${item.id}`, !collapsed],
+        ]),
+      ),
     );
     setGroupPreferences((current) => {
       if (!current.groups.length) return current;
@@ -2351,832 +2452,738 @@ export function WorkspaceWork({
   const onSidebarScroll = useSidebarScroll();
 
   return (
-    <ChatApp
-      open={sidebarOpen}
-      onOpenChange={setSidebarOpen}
-      openMobile={mobilePane === "sessions"}
-      onOpenMobileChange={(open) => setMobilePane(open ? "sessions" : "work")}
-      className="relative flex h-full min-w-0"
+    <SubagentConversationScope.Provider
+      value={{ slug, agentId: controlAgent?.id ?? agentId }}
     >
-      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        <AnimatedSidebar
-          ariaLabel={tAgents("agents")}
-          collapsible="offcanvas"
-          className="h-full shrink-0"
-          panelClassName="h-full min-h-0 bg-muted/30"
-        >
-          <AnimatedSidebarContent className="gap-3 overflow-hidden px-3 py-4">
-            <AnimatedSidebarGroup className="min-h-0 flex-1 p-0">
-              <SidebarToolbar
-                title={tAgents("agents")}
-                searchLabel={t("search")}
-                searchPlaceholder={common("search")}
-                search={sidebarSearch}
-                onSearchChange={setSidebarSearch}
-                addLabel={tAgents("newAgent")}
-                onAdd={() =>
-                  router.push(
-                    `/app/${encodeURIComponent(slug)}/agents?create=1&returnTo=${encodeURIComponent(workReturnTo)}`,
-                  )
-                }
-                moreLabel={t("listOptions")}
-                moreOpen={listOptionsOpen}
-                onMoreOpenChange={setListOptionsOpen}
-                hasItems={agents.length > 0}
-                expandLabel={t("expandAll")}
-                collapseLabel={t("collapseAll")}
-                newGroupLabel={t("newGroup")}
-                onExpandAll={() => setAllAgentSections(false)}
-                onCollapseAll={() => setAllAgentSections(true)}
-                onNewGroup={() => setGroupEditor({ id: null, name: "" })}
-              />
-              <AnimatedSidebarGroupContent
-                onScroll={onSidebarScroll}
-                className="sidebar-scroll min-h-0 flex-1 !w-auto -mr-3 overflow-y-auto overscroll-contain pr-3"
-              >
-                {filteredSidebarResources.length ? (
-                  <AISidebar
-                    items={filteredSidebarResources}
-                    activeId={activeResourceId}
-                    renderAfterRow={(resource) => {
-                      if (sidebarSearch.trim()) return null;
-                      const roots = sidebarResources.flatMap((item) =>
-                        item.id.startsWith("group:")
-                          ? (item.children ?? [])
-                          : [item],
-                      );
-                      const parent = roots.find(
-                        (item) => item.children?.at(-1)?.id === resource.id,
-                      );
-                      if (!parent) return null;
-                      const id = parent.id.slice("agent:".length);
-                      const entry = visibleAgents.find(
-                        ({ agent }) => agent.id === id,
-                      );
-                      if (
-                        !entry ||
-                        entry.sessions.length + entry.channels.length <= 5
-                      )
-                        return null;
-                      return (
-                        <button
-                          type="button"
-                          aria-label={`${fullConversationLists[id] ? t("collapseAll") : t("expandAll")} ${entry.agent.name}`}
-                          onClick={() =>
-                            setFullConversationLists((current) => ({
-                              ...current,
-                              [id]: !current[id],
-                            }))
-                          }
-                          className="ml-10 self-start rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-                        >
-                          {fullConversationLists[id]
-                            ? t("collapseAll")
-                            : t("expandAll")}
-                        </button>
-                      );
-                    }}
-                    ariaLabel={tAgents("agents")}
-                    className={`px-0 [&_[role=treeitem]]:rounded-lg [&_[role=treeitem]]:min-h-10 [&_[aria-selected=true]]:bg-muted [&_[role=treeitem]>span[aria-hidden=true]:empty]:ml-1 [&_[role=treeitem]>span[aria-hidden=true]:empty]:w-0 [&_[role=treeitem]>span[aria-hidden=true]:has(>[data-sidebar-dot])]:ml-1 [&_[role=treeitem]>span[aria-hidden=true]:has(>[data-sidebar-dot])]:w-0 ${sidebarHoverActionsClassName}`}
-                    expandedIds={expandedResourceIds}
-                    onExpandedIdsChange={persistExpandedResources}
-                    onActiveChange={(id) => {
-                      setDraftSelectionKey(null);
-                      setMobilePane("work");
-                      const [kind, resourceId] = id.split(":", 2);
-                      if (kind === "session")
-                        router.push(workHref(slug, resourceId));
-                      if (kind === "conversation")
-                        router.push(
-                          `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(conversations.find((item) => item.id === resourceId)?.agentId ?? activeAgentId)}&c=${encodeURIComponent(resourceId)}`,
-                        );
-                    }}
-                    onMove={moveSidebarResource}
-                    onRename={(resource, label) => {
-                      if (
-                        !resource.id.startsWith("group:") ||
-                        resource.id === "group:ungrouped"
-                      )
-                        return;
-                      const id = resource.id.slice("group:".length);
-                      setGroupPreferences((current) => ({
-                        ...current,
-                        groups: current.groups.map((group) =>
-                          group.id === id ? { ...group, name: label } : group,
-                        ),
-                      }));
-                    }}
-                    renderActions={(resource) => {
-                      const [kind, id] = resource.id.split(":", 2);
-                      const itemAgent =
-                        kind === "agent"
-                          ? agents.find((item) => item.id === id)
-                          : null;
-                      if (!itemAgent) return null;
-                      const pinButton = (
-                        <button
-                          type="button"
-                          draggable={false}
-                          aria-pressed={itemAgent.pinned}
-                          data-sidebar-reveal={
-                            itemAgent.pinned ? undefined : ""
-                          }
-                          aria-label={`${itemAgent.pinned ? tAgents("unpinAgent") : tAgents("pinAgent")} ${itemAgent.name}`}
-                          title={
-                            itemAgent.pinned
-                              ? tAgents("unpinAgent")
-                              : tAgents("pinAgent")
-                          }
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void toggleAgentPin(itemAgent);
-                          }}
-                          className={cx(
-                            "grid size-7 shrink-0 place-items-center rounded-lg outline-none transition-opacity hover:bg-foreground/5 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/resource:opacity-100 group-data-[menu-open=true]/resource:opacity-100",
-                            itemAgent.pinned
-                              ? "text-foreground opacity-100"
-                              : "text-muted-foreground opacity-0",
-                          )}
-                        >
-                          <Pin
-                            aria-hidden="true"
-                            className={cx(
-                              "size-3.5 rotate-45",
-                              itemAgent.pinned && "fill-current",
-                            )}
-                          />
-                        </button>
-                      );
-                      const status = agentSidebarStatus(itemAgent, items);
-                      const firstIssue = status.issues[0];
-                      const resolveButton = firstIssue ? (
-                        <Tooltip
-                          content={
-                            <div className="space-y-1">
-                              {agentStatusTooltip(status)}
-                              <p className="text-muted-foreground">
-                                {t("agentResolveIssue", {
-                                  issue: agentIssueLabel(firstIssue),
-                                })}
-                              </p>
+      <ChatApp
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
+        openMobile={mobilePane === "sessions"}
+        onOpenMobileChange={(open) => setMobilePane(open ? "sessions" : "work")}
+        className="relative flex h-full min-w-0"
+      >
+        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+          <AnimatedSidebar
+            ariaLabel={tAgents("agents")}
+            collapsible="offcanvas"
+            className="h-full shrink-0"
+            panelClassName="h-full min-h-0 bg-muted/30"
+          >
+            <AnimatedSidebarContent className="gap-3 overflow-hidden px-3 py-4">
+              <AnimatedSidebarGroup className="min-h-0 flex-1 p-0">
+                <SidebarToolbar
+                  title={tAgents("agents")}
+                  searchLabel={t("search")}
+                  searchPlaceholder={common("search")}
+                  search={sidebarSearch}
+                  onSearchChange={setSidebarSearch}
+                  addLabel={tAgents("newAgent")}
+                  onAdd={() =>
+                    router.push(
+                      `/app/${encodeURIComponent(slug)}/agents?create=1&returnTo=${encodeURIComponent(workReturnTo)}`,
+                    )
+                  }
+                  moreLabel={t("listOptions")}
+                  moreOpen={listOptionsOpen}
+                  onMoreOpenChange={setListOptionsOpen}
+                  hasItems={agents.length > 0}
+                  expandLabel={t("expandAll")}
+                  collapseLabel={t("collapseAll")}
+                  newGroupLabel={t("newGroup")}
+                  onExpandAll={() => setAllAgentSections(false)}
+                  onCollapseAll={() => setAllAgentSections(true)}
+                  onNewGroup={() => setGroupEditor({ id: null, name: "" })}
+                />
+                <AnimatedSidebarGroupContent
+                  onScroll={onSidebarScroll}
+                  className="sidebar-scroll min-h-0 flex-1 !w-auto -mr-3 overflow-y-auto overscroll-contain pr-3"
+                >
+                  {filteredSidebarResources.length ? (
+                    <AISidebar
+                      items={filteredSidebarResources}
+                      activeId={activeResourceId}
+                      renderAfterRow={(resource) => {
+                        if (sidebarSearch.trim()) return null;
+                        if (resource.id.startsWith("a2a:")) {
+                          const entry = visibleAgents.find((item) =>
+                            item.a2aContexts.some(
+                              (context) =>
+                                `a2a:${context.contextId}` === resource.id,
+                            ),
+                          );
+                          if (!entry) return null;
+                          const id = entry.agent.id;
+                          const group = sidebarResources
+                            .flatMap((item) =>
+                              item.id.startsWith("group:")
+                                ? (item.children ?? [])
+                                : [item],
+                            )
+                            .find((item) => item.id === `agent:${id}`)
+                            ?.children?.find(
+                              (item) => item.id === `a2a-group:${id}`,
+                            );
+                          if (group?.children?.at(-1)?.id !== resource.id)
+                            return null;
+                          const expanded = fullConversationLists[`a2a:${id}`];
+                          const page = a2a.pages[id];
+                          return (
+                            <div className="ml-14 flex flex-wrap gap-1">
+                              {entry.a2aContexts.length > 5 ? (
+                                <button
+                                  type="button"
+                                  className="rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                                  aria-label={`${expanded ? t("collapseAll") : t("expandAll")} ${t("a2a.group")}`}
+                                  onClick={() =>
+                                    setFullConversationLists((current) => ({
+                                      ...current,
+                                      [`a2a:${id}`]: !current[`a2a:${id}`],
+                                    }))
+                                  }
+                                >
+                                  {expanded ? t("collapseAll") : t("expandAll")}
+                                </button>
+                              ) : null}
+                              {(expanded || entry.a2aContexts.length <= 5) &&
+                              page?.nextCursor ? (
+                                <button
+                                  type="button"
+                                  disabled={page.loading}
+                                  aria-busy={page.loading}
+                                  onClick={() => a2a.loadMore(id)}
+                                  className="rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                                >
+                                  {t("a2a.loadMore")}
+                                </button>
+                              ) : null}
+                              {page?.failed ? (
+                                <span
+                                  role="alert"
+                                  className="px-2 py-1.5 text-xs text-destructive"
+                                >
+                                  {t("a2a.loadFailed")}
+                                </span>
+                              ) : null}
                             </div>
-                          }
-                          side="right"
-                        >
+                          );
+                        }
+                        const roots = sidebarResources.flatMap((item) =>
+                          item.id.startsWith("group:")
+                            ? (item.children ?? [])
+                            : [item],
+                        );
+                        const parent = roots.find(
+                          (item) =>
+                            item.children
+                              ?.filter(
+                                (child) => !child.id.startsWith("a2a-group:"),
+                              )
+                              .at(-1)?.id === resource.id,
+                        );
+                        if (!parent) return null;
+                        const id = parent.id.slice("agent:".length);
+                        const entry = visibleAgents.find(
+                          ({ agent }) => agent.id === id,
+                        );
+                        if (
+                          !entry ||
+                          entry.sessions.length + entry.channels.length <= 5
+                        )
+                          return null;
+                        return (
+                          <button
+                            type="button"
+                            aria-label={`${fullConversationLists[id] ? t("collapseAll") : t("expandAll")} ${entry.agent.name}`}
+                            onClick={() =>
+                              setFullConversationLists((current) => ({
+                                ...current,
+                                [id]: !current[id],
+                              }))
+                            }
+                            className="ml-10 self-start rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                          >
+                            {fullConversationLists[id]
+                              ? t("collapseAll")
+                              : t("expandAll")}
+                          </button>
+                        );
+                      }}
+                      ariaLabel={tAgents("agents")}
+                      className={`px-0 [&_[role=treeitem]]:rounded-lg [&_[role=treeitem]]:min-h-10 [&_[aria-selected=true]]:bg-muted [&_[role=treeitem]>span[aria-hidden=true]:empty]:ml-1 [&_[role=treeitem]>span[aria-hidden=true]:empty]:w-0 [&_[role=treeitem]>span[aria-hidden=true]:has(>[data-sidebar-dot])]:ml-1 [&_[role=treeitem]>span[aria-hidden=true]:has(>[data-sidebar-dot])]:w-0 ${sidebarHoverActionsClassName}`}
+                      expandedIds={expandedResourceIds}
+                      onExpandedIdsChange={persistExpandedResources}
+                      onActiveChange={(id) => {
+                        setDraftSelectionKey(null);
+                        setMobilePane("work");
+                        const [kind, resourceId] = id.split(":", 2);
+                        if (kind === "session")
+                          router.push(workHref(slug, resourceId));
+                        if (kind === "conversation")
+                          router.push(
+                            `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(conversations.find((item) => item.id === resourceId)?.agentId ?? activeAgentId)}&c=${encodeURIComponent(resourceId)}`,
+                          );
+                        if (kind === "a2a") {
+                          const entry = visibleAgents.find((item) =>
+                            item.a2aContexts.some(
+                              (context) => context.contextId === resourceId,
+                            ),
+                          );
+                          const context = entry?.a2aContexts.find(
+                            (item) => item.contextId === resourceId,
+                          );
+                          const taskId = context?.tasks.at(-1)?.taskId;
+                          if (entry && taskId)
+                            router.push(
+                              `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(entry.agent.id)}&a2a=${encodeURIComponent(taskId)}`,
+                            );
+                        }
+                      }}
+                      onMove={moveSidebarResource}
+                      onRename={(resource, label) => {
+                        if (
+                          !resource.id.startsWith("group:") ||
+                          resource.id === "group:ungrouped"
+                        )
+                          return;
+                        const id = resource.id.slice("group:".length);
+                        setGroupPreferences((current) => ({
+                          ...current,
+                          groups: current.groups.map((group) =>
+                            group.id === id ? { ...group, name: label } : group,
+                          ),
+                        }));
+                      }}
+                      renderActions={(resource) => {
+                        const [kind, id] = resource.id.split(":", 2);
+                        if (kind === "a2a") {
+                          const context = visibleAgents
+                            .flatMap((entry) => entry.a2aContexts)
+                            .find((item) => item.contextId === id);
+                          const state = a2aStateKey(
+                            context?.state ?? "TASK_STATE_UNSPECIFIED",
+                          );
+                          return (
+                            <span className="sr-only">
+                              {taskStates.has(`states.${state}`)
+                                ? taskStates(`states.${state}`)
+                                : state}
+                            </span>
+                          );
+                        }
+                        const itemAgent =
+                          kind === "agent"
+                            ? agents.find((item) => item.id === id)
+                            : null;
+                        if (!itemAgent) return null;
+                        const pinButton = (
                           <button
                             type="button"
                             draggable={false}
-                            aria-label={`${t("agentIssuesTitle", { count: status.issues.length })}: ${agentIssueLabel(firstIssue)}`}
+                            aria-pressed={itemAgent.pinned}
+                            data-sidebar-reveal={
+                              itemAgent.pinned ? undefined : ""
+                            }
+                            aria-label={`${itemAgent.pinned ? tAgents("unpinAgent") : tAgents("pinAgent")} ${itemAgent.name}`}
+                            title={
+                              itemAgent.pinned
+                                ? tAgents("unpinAgent")
+                                : tAgents("pinAgent")
+                            }
                             onClick={(event) => {
                               event.stopPropagation();
-                              resolveAgentIssue(itemAgent, firstIssue);
+                              void toggleAgentPin(itemAgent);
                             }}
                             className={cx(
-                              "grid size-7 shrink-0 place-items-center rounded-lg outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring",
-                              status.tone === "error"
-                                ? "text-destructive"
-                                : "text-warning",
+                              "grid size-7 shrink-0 place-items-center rounded-lg outline-none transition-opacity hover:bg-foreground/5 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/resource:opacity-100 group-data-[menu-open=true]/resource:opacity-100",
+                              itemAgent.pinned
+                                ? "text-foreground opacity-100"
+                                : "text-muted-foreground opacity-0",
                             )}
                           >
-                            <CircleAlert
+                            <Pin
                               aria-hidden="true"
-                              className="size-3.5"
+                              className={cx(
+                                "size-3.5 rotate-45",
+                                itemAgent.pinned && "fill-current",
+                              )}
                             />
                           </button>
-                        </Tooltip>
-                      ) : null;
-                      if (!itemAgent.supportsWork)
+                        );
+                        const status = agentSidebarStatus(itemAgent, items);
+                        const firstIssue = status.issues[0];
+                        const resolveButton = firstIssue ? (
+                          <Tooltip
+                            content={
+                              <div className="space-y-1">
+                                {agentStatusTooltip(status)}
+                                <p className="text-muted-foreground">
+                                  {t("agentResolveIssue", {
+                                    issue: agentIssueLabel(firstIssue),
+                                  })}
+                                </p>
+                              </div>
+                            }
+                            side="right"
+                          >
+                            <button
+                              type="button"
+                              draggable={false}
+                              aria-label={`${t("agentIssuesTitle", { count: status.issues.length })}: ${agentIssueLabel(firstIssue)}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                resolveAgentIssue(itemAgent, firstIssue);
+                              }}
+                              className={cx(
+                                "grid size-7 shrink-0 place-items-center rounded-lg outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring",
+                                status.tone === "error"
+                                  ? "text-destructive"
+                                  : "text-warning",
+                              )}
+                            >
+                              <CircleAlert
+                                aria-hidden="true"
+                                className="size-3.5"
+                              />
+                            </button>
+                          </Tooltip>
+                        ) : null;
+                        if (!itemAgent.supportsWork)
+                          return (
+                            <>
+                              {resolveButton}
+                              {pinButton}
+                            </>
+                          );
                         return (
                           <>
                             {resolveButton}
                             {pinButton}
+                            <button
+                              type="button"
+                              draggable={false}
+                              data-sidebar-reveal=""
+                              aria-label={`${t("newWork")} ${itemAgent.name}`}
+                              title={t("newWork")}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                startNewWork(itemAgent.id);
+                              }}
+                              className="grid size-7 shrink-0 place-items-center rounded-lg outline-none opacity-0 transition-opacity hover:bg-foreground/5 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/resource:opacity-100 group-data-[menu-open=true]/resource:opacity-100"
+                            >
+                              <MessageSquarePlus
+                                aria-hidden="true"
+                                className="size-3.5"
+                              />
+                            </button>
                           </>
                         );
-                      return (
-                        <>
-                          {resolveButton}
-                          {pinButton}
-                          <button
-                            type="button"
-                            draggable={false}
-                            data-sidebar-reveal=""
-                            aria-label={`${t("newWork")} ${itemAgent.name}`}
-                            title={t("newWork")}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              startNewWork(itemAgent.id);
-                            }}
-                            className="grid size-7 shrink-0 place-items-center rounded-lg outline-none opacity-0 transition-opacity hover:bg-foreground/5 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring group-hover/resource:opacity-100 group-data-[menu-open=true]/resource:opacity-100"
-                          >
-                            <MessageSquarePlus
-                              aria-hidden="true"
-                              className="size-3.5"
-                            />
-                          </button>
-                        </>
-                      );
-                    }}
-                    renderIcon={(resource) => {
-                      const [kind, id] = resource.id.split(":", 2);
-                      if (kind === "agent") {
-                        const itemAgent = agents.find((item) => item.id === id);
-                        const status = agentSidebarStatus(itemAgent, items);
-                        const { tone } = status;
-                        const avatar = (
-                          <span className="relative grid size-5 place-items-center rounded-md bg-muted text-[10px] font-semibold text-foreground ring-1 ring-border">
-                            {itemAgent?.name
-                              .slice(0, 1)
-                              .toLocaleUpperCase() || (
-                              <Bot className="size-3.5" />
-                            )}
-                            {tone ? (
-                              <span
+                      }}
+                      renderIcon={(resource) => {
+                        const [kind, id] = resource.id.split(":", 2);
+                        if (kind === "a2a") {
+                          const context = visibleAgents
+                            .flatMap((entry) => entry.a2aContexts)
+                            .find((item) => item.contextId === id);
+                          const state = a2aStateKey(
+                            context?.state ?? "TASK_STATE_UNSPECIFIED",
+                          );
+                          return (
+                            <Tooltip
+                              content={
+                                taskStates.has(`states.${state}`)
+                                  ? taskStates(`states.${state}`)
+                                  : state
+                              }
+                              side="right"
+                            >
+                              <Circle
+                                data-sidebar-dot=""
                                 className={cx(
-                                  "absolute -right-0.5 -top-0.5 size-1.5 rounded-full ring-2 ring-background",
-                                  tone === "error"
-                                    ? "bg-destructive"
-                                    : tone === "warning"
-                                      ? "bg-warning"
-                                      : "bg-primary",
+                                  "size-2 fill-current",
+                                  ["failed", "rejected", "canceled"].includes(
+                                    state,
+                                  )
+                                    ? "text-destructive"
+                                    : [
+                                          "input-required",
+                                          "auth-required",
+                                        ].includes(state)
+                                      ? "text-warning"
+                                      : state === "completed"
+                                        ? "text-emerald-500"
+                                        : "text-primary",
                                 )}
                               />
-                            ) : null}
-                          </span>
-                        );
-                        return tone ? (
-                          <Tooltip
-                            content={agentStatusTooltip(status)}
-                            side="right"
+                            </Tooltip>
+                          );
+                        }
+                        if (kind === "agent") {
+                          const itemAgent = agents.find(
+                            (item) => item.id === id,
+                          );
+                          const status = agentSidebarStatus(itemAgent, items);
+                          const { tone } = status;
+                          const avatar = (
+                            <span className="relative grid size-5 place-items-center rounded-md bg-muted text-[10px] font-semibold text-foreground ring-1 ring-border">
+                              {itemAgent?.name
+                                .slice(0, 1)
+                                .toLocaleUpperCase() || (
+                                <Bot className="size-3.5" />
+                              )}
+                              {tone ? (
+                                <span
+                                  className={cx(
+                                    "absolute -right-0.5 -top-0.5 size-1.5 rounded-full ring-2 ring-background",
+                                    tone === "error"
+                                      ? "bg-destructive"
+                                      : tone === "warning"
+                                        ? "bg-warning"
+                                        : "bg-primary",
+                                  )}
+                                />
+                              ) : null}
+                            </span>
+                          );
+                          return tone ? (
+                            <Tooltip
+                              content={agentStatusTooltip(status)}
+                              side="right"
+                            >
+                              {avatar}
+                            </Tooltip>
+                          ) : (
+                            avatar
+                          );
+                        }
+                        if (kind === "session") {
+                          const item = items.find(
+                            (session) => session.id === id,
+                          );
+                          const tone = sidebarIssueTone(item?.status ?? "");
+                          return tone ? (
+                            <Circle
+                              data-sidebar-dot=""
+                              className={cx(
+                                "size-2 fill-current",
+                                tone === "error"
+                                  ? "text-destructive"
+                                  : tone === "warning"
+                                    ? "text-warning"
+                                    : "text-primary",
+                              )}
+                            />
+                          ) : (
+                            false
+                          );
+                        }
+                        // Second-level conversations show no icon; `false` suppresses the sidebar default.
+                        if (kind === "conversation") return false;
+                        return <Folder className="size-4" />;
+                      }}
+                      renderMenu={(resource, controls) => {
+                        const [kind, id] = resource.id.split(":", 2);
+                        const action = (label: string, run: () => void) => (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              controls.close();
+                              run();
+                            }}
+                            className="flex h-8 w-full items-center rounded-lg px-2.5 text-left text-xs text-foreground hover:bg-muted"
                           >
-                            {avatar}
-                          </Tooltip>
-                        ) : (
-                          avatar
+                            {label}
+                          </button>
                         );
-                      }
-                      if (kind === "session") {
-                        const item = items.find((session) => session.id === id);
-                        const tone = sidebarIssueTone(item?.status ?? "");
-                        return tone ? (
-                          <Circle
-                            data-sidebar-dot=""
-                            className={cx(
-                              "size-2 fill-current",
-                              tone === "error"
-                                ? "text-destructive"
-                                : tone === "warning"
-                                  ? "text-warning"
-                                  : "text-primary",
-                            )}
-                          />
-                        ) : (
-                          false
-                        );
-                      }
-                      // Second-level conversations show no icon; `false` suppresses the sidebar default.
-                      if (kind === "conversation") return false;
-                      return <Folder className="size-4" />;
-                    }}
-                    renderMenu={(resource, controls) => {
-                      const [kind, id] = resource.id.split(":", 2);
-                      const action = (label: string, run: () => void) => (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            controls.close();
-                            run();
-                          }}
-                          className="flex h-8 w-full items-center rounded-lg px-2.5 text-left text-xs text-foreground hover:bg-muted"
-                        >
-                          {label}
-                        </button>
-                      );
-                      if (kind === "group" && id !== "ungrouped")
-                        return (
-                          <>
-                            {action(t("renameGroup"), controls.rename)}
-                            {action(t("deleteGroup"), () =>
-                              deleteAgentGroup(id),
-                            )}
-                          </>
-                        );
-                      if (kind === "agent") {
-                        const itemAgent = agents.find((item) => item.id === id);
-                        if (!itemAgent) return null;
-                        return (
-                          <>
-                            {action(tAgents("configureAgent"), () =>
-                              router.push(
-                                agentSettingsHref(
-                                  slug,
-                                  itemAgent.id,
-                                  workReturnTo,
+                        if (kind === "group" && id !== "ungrouped")
+                          return (
+                            <>
+                              {action(t("renameGroup"), controls.rename)}
+                              {action(t("deleteGroup"), () =>
+                                deleteAgentGroup(id),
+                              )}
+                            </>
+                          );
+                        if (kind === "agent") {
+                          const itemAgent = agents.find(
+                            (item) => item.id === id,
+                          );
+                          if (!itemAgent) return null;
+                          return (
+                            <>
+                              {action(tAgents("configureAgent"), () =>
+                                router.push(
+                                  agentSettingsHref(
+                                    slug,
+                                    itemAgent.id,
+                                    workReturnTo,
+                                  ),
                                 ),
-                              ),
-                            )}
-                            {itemAgent.supportsWork
-                              ? action(t("newWork"), () =>
-                                  startNewWork(itemAgent.id),
-                                )
-                              : null}
-                            {action(tAgents("chat"), () =>
-                              router.push(
-                                `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(itemAgent.id)}`,
-                              ),
-                            )}
-                            {action(tAgents("deleteAgent"), () =>
-                              setDeleteAgentTarget(itemAgent),
-                            )}
-                          </>
-                        );
-                      }
-                      if (kind === "session") {
-                        const item = items.find((session) => session.id === id);
-                        return item && DELETABLE_STATUSES.has(item.status)
-                          ? action(t("deleteConversation"), () => {
-                              setDeleteConversationError("");
-                              setDeleteConversationTarget({
-                                id: item.conversationId,
-                                agentId: item.agentId,
-                                title: item.title,
-                                source: null,
-                                workSessionId: item.id,
-                              });
-                            })
-                          : null;
-                      }
-                      if (kind === "conversation") {
-                        const target = conversations.find(
-                          (item) => item.id === id,
-                        );
-                        if (
-                          !target ||
-                          target.source ||
-                          target.title?.startsWith("msg:")
-                        )
-                          return null;
-                        return action(tAgents("deleteConversation"), () => {
-                          setDeleteConversationError("");
-                          setDeleteConversationTarget(target);
-                        });
-                      }
-                      return null;
-                    }}
-                  />
-                ) : (
-                  <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-                    {sidebarSearch.trim()
-                      ? t("noSearchResults")
-                      : tAgents("noAgentsYet")}
-                  </p>
-                )}
-              </AnimatedSidebarGroupContent>
-            </AnimatedSidebarGroup>
-          </AnimatedSidebarContent>
-          <AnimatedSidebarRail />
-        </AnimatedSidebar>
+                              )}
+                              {itemAgent.supportsWork
+                                ? action(t("newWork"), () =>
+                                    startNewWork(itemAgent.id),
+                                  )
+                                : null}
+                              {action(tAgents("chat"), () =>
+                                router.push(
+                                  `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(itemAgent.id)}`,
+                                ),
+                              )}
+                              {action(tAgents("deleteAgent"), () =>
+                                setDeleteAgentTarget(itemAgent),
+                              )}
+                            </>
+                          );
+                        }
+                        if (kind === "session") {
+                          const item = items.find(
+                            (session) => session.id === id,
+                          );
+                          return item && DELETABLE_STATUSES.has(item.status)
+                            ? action(t("deleteConversation"), () => {
+                                setDeleteConversationError("");
+                                setDeleteConversationTarget({
+                                  id: item.conversationId,
+                                  agentId: item.agentId,
+                                  title: item.title,
+                                  source: null,
+                                  workSessionId: item.id,
+                                });
+                              })
+                            : null;
+                        }
+                        if (kind === "conversation") {
+                          const target = conversations.find(
+                            (item) => item.id === id,
+                          );
+                          if (
+                            !target ||
+                            target.source ||
+                            target.title?.startsWith("msg:")
+                          )
+                            return null;
+                          return action(tAgents("deleteConversation"), () => {
+                            setDeleteConversationError("");
+                            setDeleteConversationTarget(target);
+                          });
+                        }
+                        return null;
+                      }}
+                    />
+                  ) : (
+                    <p className="px-3 py-8 text-center text-xs text-muted-foreground">
+                      {sidebarSearch.trim()
+                        ? t("noSearchResults")
+                        : tAgents("noAgentsYet")}
+                    </p>
+                  )}
+                </AnimatedSidebarGroupContent>
+              </AnimatedSidebarGroup>
+            </AnimatedSidebarContent>
+            <AnimatedSidebarRail />
+          </AnimatedSidebar>
 
-        <AnimatedSidebarInset className="h-full min-h-0 min-w-0 flex-1 overflow-hidden">
-          <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">
-            <header className="flex h-12 shrink-0 items-center justify-between gap-2 px-3 sm:px-5">
-              <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                <ChatAppSidebarTrigger
-                  openLabel={t("showSidebar")}
-                  closeLabel={t("hideSidebar")}
-                >
-                  <PanelLeft className="size-4" />
-                </ChatAppSidebarTrigger>
-                <div className="flex min-w-0 items-center gap-2">
-                  <p className="truncate text-sm font-medium text-foreground">
-                    {conversation?.title ||
-                      selected?.title ||
-                      selected?.task ||
-                      tAgents("newChat")}
-                  </p>
-                  {controlAgent ? (
-                    <span className="hidden max-w-40 truncate rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground sm:inline-block">
-                      {controlAgent.name}
-                    </span>
-                  ) : null}
-                  {channelConversation && conversation?.modelOverride ? (
-                    <span
-                      className="max-w-48 truncate rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground"
-                      title={
-                        conversation.modelOverride.providerName ?? undefined
-                      }
-                    >
-                      {tChannels("sessionModelOverride", {
-                        model: conversation.modelOverride.model,
-                      })}
-                    </span>
+          <AnimatedSidebarInset className="h-full min-h-0 min-w-0 flex-1 overflow-hidden">
+            <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">
+              <header className="flex h-12 shrink-0 items-center justify-between gap-2 px-3 sm:px-5">
+                <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                  <ChatAppSidebarTrigger
+                    openLabel={t("showSidebar")}
+                    closeLabel={t("hideSidebar")}
+                  >
+                    <PanelLeft className="size-4" />
+                  </ChatAppSidebarTrigger>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {viewingA2A
+                        ? t("a2a.title")
+                        : conversation?.title ||
+                          selected?.title ||
+                          selected?.task ||
+                          tAgents("newChat")}
+                    </p>
+                    {controlAgent ? (
+                      <span className="hidden max-w-40 truncate rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground sm:inline-block">
+                        {controlAgent.name}
+                      </span>
+                    ) : null}
+                    {channelConversation && conversation?.modelOverride ? (
+                      <span
+                        className="max-w-48 truncate rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground"
+                        title={
+                          conversation.modelOverride.providerName ?? undefined
+                        }
+                      >
+                        {tChannels("sessionModelOverride", {
+                          model: conversation.modelOverride.model,
+                        })}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  {completionNotificationControl}
+                  {controlSandbox || conversationWorkspace ? (
+                    <>
+                      <Button
+                        type="button"
+                        onClick={() => togglePanel("files")}
+                        aria-label={tSandboxes("files")}
+                        title={tSandboxes("files")}
+                        aria-pressed={desktopPanel === "files"}
+                        variant="ghost"
+                        size="icon"
+                      >
+                        <Folder className="size-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        disabled={sessionReadOnly}
+                        onClick={() => togglePanel("terminal")}
+                        aria-label={tSandboxes("terminal")}
+                        title={tSandboxes("terminal")}
+                        aria-pressed={desktopPanel === "terminal"}
+                        variant="ghost"
+                        size="icon"
+                      >
+                        <TerminalSquare className="size-4" />
+                      </Button>
+                    </>
                   ) : null}
                 </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
-                {completionNotificationControl}
-                {controlSandbox || conversationWorkspace ? (
-                  <>
-                    <Button
-                      type="button"
-                      onClick={() => togglePanel("files")}
-                      aria-label={tSandboxes("files")}
-                      title={tSandboxes("files")}
-                      aria-pressed={desktopPanel === "files"}
-                      variant="ghost"
-                      size="icon"
-                    >
-                      <Folder className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      disabled={sessionReadOnly}
-                      onClick={() => togglePanel("terminal")}
-                      aria-label={tSandboxes("terminal")}
-                      title={tSandboxes("terminal")}
-                      aria-pressed={desktopPanel === "terminal"}
-                      variant="ghost"
-                      size="icon"
-                    >
-                      <TerminalSquare className="size-4" />
-                    </Button>
-                  </>
-                ) : null}
-              </div>
-            </header>
-            {(selected || conversation) && sessionReadOnly ? (
-              <p
-                role="status"
-                className="border-b border-border px-4 py-3 text-sm text-muted-foreground"
-              >
-                {t("sessionHistoryReadOnly")}
-              </p>
-            ) : null}
-            {selected &&
-            !sessionReadOnly &&
-            controlAgent &&
-            selected.agentRevisionVersion &&
-            controlAgent.currentRevisionVersion &&
-            selected.agentRevisionVersion <
-              controlAgent.currentRevisionVersion ? (
-              <RevisionUpgradeNotice
-                url={`/api/v1/agents/${controlAgent.id}/conversations/${selected.conversationId}/revision`}
-                fromVersion={selected.agentRevisionVersion}
-                targetVersion={controlAgent.currentRevisionVersion}
-                disabled={selectedActive || Boolean(busy) || composerPending}
-                onUpgraded={() => {
-                  void refreshSelected();
-                  router.refresh();
-                }}
-              />
-            ) : null}
-            {conversation &&
-            channelConversation &&
-            !sessionReadOnly &&
-            controlAgent &&
-            conversation.agentRevisionVersion &&
-            controlAgent.currentRevisionVersion &&
-            conversation.agentRevisionVersion <
-              controlAgent.currentRevisionVersion ? (
-              <RevisionUpgradeNotice
-                url={`/api/v1/agents/${conversation.agentId}/conversations/${conversation.id}/revision`}
-                fromVersion={conversation.agentRevisionVersion}
-                targetVersion={controlAgent.currentRevisionVersion}
-                disabled={conversationBusy || Boolean(busy) || composerPending}
-                onUpgraded={() => router.refresh()}
-              />
-            ) : null}
+              </header>
+              {(selected || conversation) && sessionReadOnly ? (
+                <p
+                  role="status"
+                  className="border-b border-border px-4 py-3 text-sm text-muted-foreground"
+                >
+                  {t("sessionHistoryReadOnly")}
+                </p>
+              ) : null}
+              {selected &&
+              !sessionReadOnly &&
+              controlAgent &&
+              selected.agentRevisionVersion &&
+              controlAgent.currentRevisionVersion &&
+              selected.agentRevisionVersion <
+                controlAgent.currentRevisionVersion ? (
+                <RevisionUpgradeNotice
+                  url={`/api/v1/agents/${controlAgent.id}/conversations/${selected.conversationId}/revision`}
+                  fromVersion={selected.agentRevisionVersion}
+                  targetVersion={controlAgent.currentRevisionVersion}
+                  disabled={selectedActive || Boolean(busy) || composerPending}
+                  onUpgraded={() => {
+                    void refreshSelected();
+                    router.refresh();
+                  }}
+                />
+              ) : null}
+              {conversation &&
+              channelConversation &&
+              !sessionReadOnly &&
+              controlAgent &&
+              conversation.agentRevisionVersion &&
+              controlAgent.currentRevisionVersion &&
+              conversation.agentRevisionVersion <
+                controlAgent.currentRevisionVersion ? (
+                <RevisionUpgradeNotice
+                  url={`/api/v1/agents/${conversation.agentId}/conversations/${conversation.id}/revision`}
+                  fromVersion={conversation.agentRevisionVersion}
+                  targetVersion={controlAgent.currentRevisionVersion}
+                  disabled={
+                    conversationBusy || Boolean(busy) || composerPending
+                  }
+                  onUpgraded={() => router.refresh()}
+                />
+              ) : null}
 
-            {observingConversation ? (
-              <div className="mx-auto w-full max-w-3xl px-4 py-2 sm:px-6">
-                <LiveOutputStatus connection={conversationLive.connection} />
-              </div>
-            ) : null}
-            {conversation &&
-            !sessionReadOnly &&
-            !channelConversation &&
-            controlAgent ? (
-              <AgentConversation
-                key={conversation.id}
-                activeConversationId={conversation.id}
-                agentId={controlAgent.id}
-                agentName={controlAgent.name}
-                settingsHref={agentSettingsHref(
-                  slug,
-                  controlAgent.id,
-                  workReturnTo,
-                )}
-                composerNotice={(
-                  setEditorText,
-                  widgetTarget,
-                  renderedActivityIds,
-                ) => (
-                  <ConversationExecution
-                    key={`${controlAgent.id}:${conversation.id}`}
-                    endpoint={`/api/v1/agents/${encodeURIComponent(controlAgent.id)}/conversations/${encodeURIComponent(conversation.id)}/execution`}
-                    showStatus={false}
-                    active={conversationBusy}
-                    onSetEditorText={setEditorText}
-                    belowEditorElement={widgetTarget}
-                    renderedActivityIds={renderedActivityIds}
-                    className="mb-3"
-                    onChange={() => router.refresh()}
+              {observingConversation ? (
+                <div className="mx-auto w-full max-w-3xl px-4 py-2 sm:px-6">
+                  <LiveOutputStatus connection={conversationLive.connection} />
+                </div>
+              ) : null}
+              {viewingA2A ? (
+                a2a.context ? (
+                  <A2AContextView
+                    key={`${slug}:${a2a.context.contextId}`}
+                    slug={slug}
+                    context={a2a.context}
                   />
-                )}
-                ready={!sessionReadOnly}
-                runtimeKind={conversation.runtimeKind ?? null}
-                agentRevisionVersion={conversation.agentRevisionVersion}
-                currentRevisionVersion={controlAgent.currentRevisionVersion}
-                mcpToolsUpdated={controlAgent.mcpToolsUpdated}
-                modelName={conversation.modelName}
-                modelOverride={modelChoices[composerScope] ?? null}
-                modelPicker={
-                  <ComposerModelSelect
-                    providers={providers}
-                    defaultSelection={
-                      controlAgent.providerId && controlAgent.model
-                        ? {
-                            providerId: controlAgent.providerId,
-                            model: controlAgent.model,
-                          }
-                        : null
-                    }
-                    value={modelChoices[composerScope] ?? null}
-                    onChange={(value) =>
-                      setModelChoices((choices) => ({
-                        ...choices,
-                        [composerScope]: value,
-                      }))
-                    }
-                  />
-                }
-                initialMessages={
-                  conversation.messages.filter(
-                    (message) => !messageCompaction(message),
-                  ) as AgentUIMessage[]
-                }
-                initialReasoningEffort={
-                  conversation.reasoningEffort ?? "default"
-                }
-                reasoningAvailable={false}
-                creatingConversation={false}
-                ensureConversation={async () => conversation.id}
-                attachmentUploadUrl={`/api/v1/workspaces/${workspaceId}/attachments`}
-                mcpPromptApiPath={`/api/v1/agents/${controlAgent.id}/prompts`}
-                mcpResourceApiPath={`/api/v1/agents/${controlAgent.id}/composer`}
-                onBusyChange={setConversationBusy}
-                onConversationChanged={() => router.refresh()}
-              />
-            ) : (
-              <MessageScroller
-                key={selected?.id ?? conversation?.id ?? "new"}
-                label={t("title")}
-                data-ui="work.transcript"
-                busy={selectedActive || Boolean(conversationOutput?.active)}
-                followOutput={followingOutput}
-                onFollowChange={setFollowingOutput}
-                navigation="rail"
-                className={
-                  selected || conversation
-                    ? "min-h-0 flex-1"
-                    : "mt-auto min-h-0 flex-none"
-                }
-              >
-                {selected || conversation ? (
-                  <>
-                    <WorkTranscript
-                      agentName={controlAgent?.name ?? t("agent")}
-                      modelName={
-                        conversation?.modelOverride?.model ??
-                        conversation?.modelName ??
-                        selected?.modelName ??
-                        null
-                      }
-                      messages={
-                        conversationAccessRevoked
-                          ? []
-                          : (conversation?.messages ?? selected?.messages ?? [])
-                      }
-                      streamText={streamText}
-                      streamActivities={streamActivities}
-                      streamStartedAt={streamStartedAt}
-                      streamRuntimeKind={streamRuntimeKind}
-                      streamModelName={streamModelName}
-                      executionStage={executionStage}
-                      sessionStartedAt={selected?.startedAt}
-                      sessionCompletedAt={selected?.completedAt}
-                      streaming={selectedActive}
-                    />
-                    {observingConversation &&
-                    !conversationAccessRevoked &&
-                    conversationOutput &&
-                    !conversationOutputPersisted ? (
-                      <div className="mx-auto w-full max-w-3xl px-4 pb-8 sm:px-6">
-                        <LiveOutputView output={conversationOutput} />
-                      </div>
-                    ) : null}
-                    {selected?.artifacts.length ? (
-                      <section className="mx-auto w-full max-w-3xl px-4 py-5">
-                        <p className="flex items-center gap-2 text-xs font-semibold">
-                          <FileOutput className="size-4" />
-                          {t("artifacts")}
-                        </p>
-                        <ul className="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
-                          {selected.artifacts.map((artifact) => (
-                            <li key={artifact}>{artifact}</li>
-                          ))}
-                        </ul>
-                      </section>
-                    ) : null}
-                  </>
                 ) : (
-                  <div className="flex items-center justify-center px-6 pb-7 pt-10 text-center">
-                    <div className="max-w-lg">
-                      <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-muted text-foreground ring-1 ring-border/50">
-                        <Bot className="size-6" />
-                      </span>
-                      {agent ? (
-                        <p className="mt-4 text-sm font-medium text-muted-foreground">
-                          {agent.name}
-                        </p>
-                      ) : null}
-                      <h2 className="mt-2 text-2xl font-medium tracking-tight sm:text-3xl">
-                        {t("emptyTitle")}
-                      </h2>
-                      {agent?.description &&
-                      agent.description.trim() !== agent.name.trim() ? (
-                        <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
-                          {agent.description}
-                        </p>
-                      ) : null}
-                      {agent?.mcpToolsUpdated ? (
-                        <McpToolsUpdatedNote {...agent.mcpToolsUpdated} />
-                      ) : null}
-                    </div>
-                  </div>
-                )}
-                {visibleError && !configurationError ? (
-                  <div
-                    role="alert"
-                    className="mx-auto my-4 w-[calc(100%_-_2rem)] max-w-[736px] rounded-2xl border border-border bg-muted/40 p-4 text-sm text-muted-foreground"
-                  >
-                    {runtimeError ? runtimeError.text : visibleError}
-                    {runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE" &&
-                    controlAgent ? (
+                  <div className="mx-auto w-full max-w-3xl flex-1 space-y-3 px-4 py-6 sm:px-6">
+                    <p
+                      role={
+                        a2a.selectionStatus === "loading" ? "status" : "alert"
+                      }
+                      className="text-sm text-muted-foreground"
+                    >
+                      {t(
+                        a2a.selectionStatus === "loading"
+                          ? "a2a.loading"
+                          : a2a.selectionStatus === "missing"
+                            ? "a2a.unavailable"
+                            : "a2a.loadFailed",
+                      )}
+                    </p>
+                    {a2a.selectionStatus !== "loading" ? (
                       <Button
                         variant="outline"
                         size="sm"
-                        className="ml-3 rounded-full"
-                        onClick={() =>
-                          router.push(
-                            agentSettingsHref(
-                              slug,
-                              controlAgent.id,
-                              workReturnTo,
-                              "mcp",
-                            ),
-                          )
-                        }
+                        onClick={a2a.refreshSelection}
                       >
-                        {tAgents("configureAgent")}
+                        {t("executionRefresh")}
                       </Button>
                     ) : null}
                   </div>
-                ) : null}
-              </MessageScroller>
-            )}
-            {conversation &&
-            channelConversation &&
-            !conversationAccessRevoked ? (
-              <ConversationExecution
-                key={`${conversation.agentId}:${conversation.id}`}
-                endpoint={`/api/v1/agents/${encodeURIComponent(conversation.agentId)}/conversations/${encodeURIComponent(conversation.id)}/execution`}
-                showStatus
-                showActivities={false}
-                onBusyChange={setConversationBusy}
-                renderedActivityIds={renderedHookIds}
-                settingsHref={agentSettingsHref(
-                  slug,
-                  conversation.agentId,
-                  workReturnTo,
-                  "mcp",
-                )}
-                className={conversationComposerDockClassName}
-                onChange={() => router.refresh()}
-              />
-            ) : null}
-            {unappliedDraft && agent ? (
-              <div
-                role="status"
-                className="mx-auto mb-2 flex w-[calc(100%_-_2rem)] max-w-[736px] flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm"
-              >
-                <p className="text-muted-foreground">
-                  {t("agentDraftUnapplied")}
-                </p>
-                <Button
-                  onClick={() =>
-                    router.push(agentSettingsHref(slug, agent.id, workReturnTo))
-                  }
-                  variant="outline"
-                  size="sm"
-                  className="rounded-full"
-                >
-                  {t("agentDraftReview")}
-                </Button>
-              </div>
-            ) : null}
-            {showConfigurationNotice && controlAgent ? (
-              <div
-                role="alert"
-                className="mx-auto mb-2 flex w-[calc(100%_-_2rem)] max-w-[736px] flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm"
-              >
-                <span className="text-muted-foreground">
-                  {t("configureAgent")}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-full"
-                  onClick={() =>
-                    router.push(
-                      agentSettingsHref(slug, controlAgent.id, workReturnTo),
-                    )
-                  }
-                >
-                  {tAgents("configureAgent")}
-                </Button>
-              </div>
-            ) : null}
-
-            {!conversation && (!sessionReadOnly || selectedActive) && (
-              <div
-                className={`${conversationComposerDockClassName} ${!selected ? "mb-auto before:hidden" : ""} ${showConfigurationNotice || unappliedDraft ? "before:hidden" : ""}`}
-              >
-                <div>
-                  {selected && !sessionReadOnly ? (
-                    <ConversationExecution
-                      key={selected.id}
-                      endpoint={`/api/v1/workspaces/${encodeURIComponent(slug)}/work-sessions/${encodeURIComponent(selected.id)}/ui`}
-                      showStatus={false}
-                      showActivities={false}
-                      active={selectedActive}
-                      onSetEditorText={setDraft}
-                      belowEditorElement={belowEditorElement}
-                      renderedActivityIds={renderedHookIds}
-                      onChange={() => void refreshSelected()}
-                      className="mb-3"
-                    />
-                  ) : null}
-                  <WorkComposer
-                    key={composerScope}
-                    agentId={controlAgent?.id}
-                    sandboxId={controlSandbox?.id}
-                    workSessionId={selected?.id}
-                    conversationId={selected?.conversationId}
-                    commands={commands}
-                    draft={draft}
-                    onDraftChange={setDraft}
-                    attachments={attachments}
-                    onAttachmentsChange={setAttachments}
-                    references={references}
-                    onReferencesChange={(items) =>
-                      setReferenceSelection({ scope: composerScope, items })
-                    }
-                    supportsAttachments={
-                      !sessionReadOnly &&
-                      (selected
-                        ? controlSandbox?.kind
-                        : activeSandbox?.kind) === "docker"
-                    }
-                    onError={setError}
-                    onPendingChange={setComposerPending}
-                    waitingQuestion={selected?.waitingQuestion}
-                    toolbarStart={null}
-                    disabled={
-                      sessionReadOnly ||
-                      unappliedDraft ||
-                      Boolean(busy) ||
-                      running ||
-                      (!canSend && !localCommand) ||
-                      composerPending
-                    }
-                    loading={running}
-                    onStop={
-                      selected && busy !== "cancel"
-                        ? () => void postAction("cancel")
-                        : undefined
-                    }
-                    onSubmit={() => void sendMessage()}
-                    toolbarEnd={
-                      <>
-                        <ConversationContextUsage
-                          busy={running}
-                          usage={contextUsage}
+                )
+              ) : (
+                <>
+                  {conversation &&
+                  !sessionReadOnly &&
+                  !channelConversation &&
+                  controlAgent ? (
+                    <AgentConversation
+                      key={conversation.id}
+                      activeConversationId={conversation.id}
+                      agentId={controlAgent.id}
+                      agentName={controlAgent.name}
+                      settingsHref={agentSettingsHref(
+                        slug,
+                        controlAgent.id,
+                        workReturnTo,
+                      )}
+                      composerNotice={(
+                        setEditorText,
+                        widgetTarget,
+                        renderedActivityIds,
+                      ) => (
+                        <ConversationExecution
+                          key={`${controlAgent.id}:${conversation.id}`}
+                          endpoint={`/api/v1/agents/${encodeURIComponent(controlAgent.id)}/conversations/${encodeURIComponent(conversation.id)}/execution`}
+                          showStatus={false}
+                          active={conversationBusy}
+                          onSetEditorText={setEditorText}
+                          belowEditorElement={widgetTarget}
+                          renderedActivityIds={renderedActivityIds}
+                          className="mb-3"
+                          onChange={() => router.refresh()}
                         />
+                      )}
+                      ready={!sessionReadOnly}
+                      runtimeKind={conversation.runtimeKind ?? null}
+                      agentRevisionVersion={conversation.agentRevisionVersion}
+                      currentRevisionVersion={
+                        controlAgent.currentRevisionVersion
+                      }
+                      mcpToolsUpdated={controlAgent.mcpToolsUpdated}
+                      modelName={conversation.modelName}
+                      modelOverride={modelChoices[composerScope] ?? null}
+                      modelPicker={
                         <ComposerModelSelect
                           providers={providers}
                           defaultSelection={
-                            controlAgent?.providerId && controlAgent.model
+                            controlAgent.providerId && controlAgent.model
                               ? {
                                   providerId: controlAgent.providerId,
                                   model: controlAgent.model,
@@ -3191,91 +3198,325 @@ export function WorkspaceWork({
                             }))
                           }
                         />
-                      </>
+                      }
+                      initialMessages={
+                        conversation.messages.filter(
+                          (message) => !messageCompaction(message),
+                        ) as AgentUIMessage[]
+                      }
+                      initialReasoningEffort={
+                        conversation.reasoningEffort ?? "default"
+                      }
+                      reasoningAvailable={false}
+                      creatingConversation={false}
+                      ensureConversation={async () => conversation.id}
+                      attachmentUploadUrl={`/api/v1/workspaces/${workspaceId}/attachments`}
+                      mcpPromptApiPath={`/api/v1/agents/${controlAgent.id}/prompts`}
+                      mcpResourceApiPath={`/api/v1/agents/${controlAgent.id}/composer`}
+                      onBusyChange={setConversationBusy}
+                      onConversationChanged={() => router.refresh()}
+                    />
+                  ) : (
+                    <MessageScroller
+                      key={selected?.id ?? conversation?.id ?? "new"}
+                      label={t("title")}
+                      data-ui="work.transcript"
+                      busy={
+                        selectedActive || Boolean(conversationOutput?.active)
+                      }
+                      followOutput={followingOutput}
+                      onFollowChange={setFollowingOutput}
+                      navigation="rail"
+                      className={
+                        selected || conversation
+                          ? "min-h-0 flex-1"
+                          : "mt-auto min-h-0 flex-none"
+                      }
+                    >
+                      {selected || conversation ? (
+                        <>
+                          <WorkTranscript
+                            agentName={controlAgent?.name ?? t("agent")}
+                            modelName={
+                              conversation?.modelOverride?.model ??
+                              conversation?.modelName ??
+                              selected?.modelName ??
+                              null
+                            }
+                            messages={
+                              conversationAccessRevoked
+                                ? []
+                                : (conversation?.messages ??
+                                  selected?.messages ??
+                                  [])
+                            }
+                            streamText={streamText}
+                            streamActivities={streamActivities}
+                            streamStartedAt={streamStartedAt}
+                            streamRuntimeKind={streamRuntimeKind}
+                            streamModelName={streamModelName}
+                            executionStage={executionStage}
+                            sessionStartedAt={selected?.startedAt}
+                            sessionCompletedAt={selected?.completedAt}
+                            streaming={selectedActive}
+                          />
+                          {observingConversation &&
+                          !conversationAccessRevoked &&
+                          conversationOutput &&
+                          !conversationOutputPersisted ? (
+                            <div className="mx-auto w-full max-w-3xl px-4 pb-8 sm:px-6">
+                              <LiveOutputView output={conversationOutput} />
+                            </div>
+                          ) : null}
+                          {selected?.artifacts.length ? (
+                            <section className="mx-auto w-full max-w-3xl px-4 py-5">
+                              <p className="flex items-center gap-2 text-xs font-semibold">
+                                <FileOutput className="size-4" />
+                                {t("artifacts")}
+                              </p>
+                              <ul className="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
+                                {selected.artifacts.map((artifact) => (
+                                  <li key={artifact}>{artifact}</li>
+                                ))}
+                              </ul>
+                            </section>
+                          ) : null}
+                        </>
+                      ) : (
+                        <div className="flex items-center justify-center px-6 pb-7 pt-10 text-center">
+                          <div className="max-w-lg">
+                            <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-muted text-foreground ring-1 ring-border/50">
+                              <Bot className="size-6" />
+                            </span>
+                            {agent ? (
+                              <p className="mt-4 text-sm font-medium text-muted-foreground">
+                                {agent.name}
+                              </p>
+                            ) : null}
+                            <h2 className="mt-2 text-2xl font-medium tracking-tight sm:text-3xl">
+                              {t("emptyTitle")}
+                            </h2>
+                            {agent?.description &&
+                            agent.description.trim() !== agent.name.trim() ? (
+                              <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
+                                {agent.description}
+                              </p>
+                            ) : null}
+                            {agent?.mcpToolsUpdated ? (
+                              <McpToolsUpdatedNote {...agent.mcpToolsUpdated} />
+                            ) : null}
+                          </div>
+                        </div>
+                      )}
+                      {visibleError && !configurationError ? (
+                        <div
+                          role="alert"
+                          className="mx-auto my-4 w-[calc(100%_-_2rem)] max-w-[736px] rounded-2xl border border-border bg-muted/40 p-4 text-sm text-muted-foreground"
+                        >
+                          {runtimeError ? runtimeError.text : visibleError}
+                          {runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE" &&
+                          controlAgent ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="ml-3 rounded-full"
+                              onClick={() =>
+                                router.push(
+                                  agentSettingsHref(
+                                    slug,
+                                    controlAgent.id,
+                                    workReturnTo,
+                                    "mcp",
+                                  ),
+                                )
+                              }
+                            >
+                              {tAgents("configureAgent")}
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </MessageScroller>
+                  )}
+                </>
+              )}
+              {conversation &&
+              channelConversation &&
+              !conversationAccessRevoked ? (
+                <ConversationExecution
+                  key={`${conversation.agentId}:${conversation.id}`}
+                  endpoint={`/api/v1/agents/${encodeURIComponent(conversation.agentId)}/conversations/${encodeURIComponent(conversation.id)}/execution`}
+                  showStatus
+                  showActivities={false}
+                  onBusyChange={setConversationBusy}
+                  renderedActivityIds={renderedHookIds}
+                  settingsHref={agentSettingsHref(
+                    slug,
+                    conversation.agentId,
+                    workReturnTo,
+                    "mcp",
+                  )}
+                  className={conversationComposerDockClassName}
+                  onChange={() => router.refresh()}
+                />
+              ) : null}
+              {unappliedDraft && agent ? (
+                <div
+                  role="status"
+                  className="mx-auto mb-2 flex w-[calc(100%_-_2rem)] max-w-[736px] flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm"
+                >
+                  <p className="text-muted-foreground">
+                    {t("agentDraftUnapplied")}
+                  </p>
+                  <Button
+                    onClick={() =>
+                      router.push(
+                        agentSettingsHref(slug, agent.id, workReturnTo),
+                      )
                     }
-                  />
-                  <div
-                    ref={setBelowEditorElement}
-                    className="space-y-3 empty:hidden"
-                  />
-                  {!selected && agent?.ready && !sandboxOptions.length ? (
-                    <p className="px-3 pt-3 text-center text-[11px] text-muted-foreground">
-                      {t("attachSandbox")}
-                    </p>
-                  ) : null}
+                    variant="outline"
+                    size="sm"
+                    className="rounded-full"
+                  >
+                    {t("agentDraftReview")}
+                  </Button>
                 </div>
-              </div>
-            )}
-          </main>
-        </AnimatedSidebarInset>
+              ) : null}
+              {showConfigurationNotice && controlAgent ? (
+                <div
+                  role="alert"
+                  className="mx-auto mb-2 flex w-[calc(100%_-_2rem)] max-w-[736px] flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm"
+                >
+                  <span className="text-muted-foreground">
+                    {t("configureAgent")}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-full"
+                    onClick={() =>
+                      router.push(
+                        agentSettingsHref(slug, controlAgent.id, workReturnTo),
+                      )
+                    }
+                  >
+                    {tAgents("configureAgent")}
+                  </Button>
+                </div>
+              ) : null}
 
-        {workspacePanelOpen ? (
-          <aside className="hidden w-96 shrink-0 min-h-0 overflow-hidden bg-background xl:block">
-            {controlSandbox && !workspacePending ? (
-              <SandboxConsole
-                key={`${conversation?.id ?? selected?.id ?? "new"}:${controlSandbox.id}`}
-                compact
-                filesOnly={desktopPanel === "files"}
-                readOnly={sessionReadOnly}
-                terminalOnly={desktopPanel === "terminal"}
-                deploymentId={controlSandbox.deploymentId}
-                running={controlSandbox.running}
-                initialPath={activeWorkingDirectory}
-                initialEntries={[]}
-                terminalLabel={controlSandbox.name}
-                terminalSubtitle={t("sandboxSubtitle")}
-                workspaceRoot={controlWorkspaceRoot}
-                rpcApiBase={workspaceRpcApiBase}
-                terminalApiBase={workspaceTerminalApiBase}
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                <Boxes className="mr-2 size-4" />
-                {workspaceUnavailableLabel}
-              </div>
-            )}
-          </aside>
-        ) : null}
-      </div>
+              {!viewingA2A &&
+                !conversation &&
+                (!sessionReadOnly || selectedActive) && (
+                  <div
+                    className={`${conversationComposerDockClassName} ${!selected ? "mb-auto before:hidden" : ""} ${showConfigurationNotice || unappliedDraft ? "before:hidden" : ""}`}
+                  >
+                    <div>
+                      {selected && !sessionReadOnly ? (
+                        <ConversationExecution
+                          key={selected.id}
+                          endpoint={`/api/v1/workspaces/${encodeURIComponent(slug)}/work-sessions/${encodeURIComponent(selected.id)}/ui`}
+                          showStatus={false}
+                          showActivities={false}
+                          active={selectedActive}
+                          onSetEditorText={setDraft}
+                          belowEditorElement={belowEditorElement}
+                          renderedActivityIds={renderedHookIds}
+                          onChange={() => void refreshSelected()}
+                          className="mb-3"
+                        />
+                      ) : null}
+                      <WorkComposer
+                        key={composerScope}
+                        agentId={controlAgent?.id}
+                        sandboxId={controlSandbox?.id}
+                        workSessionId={selected?.id}
+                        conversationId={selected?.conversationId}
+                        commands={commands}
+                        draft={draft}
+                        onDraftChange={setDraft}
+                        attachments={attachments}
+                        onAttachmentsChange={setAttachments}
+                        references={references}
+                        onReferencesChange={(items) =>
+                          setReferenceSelection({ scope: composerScope, items })
+                        }
+                        supportsAttachments={
+                          !sessionReadOnly &&
+                          (selected
+                            ? controlSandbox?.kind
+                            : activeSandbox?.kind) === "docker"
+                        }
+                        onError={setError}
+                        onPendingChange={setComposerPending}
+                        waitingQuestion={selected?.waitingQuestion}
+                        toolbarStart={null}
+                        disabled={
+                          sessionReadOnly ||
+                          unappliedDraft ||
+                          Boolean(busy) ||
+                          running ||
+                          (!canSend && !localCommand) ||
+                          composerPending
+                        }
+                        loading={running}
+                        onStop={
+                          selected && busy !== "cancel"
+                            ? () => void postAction("cancel")
+                            : undefined
+                        }
+                        onSubmit={() => void sendMessage()}
+                        toolbarEnd={
+                          <>
+                            <ConversationContextUsage
+                              busy={running}
+                              usage={contextUsage}
+                            />
+                            <ComposerModelSelect
+                              providers={providers}
+                              defaultSelection={
+                                controlAgent?.providerId && controlAgent.model
+                                  ? {
+                                      providerId: controlAgent.providerId,
+                                      model: controlAgent.model,
+                                    }
+                                  : null
+                              }
+                              value={modelChoices[composerScope] ?? null}
+                              onChange={(value) =>
+                                setModelChoices((choices) => ({
+                                  ...choices,
+                                  [composerScope]: value,
+                                }))
+                              }
+                            />
+                          </>
+                        }
+                      />
+                      <div
+                        ref={setBelowEditorElement}
+                        className="space-y-3 empty:hidden"
+                      />
+                      {!selected && agent?.ready && !sandboxOptions.length ? (
+                        <p className="px-3 pt-3 text-center text-[11px] text-muted-foreground">
+                          {t("attachSandbox")}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
+            </main>
+          </AnimatedSidebarInset>
 
-      {mobilePanel ? (
-        <CenterMorphModal
-          open={Boolean(mobilePanel)}
-          onOpenChange={(open) => {
-            if (!open) setMobilePanel(null);
-          }}
-        >
-          <CenterMorphModalContent
-            ariaLabel={
-              mobilePanel === "files"
-                ? tSandboxes("files")
-                : tSandboxes("terminal")
-            }
-            closeButtonLabel={t("closeWorkspace")}
-            className="flex h-[calc(100dvh-2rem)] w-full max-w-5xl flex-col"
-          >
-            <DialogHeader
-              title={
-                mobilePanel === "files"
-                  ? tSandboxes("files")
-                  : tSandboxes("terminal")
-              }
-              icon={
-                mobilePanel === "files" ? (
-                  <Folder className="size-4" />
-                ) : (
-                  <TerminalSquare className="size-4" />
-                )
-              }
-            />
-            <div className="min-h-0 flex-1 overflow-hidden">
+          {workspacePanelOpen ? (
+            <aside className="hidden w-96 shrink-0 min-h-0 overflow-hidden bg-background xl:block">
               {controlSandbox && !workspacePending ? (
                 <SandboxConsole
                   key={`${conversation?.id ?? selected?.id ?? "new"}:${controlSandbox.id}`}
                   compact
-                  filesOnly={mobilePanel === "files"}
+                  filesOnly={desktopPanel === "files"}
                   readOnly={sessionReadOnly}
-                  terminalOnly={mobilePanel === "terminal"}
+                  terminalOnly={desktopPanel === "terminal"}
                   deploymentId={controlSandbox.deploymentId}
                   running={controlSandbox.running}
                   initialPath={activeWorkingDirectory}
@@ -3292,152 +3533,217 @@ export function WorkspaceWork({
                   {workspaceUnavailableLabel}
                 </div>
               )}
-            </div>
-          </CenterMorphModalContent>
-        </CenterMorphModal>
-      ) : null}
+            </aside>
+          ) : null}
+        </div>
 
-      <SidebarGroupDialog
-        initialName={groupEditor?.name ?? ""}
-        open={Boolean(groupEditor)}
-        title={t(groupEditor?.id ? "renameGroup" : "newGroup")}
-        nameLabel={t("groupName")}
-        placeholder={t("groupNamePlaceholder")}
-        cancelLabel={common("cancel")}
-        submitLabel={groupEditor?.id ? common("save") : common("create")}
-        onClose={() => setGroupEditor(null)}
-        onSubmit={saveAgentGroup}
-      />
+        {!viewingA2A && mobilePanel ? (
+          <CenterMorphModal
+            open={Boolean(mobilePanel)}
+            onOpenChange={(open) => {
+              if (!open) setMobilePanel(null);
+            }}
+          >
+            <CenterMorphModalContent
+              ariaLabel={
+                mobilePanel === "files"
+                  ? tSandboxes("files")
+                  : tSandboxes("terminal")
+              }
+              closeButtonLabel={t("closeWorkspace")}
+              className="flex h-[calc(100dvh-2rem)] w-full max-w-5xl flex-col"
+            >
+              <DialogHeader
+                title={
+                  mobilePanel === "files"
+                    ? tSandboxes("files")
+                    : tSandboxes("terminal")
+                }
+                icon={
+                  mobilePanel === "files" ? (
+                    <Folder className="size-4" />
+                  ) : (
+                    <TerminalSquare className="size-4" />
+                  )
+                }
+              />
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {controlSandbox && !workspacePending ? (
+                  <SandboxConsole
+                    key={`${conversation?.id ?? selected?.id ?? "new"}:${controlSandbox.id}`}
+                    compact
+                    filesOnly={mobilePanel === "files"}
+                    readOnly={sessionReadOnly}
+                    terminalOnly={mobilePanel === "terminal"}
+                    deploymentId={controlSandbox.deploymentId}
+                    running={controlSandbox.running}
+                    initialPath={activeWorkingDirectory}
+                    initialEntries={[]}
+                    terminalLabel={controlSandbox.name}
+                    terminalSubtitle={t("sandboxSubtitle")}
+                    workspaceRoot={controlWorkspaceRoot}
+                    rpcApiBase={workspaceRpcApiBase}
+                    terminalApiBase={workspaceTerminalApiBase}
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    <Boxes className="mr-2 size-4" />
+                    {workspaceUnavailableLabel}
+                  </div>
+                )}
+              </div>
+            </CenterMorphModalContent>
+          </CenterMorphModal>
+        ) : null}
 
-      <CenterMorphModal
-        open={Boolean(deleteConversationTarget)}
-        onOpenChange={(open) => {
-          if (!open && !deleteConversationPending)
-            setDeleteConversationTarget(null);
-        }}
-      >
-        <CenterMorphModalContent
-          ariaLabel={
-            deleteConversationTarget?.workSessionId
-              ? t("deleteConversation")
-              : tAgents("deleteConversation")
-          }
-          closeButtonLabel={tAgents("close")}
-          className="max-w-md"
+        <SidebarGroupDialog
+          initialName={groupEditor?.name ?? ""}
+          open={Boolean(groupEditor)}
+          title={t(groupEditor?.id ? "renameGroup" : "newGroup")}
+          nameLabel={t("groupName")}
+          placeholder={t("groupNamePlaceholder")}
+          cancelLabel={common("cancel")}
+          submitLabel={groupEditor?.id ? common("save") : common("create")}
+          onClose={() => setGroupEditor(null)}
+          onSubmit={saveAgentGroup}
+        />
+
+        <CenterMorphModal
+          open={Boolean(deleteConversationTarget)}
+          onOpenChange={(open) => {
+            if (!open && !deleteConversationPending)
+              setDeleteConversationTarget(null);
+          }}
         >
-          <DialogHeader
-            title={
+          <CenterMorphModalContent
+            ariaLabel={
               deleteConversationTarget?.workSessionId
                 ? t("deleteConversation")
                 : tAgents("deleteConversation")
             }
-          />
-          <DialogBody>
-            <p className="text-sm text-muted-foreground">
-              {deleteConversationTarget?.workSessionId
-                ? t("deleteConversationDescription")
-                : tAgents("deleteConversationDescription")}
-            </p>
-            {deleteConversationError ? (
-              <p role="alert" className="mt-3 text-sm text-destructive">
-                {deleteConversationError}
-              </p>
-            ) : null}
-          </DialogBody>
-          <form
-            action={async (formData) => {
-              if (!deleteConversationTarget || deleteConversationPending)
-                return;
-              const target = deleteConversationTarget;
-              setDeleteConversationPending(true);
-              setDeleteConversationError("");
-              try {
-                if (target.workSessionId) {
-                  await deleteWorkConversation({
-                    ...target,
-                    workSessionId: target.workSessionId,
-                  });
-                } else {
-                  const result = await deleteConversationAction(formData);
-                  if (result.error) setDeleteConversationError(result.error);
-                }
-              } catch (cause) {
-                unstable_rethrow(cause);
-                setDeleteConversationError(
-                  cause instanceof Error
-                    ? cause.message
-                    : operationsT("failed"),
-                );
-              } finally {
-                setDeleteConversationPending(false);
-              }
-            }}
+            closeButtonLabel={tAgents("close")}
+            className="max-w-md"
           >
-            <input type="hidden" name="workspace" value={slug} />
-            <input
-              type="hidden"
-              name="agentId"
-              value={deleteConversationTarget?.agentId ?? ""}
+            <DialogHeader
+              title={
+                deleteConversationTarget?.workSessionId
+                  ? t("deleteConversation")
+                  : tAgents("deleteConversation")
+              }
             />
-            <input
-              type="hidden"
-              name="conversationId"
-              value={deleteConversationTarget?.id ?? ""}
-            />
-            <DialogFooter cancel={<DialogCancel />}>
-              <SubmitButton
-                size="md"
-                variant="primary"
-                className="bg-destructive text-white hover:bg-destructive/90"
-                pendingLabel={tAgents("deleting")}
-                error={deleteConversationError}
-                flash={false}
-              >
-                {tAgents("confirmDelete")}
-              </SubmitButton>
-            </DialogFooter>
-          </form>
-        </CenterMorphModalContent>
-      </CenterMorphModal>
+            <DialogBody>
+              <p className="text-sm text-muted-foreground">
+                {deleteConversationTarget?.workSessionId
+                  ? t("deleteConversationDescription")
+                  : tAgents("deleteConversationDescription")}
+              </p>
+              {deleteConversationError ? (
+                <p role="alert" className="mt-3 text-sm text-destructive">
+                  {deleteConversationError}
+                </p>
+              ) : null}
+            </DialogBody>
+            <form
+              action={async (formData) => {
+                if (!deleteConversationTarget || deleteConversationPending)
+                  return;
+                const target = deleteConversationTarget;
+                setDeleteConversationPending(true);
+                setDeleteConversationError("");
+                try {
+                  if (target.workSessionId) {
+                    await deleteWorkConversation({
+                      ...target,
+                      workSessionId: target.workSessionId,
+                    });
+                  } else {
+                    const result = await deleteConversationAction(formData);
+                    if (result.error) setDeleteConversationError(result.error);
+                  }
+                } catch (cause) {
+                  unstable_rethrow(cause);
+                  setDeleteConversationError(
+                    cause instanceof Error
+                      ? cause.message
+                      : operationsT("failed"),
+                  );
+                } finally {
+                  setDeleteConversationPending(false);
+                }
+              }}
+            >
+              <input type="hidden" name="workspace" value={slug} />
+              <input
+                type="hidden"
+                name="agentId"
+                value={deleteConversationTarget?.agentId ?? ""}
+              />
+              <input
+                type="hidden"
+                name="conversationId"
+                value={deleteConversationTarget?.id ?? ""}
+              />
+              <DialogFooter cancel={<DialogCancel />}>
+                <SubmitButton
+                  size="md"
+                  variant="primary"
+                  className="bg-destructive text-white hover:bg-destructive/90"
+                  pendingLabel={tAgents("deleting")}
+                  error={deleteConversationError}
+                  flash={false}
+                >
+                  {tAgents("confirmDelete")}
+                </SubmitButton>
+              </DialogFooter>
+            </form>
+          </CenterMorphModalContent>
+        </CenterMorphModal>
 
-      <CenterMorphModal
-        open={Boolean(deleteAgentTarget)}
-        onOpenChange={(open) => {
-          if (!open) setDeleteAgentTarget(null);
-        }}
-      >
-        <CenterMorphModalContent
-          ariaLabel={tAgents("deleteAgent")}
-          closeButtonLabel={tAgents("close")}
-          className="max-w-md"
+        <CenterMorphModal
+          open={Boolean(deleteAgentTarget)}
+          onOpenChange={(open) => {
+            if (!open) setDeleteAgentTarget(null);
+          }}
         >
-          <DialogHeader title={tAgents("deleteAgent")} />
-          <DialogBody>
-            <p className="text-sm text-muted-foreground">
-              {tAgents("deleteThisAgentAndItsSandboxesAndAllItsConversations")}
-            </p>
-          </DialogBody>
-          <form action={deleteAgentAction}>
-            <input type="hidden" name="workspace" value={slug} />
-            <input
-              type="hidden"
-              name="agentId"
-              value={deleteAgentTarget?.id ?? ""}
-            />
-            <input type="hidden" name="returnTo" value={`/app/${slug}/work`} />
-            <DialogFooter cancel={<DialogCancel />}>
-              <SubmitButton
-                size="md"
-                variant="primary"
-                className="bg-destructive text-white hover:bg-destructive/90"
-                pendingLabel={tAgents("deleting")}
-              >
-                {tAgents("confirmDelete")}
-              </SubmitButton>
-            </DialogFooter>
-          </form>
-        </CenterMorphModalContent>
-      </CenterMorphModal>
-    </ChatApp>
+          <CenterMorphModalContent
+            ariaLabel={tAgents("deleteAgent")}
+            closeButtonLabel={tAgents("close")}
+            className="max-w-md"
+          >
+            <DialogHeader title={tAgents("deleteAgent")} />
+            <DialogBody>
+              <p className="text-sm text-muted-foreground">
+                {tAgents(
+                  "deleteThisAgentAndItsSandboxesAndAllItsConversations",
+                )}
+              </p>
+            </DialogBody>
+            <form action={deleteAgentAction}>
+              <input type="hidden" name="workspace" value={slug} />
+              <input
+                type="hidden"
+                name="agentId"
+                value={deleteAgentTarget?.id ?? ""}
+              />
+              <input
+                type="hidden"
+                name="returnTo"
+                value={`/app/${slug}/work`}
+              />
+              <DialogFooter cancel={<DialogCancel />}>
+                <SubmitButton
+                  size="md"
+                  variant="primary"
+                  className="bg-destructive text-white hover:bg-destructive/90"
+                  pendingLabel={tAgents("deleting")}
+                >
+                  {tAgents("confirmDelete")}
+                </SubmitButton>
+              </DialogFooter>
+            </form>
+          </CenterMorphModalContent>
+        </CenterMorphModal>
+      </ChatApp>
+    </SubagentConversationScope.Provider>
   );
 }

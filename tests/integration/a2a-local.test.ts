@@ -43,6 +43,9 @@ import {
 import { publishLocalArtifact } from "@/lib/a2a/local-artifacts";
 import { openTaskFile, listTaskFiles, storeTaskFile } from "@/lib/a2a/files";
 import { getConsoleTaskTree } from "@/lib/a2a/console-tasks";
+import { getConsoleContexts } from "@/lib/a2a/console-contexts";
+import { handleA2AConsoleContexts } from "@/lib/a2a/console-http";
+import { createSession } from "@/lib/auth/session";
 import {
   createLocalRootGrant,
   childGrant,
@@ -118,6 +121,19 @@ import { runSandboxAgentTurn } from "@/lib/agents/sandbox-runtime";
 import type * as AgentSandboxRuntime from "@/lib/agents/sandbox-runtime";
 import { taskRuntimeFailure } from "@/lib/agents/runtime-failure";
 import { taskOutput } from "@/lib/agents/execution/live-output";
+
+const consoleCookie = vi.hoisted(() => ({ value: null as string | null }));
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    get: (name: string) =>
+      name === "mcp_session" && consoleCookie.value
+        ? { value: consoleCookie.value }
+        : undefined,
+    set: (name: string, value: string) => {
+      if (name === "mcp_session") consoleCookie.value = value;
+    },
+  }),
+}));
 
 // Native process I/O is injected; Work admission, claims, tokens and child grants remain real.
 vi.mock("@/lib/agents/sandbox-runtime", async (original) => ({
@@ -331,6 +347,7 @@ beforeAll(async () => {
   }
 });
 beforeEach(async () => {
+  consoleCookie.value = null;
   attachmentIO.blobs.clear();
   await db.logEvent.deleteMany({ where: { workspaceId: ws } });
   await db.a2AContext.deleteMany({ where: { workspaceId: ws } });
@@ -1663,6 +1680,163 @@ describe("console task tree authorization", () => {
     expect(
       (await getConsoleTaskTree(actor(), parent.id, stored.id)).selectedTask.id,
     ).toBe(stored.id);
+  });
+  it("lists inbound delegations with sender and root-authorized transcript coordinates", async () => {
+    const parent = await root();
+    const delegated = await child(parent, 1, request(`  ${"a".repeat(140)}  `));
+    const persisted = await db.a2ATask.findUniqueOrThrow({
+      where: { id: delegated.row.id },
+    });
+    const receiver = { ...actor(), agentId: agents[1] };
+    const result = await getConsoleContexts(receiver);
+    expect(result).toEqual({
+      items: [
+        {
+          contextId: delegated.row.contextId,
+          peer: { kind: "agent", name: "Agent 0" },
+          title: "a".repeat(120),
+          state: "TASK_STATE_SUBMITTED",
+          updatedAt: persisted.updatedAt.toISOString(),
+          tasks: [
+            {
+              taskId: delegated.row.id,
+              rootTaskId: parent.id,
+              rootAgentId: agents[0],
+              createdAt: delegated.row.createdAt.toISOString(),
+            },
+          ],
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(
+      await getConsoleContexts(receiver, { taskId: delegated.row.id }),
+    ).toEqual(result);
+    expect(await getConsoleContexts(receiver, { taskId: parent.id })).toEqual({
+      items: [],
+      nextCursor: null,
+    });
+    expect(
+      await getConsoleContexts(receiver, { taskId: randomUUID() }),
+    ).toEqual({ items: [], nextCursor: null });
+    expect(
+      await getConsoleContexts({ ...receiver, actorId: otherUser }),
+    ).toEqual({ items: [], nextCursor: null });
+    expect(
+      await getConsoleContexts(
+        { ...receiver, actorId: otherUser },
+        { taskId: delegated.row.id },
+      ),
+    ).toEqual({ items: [], nextCursor: null });
+    await db.agentSubAgent.delete({
+      where: { parentId_childId: { parentId: agents[0], childId: agents[1] } },
+    });
+    expect(await getConsoleContexts(receiver)).toEqual({
+      items: [],
+      nextCursor: null,
+    });
+    expect(
+      await getConsoleContexts(receiver, { taskId: delegated.row.id }),
+    ).toEqual({ items: [], nextCursor: null });
+  });
+  it("lists console RPC roots but excludes expired contexts", async () => {
+    const parent = await root();
+    expect((await getConsoleContexts(actor())).items).toMatchObject([
+      {
+        contextId: parent.contextId,
+        peer: { kind: "client", name: "Console" },
+        title: "Do this task",
+        state: "TASK_STATE_WORKING",
+      },
+    ]);
+    await db.a2AContext.update({
+      where: { id: parent.contextId },
+      data: { expiresAt: new Date(0) },
+    });
+    expect(await getConsoleContexts(actor())).toEqual({
+      items: [],
+      nextCursor: null,
+    });
+    expect(await getConsoleContexts(actor(), { taskId: parent.id })).toEqual({
+      items: [],
+      nextCursor: null,
+    });
+  });
+  it("paginates received contexts without duplicating or dropping equal-time entries", async () => {
+    const contexts: string[] = [];
+    const updatedAt = new Date("2026-11-01T00:00:00.000Z");
+    for (let index = 0; index < 21; index++) {
+      const parent = await root();
+      await finishTask(
+        parent.id,
+        assertDefined(parent.leaseToken),
+        TaskState.TASK_STATE_COMPLETED,
+      );
+      await db.a2ATask.update({
+        where: { id: parent.id },
+        data: { updatedAt },
+      });
+      contexts.push(parent.contextId);
+    }
+    const first = await getConsoleContexts(actor());
+    expect(first.items).toHaveLength(20);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    const second = await getConsoleContexts(actor(), {
+      cursor: assertDefined(first.nextCursor),
+    });
+    expect(second.items).toHaveLength(1);
+    expect(second.nextCursor).toBeNull();
+    expect(
+      [...first.items, ...second.items].map((item) => item.contextId),
+    ).toEqual(contexts.sort().reverse());
+  });
+  it("preserves the console session, origin, membership and strict-query boundary", async () => {
+    const workspace = await db.workspace.findUniqueOrThrow({
+      where: { id: ws },
+    });
+    const url = `http://localhost/api/v1/workspaces/${workspace.slug}/agents/${agents[0]}/a2a/console/contexts`;
+    const call = (
+      suffix = "",
+      headers: HeadersInit = {},
+      slug = workspace.slug,
+    ) =>
+      handleA2AConsoleContexts(
+        new Request(url + suffix, { headers }),
+        slug,
+        agents[0],
+      );
+    expect((await call()).status).toBe(401);
+    await createSession(user, 0);
+    expect((await call()).status).toBe(200);
+    expect(
+      (await call("", { authorization: "Bearer rejected-even-with-session" }))
+        .status,
+    ).toBe(401);
+    expect(
+      (await call("", { origin: "https://foreign.test.invalid" })).status,
+    ).toBe(403);
+    expect((await call("", { "sec-fetch-site": "cross-site" })).status).toBe(
+      403,
+    );
+    expect((await call("", {}, `missing-${randomUUID()}`)).status).toBe(404);
+    for (const suffix of [
+      "?unknown=1",
+      "?taskId=",
+      "?taskId=a&taskId=b",
+      "?cursor=invalid",
+    ])
+      expect((await call(suffix)).status).toBe(400);
+    await db.membership.delete({
+      where: { workspaceId_userId: { workspaceId: ws, userId: otherUser } },
+    });
+    try {
+      await createSession(otherUser, 0);
+      expect((await call()).status).toBe(404);
+    } finally {
+      await db.membership.create({
+        data: { workspaceId: ws, userId: otherUser, role: "member" },
+      });
+    }
   });
 });
 
@@ -3400,6 +3574,13 @@ describe("unified native ingress mappings", () => {
       });
       const accepted = await submitAgentEntry(input, vi.fn());
       expect(accepted.row.state).toBe(TaskState.TASK_STATE_SUBMITTED);
+      expect(await getConsoleContexts(actor())).toEqual({
+        items: [],
+        nextCursor: null,
+      });
+      expect(
+        await getConsoleContexts(actor(), { taskId: accepted.row.id }),
+      ).toEqual({ items: [], nextCursor: null });
       expect(accepted.row.executionBackend).toBe("pi-sdk");
       expect(
         (accepted.row.grant as unknown as LocalA2AGrant).entryPolicy?.kind,
@@ -3430,6 +3611,19 @@ describe("unified native ingress mappings", () => {
         "old-dangerous-operation",
       ])
         expect(JSON.stringify(events)).not.toContain(privateText);
+      if (kind === "chat" || kind === "channel") {
+        const parent = assertDefined(await claimTask(accepted.row.id));
+        const delegated = await child(parent);
+        expect(
+          (await getConsoleContexts({ ...actor(), agentId: agents[1] })).items,
+        ).toMatchObject([
+          {
+            contextId: delegated.row.contextId,
+            peer: { kind: "agent", name: "Agent 0" },
+            tasks: [{ taskId: delegated.row.id, rootTaskId: parent.id }],
+          },
+        ]);
+      }
     },
   );
   it("retries the initial message after acceptance without manufacturing different context identifiers", async () => {

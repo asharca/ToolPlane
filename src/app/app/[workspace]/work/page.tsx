@@ -121,13 +121,14 @@ export default async function WorkspaceWorkPage({
     w?: string;
     agent?: string;
     c?: string;
+    a2a?: string;
     welcome?: string;
     mode?: string;
   }>;
 }) {
   const [
     { workspace: slug },
-    { w, c, agent: requestedAgentId, welcome, mode },
+    { w, c, a2a, agent: requestedAgentId, welcome, mode },
     user,
     t,
   ] = await Promise.all([
@@ -140,7 +141,7 @@ export default async function WorkspaceWorkPage({
   const workspace = await getWorkspaceForUser(slug, user.id);
   if (!workspace) redirect("/app");
   if (mode === "a2a") return notFound();
-  const titlePending = Boolean(w && !c && isWorkSessionTitlePending(w));
+  const titlePending = Boolean(w && !c && !a2a && isWorkSessionTitlePending(w));
   const [
     agents,
     providers,
@@ -152,8 +153,8 @@ export default async function WorkspaceWorkPage({
     listAgents(workspace.id),
     listProviders(workspace.id),
     listWorkSessions(workspace.id),
-    w && !c ? getWorkSession(workspace.id, w) : Promise.resolve(null),
-    c ? getConversation(c, workspace.id) : Promise.resolve(null),
+    w && !c && !a2a ? getWorkSession(workspace.id, w) : Promise.resolve(null),
+    c && !a2a ? getConversation(c, workspace.id) : Promise.resolve(null),
     cookies(),
   ]);
   const initialSidebarOpen =
@@ -166,6 +167,7 @@ export default async function WorkspaceWorkPage({
   );
   if (
     c &&
+    !a2a &&
     (!conversation ||
       !agents.some((agent) => agent.id === conversation.agentId) ||
       (requestedAgentId && requestedAgentId !== conversation.agentId))
@@ -221,7 +223,7 @@ export default async function WorkspaceWorkPage({
         initialExpandedAgents={initialExpandedAgents}
         initialGroupPreferences={initialGroupPreferences}
         initialSidebarOpen={initialSidebarOpen}
-        selectedWorkSessionId={c ? null : (w ?? null)}
+        selectedWorkSessionId={c || a2a ? null : (w ?? null)}
         selectedSession={
           selectedSession
             ? {
@@ -269,6 +271,7 @@ export default async function WorkspaceWorkPage({
             : null
         }
         requestedAgentId={requestedAgentId}
+        requestedA2ATaskId={a2a}
         providers={providers.map((provider) => ({
           id: provider.id,
           name: provider.name,

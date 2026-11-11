@@ -272,7 +272,20 @@ export function applyNativeUiAction(
       ...input.todos.map((todo) => ({ ...todo, source: input.source })),
     ];
   } else if (input.action === "activity") {
-    const activity = input.activity;
+    let activity = input.activity;
+    if (
+      activity.input === undefined &&
+      activity.toolCallId?.startsWith("platform-child:")
+    ) {
+      const previous = p.activities.find(
+        (entry) =>
+          entry.source.subagentId === activity.source.subagentId &&
+          entry.toolCallId === activity.toolCallId &&
+          entry.type === activity.type,
+      );
+      if (previous?.input !== undefined)
+        activity = { ...activity, input: previous.input };
+    }
     p.activities = p.activities.filter(
       (entry) =>
         entry.source.subagentId !== activity.source.subagentId ||
