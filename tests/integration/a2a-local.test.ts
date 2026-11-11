@@ -1695,6 +1695,7 @@ describe("scoped native task artifacts", () => {
       parts: [
         {
           raw: Buffer.from("diff --git").toString("base64"),
+          filename: "2026年10月月报.docx",
           mediaType: "text/x-diff",
         },
       ],
@@ -1719,6 +1720,8 @@ describe("scoped native task artifacts", () => {
     const storedFile = await openTaskFile(task.id, fileId);
     expect(await new Response(storedFile.body).text()).toBe("diff --git");
     expect(storedFile.file.mimeType).toBe("text/x-diff");
+    expect(storedFile.file.filename).toBe("2026年10月月报.docx");
+    expect(patchPart.filename).toBe("2026年10月月报.docx");
     expect(JSON.stringify(wire)).not.toContain(
       Buffer.from("diff --git").toString("base64"),
     );
