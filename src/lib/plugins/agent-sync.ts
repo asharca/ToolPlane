@@ -1,11 +1,9 @@
 import "server-only";
 import { db } from "@/lib/db";
-import { TERMINAL } from "@/lib/a2a/model";
 import {
   AgentExecutionBusyError,
-  withAgentMaintenanceLease,
+  withAgentDraftLease,
 } from "@/lib/agents/agent-execution-gate";
-import { sandboxExecutionBusy } from "@/lib/agents/sandbox-execution-gate";
 import { pinCurrentAgentRevision } from "@/lib/agents/revisions";
 import { applyPiPackageToAgent } from "@/lib/pi-packages/agent-apply";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
@@ -128,36 +126,9 @@ async function syncAgentPlugin(
         "stale_sync",
         "The plugin update target is no longer current.",
       );
-    await withAgentMaintenanceLease(agentId, async () => {
-      const [sandboxes, activeTask, activeWork] = await Promise.all([
-        db.agentSandbox.findMany({
-          where: { agentId, agent: { workspaceId } },
-          select: { sandboxId: true },
-        }),
-        db.a2ATask.findFirst({
-          where: {
-            context: { agentId, workspaceId },
-            state: { notIn: TERMINAL },
-          },
-          select: { id: true },
-        }),
-        db.workSession.findFirst({
-          where: {
-            agentId,
-            workspaceId,
-            status: {
-              in: ["queued", "running", "cancelling"],
-            },
-          },
-          select: { id: true },
-        }),
-      ]);
-      if (
-        sandboxes.some(({ sandboxId }) => sandboxExecutionBusy(sandboxId)) ||
-        activeTask ||
-        activeWork
-      )
-        throw new AgentExecutionBusyError();
+    // Publishing only moves the default; running sessions keep their pinned
+    // revision. Only a concurrent draft write or sandbox maintenance defers it.
+    await withAgentDraftLease(agentId, async () => {
       const release = binding.targetRelease;
       if (!release)
         throw new PluginError(

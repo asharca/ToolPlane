@@ -356,6 +356,7 @@
 - **下次怎么验证**：在真实任务运行期间修改并保存设置，核对新默认修订与原会话固定引用；容量回归同时验证草稿可与执行共存、不绕过并发上限、嵌套维护不能放宽互斥。不能只在 Agent 空闲时验收保存。
 - **依据**：`src/lib/agents/agent-execution-gate.ts`、`tests/unit/agent-execution-gate.test.ts`、`tests/integration/agents-mutations.test.ts`。
 - **固定模型补充（2026-11-05，用户报告 Task not found）**：本地准入、固定配置解析和 runtime grant 把草稿 provider 与 revision 等值比较，未应用 MiniMax 草稿便阻断固定 Qwen 的旧 Work／新入口。执行改查所选修订的 provider，并保留真实资源归属与凭据撤销。独立库先复现四个失败，修复后相关 126 项通过；生产原 v6 会话真实 `bash` 返回 `PINNED_REVISION_OK`，新 v7 MiniMax 会话返回 `NEW_REVISION_OK`。下次同时验证草稿切换／置空不改旧权限，以及固定 provider 删除／空凭据仍拒绝。
+- **插件绑定与同步复发（2026-11-11，用户反馈 10030「智同事-小薪」插件长时间待同步、添加插件报 `pi_package_agent_busy`）**：`validateAndWritePiPackages` 在草稿租约内仍查沙箱执行、未结束 A2A 任务和运行中 Work，拒绝只写 `AgentPiPackage` 草稿的绑定；`syncAgentPlugin` 用维护租约并要求 Agent 完全空闲才发布新修订，而设置页应用修订本无此限制。现场：需审核的代码更新批准后转为待同步，直到任务 `b15d0ecc` 结束后的首个 15 秒重试（03:44:32）才发布修订 35。改为草稿租约：绑定与同步随时写入／发布，运行中会话仍固定旧修订；只有并发草稿写入或沙箱维护使同步留在待同步。未被生产调用的 `bindAgentWorkspaceResource` 同步移除此限制。下次凡写草稿或发布默认修订的入口，在执行租约和运行中 Work 存在时各验证一次，并核对旧会话的固定包版本（`tests/integration/plugin-agent-sync.test.ts`、`pi-package-bindings.test.ts`）。
 
 ### TP-L032：沙箱分类按用户用途，不暴露内部生命周期记录
 

@@ -155,7 +155,7 @@ afterAll(async () => {
   if (userId) await db.user.delete({ where: { id: userId } });
   await db.$disconnect();
 });
-it("pins creation, preserves old approved bindings and rejects foreign releases and active leases", async () => {
+it("pins creation, preserves old approved bindings, rejects foreign releases and edits drafts during sandbox execution", async () => {
   const agent = await createAgent(workspaceId, "SDK", {
     piPackages: [{ marketInstallId: installId, releaseId: v1 }],
   });
@@ -188,16 +188,12 @@ it("pins creation, preserves old approved bindings and rejects foreign releases 
     where: { agentId: agent.id },
   });
   await withSandboxExecutionLease(sandbox.sandboxId, async () => {
-    await expect(
-      updateAgent(workspaceId, agent.id, { ...cfg, piPackages: [] }),
-    ).rejects.toThrow("pi_package_agent_busy");
-    expect((await binding()).releaseId).toBe(v1);
+    await updateAgent(workspaceId, agent.id, {
+      ...cfg,
+      piPackages: [{ marketInstallId: installId, releaseId: v2 }],
+    });
+    expect((await binding()).releaseId).toBe(v2);
   });
-  await updateAgent(workspaceId, agent.id, {
-    ...cfg,
-    piPackages: [{ marketInstallId: installId, releaseId: v2 }],
-  });
-  expect((await binding()).releaseId).toBe(v2);
   await updateAgent(workspaceId, agent.id, { ...cfg, piPackages: [] });
   expect(await db.agentPiPackage.count({ where: { agentId: agent.id } })).toBe(
     0,
@@ -234,7 +230,7 @@ it("creates fresh native drafts without applying grants and keeps historical run
     await db.agent.findUnique({ where: { id: historical.id } }),
   ).not.toBeNull();
 });
-it("rejects foreign workspace installs, duplicates, arbitrary fields and busy Work without losing bindings", async () => {
+it("rejects foreign workspace installs, duplicates and arbitrary fields, and edits drafts while Work runs", async () => {
   await db.marketInstall.update({
     where: { id: installId },
     data: { currentReleaseId: v2 },
@@ -272,7 +268,7 @@ it("rejects foreign workspace installs, duplicates, arbitrary fields and busy Wo
   const conversation = await db.conversation.create({
     data: { agentId: agent.id },
   });
-  const work = await db.workSession.create({
+  await db.workSession.create({
     data: {
       workspaceId,
       agentId: agent.id,
@@ -280,18 +276,6 @@ it("rejects foreign workspace installs, duplicates, arbitrary fields and busy Wo
       runtimeKind: "pi-sdk",
       status: "running",
     },
-  });
-  await expect(
-    updateAgent(workspaceId, agent.id, { ...cfg, piPackages: [] }),
-  ).rejects.toThrow("pi_package_agent_busy");
-  expect(
-    await db.agentPiPackage.count({
-      where: { agentId: agent.id, releaseId: v2 },
-    }),
-  ).toBe(1);
-  await db.workSession.update({
-    where: { id: work.id },
-    data: { status: "completed" },
   });
   await updateAgent(workspaceId, agent.id, { ...cfg, piPackages: [] });
   expect(await db.agentPiPackage.count({ where: { agentId: agent.id } })).toBe(
