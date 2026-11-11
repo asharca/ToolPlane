@@ -269,6 +269,7 @@ type ConversationDetail = ConversationSummary & {
 type WorkSidebarAgent = {
   agent: WorkAgent;
   sessions: WorkItem[];
+  chats: Array<ConversationSummary & { label: string }>;
   channels: Array<ConversationSummary & { label: string }>;
   a2aContexts: A2AContextSummary[];
 };
@@ -340,6 +341,14 @@ const UNGROUPED_SIDEBAR_GROUP_ID = "__ungrouped__";
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
+}
+
+function sidebarFolderIds(resources: SidebarResource[]): string[] {
+  return resources.flatMap((resource) =>
+    resource.kind === "folder" || resource.kind === "project"
+      ? [resource.id, ...sidebarFolderIds(resource.children ?? [])]
+      : [],
+  );
 }
 
 function sidebarIssueTone(
@@ -1388,7 +1397,7 @@ export function WorkspaceWork({
           items.filter((session) => session.agentId === item.id),
           order,
         );
-        const agentChannels = sortSidebarItems(
+        const agentConversations = sortSidebarItems(
           conversations.filter((entry) => entry.agentId === item.id),
           order,
         ).map((entry) => {
@@ -1414,7 +1423,8 @@ export function WorkspaceWork({
         return {
           agent: item,
           sessions: agentSessions,
-          channels: agentChannels,
+          chats: agentConversations.filter((entry) => !entry.source),
+          channels: agentConversations.filter((entry) => entry.source),
           a2aContexts,
         };
       }),
@@ -1457,6 +1467,7 @@ export function WorkspaceWork({
         ({
           agent: itemAgent,
           sessions: agentSessions,
+          chats,
           channels,
           a2aContexts,
         }) => ({
@@ -1469,11 +1480,33 @@ export function WorkspaceWork({
               label: item.title || item.task || t("untitled"),
               kind: "file" as const,
             })),
-            ...channels.map((item) => ({
+            ...chats.map((item) => ({
               id: `conversation:${item.id}`,
               label: item.label,
               kind: "bookmark" as const,
             })),
+            ...(channels.length
+              ? [
+                  {
+                    id: `channel-group:${itemAgent.id}`,
+                    label: t("channelGroup"),
+                    kind: "folder" as const,
+                    children: channels
+                      .filter(
+                        (item, index) =>
+                          sidebarSearch.trim() ||
+                          fullConversationLists[`channel:${itemAgent.id}`] ||
+                          index < 5 ||
+                          item.id === conversation?.id,
+                      )
+                      .map((item) => ({
+                        id: `conversation:${item.id}`,
+                        label: item.label,
+                        kind: "bookmark" as const,
+                      })),
+                  },
+                ]
+              : []),
             ...(a2aContexts.length
               ? [
                   {
@@ -1557,6 +1590,42 @@ export function WorkspaceWork({
           : null;
   const activeResourceIdRef = useRef(activeResourceId);
   activeResourceIdRef.current = activeResourceId;
+  const revealedResourceId = useRef<string | null>(null);
+  useEffect(() => {
+    if (revealedResourceId.current === activeResourceId) return;
+    revealedResourceId.current = activeResourceId;
+    if (!activeResourceId) return;
+    const folderKey = channelConversation
+      ? `channel:${activeAgentId}`
+      : viewingA2A
+        ? `a2a:${activeAgentId}`
+        : null;
+    setExpandedAgents((current) => {
+      if (current[activeAgentId] && (!folderKey || current[folderKey]))
+        return current;
+      return {
+        ...current,
+        [activeAgentId]: true,
+        ...(folderKey ? { [folderKey]: true } : {}),
+      };
+    });
+    setGroupPreferences((current) => {
+      const groupId =
+        current.assignments[activeAgentId] ?? UNGROUPED_SIDEBAR_GROUP_ID;
+      if (!current.collapsed[groupId]) return current;
+      return {
+        ...current,
+        collapsed: { ...current.collapsed, [groupId]: false },
+      };
+    });
+  }, [
+    activeResourceId,
+    activeAgentId,
+    channelConversation,
+    viewingA2A,
+    setExpandedAgents,
+    setGroupPreferences,
+  ]);
   const expandedResourceIds = useMemo(
     () =>
       sidebarSearch.trim() &&
@@ -1564,10 +1633,7 @@ export function WorkspaceWork({
         ? searchExpandedResources.ids
         : [
             ...(sidebarSearch.trim()
-              ? filteredSidebarResources.flatMap((resource) => [
-                  resource.id,
-                  ...(resource.children?.map((child) => child.id) ?? []),
-                ])
+              ? sidebarFolderIds(filteredSidebarResources)
               : []),
             ...groupPreferences.groups
               .filter((group) => !groupPreferences.collapsed[group.id])
@@ -1577,9 +1643,11 @@ export function WorkspaceWork({
               : ["group:ungrouped"]),
             ...visibleAgents
               .filter(
-                ({ agent: itemAgent, channels }) =>
+                ({ agent: itemAgent, chats, channels }) =>
                   expandedAgents[itemAgent.id] ??
-                  (itemAgent.id === activeAgentId || channels.length > 0),
+                  (itemAgent.id === activeAgentId ||
+                    chats.length > 0 ||
+                    channels.length > 0),
               )
               .map(({ agent: itemAgent }) => `agent:${itemAgent.id}`),
             ...visibleAgents
@@ -1588,6 +1656,12 @@ export function WorkspaceWork({
                   expandedAgents[`a2a:${itemAgent.id}`] ?? true,
               )
               .map(({ agent: itemAgent }) => `a2a-group:${itemAgent.id}`),
+            ...visibleAgents
+              .filter(
+                ({ agent: itemAgent }) =>
+                  expandedAgents[`channel:${itemAgent.id}`] ?? false,
+              )
+              .map(({ agent: itemAgent }) => `channel-group:${itemAgent.id}`),
           ],
     [
       activeAgentId,
@@ -1612,6 +1686,7 @@ export function WorkspaceWork({
         agents.flatMap((item) => [
           [item.id, expanded.has(`agent:${item.id}`)],
           [`a2a:${item.id}`, expanded.has(`a2a-group:${item.id}`)],
+          [`channel:${item.id}`, expanded.has(`channel-group:${item.id}`)],
         ]),
       ),
     );
@@ -1698,6 +1773,11 @@ export function WorkspaceWork({
     );
     if (!source || !target || source.agentId !== target.agentId)
       throw new Error("Resources must stay with their agent");
+    if (
+      ("source" in source && Boolean(source.source)) !==
+      ("source" in target && Boolean(target.source))
+    )
+      throw new Error("Conversations must stay in their folder");
     const agentItems = [...items, ...conversations].filter(
       (item) => item.agentId === source.agentId,
     );
@@ -2273,7 +2353,10 @@ export function WorkspaceWork({
     const nextSession = remaining?.sessions.find(
       (item) => item.id !== target.workSessionId,
     );
-    const nextConversation = remaining?.channels[0];
+    const nextConversation = sortSidebarItems(
+      conversations.filter((item) => item.agentId === target.agentId),
+      groupPreferences.conversationOrder?.[target.agentId],
+    )[0];
     const href = nextSession
       ? workHref(slug, nextSession.id)
       : nextConversation
@@ -2362,11 +2445,19 @@ export function WorkspaceWork({
   }
 
   function setAllAgentSections(collapsed: boolean) {
+    if (sidebarSearch.trim()) {
+      setSearchExpandedResources({
+        query: sidebarSearch.trim(),
+        ids: collapsed ? [] : sidebarFolderIds(filteredSidebarResources),
+      });
+      return;
+    }
     setExpandedAgents(
       Object.fromEntries(
         agents.flatMap((item) => [
           [item.id, !collapsed],
           [`a2a:${item.id}`, !collapsed],
+          [`channel:${item.id}`, !collapsed],
         ]),
       ),
     );
@@ -2504,6 +2595,45 @@ export function WorkspaceWork({
                       activeId={activeResourceId}
                       renderAfterRow={(resource) => {
                         if (sidebarSearch.trim()) return null;
+                        const roots = sidebarResources.flatMap((item) =>
+                          item.id.startsWith("group:")
+                            ? (item.children ?? [])
+                            : [item],
+                        );
+                        const channelGroup = roots
+                          .flatMap((item) => item.children ?? [])
+                          .find(
+                            (item) =>
+                              item.id.startsWith("channel-group:") &&
+                              item.children?.at(-1)?.id === resource.id,
+                          );
+                        if (channelGroup) {
+                          const id = channelGroup.id.slice(
+                            "channel-group:".length,
+                          );
+                          const entry = visibleAgents.find(
+                            ({ agent }) => agent.id === id,
+                          );
+                          if (!entry || entry.channels.length <= 5) return null;
+                          const key = `channel:${id}`;
+                          const expanded = Boolean(fullConversationLists[key]);
+                          return (
+                            <button
+                              type="button"
+                              aria-expanded={expanded}
+                              aria-label={`${expanded ? t("collapseAll") : t("expandAll")} ${entry.agent.name} · ${t("channelGroup")}`}
+                              onClick={() =>
+                                setFullConversationLists((current) => ({
+                                  ...current,
+                                  [key]: !current[key],
+                                }))
+                              }
+                              className="ml-14 self-start rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                            >
+                              {expanded ? t("collapseAll") : t("expandAll")}
+                            </button>
+                          );
+                        }
                         if (resource.id.startsWith("a2a:")) {
                           const entry = visibleAgents.find((item) =>
                             item.a2aContexts.some(
@@ -2513,12 +2643,7 @@ export function WorkspaceWork({
                           );
                           if (!entry) return null;
                           const id = entry.agent.id;
-                          const group = sidebarResources
-                            .flatMap((item) =>
-                              item.id.startsWith("group:")
-                                ? (item.children ?? [])
-                                : [item],
-                            )
+                          const group = roots
                             .find((item) => item.id === `agent:${id}`)
                             ?.children?.find(
                               (item) => item.id === `a2a-group:${id}`,
@@ -2567,17 +2692,10 @@ export function WorkspaceWork({
                             </div>
                           );
                         }
-                        const roots = sidebarResources.flatMap((item) =>
-                          item.id.startsWith("group:")
-                            ? (item.children ?? [])
-                            : [item],
-                        );
                         const parent = roots.find(
                           (item) =>
                             item.children
-                              ?.filter(
-                                (child) => !child.id.startsWith("a2a-group:"),
-                              )
+                              ?.filter((child) => child.kind !== "folder")
                               .at(-1)?.id === resource.id,
                         );
                         if (!parent) return null;
@@ -2587,7 +2705,7 @@ export function WorkspaceWork({
                         );
                         if (
                           !entry ||
-                          entry.sessions.length + entry.channels.length <= 5
+                          entry.sessions.length + entry.chats.length <= 5
                         )
                           return null;
                         return (
@@ -2876,7 +2994,7 @@ export function WorkspaceWork({
                             false
                           );
                         }
-                        // Second-level conversations show no icon; `false` suppresses the sidebar default.
+                        // Conversations show no icon; `false` suppresses the sidebar default.
                         if (kind === "conversation") return false;
                         return <Folder className="size-4" />;
                       }}

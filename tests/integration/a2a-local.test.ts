@@ -42,9 +42,17 @@ import {
 } from "@/lib/agents/execution/task-ui";
 import { publishLocalArtifact } from "@/lib/a2a/local-artifacts";
 import { openTaskFile, listTaskFiles, storeTaskFile } from "@/lib/a2a/files";
-import { getConsoleTaskTree } from "@/lib/a2a/console-tasks";
+import {
+  getConsoleTaskTree,
+  getConsoleMutationTaskTree,
+} from "@/lib/a2a/console-tasks";
 import { getConsoleContexts } from "@/lib/a2a/console-contexts";
-import { handleA2AConsoleContexts } from "@/lib/a2a/console-http";
+import {
+  handleA2AConsoleContexts,
+  handleA2AConsoleTasks,
+} from "@/lib/a2a/console-http";
+import { taskFileSessionDownload } from "@/lib/a2a/file-http";
+import { handleConsoleOutputEvents } from "@/lib/agents/execution/live-output-http";
 import { createSession } from "@/lib/auth/session";
 import {
   createLocalRootGrant,
@@ -120,7 +128,11 @@ import { executeLocalTask } from "@/lib/agents/execution/pi-executor";
 import { runSandboxAgentTurn } from "@/lib/agents/sandbox-runtime";
 import type * as AgentSandboxRuntime from "@/lib/agents/sandbox-runtime";
 import { taskRuntimeFailure } from "@/lib/agents/runtime-failure";
-import { taskOutput } from "@/lib/agents/execution/live-output";
+import {
+  taskOutput,
+  startTaskOutput,
+  publishTaskText,
+} from "@/lib/agents/execution/live-output";
 
 const consoleCookie = vi.hoisted(() => ({ value: null as string | null }));
 vi.mock("next/headers", () => ({
@@ -1519,7 +1531,194 @@ describe("console task tree authorization", () => {
     agentId: agents[0],
     slug: "unused",
   });
-  it("reads retained OMP task messages without minting execution authority or transferring ownership", async () => {
+  it("shares real output and attachments across revisions without granting mutations", async () => {
+    const parent = await root();
+    const delegated = await child(parent);
+    const otherGrant = await createLocalRootGrant(ws, agents[0], otherUser);
+    await expect(
+      getConsoleMutationTaskTree(
+        { ...actor(), actorId: otherUser },
+        parent.id,
+        delegated.row.id,
+      ),
+    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    await publishLocalArtifact(parent.id, assertDefined(parent.leaseToken), {
+      artifactId: "shared-report",
+      name: "Shared attachment report",
+      parts: [
+        {
+          raw: Buffer.from("shared attachment bytes").toString("base64"),
+          filename: "report.txt",
+          mediaType: "text/plain",
+        },
+      ],
+    });
+    const file = assertDefined((await listTaskFiles(parent.id))[0]);
+    startTaskOutput(parent.id, { runtimeKind: "pi-sdk" });
+    publishTaskText(parent.id, "Real shared execution output");
+    await finishTask(
+      parent.id,
+      assertDefined(parent.leaseToken),
+      TaskState.TASK_STATE_COMPLETED,
+    );
+    const owner = await db.agent.findUniqueOrThrow({
+      where: { id: agents[0] },
+    });
+    const previous = await requireAgentRevision(
+      db,
+      owner.id,
+      grant.agentRevisionId,
+    );
+    const next = await db.agentRevision.create({
+      data: {
+        agentId: owner.id,
+        version: owner.currentRevisionVersion + 1,
+        config: previous.config as Prisma.InputJsonValue,
+      },
+    });
+    await db.agent.update({
+      where: { id: owner.id },
+      data: { currentRevisionVersion: next.version, a2aInboundEnabled: false },
+    });
+    const workspace = await db.workspace.findUniqueOrThrow({
+      where: { id: ws },
+    });
+    const base = `http://localhost/api/v1/workspaces/${workspace.slug}/agents/${owner.id}/a2a/console`;
+    const tasksUrl = `${base}/tasks?rootTaskId=${parent.id}&historyLength=32`;
+    const downloadUrl = `http://localhost/api/v1/a2a/files/${file.id}/download?task=${parent.id}`;
+    expect(
+      (
+        await handleA2AConsoleTasks(
+          new Request(tasksUrl),
+          workspace.slug,
+          owner.id,
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (await taskFileSessionDownload(new Request(downloadUrl), file.id)).status,
+    ).toBe(401);
+    expect(
+      (
+        await handleConsoleOutputEvents(
+          new Request(`${base}/tasks/events?rootTaskId=${parent.id}`),
+          workspace.slug,
+          owner.id,
+        )
+      ).status,
+    ).toBe(401);
+    await createSession(otherUser, 0);
+    const listed = await handleA2AConsoleContexts(
+      new Request(`${base}/contexts`),
+      workspace.slug,
+      owner.id,
+    );
+    expect(listed.status).toBe(200);
+    expect((await listed.json()).items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ contextId: parent.contextId }),
+      ]),
+    );
+    const detail = await handleA2AConsoleTasks(
+      new Request(tasksUrl),
+      workspace.slug,
+      owner.id,
+    );
+    expect(detail.status).toBe(200);
+    expect((await detail.json()).selectedTask).toMatchObject({ id: parent.id });
+    expect(
+      (
+        await getConsoleTaskTree(
+          { ...actor(), actorId: otherUser },
+          parent.id,
+          delegated.row.id,
+        )
+      ).selectedTask.id,
+    ).toBe(delegated.row.id);
+    const download = await taskFileSessionDownload(
+      new Request(downloadUrl),
+      file.id,
+    );
+    expect(download.status).toBe(200);
+    expect(await download.text()).toBe("shared attachment bytes");
+    expect(
+      (
+        await taskFileSessionDownload(
+          new Request(
+            `http://localhost/api/v1/a2a/files/${file.id}/download?task=${delegated.row.id}`,
+          ),
+          file.id,
+        )
+      ).status,
+    ).toBe(404);
+    const stream = await handleConsoleOutputEvents(
+      new Request(`${base}/tasks/events?rootTaskId=${parent.id}`),
+      workspace.slug,
+      owner.id,
+    );
+    expect(stream.status).toBe(200);
+    const reader = assertDefined(stream.body).getReader();
+    try {
+      const first = await reader.read();
+      expect(new TextDecoder().decode(first.value)).toContain(
+        "Real shared execution output",
+      );
+    } finally {
+      await reader.cancel();
+    }
+    await expect(
+      requestCancellation(otherGrant, parent.id),
+    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    const retry = await handleA2AConsoleTasks(
+      new Request(`${base}/tasks`, {
+        method: "POST",
+        headers: {
+          origin: "http://localhost",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          rootTaskId: parent.id,
+          taskId: parent.id,
+          action: "retryFiles",
+        }),
+      }),
+      workspace.slug,
+      owner.id,
+    );
+    expect(retry.status).toBe(404);
+    await db.membership.delete({
+      where: { workspaceId_userId: { workspaceId: ws, userId: otherUser } },
+    });
+    try {
+      expect(
+        (
+          await handleA2AConsoleTasks(
+            new Request(tasksUrl),
+            workspace.slug,
+            owner.id,
+          )
+        ).status,
+      ).toBe(404);
+      expect(
+        (await taskFileSessionDownload(new Request(downloadUrl), file.id))
+          .status,
+      ).toBe(404);
+      expect(
+        (
+          await handleConsoleOutputEvents(
+            new Request(`${base}/tasks/events?rootTaskId=${parent.id}`),
+            workspace.slug,
+            owner.id,
+          )
+        ).status,
+      ).toBe(404);
+    } finally {
+      await db.membership.create({
+        data: { workspaceId: ws, userId: otherUser, role: "member" },
+      });
+    }
+  });
+  it("reads retained OMP messages for workspace members without reviving execution", async () => {
     const parent = await root();
     await finishTask(
       parent.id,
@@ -1586,9 +1785,14 @@ describe("console task tree authorization", () => {
       expect(
         Task.fromJSON(tree.selectedTask).history[0].parts[0].content?.value,
       ).toBe("Do this task");
-      await expect(
-        getConsoleTaskTree({ ...actor(), actorId: otherUser }, parent.id),
-      ).rejects.toBeInstanceOf(TaskNotFoundError);
+      expect(
+        (
+          await getConsoleTaskTree(
+            { ...actor(), actorId: otherUser },
+            parent.id,
+          )
+        ).selectedTask.id,
+      ).toBe(parent.id);
       await expect(
         createLocalRootGrant(ws, owner.id, user),
       ).rejects.toBeInstanceOf(TaskNotFoundError);
@@ -1606,7 +1810,7 @@ describe("console task tree authorization", () => {
       });
     }
   });
-  it("shows owned root and descendants without execution grants or private prompts", async () => {
+  it("shows workspace root and descendants without execution grants or private prompts", async () => {
     const parent = await root();
     const delegated = await child(parent);
     await db.agent.update({
@@ -1629,11 +1833,53 @@ describe("console task tree authorization", () => {
     ])
       expect(JSON.stringify(tree)).not.toContain(value);
   });
-  it("denies another member, foreign root and direct delegated entry", async () => {
+  it("allows another member but denies foreign roots and direct delegated entry", async () => {
     const parent = await root();
     const delegated = await child(parent);
+    expect(
+      (await getConsoleTaskTree({ ...actor(), actorId: otherUser }, parent.id))
+        .selectedTask.id,
+    ).toBe(parent.id);
+    const foreign = await db.workspace.create({
+      data: {
+        slug: `foreign-a2a-${randomUUID()}`,
+        name: "Foreign observer",
+        ownerId: otherUser,
+      },
+    });
+    try {
+      await expect(
+        getConsoleTaskTree(
+          { ...actor(), actorId: otherUser, workspaceId: foreign.id },
+          parent.id,
+          delegated.row.id,
+        ),
+      ).rejects.toBeInstanceOf(TaskNotFoundError);
+      const denied = await handleA2AConsoleTasks(
+        new Request(
+          `http://localhost/api/v1/workspaces/${foreign.slug}/agents/${agents[0]}/a2a/console/tasks?rootTaskId=${parent.id}`,
+        ),
+        foreign.slug,
+        agents[0],
+      );
+      expect(denied.status).toBe(401);
+      await createSession(otherUser, 0);
+      expect(
+        (
+          await handleA2AConsoleTasks(
+            new Request(
+              `http://localhost/api/v1/workspaces/${foreign.slug}/agents/${agents[0]}/a2a/console/tasks?rootTaskId=${parent.id}`,
+            ),
+            foreign.slug,
+            agents[0],
+          )
+        ).status,
+      ).toBe(404);
+    } finally {
+      await db.workspace.delete({ where: { id: foreign.id } });
+    }
     await expect(
-      getConsoleTaskTree({ ...actor(), actorId: otherUser }, parent.id),
+      getConsoleTaskTree({ ...actor(), actorId: randomUUID() }, parent.id),
     ).rejects.toBeInstanceOf(TaskNotFoundError);
     await expect(
       getConsoleTaskTree(actor(), delegated.row.id),
@@ -1643,23 +1889,26 @@ describe("console task tree authorization", () => {
       getConsoleTaskTree(actor(), second.id, delegated.row.id),
     ).rejects.toBeInstanceOf(TaskNotFoundError);
   });
-  it("restricts a stale console tree to its visible parent after an edge is revoked", async () => {
+  it("retains historical descendants after an execution edge is revoked", async () => {
     const parent = await root();
     const delegated = await child(parent);
     await db.agentSubAgent.delete({
       where: { parentId_childId: { parentId: agents[0], childId: agents[1] } },
     });
     const tree = await getConsoleTaskTree(actor(), parent.id);
-    expect(tree.restricted).toBe(true);
-    expect(tree.nodes.map((node) => node.id)).toEqual([parent.id]);
+    expect(tree.restricted).toBe(false);
+    expect(tree.nodes.map((node) => node.id)).toEqual([
+      parent.id,
+      delegated.row.id,
+    ]);
     expect(tree.selectedTask.id).toBe(parent.id);
-    expect(JSON.stringify(tree)).not.toContain(delegated.row.id);
     expect(JSON.stringify(tree)).not.toContain(
       assertDefined(parent.leaseToken),
     );
-    await expect(
-      getConsoleTaskTree(actor(), parent.id, delegated.row.id),
-    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    expect(
+      (await getConsoleTaskTree(actor(), parent.id, delegated.row.id))
+        .selectedTask.id,
+    ).toBe(delegated.row.id);
   });
   it("uses current read authority, not an expired execution credential, for history", async () => {
     const parent = await root();
@@ -1721,23 +1970,20 @@ describe("console task tree authorization", () => {
     ).toEqual({ items: [], nextCursor: null });
     expect(
       await getConsoleContexts({ ...receiver, actorId: otherUser }),
-    ).toEqual({ items: [], nextCursor: null });
+    ).toEqual(result);
     expect(
       await getConsoleContexts(
         { ...receiver, actorId: otherUser },
         { taskId: delegated.row.id },
       ),
-    ).toEqual({ items: [], nextCursor: null });
+    ).toEqual(result);
     await db.agentSubAgent.delete({
       where: { parentId_childId: { parentId: agents[0], childId: agents[1] } },
     });
-    expect(await getConsoleContexts(receiver)).toEqual({
-      items: [],
-      nextCursor: null,
-    });
+    expect(await getConsoleContexts(receiver)).toEqual(result);
     expect(
       await getConsoleContexts(receiver, { taskId: delegated.row.id }),
-    ).toEqual({ items: [], nextCursor: null });
+    ).toEqual(result);
   });
   it("lists console RPC roots but excludes expired contexts", async () => {
     const parent = await root();
@@ -2102,14 +2348,15 @@ describe("native task context persistence", () => {
     expect(
       Task.fromJSON(viewed.selectedTask).history[0].parts[0].content?.value,
     ).toBe("Do this task");
-    await expect(
-      getConsoleTaskTree(
-        { ...actor, actorId: otherUser },
-        parent.id,
-        parent.id,
-        32,
-      ),
-    ).rejects.toThrow();
+    const shared = await getConsoleTaskTree(
+      { ...actor, actorId: otherUser },
+      parent.id,
+      parent.id,
+      32,
+    );
+    expect(
+      Task.fromJSON(shared.selectedTask).history[0].parts[0].content?.value,
+    ).toBe("Do this task");
     await expect(
       getConsoleTaskTree(actor, delegated.row.id, delegated.row.id, 32),
     ).rejects.toThrow();
@@ -3051,6 +3298,15 @@ describe("unified native ingress mappings", () => {
           : input.sourceId;
       const accepted = await submitAgentEntry(input, vi.fn());
       const parent = assertDefined(await claimTask(accepted.row.id));
+      const delegated = await child(parent);
+      const childRun = assertDefined(await claimTask(delegated.row.id));
+      await finishTask(
+        childRun.id,
+        assertDefined(childRun.leaseToken),
+        TaskState.TASK_STATE_COMPLETED,
+        undefined,
+        textArtifact("Retained old delegated result"),
+      );
       await finishTask(
         parent.id,
         assertDefined(parent.leaseToken),
@@ -3122,6 +3378,50 @@ describe("unified native ingress mappings", () => {
       expect(
         await db.a2AEntryReceipt.count({ where: { taskId: parent.id } }),
       ).toBe(1);
+
+      // Explicit upgrade advances the shared entry Context, not the immutable
+      // root grant. Its old delegated history remains workspace-readable.
+      const observer = {
+        workspaceId: ws,
+        actorId: otherUser,
+        agentId: agents[0],
+        slug: "unused",
+      };
+      const tree = await getConsoleTaskTree(observer, parent.id, childRun.id);
+      expect(tree.nodes.map((node) => node.id)).toEqual([
+        parent.id,
+        childRun.id,
+      ]);
+      expect(tree.selectedTask).toMatchObject({
+        id: childRun.id,
+        artifacts: [{ parts: [{ text: "Retained old delegated result" }] }],
+      });
+      expect(
+        (await getConsoleTaskTree({ ...observer, actorId: user }, parent.id))
+          .selectedTask,
+      ).toMatchObject({
+        id: parent.id,
+        artifacts: [{ parts: [{ text: "Retained old result" }] }],
+      });
+      await expect(
+        getConsoleTaskTree(observer, parent.id),
+      ).rejects.toBeInstanceOf(TaskNotFoundError);
+      expect(
+        (await getConsoleContexts({ ...observer, agentId: agents[1] })).items,
+      ).toEqual([
+        expect.objectContaining({
+          contextId: childRun.contextId,
+          tasks: [
+            expect.objectContaining({
+              taskId: childRun.id,
+              rootTaskId: parent.id,
+            }),
+          ],
+        }),
+      ]);
+      await expect(
+        getConsoleMutationTaskTree(observer, parent.id, childRun.id),
+      ).rejects.toBeInstanceOf(TaskNotFoundError);
 
       // Reproduce the persisted state left by older upgrade code; same-version
       // explicit upgrade repairs only the already-authorized session's own context.
@@ -3403,6 +3703,77 @@ describe("unified native ingress mappings", () => {
         (await getConsoleTaskTree(actor(), claimed.id, childRun.id))
           .selectedTask.id,
       ).toBe(childRun.id);
+      const privateFile = await storeTaskFile(
+        claimed.id,
+        "private-root-file",
+        "private.txt",
+        "text/plain",
+        new Blob(["Private ordinary root attachment"]).stream(),
+      );
+      const sharedFile = await storeTaskFile(
+        childRun.id,
+        "shared-child-file",
+        "shared.txt",
+        "text/plain",
+        new Blob(["Shared delegated attachment"]).stream(),
+      );
+      startTaskOutput(claimed.id, { runtimeKind: "pi-sdk" });
+      publishTaskText(claimed.id, "Private ordinary root output");
+      startTaskOutput(childRun.id, { runtimeKind: "pi-sdk" });
+      publishTaskText(childRun.id, "Shared delegated output");
+      const observer = { ...actor(), actorId: otherUser };
+      const sharedTree = await getConsoleTaskTree(
+        observer,
+        claimed.id,
+        childRun.id,
+        32,
+      );
+      expect(sharedTree.selectedTask.id).toBe(childRun.id);
+      expect(sharedTree.nodes.map((node) => node.id)).toEqual([
+        claimed.id,
+        childRun.id,
+      ]);
+      expect(JSON.stringify(sharedTree)).not.toMatch(
+        /fixture-entry-private|Private ordinary root/,
+      );
+      await expect(
+        getConsoleTaskTree(observer, claimed.id, claimed.id, 32),
+      ).rejects.toBeInstanceOf(TaskNotFoundError);
+      await createSession(otherUser, 0);
+      const workspace = await db.workspace.findUniqueOrThrow({
+        where: { id: ws },
+      });
+      const download = (taskId: string, fileId: string) =>
+        taskFileSessionDownload(
+          new Request(
+            `http://localhost/api/v1/a2a/files/${fileId}/download?task=${taskId}`,
+          ),
+          fileId,
+        );
+      expect((await download(claimed.id, privateFile.id)).status).toBe(404);
+      const sharedDownload = await download(childRun.id, sharedFile.id);
+      expect(sharedDownload.status).toBe(200);
+      expect(await sharedDownload.text()).toBe("Shared delegated attachment");
+      const observe = (selectedTaskId: string) =>
+        handleConsoleOutputEvents(
+          new Request(
+            `http://localhost/api/v1/workspaces/${workspace.slug}/agents/${agents[0]}/a2a/console/tasks/events?rootTaskId=${claimed.id}&selectedTaskId=${selectedTaskId}`,
+          ),
+          workspace.slug,
+          agents[0],
+        );
+      expect((await observe(claimed.id)).status).toBe(404);
+      const childEvents = await observe(childRun.id);
+      expect(childEvents.status).toBe(200);
+      const reader = assertDefined(childEvents.body).getReader();
+      try {
+        const first = await reader.read();
+        const text = new TextDecoder().decode(first.value);
+        expect(text).toContain("Shared delegated output");
+        expect(text).not.toContain("Private ordinary root output");
+      } finally {
+        await reader.cancel();
+      }
       await expect(
         childGrant(claimed.id, assertDefined(claimed.leaseToken), agents[4]),
       ).rejects.toBeInstanceOf(TaskNotFoundError);

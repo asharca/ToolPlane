@@ -1,7 +1,10 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { z } from "zod";
-import { getConsoleTaskTree } from "./console-tasks";
+import {
+  getConsoleTaskTree,
+  getConsoleMutationTaskTree,
+} from "./console-tasks";
 import { getConsoleContexts } from "./console-contexts";
 import { retryTaskFileReception } from "./store";
 import type { TaskGrant } from "./principal";
@@ -174,7 +177,7 @@ export async function handleA2AConsoleTasks(
             input.reason === "too_large" ? 413 : 400,
             "Invalid file retry request.",
           );
-        await getConsoleTaskTree(
+        await getConsoleMutationTaskTree(
           ctx,
           input.value.rootTaskId,
           input.value.taskId,

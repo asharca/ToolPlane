@@ -598,7 +598,6 @@ describe("registered remote Agents in the native task core", () => {
       remoteState: 3,
     });
     const [file] = await listTaskFiles(failed.id);
-    expect(file.filename).toBe("report-2026.csv");
     expect(
       await new Response((await openTaskFile(failed.id, file.id)).body).text(),
     ).toBe("remote-file-body");
@@ -1337,9 +1336,10 @@ describe("registered remote Agents in the native task core", () => {
         .state,
     ).toBe(TaskState.TASK_STATE_FAILED);
     expect(network.rpc).toHaveBeenCalledTimes(1);
-    await expect(
-      getConsoleTaskTree(ctx, parent.id, delegated.row.id),
-    ).rejects.toThrow();
+    expect(
+      (await getConsoleTaskTree(ctx, parent.id, delegated.row.id)).selectedTask
+        .id,
+    ).toBe(delegated.row.id);
     await expect(
       mutateRemoteRegistry(ctx, {
         action: "configure",

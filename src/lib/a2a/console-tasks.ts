@@ -109,8 +109,8 @@ async function retainedOmpTarget(grant: LocalA2AGrant) {
   };
 }
 
-/** Knowing a child ID never authorizes it: enter through an owned, non-delegated root. */
-export async function getConsoleTaskTree(
+/** Execution controls retain actor, live policy, edge and revision authorization. */
+export async function getConsoleMutationTaskTree(
   ctx: ConsoleActor,
   rootId: string,
   selectedId = rootId,
@@ -333,6 +333,254 @@ export async function getConsoleTaskTree(
   }
   const selected = visible.get(selectedId);
   if (!visible.has(root.id) || !selected) throw new TaskNotFoundError();
+  return {
+    rootTaskId: root.id,
+    nodes,
+    restricted: visible.size !== rows.length,
+    selectedTask: jsonTask(
+      historyView(Task.fromJSON(selected.snapshot), historyLength),
+    ),
+  };
+}
+
+/** Retained entry ownership survives revision changes, not deletion or retargeting. */
+async function assertRetainedEntrySource(grant: LocalA2AGrant) {
+  const entry = grant.entryPolicy;
+  if (!entry) return;
+  if (entry.sourceAgentId !== grant.agentId) throw new TaskNotFoundError();
+  if (entry.kind === "work") {
+    if (
+      !(await db.workSession.count({
+        where: {
+          id: entry.sourceId,
+          workspaceId: grant.workspaceId,
+          agentId: grant.agentId,
+        },
+      }))
+    )
+      throw new TaskNotFoundError();
+    return;
+  }
+  if (
+    entry.kind === "trigger" &&
+    !(await db.agentTrigger.count({
+      where: {
+        id: entry.sourceId,
+        workspaceId: grant.workspaceId,
+        agentId: grant.agentId,
+      },
+    }))
+  )
+    throw new TaskNotFoundError();
+  const conversationId =
+    entry.kind === "trigger" ? entry.conversationId : entry.sourceId;
+  if (
+    !conversationId ||
+    !(await db.conversation.count({
+      where: {
+        id: conversationId,
+        agentId: grant.agentId,
+        agent: { workspaceId: grant.workspaceId },
+      },
+    }))
+  )
+    throw new TaskNotFoundError();
+  if (
+    entry.kind === "channel" &&
+    (!entry.channelId ||
+      !(await db.agentChannelConnection.count({
+        where: {
+          id: entry.channelId,
+          workspaceId: grant.workspaceId,
+          agentId: grant.agentId,
+        },
+      })))
+  )
+    throw new TaskNotFoundError();
+}
+
+/** Workspace observation uses stored provenance, never current execution capabilities. */
+export async function getConsoleTaskTree(
+  ctx: ConsoleActor,
+  rootId: string,
+  selectedId = rootId,
+  historyLength = 0,
+): Promise<ConsoleTaskTree> {
+  if (
+    !Number.isSafeInteger(historyLength) ||
+    historyLength < 0 ||
+    historyLength > 32
+  )
+    throw new UnsupportedOperationError("Invalid history length.");
+  await assertLocalActor(db, ctx.workspaceId, ctx.actorId);
+  const root = await db.a2ATask.findFirst({
+    where: {
+      id: rootId,
+      parentTaskId: null,
+      context: {
+        workspaceId: ctx.workspaceId,
+        expiresAt: { gt: new Date() },
+        OR: [
+          { targetKind: "local", agentId: ctx.agentId },
+          {
+            targetKind: "published",
+            endpoint: {
+              workspaceId: ctx.workspaceId,
+              sourceAgentId: ctx.agentId,
+            },
+          },
+        ],
+      },
+    },
+  });
+  if (!root || (root.rootTaskId !== root.id && root.rootTaskId !== null))
+    throw new TaskNotFoundError();
+  const rows = await db.a2ATask.findMany({
+    where: {
+      OR: [{ id: root.id }, { rootTaskId: root.id }],
+      context: { workspaceId: ctx.workspaceId, expiresAt: { gt: new Date() } },
+    },
+    include: {
+      context: {
+        include: {
+          agent: { select: { id: true, workspaceId: true, name: true } },
+          remoteAgent: { select: { id: true, workspaceId: true, name: true } },
+          endpoint: {
+            select: { workspaceId: true, sourceAgentId: true, name: true },
+          },
+        },
+      },
+    },
+    orderBy: [{ depth: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+    take: LOCAL_LIMITS.tasksPerRoot + 1,
+  });
+  if (rows.length > LOCAL_LIMITS.tasksPerRoot)
+    throw new UnsupportedOperationError(
+      "Task tree exceeds its configured limit.",
+    );
+  const visible = new Map<string, (typeof rows)[number]>();
+  const nodes: ConsoleTaskTree["nodes"] = [];
+  for (const row of rows) {
+    const grant = row.grant as unknown as TaskGrant;
+    const context = row.context;
+    if (
+      !grant ||
+      grant.workspaceId !== ctx.workspaceId ||
+      grant.ownerKey !== context.ownerKey
+    )
+      continue;
+    // Entry contexts advance their revision/binding during explicit session upgrades;
+    // retained task grants keep the original pin, which is not a read credential.
+    const target = isLocalGrant(grant)
+      ? context.targetKind === "local" && context.agentId === grant.agentId
+        ? context.agent
+        : null
+      : isRemoteGrant(grant)
+        ? context.targetKind === "remote" &&
+          context.remoteAgentId === grant.remoteAgentId
+          ? context.remoteAgent
+          : null
+        : context.targetKind === "published" &&
+            context.endpointId === grant.endpointId &&
+            context.clientId === grant.clientId
+          ? context.endpoint
+          : null;
+    if (!target || target.workspaceId !== ctx.workspaceId) continue;
+    if (row.id === root.id) {
+      if (
+        row.depth !== 0 ||
+        isRemoteGrant(grant) ||
+        (isLocalGrant(grant) &&
+          (row.rootTaskId !== row.id ||
+            grant.agentId !== ctx.agentId ||
+            grant.ancestorTaskIds.length ||
+            grant.ancestorAgentIds.length))
+      )
+        continue;
+    } else {
+      if (!isWorkspaceGrant(grant)) continue;
+      const parent = row.parentTaskId
+        ? visible.get(row.parentTaskId)
+        : undefined;
+      const parentGrant = parent?.grant as unknown as TaskGrant | undefined;
+      if (
+        !parent ||
+        !parentGrant ||
+        !isLocalGrant(parentGrant) ||
+        grant.actorId !== parentGrant.actorId ||
+        grant.rootTaskId !== root.id ||
+        grant.parentTaskId !== parent.id ||
+        row.depth !== parent.depth + 1 ||
+        JSON.stringify(grant.ancestorTaskIds) !==
+          JSON.stringify([...parentGrant.ancestorTaskIds, parent.id]) ||
+        JSON.stringify(grant.ancestorAgentIds) !==
+          JSON.stringify([
+            ...parentGrant.ancestorAgentIds,
+            parentGrant.agentId,
+          ]) ||
+        (isRemoteGrant(grant) && grant.sourceAgentId !== parentGrant.agentId)
+      )
+        continue;
+    }
+    visible.set(row.id, row);
+    const task = Task.fromJSON(row.snapshot);
+    const status = jsonTask(task).status as { state?: string } | undefined;
+    const remote = task.metadata?.toolplaneRemote as
+      | { state?: string; outcome?: "observed" | "unknown" }
+      | undefined;
+    nodes.push({
+      id: row.id,
+      parentTaskId: row.parentTaskId,
+      agentId: isLocalGrant(grant)
+        ? grant.agentId
+        : isRemoteGrant(grant)
+          ? grant.remoteAgentId
+          : ctx.agentId,
+      name: target.name,
+      state: status?.state ?? "TASK_STATE_UNSPECIFIED",
+      phase: row.phase,
+      cancelRequested: Boolean(row.cancelRequestedAt),
+      ...(isRemoteGrant(grant)
+        ? {
+            remoteState: remote?.state,
+            remoteOutcome:
+              remote?.outcome ??
+              (row.remoteDispatchedAt && row.state === 4
+                ? "unknown"
+                : undefined),
+          }
+        : {
+            pendingUiRequests: nativeUiView(
+              row.uiProjection,
+              row.leaseToken,
+              row.phase === "executing" &&
+                !row.cancelRequestedAt &&
+                row.deadlineAt > new Date(),
+            ).uiRequests.length,
+          }),
+      resumeCount: row.resumeCount,
+      updatedAt: row.statusAt.toISOString(),
+      ...(row.executionBackend === "pi-sdk" ||
+      row.executionBackend === "omp" ||
+      row.executionBackend === "pi-harness"
+        ? {
+            executionBackend: row.executionBackend,
+            nativeOperationId: row.nativeOperationId,
+            contextId: row.contextId,
+          }
+        : {}),
+    });
+  }
+  const selected = visible.get(selectedId);
+  if (!visible.has(root.id) || !selected) throw new TaskNotFoundError();
+  if (selected.id === root.id) {
+    const grant = selected.grant as unknown as TaskGrant;
+    if (isLocalGrant(grant) && grant.entryPolicy) {
+      if (grant.entryPolicy.kind !== "channel" && grant.actorId !== ctx.actorId)
+        throw new TaskNotFoundError();
+      await assertRetainedEntrySource(grant);
+    }
+  }
   return {
     rootTaskId: root.id,
     nodes,

@@ -12,6 +12,7 @@ import {
 } from "vitest";
 import {
   Message,
+  Artifact,
   SendMessageRequest,
   Task,
   TaskState,
@@ -26,6 +27,8 @@ import {
   resolveA2AGrant,
   type A2AGrant,
 } from "@/lib/a2a/principal";
+import { getConsoleContexts } from "@/lib/a2a/console-contexts";
+import { getConsoleTaskTree } from "@/lib/a2a/console-tasks";
 import {
   claimTask,
   eventsAfter,
@@ -247,6 +250,66 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
+it("lets workspace members observe retained published-client tasks without client credentials", async () => {
+  const retained = await history();
+  const member = await db.user.create({
+    data: {
+      email: `a2a-reader-${randomUUID()}@test.invalid`,
+      passwordHash: "unused",
+    },
+  });
+  await db.membership.create({
+    data: { workspaceId, userId: member.id, role: "member" },
+  });
+  try {
+    await db.agentApiClient.update({
+      where: { id: clientId },
+      data: { status: "disabled" },
+    });
+    await db.agentApiKey.updateMany({
+      where: { clientId },
+      data: { revokedAt: new Date() },
+    });
+    const actor = { workspaceId, actorId: member.id, agentId, slug: "unused" };
+    const contexts = await getConsoleContexts(actor);
+    expect(contexts.items).toMatchObject([
+      {
+        contextId: retained.contextId,
+        peer: { kind: "client", name: "API client" },
+        tasks: [
+          {
+            taskId: retained.id,
+            rootTaskId: retained.id,
+            rootAgentId: agentId,
+          },
+        ],
+      },
+    ]);
+    const tree = await getConsoleTaskTree(actor, retained.id, retained.id, 32);
+    expect(tree.selectedTask).toMatchObject({
+      id: retained.id,
+      artifacts: [{ parts: [{ text: "Retained response" }] }],
+    });
+    expect(JSON.stringify({ contexts, tree })).not.toMatch(
+      /ownerKey|endpointPublicId|clientId|keyId|runtimeImage|toolPolicy/,
+    );
+    await expect(
+      requestCancellation(other, retained.id),
+    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    await expect(
+      getConsoleTaskTree({ ...actor, workspaceId: randomUUID() }, retained.id),
+    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    await db.membership.delete({
+      where: { workspaceId_userId: { workspaceId, userId: member.id } },
+    });
+    await expect(getConsoleContexts(actor)).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
+  } finally {
+    await db.user.delete({ where: { id: member.id } });
+  }
+});
+
 /** Import an already-recorded ledger row, never admit or dispatch a retired runtime. */
 async function history(
   state: TaskState = TaskState.TASK_STATE_COMPLETED,
@@ -277,7 +340,7 @@ async function history(
       status: { state, timestamp: statusAt.toISOString() },
       artifacts:
         state === TaskState.TASK_STATE_COMPLETED
-          ? [textArtifact("Retained response")]
+          ? [Artifact.toJSON(textArtifact("Retained response"))]
           : [],
     });
     const row = await tx.a2ATask.create({

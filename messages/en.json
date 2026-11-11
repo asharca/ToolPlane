@@ -3216,6 +3216,7 @@
         "loadMore": "Load more conversations",
         "task": "Task {number}"
       },
+      "channelGroup": "Channels",
       "completionNotificationTitle": "ToolPlane · Turn finished",
       "completionNotificationEnable": "Enable notifications when this Work page is inactive",
       "completionNotificationDisable": "Disable inactive-page completion notifications",
