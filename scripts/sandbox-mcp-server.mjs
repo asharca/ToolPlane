@@ -54,6 +54,25 @@ const SSH =
       })
     : null;
 const WORKSPACE_ROOT = "/workspace";
+// Keep in sync with SANDBOX_AGENT_HOME in src/lib/agents/sandbox-runtime.ts.
+const AGENT_HOME = `${WORKSPACE_ROOT}/.toolplane/agent-home`;
+const AGENT_SHARED = `${WORKSPACE_ROOT}/shared`;
+const AGENT_HOME_ENV = {
+  HOME: AGENT_HOME,
+  XDG_CONFIG_HOME: `${AGENT_HOME}/.config`,
+  XDG_DATA_HOME: `${AGENT_HOME}/.local/share`,
+  XDG_CACHE_HOME: `${AGENT_HOME}/.cache`,
+  XDG_STATE_HOME: `${AGENT_HOME}/.local/state`,
+};
+// Login shells reset PATH from /etc/profile; ~/.profile restores ~/.local/bin.
+const AGENT_HOME_INIT = `set -eu
+mkdir -p "$HOME/.local/bin" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME" ${shQuote(AGENT_SHARED)}
+chmod 700 "$HOME"
+test -e "$HOME/.profile" || cat > "$HOME/.profile" <<'EOF'
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH"; export PATH ;; esac
+if [ -n "\${BASH_VERSION:-}" ] && [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi
+EOF
+`;
 const PROTOCOL_VERSION = "2025-06-18";
 const VERSION = "1.0.0";
 const MAX_BODY = 4_000_000;
@@ -530,12 +549,17 @@ function hasExpectedDockerSandboxCaps(info) {
   const expectedMount = (info?.Mounts ?? []).some(
     (mount) => mount?.Destination === mountTarget && mount?.Name === VOLUME,
   );
+  const env = new Set(info?.Config?.Env ?? []);
+  const expectedHome = Object.entries(AGENT_HOME_ENV).every(([key, value]) =>
+    env.has(`${key}=${value}`),
+  );
   return (
     capDrop.has("ALL") &&
     DOCKER_SANDBOX_CAPS.every((cap) => capAdd.has(cap)) &&
     securityOpts.has("no-new-privileges") &&
     info?.Config?.Image === IMAGE &&
     expectedMount &&
+    expectedHome &&
     extraHosts.has("host.docker.internal:host-gateway")
   );
 }
@@ -565,10 +589,9 @@ function dockerCreateArgs() {
     "--cap-drop",
     "ALL",
     ...DOCKER_SANDBOX_CAPS.flatMap((cap) => ["--cap-add", cap]),
-    ...Object.entries(USER_ENV).flatMap(([key, value]) => [
-      "--env",
-      `${key}=${value}`,
-    ]),
+    ...Object.entries({ ...USER_ENV, ...AGENT_HOME_ENV }).flatMap(
+      ([key, value]) => ["--env", `${key}=${value}`],
+    ),
   ];
 
   return [...base, "-v", `${VOLUME}:/workspace`, IMAGE, "sleep", "infinity"];
@@ -684,12 +707,29 @@ async function ensureRuntime() {
   if (KIND === "connector") return;
   await ensureDockerContainer();
   await syncDockerEnvironment({ replay: true });
+  const home = await run(
+    "docker",
+    ["exec", CONTAINER, "sh", "-c", AGENT_HOME_INIT],
+    { env: dockerEnv(), timeoutMs: 30_000 },
+  );
+  if (home.exitCode !== 0)
+    throw new Error(home.stderr || `agent home init failed (${home.exitCode})`);
 }
 
 function workspacePath(raw) {
   const rel = safeRel(raw);
   if (rel === null) return null;
   return `${WORKSPACE_ROOT}${rel ? `/${rel}` : ""}`;
+}
+
+// Optional `root` confines a file operation, after symlink resolution, to that
+// workspace subtree or the Agent shared directory. Returns null for a bad root.
+function confineGuard(target, root) {
+  if (root === undefined) return "";
+  const rel = safeRel(root);
+  if (rel === null || typeof root !== "string") return null;
+  const base = `${WORKSPACE_ROOT}${rel ? `/${rel}` : ""}`;
+  return `resolved="$(realpath -m -- ${shQuote(target)})" && case "$resolved" in ${shQuote(base)}|${shQuote(base)}/*|${shQuote(AGENT_SHARED)}|${shQuote(AGENT_SHARED)}/*) ;; *) echo 'Path is outside the workspace.' >&2; exit 73 ;; esac && `;
 }
 
 async function dockerShell({ command, cwd = ".", stdin = "", timeoutMs }) {
@@ -765,7 +805,7 @@ async function dockerTrackedExec({
 }) {
   const executionId = randomUUID();
   const controlPrefix = `__TOOLPLANE_EXEC_PID_${executionId}__`;
-  const wrapper = `printf '${controlPrefix}%s\\n' "$$"; exec "$@"`;
+  const wrapper = `printf '${controlPrefix}%s\\n' "$$"; PATH="$HOME/.local/bin:$PATH"; export PATH; exec "$@"`;
   const result = await run(
     "docker",
     [
@@ -834,20 +874,22 @@ async function processExec(args = {}) {
   );
 }
 
-async function listDir(args = {}) {
+async function listDir({ root, ...args } = {}) {
   if (KIND === "connector") {
     return connectorTool("list_dir", args, 10_000);
   }
   const p = workspacePath(args.path ?? ".");
   if (!p) return textResult("Invalid path.", true);
+  const guard = confineGuard(p, root);
+  if (guard === null) return textResult("Invalid root.", true);
   const result = await run(
     "docker",
     [
       "exec",
       CONTAINER,
       "sh",
-      "-lc",
-      `find ${shQuote(p)} -maxdepth 1 -mindepth 1 -printf '%f\\t%y\\t%s\\n' | sort`,
+      "-c",
+      `${guard}find ${shQuote(p)}/ -maxdepth 1 -mindepth 1 -printf '%f\\t%y\\t%s\\n' | sort`,
     ],
     { env: dockerEnv() },
   );
@@ -872,15 +914,19 @@ async function listDir(args = {}) {
   });
 }
 
-async function readSandboxFile(args = {}) {
+async function readSandboxFile({ root, ...args } = {}) {
   if (KIND === "connector") {
     return connectorTool("read_file", args, 10_000);
   }
   const p = workspacePath(args.path);
   if (!p) return textResult("Invalid path.", true);
-  const result = await run("docker", ["exec", CONTAINER, "cat", p], {
-    env: dockerEnv(),
-  });
+  const guard = confineGuard(p, root);
+  if (guard === null) return textResult("Invalid root.", true);
+  const result = await run(
+    "docker",
+    ["exec", CONTAINER, "sh", "-c", `${guard}cat -- ${shQuote(p)}`],
+    { env: dockerEnv() },
+  );
   return textResult(
     {
       path: safeRel(args.path),
@@ -891,7 +937,7 @@ async function readSandboxFile(args = {}) {
   );
 }
 
-async function writeSandboxFile(args = {}) {
+async function writeSandboxFile({ root, ...args } = {}) {
   const rel = safeRel(args.path);
   if (!rel) return textResult("Invalid path.", true);
   let decoded;
@@ -914,9 +960,11 @@ async function writeSandboxFile(args = {}) {
   }
   const p = workspacePath(rel);
   const parent = path.posix.dirname(p);
+  const guard = confineGuard(p, root);
+  if (guard === null) return textResult("Invalid root.", true);
   const created = await run(
     "docker",
-    ["exec", CONTAINER, "mkdir", "-p", "--", parent],
+    ["exec", CONTAINER, "sh", "-c", `${guard}mkdir -p -- ${shQuote(parent)}`],
     { env: dockerEnv() },
   );
   if (created.exitCode !== 0) return textResult(created, true);
@@ -934,21 +982,23 @@ async function writeSandboxFile(args = {}) {
   );
 }
 
-async function downloadSandboxFile(args = {}) {
+async function downloadSandboxFile({ root, ...args } = {}) {
   const rel = safeRel(args.path);
   if (!rel) return textResult("Invalid path.", true);
   if (KIND === "connector") {
     return connectorTool("download_file", { ...args, path: rel }, 30_000);
   }
   const p = workspacePath(rel);
+  const guard = confineGuard(p, root);
+  if (guard === null) return textResult("Invalid root.", true);
   const stat = await run(
     "docker",
     [
       "exec",
       CONTAINER,
       "sh",
-      "-lc",
-      `test -f ${shQuote(p)} && wc -c < ${shQuote(p)}`,
+      "-c",
+      `${guard}test -f ${shQuote(p)} && wc -c < ${shQuote(p)}`,
     ],
     {
       env: dockerEnv(),
@@ -964,7 +1014,7 @@ async function downloadSandboxFile(args = {}) {
     );
   const result = await run(
     "docker",
-    ["exec", CONTAINER, "sh", "-lc", `base64 -w 0 ${shQuote(p)}`],
+    ["exec", CONTAINER, "sh", "-c", `${guard}base64 -w 0 ${shQuote(p)}`],
     {
       env: dockerEnv(),
       timeoutMs: 30_000,
@@ -984,7 +1034,7 @@ async function downloadSandboxFile(args = {}) {
   );
 }
 
-async function deleteSandboxFile(args = {}) {
+async function deleteSandboxFile({ root, ...args } = {}) {
   const rel = safeRel(args.path);
   if (!rel) return textResult("Invalid path.", true);
   if (KIND === "connector") {
@@ -992,7 +1042,9 @@ async function deleteSandboxFile(args = {}) {
   }
   const p = workspacePath(rel);
   const parent = path.posix.dirname(p);
-  const guard = `resolved_parent="$(realpath -m -- ${shQuote(parent)})" && case "$resolved_parent" in ${shQuote(WORKSPACE_ROOT)}|${shQuote(WORKSPACE_ROOT)}/*) ;; *) exit 73 ;; esac`;
+  const confine = confineGuard(parent, root);
+  if (confine === null) return textResult("Invalid root.", true);
+  const guard = `${confine}resolved_parent="$(realpath -m -- ${shQuote(parent)})" && case "$resolved_parent" in ${shQuote(WORKSPACE_ROOT)}|${shQuote(WORKSPACE_ROOT)}/*) ;; *) exit 73 ;; esac`;
   const remove =
     args.missingOk === true
       ? `test ! -d ${shQuote(p)} && rm -f -- ${shQuote(p)}`

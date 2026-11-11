@@ -501,3 +501,19 @@
 - **证据（2026-11-11，用户反馈）**：A2A 任务已保存 `toolplaneLiveOutput`，但会话只为最新且未结束任务打开实时流；已完成及较早任务没有加载这份过程记录，MCP 等工具调用在重开后不可见。任务详情现通过已有 `readTaskOutput` 恢复所选任务过程，页面复用原工具卡片，不为历史任务新增长期连接。
 - **下次怎么验证**：真实发布工具活动并完成根／子任务，使用另一成员读取详情，推进时钟使内存回放过期后仍断言调用名、参数、结果存在；同时保留私有根与跨工作区拒绝断言。依据：[读取链路](src/lib/a2a/console-tasks.ts)、[展示](src/components/dashboard/work/A2AContextView.tsx)、[集成回归](tests/integration/a2a-local.test.ts)。
 - **确认日期**：2026-11-11。
+
+### TP-L048：容器内环境变量要按实际进程核对，不能只看传参
+
+**规则**：`docker exec --env KEY` 从 Docker CLI 自身环境取值。给沙箱进程设置 `HOME` 等变量时，调用方传入值必须覆盖宿主值；宿主 CLI 仍需的配置（如 `DOCKER_CONFIG`）单独保留。验收看沙箱内实际进程的 `/proc/<pid>/environ` 或原生 `bash` 输出，不以代码传参为准。
+
+- **证据（2026-11-12，Agent 共享 HOME 验收）**：`runPiSdk` 已传 `HOME=/workspace/.toolplane/agent-home`，但 `dockerEnv()` 先展开 `extra` 再用宿主 `HOME` 覆盖，真实 Pi 的 `$HOME` 为 `/home/ashark`，`~/.local/bin` 和 `.gitconfig` 落到容器 `/home/ashark`。此前被 `pi-sdk-session.mjs` 重写 HOME 掩盖；移除重写后才暴露。修复后两个会话分别得到共享 HOME，B 能调用 A 安装的工具并读到全局 Git 配置，网页终端一致。
+- **下次怎么验证**：同一 Agent 两个真实 Work 会话 + 网页终端，各自 `echo $HOME`、调用另一会话安装的 `~/.local/bin` 工具；文件面板对 `.toolplane` 与越界符号链接返回拒绝。依据：[沙箱执行器](src/lib/agents/sandbox-runtime.ts)、[沙箱 MCP 服务](scripts/sandbox-mcp-server.mjs)。
+- **确认日期**：2026-11-12。
+
+### TP-L049：长时间运行的 `next dev` 会被 React 开发态异步追踪拖垮
+
+**规则**：本地 Work 出现 Prisma 交互事务超时（`timeout ... 5000 ms`）而数据库查询本身很快时，先检查开发服务器主线程，不要先改事务超时或业务代码。
+
+- **证据（2026-11-12，本地 :3000）**：运行约 2 天的 `next-server` RSS 48 GiB、`--max-old-space-size` 近乎无上限；CPU profile 中约 96% 主线程时间在 React Flight 开发态 `visitAsyncNode`（异步调试链追踪），同时 `psql` 计数查询仅 0.18 秒。Work 准入事务因此连续超时，一条运行卡在“准备中”。受控重启（确认旧 owner 退出、清理其遗留 sandbox-mcp-server，按日志 ACK 单次恢复）后 readiness 200，真实 Work 约 23 秒完成。上游问题：[react#38106](https://github.com/react/react/issues/38106)、[react#36995](https://github.com/react/react/pull/36995)；生产构建不受影响。
+- **下次怎么验证**：`/proc/<pid>/status` 看 next-server RSS，`kill -USR1` 后用 inspector 采 10 秒 CPU profile；若 `visitAsyncNode` 主导即重启开发服务器，并按运行时运维流程恢复 owner。
+- **确认日期**：2026-11-12。

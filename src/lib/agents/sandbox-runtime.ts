@@ -484,6 +484,19 @@ export function sandboxRuntimeCanReachProxy(network: string): boolean {
   return network !== "none";
 }
 
+/** Agent-wide CLI state (logins, user installs) shared by every conversation. */
+export const SANDBOX_AGENT_HOME = "/workspace/.toolplane/agent-home";
+
+export function sandboxAgentHomeEnvironment(): Record<string, string> {
+  return {
+    HOME: SANDBOX_AGENT_HOME,
+    XDG_CONFIG_HOME: `${SANDBOX_AGENT_HOME}/.config`,
+    XDG_DATA_HOME: `${SANDBOX_AGENT_HOME}/.local/share`,
+    XDG_CACHE_HOME: `${SANDBOX_AGENT_HOME}/.cache`,
+    XDG_STATE_HOME: `${SANDBOX_AGENT_HOME}/.local/state`,
+  };
+}
+
 export function sandboxRuntimeStateRoot(
   runtimeKind: SandboxAgentRuntimeKind,
   agentId: string,
@@ -1224,10 +1237,11 @@ export function parseDshEventLine(
   return null;
 }
 
+// `extra` is forwarded into the container via `docker exec --env KEY`, so it
+// must win over the host values the Docker CLI itself needs.
 function dockerEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     NODE_ENV: process.env.NODE_ENV ?? "production",
-    ...extra,
   };
   for (const key of [
     "PATH",
@@ -1240,7 +1254,11 @@ function dockerEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   ]) {
     if (process.env[key]) env[key] = process.env[key];
   }
-  return env;
+  // A container HOME must not move the host Docker CLI config.
+  if (extra.HOME && process.env.HOME)
+    env.DOCKER_CONFIG =
+      process.env.DOCKER_CONFIG ?? `${process.env.HOME}/.docker`;
+  return { ...env, ...extra };
 }
 
 function redact(value: string, secrets: readonly string[]): string {
@@ -2587,12 +2605,8 @@ async function runPiSdk(
         PI_OFFLINE: "1",
         PI_TELEMETRY: "0",
         NO_COLOR: "1",
-        HOME: `${stateRoot}/home`,
+        ...sandboxAgentHomeEnvironment(),
         PI_CODING_AGENT_DIR: stateRoot,
-        XDG_CONFIG_HOME: `${stateRoot}/xdg-config`,
-        XDG_DATA_HOME: `${stateRoot}/xdg-data`,
-        XDG_CACHE_HOME: `${stateRoot}/xdg-cache`,
-        XDG_STATE_HOME: `${stateRoot}/xdg-state`,
       },
       onStdout: async (chunk) => {
         buffer += chunk;

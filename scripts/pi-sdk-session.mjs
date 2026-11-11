@@ -3,12 +3,14 @@
 import {
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   readSync,
   realpathSync,
   renameSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { findPackageJSON } from "node:module";
@@ -25,17 +27,29 @@ import {
 const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
 // Native tools inherit this: importing a skill must not add files to its pinned snapshot.
 process.env.PYTHONDONTWRITEBYTECODE = "1";
-// Extension and native writable state belongs to this conversation, never /root.
-for (const [name, directory] of Object.entries({
-  HOME: join(config.agentDir, "home"),
-  PI_CODING_AGENT_DIR: config.agentDir,
-  XDG_CONFIG_HOME: join(config.agentDir, "xdg-config"),
-  XDG_DATA_HOME: join(config.agentDir, "xdg-data"),
-  XDG_CACHE_HOME: join(config.agentDir, "xdg-cache"),
-  XDG_STATE_HOME: join(config.agentDir, "xdg-state"),
-})) {
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  process.env[name] = directory;
+// Pi state belongs to this conversation; HOME/XDG (CLI logins, user installs)
+// are the Agent-wide directories passed by the runtime, never /root.
+mkdirSync(config.agentDir, { recursive: true, mode: 0o700 });
+process.env.PI_CODING_AGENT_DIR = config.agentDir;
+for (const name of [
+  "HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_STATE_HOME",
+]) {
+  if (!process.env[name]) throw new Error(`${name} is required.`);
+  mkdirSync(process.env[name], { recursive: true, mode: 0o700 });
+}
+const userBin = join(process.env.HOME, ".local/bin");
+if (!(process.env.PATH ?? "").split(":").includes(userBin))
+  process.env.PATH = `${userBin}:${process.env.PATH ?? ""}`;
+// Explicit Agent-wide shared files, linked into each conversation workspace.
+mkdirSync("/workspace/shared", { recursive: true });
+try {
+  lstatSync(join(config.workspaceRoot, "shared"));
+} catch {
+  symlinkSync("/workspace/shared", join(config.workspaceRoot, "shared"));
 }
 const sdkEntry = realpathSync(
   join(
