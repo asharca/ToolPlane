@@ -536,6 +536,9 @@ find "$stage" -type l -print0 | while IFS= read -r -d '' link; do
   esac
   ln -sfnT -- "$target" "$link"
 done
+mkdir -p /to/shared
+chmod 0777 /to/shared
+test -e "$stage/shared" || test -L "$stage/shared" || ln -s /workspace/shared "$stage/shared"
 test ! -e "$stage/.toolplane-shared-migration.json"
 test ! -L "$stage/.toolplane-shared-migration.json"
 printf '%s' "$marker" > "$stage/.toolplane-shared-migration.json"

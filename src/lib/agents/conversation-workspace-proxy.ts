@@ -68,9 +68,14 @@ export async function proxyConversationWorkspace(
             "write_file",
             "delete_file",
           ].includes(params.name)
-        )
-          params.arguments = { ...args, path: scopedPath(args.path) };
-        else if (["shell_exec", "process_exec"].includes(params.name))
+        ) {
+          const scoped = scopedPath(args.path);
+          const root = posix.relative("/workspace", target.workspaceRoot);
+          // Runtime state (Pi sessions, Agent HOME logins) is never a user file.
+          if (scoped.split("/").includes(".toolplane"))
+            throw new Error("Invalid path");
+          params.arguments = { ...args, path: scoped, root };
+        } else if (["shell_exec", "process_exec"].includes(params.name))
           params.arguments = { ...args, cwd: scopedPath(args.cwd) };
       }
       body = JSON.stringify(payload);
