@@ -341,8 +341,8 @@ function A2AContextTask({
   const [tree, setTree] = useState<ConsoleTaskTree | null>(null);
   const [failed, setFailed] = useState(false);
   const [refresh, setRefresh] = useState(0);
-  // Keep an established replay after settlement: failed/canceled partial output
-  // may never appear in an artifact. Older tasks never open another stream.
+  // Follow running output; completed and older tasks load their durable replay
+  // with the task tree without opening another long-lived stream.
   const [watchOutput, setWatchOutput] = useState(
     latest && !terminal(initialState),
   );
@@ -451,7 +451,10 @@ function A2AContextTask({
   }, [base, rootTaskId, taskId, latest, refresh]);
 
   const selected = tree?.selectedTask as ResultTask | undefined;
-  const output = live.output?.taskId === taskId ? live.output : null;
+  const output =
+    live.output?.taskId === taskId
+      ? live.output
+      : (tree?.selectedOutput ?? null);
   const outputText = output?.text.replace(/\s+/g, " ").trim();
   const persistedParts = selected
     ? [
