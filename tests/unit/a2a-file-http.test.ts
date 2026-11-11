@@ -51,10 +51,36 @@ describe("task file download boundaries", () => {
     expect(mocks.actor).toHaveBeenCalledWith({}, "w", "u");
     expect(mocks.open).toHaveBeenCalledWith("t", "f");
     expect(response.headers.get("cache-control")).toContain("no-store");
-    expect(response.headers.get("content-disposition")).toBe(
-      'attachment; filename="safe.txt"',
-    );
   });
+  it.each(["session", "capability"])(
+    "downloads Unicode filenames through %s access",
+    async (access) => {
+      const filename = "2026年10月月报 ('final')*.docx";
+      const opened = {
+        file: { filename, size: 3 },
+        body: new Blob(["abc"]).stream(),
+      };
+      mocks.open.mockResolvedValue(opened);
+      mocks.capability.mockResolvedValue(opened);
+      const response =
+        access === "session"
+          ? await taskFileSessionDownload(download(), "f")
+          : await taskFileDownload(
+              download({}, "task=t&expires=123&signature=valid"),
+              "f",
+            );
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("abc");
+      const disposition = response.headers.get("content-disposition");
+      if (!disposition) throw new Error("Missing download filename");
+      expect(disposition).toMatch(
+        /^attachment; filename="[A-Za-z0-9._-]+"; filename\*=UTF-8''/,
+      );
+      const encoded = disposition.split("filename*=UTF-8''")[1];
+      expect(decodeURIComponent(encoded)).toBe(filename);
+      expect(encoded).not.toMatch(/['()*]/);
+    },
+  );
   it("rejects browser cross-site access before authentication", async () => {
     expect(
       (

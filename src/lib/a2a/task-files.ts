@@ -17,7 +17,6 @@ import {
   trackRuntimeOperation,
 } from "@/lib/runtime/ownership-state";
 import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
-import { safeAttachmentFilename } from "@/lib/attachments/storage";
 import { assertLiveGrant, type TaskGrant } from "./principal";
 import {
   lockTask,
@@ -134,9 +133,7 @@ export async function prepareTaskFileParts(
       where: { taskId_sourceKey: { taskId, sourceKey } },
     });
     if (refreshUrls && !previous) continue;
-    const filename = safeAttachmentFilename(
-      part.filename || `file-${index + 1}`,
-    );
+    const filename = part.filename || `file-${index + 1}`;
     const mimeType = part.mediaType || "application/octet-stream";
     if (
       previous &&

@@ -76,12 +76,15 @@ import {
   cleanupTaskFiles,
   copyTaskFile,
   createTaskFileUrl,
+  hydrateTaskParts,
+  makeTaskFilePart,
   openTaskFile,
   openTaskFileCapability,
   storeTaskFile,
   storeAdmittedTaskFile,
 } from "@/lib/a2a/files";
 import { submitTask } from "@/lib/a2a/store";
+import { stageTaskFileTransfers } from "@/lib/a2a/task-files";
 let user: string;
 let originalTransportSetting: string | undefined;
 const fixtures: { workspace: string; agent: string }[] = [];
@@ -285,6 +288,71 @@ describe("PostgreSQL task file invariants with streaming storage boundary", () =
         body(),
       ),
     ).rejects.toThrow();
+  });
+  it("preserves Unicode filenames through input admission and staging", async () => {
+    const f = fixtures[0];
+    const grant = await createLocalRootGrant(f.workspace, f.agent, user);
+    const filename = "2026年10月月报.docx";
+    const t = await submitTask(
+      grant,
+      SendMessageRequest.fromJSON({
+        message: {
+          messageId: randomUUID(),
+          role: "ROLE_USER",
+          parts: [
+            {
+              raw: Buffer.from("monthly report").toString("base64"),
+              filename,
+              mediaType: "text/plain",
+            },
+          ],
+        },
+        configuration: { returnImmediately: true },
+      }),
+    );
+    expect(await stageTaskFileTransfers(t.id)).toBe(true);
+    const file = await db.a2ATaskFile.findFirstOrThrow({
+      where: { taskId: t.id },
+    });
+    expect(file.filename).toBe(filename);
+    expect(
+      await new Response((await openTaskFile(t.id, file.id)).body).text(),
+    ).toBe("monthly report");
+  });
+  it("preserves Unicode protocol filenames while using safe storage paths", async () => {
+    const t = await task();
+    const filename = "2026年10月月报.docx";
+    const file = await storeTaskFile(
+      t.id,
+      "report",
+      filename,
+      "text/plain",
+      body(),
+    );
+    expect(file.filename).toBe(filename);
+    expect(file.storagePath).toMatch(/^objects\/[0-9a-f-]+-2026-10-\.docx$/);
+    const [part] = await hydrateTaskParts(
+      t.id,
+      [makeTaskFilePart(file)],
+      "https://tp.example",
+    );
+    expect(part.filename).toBe(filename);
+    const url = new URL(
+      part.content?.$case === "url" ? part.content.value : "",
+    );
+    const expires = url.searchParams.get("expires");
+    const signature = url.searchParams.get("signature");
+    if (!expires || !signature) throw new Error("Missing file capability");
+    const opened = await openTaskFileCapability(
+      file.id,
+      t.id,
+      expires,
+      signature,
+    );
+    expect(await new Response(opened.body).text()).toBe("abc");
+    await expect(
+      storeTaskFile(t.id, "report", "2026-10-.docx", "text/plain", body()),
+    ).rejects.toThrow("different content");
   });
   it("replays identical source identity and rejects changed bytes or metadata", async () => {
     const t = await task();

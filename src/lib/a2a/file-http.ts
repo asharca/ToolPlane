@@ -1,6 +1,7 @@
 import "server-only";
 import { TaskNotFoundError } from "@a2a-js/sdk/errors";
 import { resolveRequestUser } from "@/lib/auth/request-user";
+import { safeAttachmentFilename } from "@/lib/attachments/storage";
 import { db } from "@/lib/db";
 import { assertLocalActor } from "./local-policy";
 import { isWorkspaceGrant, type TaskGrant } from "./principal";
@@ -9,6 +10,15 @@ import {
   openTaskFile,
   openTaskFileCapability,
 } from "./files";
+
+function attachmentDisposition(filename: string): string {
+  const fallback = safeAttachmentFilename(filename);
+  const encoded = encodeURIComponent(filename.toWellFormed()).replace(
+    /['()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
 
 /** A file ticket is a scoped read capability, never a credential for another endpoint. */
 export async function taskFileDownload(
@@ -43,7 +53,7 @@ export async function taskFileDownload(
         ...headers,
         "Content-Type": "application/octet-stream",
         "Content-Length": String(file.size),
-        "Content-Disposition": `attachment; filename="${file.filename}"`,
+        "Content-Disposition": attachmentDisposition(file.filename),
         ETag: `"sha256-${file.sha256}"`,
       },
     });
@@ -87,7 +97,7 @@ export async function taskFileSessionDownload(
         ...headers,
         "Content-Type": "application/octet-stream",
         "Content-Length": String(file.size),
-        "Content-Disposition": `attachment; filename="${file.filename}"`,
+        "Content-Disposition": attachmentDisposition(file.filename),
       },
     });
   } catch (error) {
