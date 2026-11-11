@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.1](https://github.com/asharca/ToolPlane/compare/v0.36.0...v0.36.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* **work:** 修复共享会话历史读取与频道折叠分组 ([#213](https://github.com/asharca/ToolPlane/issues/213)) ([335659a](https://github.com/asharca/ToolPlane/commit/335659ab98ae071c772a3527dd3cc358a466603d))
+
 ## [0.36.0](https://github.com/asharca/ToolPlane/compare/v0.35.2...v0.36.0) (2026-11-11)
 
 
