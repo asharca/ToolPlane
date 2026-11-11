@@ -3,9 +3,10 @@
 import { ButtonLink } from "@/components/motion/button";
 import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
-import { Activity, ArrowUpRight, Building2, CircleAlert } from "lucide-react";
+import { Activity, ArrowUpRight, Network, Server, Users } from "lucide-react";
 import { requireAdmin } from "@/lib/auth/admin";
 import { getSystemOverview } from "@/lib/admin/overview";
+import { getLogHealth } from "@/lib/observability/health";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 import {
   AdminBadge,
@@ -14,51 +15,29 @@ import {
   AdminPageHeader,
   AdminPanel,
 } from "@/components/admin/AdminUI";
+import { LogHealth } from "@/components/admin/LogHealth";
 import { LogOutcomeBadge, LogTimestamp } from "@/components/admin/LogUI";
 import { DashboardTable } from "@/components/dashboard/DashboardTable";
 import { adminHref } from "@/lib/admin/navigation";
 
 export const dynamic = "force-dynamic";
 
-function InventoryGroup({
-  title,
-  items,
-}: {
-  title: string;
-  items: Array<{ label: string; value: number }>;
-}) {
-  return (
-    <div className="px-4 py-2">
-      <h3 className="mb-2 text-xs font-semibold text-muted-foreground">
-        {title}
-      </h3>
-      <dl className="space-y-1">
-        {items.map((item) => (
-          <div
-            key={item.label}
-            className="flex min-h-8 items-center justify-between gap-4 text-sm"
-          >
-            <dt className="text-muted-foreground">{item.label}</dt>
-            <dd className="font-semibold tabular-nums text-foreground">
-              {item.value}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
-}
-
 export default async function AdminOverviewPage() {
-  const [t, locale] = await Promise.all([
-    getTranslations("admin"),
-    getLocale(),
-  ]);
   const admin = await requireAdmin();
+  const [t, ops, locale, overview, health] = await Promise.all([
+    getTranslations("admin"),
+    getTranslations("adminOps"),
+    getLocale(),
+    getSystemOverview(admin.id),
+    getLogHealth(admin.id),
+  ]);
   const timeZone = resolveUserTimeZone(admin);
-  const o = await getSystemOverview();
-  const ops = await getTranslations("adminOps");
-  const deployTotal = Object.values(o.counts.deployments).reduce(
+  const number = (value: number) => value.toLocaleString(locale);
+  const percent = new Intl.NumberFormat(locale, {
+    style: "percent",
+    maximumFractionDigits: 1,
+  });
+  const deployTotal = Object.values(overview.counts.deployments).reduce(
     (a, b) => a + b,
     0,
   );
@@ -66,16 +45,16 @@ export default async function AdminOverviewPage() {
     running: t("deploymentStatusRunning"),
     provisioning: t("deploymentStatusProvisioning"),
     stopped: t("deploymentStatusStopped"),
+    failed: t("deploymentStatusError"),
     error: t("deploymentStatusError"),
   };
-  const requestsHref = "/admin/logs?domain=mcp&eventName=gateway.request";
+  const requestsHref = "/admin/logs?tab=mcp";
   const a2aRequestsHref = "/admin/logs?tab=a2a&direction=inbound";
 
   return (
     <AdminPage>
       <AdminPageHeader
         title={t("systemOverview")}
-        description={t("overviewDescription")}
         actions={
           <ButtonLink href="/admin/logs" variant="secondary" size="md">
             <Activity className="size-4" aria-hidden="true" />
@@ -86,383 +65,308 @@ export default async function AdminOverviewPage() {
 
       <section className="grid grid-cols-2 gap-px border-y border-border bg-border xl:grid-cols-4">
         <AdminMetric
-          icon={Building2}
-          label={t("workspaces")}
-          value={o.counts.workspaces.toLocaleString()}
-          href="/admin/workspaces"
-          note={t("workspaceMemberships", {
-            count: o.counts.memberships.toLocaleString(),
-          })}
-        />
-        <AdminMetric
-          icon={CircleAlert}
-          label={ops("abnormalDeployments")}
-          value={o.attention.abnormalCount.toLocaleString()}
-          href="#needs-attention"
-          note={ops("runtimeStatus")}
+          icon={Users}
+          label={t("overviewAccess")}
+          value={`${number(overview.counts.users)} / ${number(overview.counts.workspaces)}`}
+          href="/admin/users"
+          note={t("overviewNewUsers", { count: overview.counts.newUsers7d })}
         />
         <AdminMetric
           icon={Activity}
           label={ops("mcpRequests")}
-          value={o.requests.total.toLocaleString()}
+          value={number(overview.requests.total)}
           href={requestsHref}
-          note={t("errorsInWindow", {
-            count: o.requests.errors.toLocaleString(),
-          })}
+          note={
+            <span
+              className={
+                overview.requests.errors ? "text-destructive" : undefined
+              }
+            >
+              {t("overviewRequestStats", {
+                errorRate: overview.requests.total
+                  ? percent.format(
+                      overview.requests.errors / overview.requests.total,
+                    )
+                  : "—",
+                p95: overview.requests.total
+                  ? number(overview.requests.p95Ms)
+                  : "—",
+              })}
+            </span>
+          }
+        />
+        <AdminMetric
+          icon={Network}
+          label={t("overviewInboundA2a")}
+          value={number(overview.a2aRequests.total)}
+          href={a2aRequestsHref}
+          note={
+            <span
+              className={
+                overview.a2aRequests.errors ? "text-destructive" : undefined
+              }
+            >
+              {t("overviewRequestStats", {
+                errorRate: overview.a2aRequests.total
+                  ? percent.format(
+                      overview.a2aRequests.errors / overview.a2aRequests.total,
+                    )
+                  : "—",
+                p95: overview.a2aRequests.total
+                  ? number(overview.a2aRequests.p95Ms)
+                  : "—",
+              })}
+            </span>
+          }
+        />
+        <AdminMetric
+          icon={Server}
+          label={t("deployments")}
+          value={number(deployTotal)}
+          href="#needs-attention"
+          note={
+            <span
+              className={
+                overview.attention.abnormalCount
+                  ? "text-destructive"
+                  : undefined
+              }
+            >
+              {t("overviewDeploymentAnomalies", {
+                count: overview.attention.abnormalCount,
+              })}
+            </span>
+          }
         />
       </section>
 
-      <div id="needs-attention" className="grid min-w-0 gap-8 xl:grid-cols-2">
+      <LogHealth health={health} />
+
+      <div id="needs-attention" className="scroll-mt-6">
         <AdminPanel title={ops("needsAttention")} padded={false}>
-          <ul className="divide-y divide-border">
-            {o.attention.unavailableWorkspaces ? (
-              <li>
-                <Link
-                  href="/admin/workspaces?status=delete_failed"
-                  className="flex items-center justify-between gap-3 px-5 py-3 text-sm hover:bg-muted/50"
-                >
-                  <span>
-                    {t("workspaces")} / {ops("delete_failed")}
-                  </span>
-                  <AdminBadge tone="danger">
-                    {o.attention.unavailableWorkspaces}
-                  </AdminBadge>
-                </Link>
-              </li>
-            ) : null}
-            {o.attention.abnormalDeployments.map((deployment) => (
-              <li key={deployment.id}>
-                <Link
-                  href={adminHref("/admin/logs", {
-                    domain: "all",
-                    deploymentId: deployment.id,
-                    workspaceId: deployment.workspaceId,
-                    returnTo: "/admin",
-                  })}
-                  className="flex min-w-0 items-center justify-between gap-3 px-5 py-3 hover:bg-muted/50"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">
-                      {deployment.name ?? deployment.id}
-                    </span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {deployment.workspace.name}
-                    </span>
-                  </span>
-                  <AdminBadge tone="danger">
-                    {deploymentLabels[deployment.status] ?? deployment.status}
-                  </AdminBadge>
-                </Link>
-              </li>
-            ))}
-          </ul>
-          {!o.attention.abnormalCount && !o.attention.unavailableWorkspaces ? (
-            <p className="px-5 py-6 text-sm text-muted-foreground">
-              {ops("noPendingWork")}
-            </p>
-          ) : null}
+          <div className="grid min-w-0 gap-6 xl:grid-cols-2">
+            <div className="min-w-0">
+              <ul className="divide-y divide-border">
+                {overview.attention.unavailableWorkspaces ? (
+                  <li>
+                    <Link
+                      href="/admin/workspaces?status=delete_failed"
+                      className="flex items-center justify-between gap-3 py-3 text-sm hover:underline"
+                    >
+                      <span>
+                        {t("workspaces")} / {ops("delete_failed")}
+                      </span>
+                      <AdminBadge tone="danger">
+                        {number(overview.attention.unavailableWorkspaces)}
+                      </AdminBadge>
+                    </Link>
+                  </li>
+                ) : null}
+                {overview.attention.abnormalDeployments.map((deployment) => (
+                  <li key={deployment.id}>
+                    <Link
+                      href={adminHref("/admin/logs", {
+                        tab: "all",
+                        deploymentId: deployment.id,
+                        workspaceId: deployment.workspaceId,
+                        returnTo: "/admin",
+                      })}
+                      className="flex min-w-0 items-center justify-between gap-3 py-3 hover:underline"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium">
+                          {deployment.name ?? deployment.id}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {deployment.workspace.name}
+                        </span>
+                      </span>
+                      <AdminBadge tone="danger">
+                        {deploymentLabels[deployment.status] ??
+                          deployment.status}
+                      </AdminBadge>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+              {!overview.attention.abnormalCount &&
+              !overview.attention.unavailableWorkspaces ? (
+                <p className="py-4 text-sm text-muted-foreground">
+                  {ops("noPendingWork")}
+                </p>
+              ) : null}
+            </div>
+            <div className="min-w-0">
+              <h3 className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+                {t("logsErrors")}
+                <span className="font-normal text-muted-foreground">
+                  {t("last24Hours")}
+                </span>
+              </h3>
+              {overview.errorGroups.length ? (
+                <ul className="mt-2 divide-y divide-border">
+                  {overview.errorGroups.map((group) => (
+                    <li
+                      key={JSON.stringify([
+                        group.eventName,
+                        group.outcome,
+                        group.errorType,
+                        group.errorCode,
+                      ])}
+                    >
+                      <Link
+                        href={adminHref("/admin/logs", {
+                          tab: "all",
+                          eventName: group.eventName,
+                          outcome: group.outcome,
+                          errorType: group.errorType ?? undefined,
+                          errorCode: group.errorCode ?? undefined,
+                          since: overview.errorGroupsWindow.since.toISOString(),
+                          until: overview.errorGroupsWindow.until.toISOString(),
+                          returnTo: "/admin",
+                        })}
+                        className="flex min-w-0 flex-wrap items-center gap-3 py-3 hover:text-destructive"
+                      >
+                        <span className="min-w-0 flex-1 basis-44">
+                          <code className="block break-all text-xs font-medium">
+                            {group.errorType ?? group.eventName}
+                            {group.errorCode ? ` / ${group.errorCode}` : ""}
+                          </code>
+                          {group.errorType ? (
+                            <code className="mt-1 block break-all text-xs text-muted-foreground">
+                              {group.eventName}
+                            </code>
+                          ) : null}
+                        </span>
+                        <LogTimestamp date={group.last} compact />
+                        <AdminBadge tone="danger">
+                          {t("logsOccurrences", { count: group.count })}
+                        </AdminBadge>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="py-4 text-sm text-muted-foreground">
+                  {ops("noErrors")}
+                </p>
+              )}
+            </div>
+          </div>
         </AdminPanel>
-        <AdminPanel
-          title={ops("recentFailures")}
-          description={t("last24Hours")}
-          padded={false}
-        >
-          {o.attention.recentFailures.length ? (
-            <ul className="divide-y divide-border">
-              {o.attention.recentFailures.map((event) => (
-                <li key={event.id}>
+      </div>
+
+      <div className="grid min-w-0 gap-8 xl:grid-cols-[minmax(0,1.5fr)_minmax(18rem,1fr)]">
+        <AdminPanel title={t("logsRecentRequests")} padded={false}>
+          {overview.recentRequests.length ? (
+            <DashboardTable
+              ariaLabel={t("logsRecentRequests")}
+              minWidth="40rem"
+              selectable={false}
+              headers={[
+                { label: t("logsTime") },
+                { label: t("logsOperation") },
+                { label: t("logsUserClient") },
+                { label: t("logsResult") },
+                { label: t("logsDuration"), align: "right" },
+              ]}
+              rows={overview.recentRequests.map((event) => ({
+                id: event.id,
+                cells: [
+                  <LogTimestamp key="time" date={event.createdAt} />,
                   <Link
+                    key="operation"
                     href={adminHref(`/admin/logs/${event.id}`, {
                       returnTo: "/admin",
                     })}
-                    className="flex min-w-0 flex-wrap items-center gap-3 px-5 py-3 hover:bg-muted/50"
+                    className="block min-w-0 max-w-56 hover:underline"
                   >
-                    <LogOutcomeBadge outcome={event.outcome} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">
-                        {event.message}
-                      </span>
-                      <code className="block truncate text-xs text-muted-foreground">
-                        {event.eventName}
-                      </code>
+                    <span className="block text-xs text-muted-foreground">
+                      {event.domain === "a2a" ? "A2A" : "MCP"}
                     </span>
-                    <LogTimestamp date={event.createdAt} />
-                  </Link>
-                </li>
-              ))}
-            </ul>
+                    <span className="block truncate font-medium">
+                      {event.toolName ?? event.rpcMethod ?? event.eventName}
+                    </span>
+                  </Link>,
+                  <span key="caller" className="block max-w-48 truncate">
+                    {event.actorName ??
+                      event.actorId ??
+                      event.clientId ??
+                      t("logsUnknownCaller")}
+                  </span>,
+                  <LogOutcomeBadge key="outcome" outcome={event.outcome} />,
+                  <span
+                    key="duration"
+                    className="whitespace-nowrap tabular-nums"
+                  >
+                    {event.durationMs === null
+                      ? "—"
+                      : `${number(event.durationMs)} ms`}
+                  </span>,
+                ],
+              }))}
+            />
           ) : (
-            <p className="px-5 py-6 text-sm text-muted-foreground">
-              {ops("noErrors")}
+            <p className="py-6 text-sm text-muted-foreground">
+              {t("noRequestData")}
             </p>
           )}
         </AdminPanel>
-      </div>
 
-      <div className="grid gap-8 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,.65fr)]">
-        <AdminPanel
-          title={t("logsRequestTriage")}
-          description={t("last24Hours")}
-          padded={false}
-        >
-          <div className="grid divide-y divide-border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
-            {[
-              {
-                label: ops("mcpRequests"),
-                stats: o.requests,
-                href: requestsHref,
-              },
-              {
-                label: t("logsA2aRequests"),
-                stats: o.a2aRequests,
-                href: a2aRequestsHref,
-              },
-            ].map(({ label, stats, href }) => (
-              <div key={href} className="min-w-0 px-5 py-4">
-                <h3 className="mb-3 text-sm font-semibold">{label}</h3>
-                <dl className="space-y-2 text-sm">
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">
-                      {t("requests24h")}
-                    </dt>
-                    <dd className="font-semibold tabular-nums">
-                      {stats.total.toLocaleString()}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{t("errors24h")}</dt>
-                    <dd
-                      className={`font-semibold tabular-nums ${stats.errors ? "text-destructive" : ""}`}
-                    >
-                      {stats.errors.toLocaleString()}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">{t("p95Latency")}</dt>
-                    <dd className="tabular-nums">
-                      {stats.total
-                        ? `${stats.p95Ms.toLocaleString()} ms`
-                        : t("noRequestData")}
-                    </dd>
-                  </div>
-                </dl>
-                <ButtonLink
-                  href={href}
-                  variant="ghost"
-                  size="md"
-                  className="mt-3"
-                >
-                  {t("overviewViewLogs")}
-                  <ArrowUpRight className="size-3.5" aria-hidden="true" />
-                </ButtonLink>
-              </div>
-            ))}
-          </div>
-          <div className="min-w-0 border-t border-border">
-            <h3 className="px-5 py-4 text-sm font-semibold">
-              {t("logsRecentRequests")}
-            </h3>
-            {o.recentRequests.length ? (
-              <DashboardTable
-                ariaLabel={t("logsRecentRequests")}
-                minWidth="42rem"
-                headers={[
-                  { label: t("logsTime") },
-                  { label: t("logsOperation") },
-                  { label: t("logsUserClient") },
-                  { label: t("logsResult") },
-                  { label: t("logsDuration"), align: "right" },
-                ]}
-                rows={o.recentRequests.map((event) => ({
-                  id: event.id,
-                  cells: [
-                    <LogTimestamp key="time" date={event.createdAt} />,
-                    <Link
-                      key="operation"
-                      href={adminHref(`/admin/logs/${event.id}`, {
-                        returnTo: "/admin",
-                      })}
-                      className="block min-w-0 max-w-56 hover:underline"
-                    >
-                      <span className="block text-xs text-muted-foreground">
-                        {event.domain === "a2a" ? "A2A" : "MCP"}
-                      </span>
-                      <span className="block truncate font-medium">
-                        {event.rpcMethod ?? event.toolName ?? event.eventName}
-                      </span>
-                    </Link>,
-                    <span key="caller" className="block max-w-48 truncate">
-                      {event.actorId ? (
-                        <>
-                          <span className="block truncate">
-                            {event.actorName ?? event.actorId}
-                          </span>
-                          {event.actorName ? (
-                            <code className="block truncate text-xs text-muted-foreground">
-                              {event.actorId}
-                            </code>
-                          ) : null}
-                        </>
-                      ) : event.clientId ? (
-                        <>
-                          <span className="block text-xs text-muted-foreground">
-                            {t("logsServiceClient")}
-                          </span>
-                          <code className="block truncate">
-                            {event.clientId}
-                          </code>
-                        </>
-                      ) : (
-                        t("logsUnknownCaller")
-                      )}
-                    </span>,
-                    <LogOutcomeBadge key="outcome" outcome={event.outcome} />,
-                    <span
-                      key="duration"
-                      className="whitespace-nowrap tabular-nums"
-                    >
-                      {event.durationMs === null
-                        ? "—"
-                        : `${event.durationMs.toLocaleString()} ms`}
-                    </span>,
-                  ],
-                }))}
-              />
-            ) : (
-              <p className="px-5 pb-6 text-sm text-muted-foreground">
-                {t("noRequestData")}
-              </p>
-            )}
-          </div>
-        </AdminPanel>
-
-        <AdminPanel
-          title={t("resourceInventory")}
-          description={t("currentTotals")}
-          padded={false}
-        >
-          <div className="grid sm:grid-cols-2 xl:grid-cols-2 [&>*+*]:border-t [&>*+*]:border-border sm:[&>*+*]:border-l sm:[&>*+*]:border-t-0">
-            <InventoryGroup
-              title={t("runtime")}
-              items={[
-                { label: t("users"), value: o.counts.users },
-                { label: t("agents"), value: o.counts.agents },
-                { label: t("toolkits"), value: o.counts.toolkits },
-                {
-                  label: t("installedSkills"),
-                  value: o.counts.installedSkills,
-                },
-                { label: t("modelProviders"), value: o.counts.providers },
-              ]}
-            />
-            <InventoryGroup
-              title={t("directory")}
-              items={[
-                { label: t("directoryServers"), value: o.counts.servers },
-                { label: t("directorySkills"), value: o.counts.skills },
-                { label: t("clients"), value: o.counts.clients },
-              ]}
-            />
-          </div>
-        </AdminPanel>
-      </div>
-
-      <div className="grid gap-8 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,.65fr)]">
         <AdminPanel
           title={t("recentSignups")}
-          description={t("latestAccounts", { count: o.recentUsers.length })}
           actions={
-            <ButtonLink href="/admin/users" variant="ghost" size="md">
+            <ButtonLink href="/admin/users" variant="ghost" size="sm">
               {t("overviewAllUsers")}
               <ArrowUpRight className="size-3.5" aria-hidden="true" />
             </ButtonLink>
           }
           padded={false}
         >
-          {o.recentUsers.length === 0 ? (
-            <p className="px-5 py-6 text-sm text-muted-foreground">
-              {t("noRecentSignups")}
-            </p>
-          ) : (
+          {overview.recentUsers.length ? (
             <ul className="divide-y divide-border">
-              {o.recentUsers.map((u) => (
-                <li key={u.id}>
+              {overview.recentUsers.map((user) => (
+                <li key={user.id}>
                   <Link
-                    href={`/admin/users/${u.id}`}
-                    className="flex min-h-12 items-center justify-between gap-4 px-5 py-2.5 transition-colors hover:bg-accent/35"
+                    href={`/admin/users/${user.id}`}
+                    className="flex min-h-12 items-center justify-between gap-3 py-3 hover:underline"
                   >
-                    <span className="flex min-w-0 items-center gap-3">
-                      <span
-                        aria-hidden="true"
-                        className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-xs font-semibold text-muted-foreground"
-                      >
-                        {(u.name ?? u.email).slice(0, 2).toUpperCase()}
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium">
+                        {user.name ?? user.email}
                       </span>
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-medium text-foreground">
-                          {u.name ?? u.email}
+                      {user.name ? (
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {user.email}
                         </span>
-                        {u.name ? (
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {u.email}
-                          </span>
-                        ) : null}
-                      </span>
+                      ) : null}
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
-                      {u.role === "admin" ? (
+                      {user.role === "admin" ? (
                         <AdminBadge tone="info">{t("admin")}</AdminBadge>
                       ) : null}
-                      {u.status === "suspended" ? (
+                      {user.status === "suspended" ? (
                         <AdminBadge tone="warning">{t("suspended")}</AdminBadge>
                       ) : null}
-                      <span className="hidden text-xs text-muted-foreground sm:inline">
+                      <time
+                        dateTime={user.createdAt.toISOString()}
+                        className="hidden text-xs text-muted-foreground sm:block"
+                      >
                         {formatInTimeZone(
-                          u.createdAt,
+                          user.createdAt,
                           timeZone,
-                          {
-                            year: "numeric",
-                            month: "short",
-                            day: "numeric",
-                          },
+                          { month: "short", day: "numeric" },
                           locale,
                         )}
-                      </span>
+                      </time>
                     </span>
                   </Link>
                 </li>
               ))}
             </ul>
-          )}
-        </AdminPanel>
-        <AdminPanel
-          title={t("overviewDeploymentStatus")}
-          actions={<AdminBadge>{deployTotal}</AdminBadge>}
-        >
-          {deployTotal ? (
-            <dl className="space-y-5">
-              {Object.entries(o.counts.deployments)
-                .sort((a, b) => b[1] - a[1])
-                .map(([status, count]) => (
-                  <div key={status}>
-                    <div className="mb-2 flex items-center justify-between gap-3 text-sm">
-                      <dt>{deploymentLabels[status] ?? status}</dt>
-                      <dd className="font-semibold tabular-nums">
-                        {count.toLocaleString(locale)}
-                      </dd>
-                    </div>
-                    <progress
-                      aria-label={deploymentLabels[status] ?? status}
-                      value={count}
-                      max={deployTotal}
-                      className={`block h-1.5 w-full overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-muted ${status === "running" ? "accent-primary [&::-webkit-progress-value]:bg-primary" : status === "error" || status === "failed" ? "accent-destructive [&::-webkit-progress-value]:bg-destructive" : "accent-muted-foreground [&::-webkit-progress-value]:bg-muted-foreground"}`}
-                    />
-                  </div>
-                ))}
-            </dl>
           ) : (
             <p className="py-6 text-sm text-muted-foreground">
-              {t("overviewNoDeployments")}
+              {t("noRecentSignups")}
             </p>
           )}
         </AdminPanel>

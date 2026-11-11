@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { logSystemEvent } from "@/lib/observability/system";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import {
@@ -155,7 +156,14 @@ function scheduleRestoreHelperCleanup(
           },
           data: { status: "restore_failed" },
         });
-      } catch {
+      } catch (cause) {
+        logSystemEvent("runtime.sandbox.restore_helper_cleanup_failed", {
+          domain: "runtime",
+          deploymentId,
+          workspaceId,
+          error: cause,
+          attributes: { attempt },
+        });
         if (attempt < 6) {
           scheduleRestoreHelperCleanup(
             error,
@@ -449,7 +457,14 @@ export async function cloneSandboxAction(formData: FormData) {
               await killProcess(clone.deployment.id, {
                 preventRestart: true,
                 finalStatus: "copy_failed",
-              }).catch(() => undefined);
+              }).catch((cause) => {
+                logSystemEvent("runtime.sandbox.clone_stop_failed", {
+                  domain: "runtime",
+                  deploymentId: clone.deployment.id,
+                  workspaceId: ctx.ws.id,
+                  error: cause,
+                });
+              });
               try {
                 await removeDockerSandboxRuntimeStrict(
                   clone.sandbox.id,
@@ -462,7 +477,13 @@ export async function cloneSandboxAction(formData: FormData) {
                     source: "sandbox",
                   },
                 });
-              } catch {
+              } catch (cause) {
+                logSystemEvent("runtime.sandbox.clone_cleanup_failed", {
+                  domain: "runtime",
+                  deploymentId: clone.deployment.id,
+                  workspaceId: ctx.ws.id,
+                  error: cause,
+                });
                 await db.deployment.updateMany({
                   where: { id: clone.deployment.id, workspaceId: ctx.ws.id },
                   data: { status: "copy_failed" },
@@ -762,6 +783,20 @@ export async function restoreSandboxSnapshotAction(formData: FormData) {
         }
       }
 
+      if (cleanupError)
+        logSystemEvent("runtime.sandbox.restore_backup_cleanup_failed", {
+          domain: "runtime",
+          deploymentId: sandbox.deploymentId,
+          workspaceId: ctx.ws.id,
+          error: cleanupError,
+        });
+      if (unsafeCopyCleanup)
+        logSystemEvent("runtime.sandbox.restore_copy_cleanup_failed", {
+          domain: "runtime",
+          deploymentId: sandbox.deploymentId,
+          workspaceId: ctx.ws.id,
+          error: unsafeCopyCleanup,
+        });
       if (preserveRollback || cleanupError) {
         revalidatePath(`/app/${slug}/sandboxes`);
         revalidatePath(`/app/${slug}/sandboxes/${sandbox.id}`);

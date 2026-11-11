@@ -5,7 +5,7 @@ import {
   listAgentRevisionChangelog,
 } from "@/lib/agents/conversation-revisions";
 import { withRequestLogging } from "@/lib/observability/http";
-import { systemLog } from "@/lib/observability/system";
+import { logSystemEvent } from "@/lib/observability/system";
 
 export const runtime = "nodejs";
 type Context = { params: Promise<{ agentId: string }> };
@@ -35,7 +35,13 @@ async function handle(req: Request, { params }: Context) {
   } catch (error) {
     if (error instanceof AgentConversationRevisionError)
       return Response.json({ error: error.code }, { status: error.status });
-    systemLog("error", "[agent] revision changelog failed", error);
+    logSystemEvent("agents.revisions.list_failed", {
+      domain: "agent",
+      error,
+      workspaceId: agent.workspaceId,
+      agentId,
+      actorId: user.id,
+    });
     return Response.json({ error: "failed" }, { status: 500 });
   }
 }

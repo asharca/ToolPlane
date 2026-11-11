@@ -1,6 +1,7 @@
 import { startRuntimeOwner } from "@/lib/runtime/owner";
 import { runtimeCanOperate } from "@/lib/runtime/ownership-state";
-import { systemLog } from "@/lib/observability/system";
+import { logSystemEvent } from "@/lib/observability/system";
+import { maintainLogs } from "@/lib/observability/maintenance";
 import { backfillChannelSenderPolicies } from "@/lib/agents/channel-sender-access";
 import { stopIdleAgentConversationSandboxes } from "@/lib/agents/conversation-sandbox";
 import { runPendingGithubResourceSyncJobs } from "@/lib/plugins/indexer";
@@ -45,14 +46,19 @@ async function registerNodeOwned() {
     const maintain = async () => {
       if (running || !runtimeCanOperate()) return;
       running = true;
+      const started = Date.now();
       try {
-        await (await import("@/lib/observability/maintenance")).maintainLogs();
+        const removed = await maintainLogs();
+        if (removed > 0)
+          logSystemEvent("maintenance.logs.retention", {
+            attributes: { removed },
+            durationMs: Date.now() - started,
+          });
       } catch (error) {
-        (await import("@/lib/observability/system")).systemLog(
-          "error",
-          "Log retention maintenance failed",
+        logSystemEvent("maintenance.logs.retention", {
           error,
-        );
+          durationMs: Date.now() - started,
+        });
       } finally {
         running = false;
       }
@@ -65,11 +71,20 @@ async function registerNodeOwned() {
   if (!g.__githubResourceSyncTimer) {
     const synchronize = async () => {
       if (!runtimeCanOperate()) return;
+      const started = Date.now();
       try {
-        await runPendingGithubResourceSyncJobs();
-        await runPendingAgentPluginSyncs();
-      } catch {
-        systemLog("error", "GitHub resource registry maintenance failed");
+        const processed = await runPendingGithubResourceSyncJobs();
+        const synced = await runPendingAgentPluginSyncs();
+        if (processed > 0 || synced > 0)
+          logSystemEvent("maintenance.plugins.registry", {
+            attributes: { processed, synced },
+            durationMs: Date.now() - started,
+          });
+      } catch (error) {
+        logSystemEvent("maintenance.plugins.registry", {
+          error,
+          durationMs: Date.now() - started,
+        });
       }
     };
     g.__githubResourceSyncTimer = setInterval(() => {
@@ -94,18 +109,19 @@ async function registerNodeOwned() {
         deploymentConfigHelpersCreatedBefore,
       );
       if (removed > 0) {
-        systemLog(
-          "warn",
-          `[mcp] cleaned ${removed} stale deployment configuration materializer helper(s)`,
-        );
+        logSystemEvent("runtime.config_helpers.reconciled", {
+          domain: "runtime",
+          level: "warn",
+          attributes: { removed },
+        });
       }
     } catch (error) {
       failed = true;
-      systemLog(
-        "error",
-        `[mcp] deployment configuration helper reconcile attempt ${attempt} failed`,
+      logSystemEvent("runtime.config_helpers.reconcile_failed", {
+        domain: "runtime",
         error,
-      );
+        attributes: { attempt },
+      });
       if (attempt < 3) {
         const retry = setTimeout(() => {
           if (runtimeCanOperate())
@@ -125,20 +141,19 @@ async function registerNodeOwned() {
         helpersCreatedBefore,
       });
       if (Object.values(copies).some((count) => count > 0)) {
-        systemLog(
-          "warn",
-          `[mcp] cleaned ${copies.helpersRemoved} stale volume helper(s); ` +
-            `marked ${copies.copiesInterrupted} clone(s), ${copies.restoresInterrupted} restore(s), ` +
-            `${copies.upgradesInterrupted} image upgrade(s), and ${copies.snapshotsInterrupted} snapshot(s) as interrupted`,
-        );
+        logSystemEvent("runtime.sandbox_copies.reconciled", {
+          domain: "runtime",
+          level: "warn",
+          attributes: copies,
+        });
       }
     } catch (error) {
       failed = true;
-      systemLog(
-        "error",
-        `[mcp] sandbox volume reconcile attempt ${attempt} failed`,
+      logSystemEvent("runtime.sandbox_copies.reconcile_failed", {
+        domain: "runtime",
         error,
-      );
+        attributes: { attempt },
+      });
       if (attempt < 3) {
         const retry = setTimeout(() => {
           if (runtimeCanOperate()) void reconcileSandboxCopies(attempt + 1);
@@ -155,13 +170,16 @@ async function registerNodeOwned() {
     );
     const restored = await reconcileAgentChannelRunners();
     if (restored > 0)
-      systemLog(
-        "info",
-        `[agent-channels] restored ${restored} channel(s) on startup`,
-      );
+      logSystemEvent("channel.startup.reconciled", {
+        domain: "channel",
+        attributes: { restored },
+      });
   } catch (error) {
     failed = true;
-    systemLog("error", "[agent-channels] startup reconcile failed", error);
+    logSystemEvent("channel.startup.reconcile_failed", {
+      domain: "channel",
+      error,
+    });
   }
 
   try {
@@ -176,10 +194,16 @@ async function registerNodeOwned() {
     const { reconcileDeployments } = await import("@/lib/process/reconcile");
     const n = await reconcileDeployments();
     if (n > 0)
-      systemLog("info", `[mcp] reconciled ${n} deployment(s) on startup`);
+      logSystemEvent("runtime.deployments.reconciled", {
+        domain: "runtime",
+        attributes: { reconciled: n },
+      });
   } catch (error) {
     failed = true;
-    systemLog("error", "[mcp] startup reconcile failed", error);
+    logSystemEvent("runtime.deployments.reconcile_failed", {
+      domain: "runtime",
+      error,
+    });
   }
 
   try {
@@ -187,16 +211,19 @@ async function registerNodeOwned() {
     await startWorkCoordinator();
   } catch (error) {
     failed = true;
-    systemLog("error", "[work] startup reconcile failed", error);
+    logSystemEvent("runtime.work.reconcile_failed", {
+      domain: "runtime",
+      error,
+    });
   }
 
   try {
     const { startAgentWorker } = await import("@/lib/agents/execution/worker");
     await startAgentWorker();
     startAgentTriggerScheduler();
-  } catch {
+  } catch (error) {
     failed = true;
-    systemLog("error", "[a2a] startup recovery failed");
+    logSystemEvent("agent.startup.recovery_failed", { domain: "agent", error });
   }
 
   if (!g.__agentConversationMaintenanceTimer) {
@@ -204,14 +231,15 @@ async function registerNodeOwned() {
     const stopIdleRuntimes = async () => {
       if (idleRunning || !runtimeCanOperate()) return;
       idleRunning = true;
+      const started = Date.now();
       try {
         await stopIdleAgentConversationSandboxes();
       } catch (error) {
-        systemLog(
-          "error",
-          "[agent] conversation sandbox maintenance failed",
+        logSystemEvent("maintenance.sandboxes.idle_stop_failed", {
+          domain: "runtime",
           error,
-        );
+          durationMs: Date.now() - started,
+        });
       } finally {
         idleRunning = false;
       }

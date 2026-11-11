@@ -12,7 +12,7 @@ export function LogFilters({
   filters,
   observedAt,
 }: {
-  tab: string;
+  tab: "all" | "audit";
   raw: Record<string, string | undefined>;
   filters: Filters;
   observedAt: number;
@@ -29,59 +29,61 @@ export function LogFilters({
           "targetType",
           "targetId",
         ] as const)
-      : tab === "a2a"
-        ? ([
-            "workspaceId",
-            "actorId",
-            "rpcMethod",
-            "eventName",
-            "contextId",
-            "rootTaskId",
-            "parentTaskId",
-            "errorType",
-            "errorCode",
-          ] as const)
-        : ([
-            "workspaceId",
-            "actorId",
-            "deploymentId",
-            "agentId",
-            "model",
-            "requestId",
-            "traceId",
-            "runId",
-            "channelId",
-            "eventName",
-            "errorType",
-            "errorCode",
-          ] as const);
+      : ([
+          "workspaceId",
+          "actorId",
+          "deploymentId",
+          "agentId",
+          "providerId",
+          "model",
+          "path",
+          "method",
+          "toolName",
+          "rpcMethod",
+          "requestId",
+          "traceId",
+          "runId",
+          "channelId",
+          "eventName",
+          "errorType",
+          "errorCode",
+        ] as const);
   const activeCount =
     fields.filter((key) => raw[key]).length +
-    (tab !== "audit" && raw.level ? 1 : 0);
+    (tab === "all" && raw.level ? 1 : 0) +
+    (tab === "all" && raw.eventNames ? 1 : 0) +
+    (tab === "all" && raw.missing ? 1 : 0);
 
   return (
-    <form action="/admin/logs" className="space-y-3" key={JSON.stringify(raw)}>
+    <form
+      action="/admin/logs"
+      method="get"
+      className="space-y-3"
+      key={JSON.stringify(raw)}
+    >
       <input type="hidden" name="tab" value={tab} />
-      {tab === "a2a" ? <input type="hidden" name="domain" value="a2a" /> : null}
       {raw.returnTo ? (
         <input type="hidden" name="returnTo" value={raw.returnTo} />
       ) : null}
-      {tab !== "audit" ? (
+      {tab === "all"
+        ? ["eventNames", "missing"].map((key) =>
+            raw[key] ? (
+              <input key={key} type="hidden" name={key} value={raw[key]} />
+            ) : null,
+          )
+        : null}
+      {tab === "all" ? (
         <nav
           aria-label={t("logsQuickFilters")}
           className="flex flex-wrap items-center gap-2"
         >
-          <span className="text-xs text-muted-foreground">
-            {t("logsQuickFilters")}
-          </span>
-          {["error", "timeout", "denied"].map((outcome) => {
+          {(["error", "timeout", "denied"] as const).map((outcome) => {
             const query = new URLSearchParams(
               Object.entries(raw).filter(([, value]) => value) as Array<
                 [string, string]
               >,
             );
             query.set("tab", tab);
-            if (tab === "a2a") query.set("domain", "a2a");
             query.set("outcome", outcome);
             query.delete("cursor");
             query.delete("level");
@@ -90,6 +92,7 @@ export function LogFilters({
                 key={outcome}
                 size="sm"
                 variant={raw.outcome === outcome ? "primary" : "secondary"}
+                aria-current={raw.outcome === outcome ? "page" : undefined}
                 href={`/admin/logs?${query}`}
               >
                 {t(`logOutcomes.${outcome}`)}
@@ -112,35 +115,33 @@ export function LogFilters({
           leftIcon={<Search aria-hidden="true" />}
           className="min-w-0 basis-full sm:min-w-64 sm:flex-1 sm:basis-0"
         />
-        {tab !== "audit" ? (
+        {tab === "all" ? (
           <>
-            {tab !== "a2a" ? (
-              <div className="grid min-w-36 flex-1 gap-1.5 sm:max-w-40">
-                <span className="text-xs font-medium">
-                  {t("logFields.domain")}
-                </span>
-                <FormSelect
-                  name="domain"
-                  label={t("logFields.domain")}
-                  defaultValue={filters.domain ?? "all"}
-                  options={[
-                    { value: "all", label: t("logsAll") },
-                    ...[
-                      "http",
-                      "mcp",
-                      "a2a",
-                      "agent",
-                      "runtime",
-                      "channel",
-                      "system",
-                    ].map((value) => ({
-                      value,
-                      label: t(`logDomains.${value}`),
-                    })),
-                  ]}
-                />
-              </div>
-            ) : null}
+            <div className="grid min-w-36 flex-1 gap-1.5 sm:max-w-40">
+              <span className="text-xs font-medium">
+                {t("logFields.domain")}
+              </span>
+              <FormSelect
+                name="domain"
+                label={t("logFields.domain")}
+                defaultValue={filters.domain ?? "all"}
+                options={[
+                  { value: "all", label: t("logsAll") },
+                  ...[
+                    "http",
+                    "mcp",
+                    "a2a",
+                    "agent",
+                    "runtime",
+                    "channel",
+                    "system",
+                  ].map((value) => ({
+                    value,
+                    label: t(`logDomains.${value}`),
+                  })),
+                ]}
+              />
+            </div>
             <div className="grid min-w-32 flex-1 gap-1.5 sm:max-w-36">
               <span className="text-xs font-medium">{t("logsResult")}</span>
               <FormSelect
@@ -150,7 +151,10 @@ export function LogFilters({
                 options={[
                   { value: "", label: t("logsAll") },
                   ...["success", "error", "timeout", "cancelled", "denied"].map(
-                    (value) => ({ value, label: t(`logOutcomes.${value}`) }),
+                    (value) => ({
+                      value,
+                      label: t(`logOutcomes.${value}`),
+                    }),
                   ),
                 ]}
               />
@@ -173,44 +177,6 @@ export function LogFilters({
           </ButtonLink>
         </div>
       </div>
-      {tab === "a2a" ? (
-        <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="grid gap-1.5">
-            <span className="text-xs font-medium">
-              {t("logFields.direction")}
-            </span>
-            <FormSelect
-              name="direction"
-              label={t("logFields.direction")}
-              defaultValue={raw.direction ?? ""}
-              options={[
-                { value: "", label: t("logsAll") },
-                ...["inbound", "outbound", "internal"].map((value) => ({
-                  value,
-                  label: t(`logsDirections.${value}`),
-                })),
-              ]}
-            />
-          </div>
-          {[
-            "agentId",
-            "endpointId",
-            "clientId",
-            "taskId",
-            "requestId",
-            "traceId",
-          ].map((key) => (
-            <Input
-              key={key}
-              name={key}
-              label={t(`logFields.${key}`)}
-              defaultValue={raw[key]}
-              maxLength={200}
-              className="min-w-0"
-            />
-          ))}
-        </div>
-      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <nav aria-label={t("logsTimeRange")} className="flex flex-wrap gap-1">
           {[1, 24, 168].map((hours) => {
@@ -220,7 +186,6 @@ export function LogFilters({
               >,
             );
             query.set("tab", tab);
-            if (tab === "a2a") query.set("domain", "a2a");
             query.delete("cursor");
             query.set(
               "since",
@@ -288,12 +253,11 @@ export function LogFilters({
               }
               name={key}
               defaultValue={raw[key]}
-              placeholder={key}
-              maxLength={200}
+              maxLength={key === "path" || key === "toolName" ? 500 : 200}
               className="min-w-0"
             />
           ))}
-          {tab !== "audit" ? (
+          {tab === "all" ? (
             <div className="grid min-w-0 gap-1.5">
               <span className="text-xs font-medium">
                 {t("logFields.level")}

@@ -1,5 +1,6 @@
 "use server";
 
+import { logSystemEvent } from "@/lib/observability/system";
 import { revalidatePath } from "next/cache";
 import { getTranslations } from "next-intl/server";
 import { requireAdmin } from "@/lib/auth/admin";
@@ -19,7 +20,18 @@ export type NotificationActionState = {
   ok?: boolean;
 };
 
-async function failure(error: unknown): Promise<{ error: string }> {
+async function failure(
+  error: unknown,
+  eventName: string,
+  actorId?: string,
+): Promise<{ error: string }> {
+  if (!(error instanceof NotificationError)) {
+    logSystemEvent(eventName, {
+      error,
+      actorId,
+      payloadPolicy: "forbidden",
+    });
+  }
   const t = await getTranslations("console.notifications");
   return {
     error: t(
@@ -61,7 +73,7 @@ async function publish(
     if (scope.kind === "site") revalidatePath("/admin/notifications");
     return { ok: true, recipientCount: result.recipientCount };
   } catch (error) {
-    return failure(error);
+    return failure(error, "notifications.publish.failed", actorId);
   }
 }
 
@@ -78,14 +90,18 @@ export async function publishWorkspaceNotificationAction(
   form: FormData,
 ): Promise<NotificationActionState> {
   const user = await getCurrentUser();
-  if (!user) return failure(new NotificationError("forbidden"));
+  if (!user)
+    return failure(
+      new NotificationError("forbidden"),
+      "notifications.publish.failed",
+    );
   try {
     const slug = form.get("workspace");
     if (typeof slug !== "string" || !slug || slug.length > 128)
       throw new NotificationError("forbidden");
     return await publish(user.id, { kind: "workspace", slug }, form);
   } catch (error) {
-    return failure(error);
+    return failure(error, "notifications.publish.failed", user.id);
   }
 }
 
@@ -94,7 +110,11 @@ export async function markNotificationReadAction(
   form: FormData,
 ): Promise<NotificationActionState> {
   const user = await getCurrentUser();
-  if (!user) return failure(new NotificationError("forbidden"));
+  if (!user)
+    return failure(
+      new NotificationError("forbidden"),
+      "notifications.read.failed",
+    );
   try {
     const notificationId = form.get("notificationId");
     if (
@@ -107,7 +127,7 @@ export async function markNotificationReadAction(
     revalidatePath("/app", "layout");
     return { ok: true };
   } catch (error) {
-    return failure(error);
+    return failure(error, "notifications.read.failed", user.id);
   }
 }
 
@@ -117,13 +137,17 @@ export async function markAllNotificationsReadAction(
 ): Promise<NotificationActionState> {
   void form;
   const user = await getCurrentUser();
-  if (!user) return failure(new NotificationError("forbidden"));
+  if (!user)
+    return failure(
+      new NotificationError("forbidden"),
+      "notifications.read_all.failed",
+    );
   try {
     await markAllNotificationsRead(user.id);
     revalidatePath("/app", "layout");
     return { ok: true };
   } catch (error) {
-    return failure(error);
+    return failure(error, "notifications.read_all.failed", user.id);
   }
 }
 
@@ -135,7 +159,11 @@ export async function getUnreadNotificationCountAction(): Promise<
     if (!user) throw new NotificationError("forbidden");
     return { count: await getUnreadNotificationCount(user.id) };
   } catch (error) {
-    const result = await failure(error);
+    const result = await failure(
+      error,
+      "notifications.unread_count.failed",
+      user?.id,
+    );
     return { error: result.error };
   }
 }

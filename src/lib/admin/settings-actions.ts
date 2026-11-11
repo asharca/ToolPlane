@@ -1,5 +1,6 @@
 "use server";
 
+import { logSystemEvent } from "@/lib/observability/system";
 import { revalidatePath } from "next/cache";
 import { getTranslations } from "next-intl/server";
 import { requireAdmin } from "@/lib/auth/admin";
@@ -69,7 +70,11 @@ export async function updateAgentConcurrencySettingsAction(
       }
       await updateAgentConcurrencySettings(maxPerAgent, maxTotal, admin.id);
     }
-  } catch {
+  } catch (error) {
+    logSystemEvent("admin.settings.concurrency_failed", {
+      error,
+      actorId: admin.id,
+    });
     return { error: t("errorActionFailed") };
   }
   refreshAgentExecutionLimits();
@@ -92,7 +97,11 @@ export async function updateAgentSandboxAutoStopSettingsAction(
         return { error: t("errorActionFailed") };
       await updateAgentSandboxAutoStopSettings(enabled === "true", admin.id);
     }
-  } catch {
+  } catch (error) {
+    logSystemEvent("admin.settings.sandbox_auto_stop_failed", {
+      error,
+      actorId: admin.id,
+    });
     return { error: t("errorActionFailed") };
   }
   revalidatePath("/admin/settings");
@@ -125,7 +134,11 @@ export async function updateAgentAttachmentLimitAction(
       }
       await setAgentAttachmentLimitBytes(megabytes * 1_000_000, admin.id);
     }
-  } catch {
+  } catch (error) {
+    logSystemEvent("admin.settings.attachment_limit_failed", {
+      error,
+      actorId: admin.id,
+    });
     return { error: t("errorActionFailed") };
   }
 
@@ -151,7 +164,11 @@ export async function updateSkillImportLimitAction(
 
   try {
     await updateSkillImportSettings(maxSkills, admin.id);
-  } catch {
+  } catch (error) {
+    logSystemEvent("admin.settings.skill_import_limit_failed", {
+      error,
+      actorId: admin.id,
+    });
     return { error: t("errorActionFailed") };
   }
 
@@ -198,7 +215,11 @@ export async function updateMcpStartupTimeoutSettingsAction(
         admin.id,
       );
     }
-  } catch {
+  } catch (error) {
+    logSystemEvent("admin.settings.mcp_timeouts_failed", {
+      error,
+      actorId: admin.id,
+    });
     return { error: t("errorActionFailed") };
   }
 
@@ -223,7 +244,11 @@ export async function updatePrivateHostsSettingsAction(
       }
       await updatePrivateHostsSettings(value, admin.id);
     }
-  } catch {
+  } catch (error) {
+    logSystemEvent("admin.settings.private_hosts_failed", {
+      error,
+      actorId: admin.id,
+    });
     return { error: t("errorActionFailed") };
   }
 

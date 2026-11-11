@@ -3,11 +3,10 @@
 import {
   ArrowLeft,
   Bell,
-  Brain,
+  Gauge,
   Building2,
   LayoutDashboard,
   Library,
-  Plug,
   Settings,
   ScrollText,
   Users,
@@ -24,17 +23,16 @@ type AdminPageLabelKey =
   | "adminNavOverview"
   | "adminNavSettings"
   | "adminNavLogs"
+  | "adminNavPerformance"
   | "adminNavUsers"
   | "adminNavWorkspaces"
-  | "adminNavMcpServers"
-  | "adminNavSkills"
   | "adminNavCatalog"
   | "adminNavNotifications";
 
 type AdminSectionLabelKey =
   | "adminNavOperations"
   | "adminNavAccess"
-  | "adminNavDirectory";
+  | "adminNavPlatform";
 
 type NavItem = {
   labelKey: AdminPageLabelKey;
@@ -56,11 +54,10 @@ const NAV_SECTIONS: NavSection[] = [
       },
       { labelKey: "adminNavLogs", href: "/admin/logs", icon: ScrollText },
       {
-        labelKey: "adminNavNotifications",
-        href: "/admin/notifications",
-        icon: Bell,
+        labelKey: "adminNavPerformance",
+        href: "/admin/performance",
+        icon: Gauge,
       },
-      { labelKey: "adminNavSettings", href: "/admin/settings", icon: Settings },
     ],
   },
   {
@@ -75,11 +72,15 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    labelKey: "adminNavDirectory",
+    labelKey: "adminNavPlatform",
     items: [
       { labelKey: "adminNavCatalog", href: "/admin/market", icon: Library },
-      { labelKey: "adminNavMcpServers", href: "/admin/servers", icon: Plug },
-      { labelKey: "adminNavSkills", href: "/admin/skills", icon: Brain },
+      {
+        labelKey: "adminNavNotifications",
+        href: "/admin/notifications",
+        icon: Bell,
+      },
+      { labelKey: "adminNavSettings", href: "/admin/settings", icon: Settings },
     ],
   },
 ];
@@ -112,6 +113,7 @@ export function AdminSidebar() {
       title={t("adminConsoleTitle")}
       groups={NAV_SECTIONS.map((section) => ({
         id: section.labelKey,
+        title: t(section.labelKey),
         items: section.items.map(({ labelKey, href, icon: Icon }) => ({
           id: href,
           label: t(labelKey),

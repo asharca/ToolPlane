@@ -1,3 +1,4 @@
+import { withRequestLogging } from "@/lib/observability/http";
 import { handleSandboxMcp } from "@/lib/sandboxes/mcp-http";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -6,4 +7,12 @@ type Context = { params: Promise<{ sandboxId: string }> };
 async function handle(req: Request, context: Context) {
   return handleSandboxMcp(req, (await context.params).sandboxId);
 }
-export { handle as POST, handle as GET, handle as DELETE };
+const observedHandle = withRequestLogging(
+  "/api/v1/sandboxes/[sandboxId]/mcp",
+  handle,
+);
+export {
+  observedHandle as POST,
+  observedHandle as GET,
+  observedHandle as DELETE,
+};

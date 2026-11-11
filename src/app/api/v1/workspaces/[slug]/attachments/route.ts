@@ -1,3 +1,4 @@
+import { logSystemEvent } from "@/lib/observability/system";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
@@ -111,6 +112,11 @@ export const POST = withRequestLogging(
       if (error instanceof EmptyAttachmentError) {
         return Response.json({ error: error.message }, { status: 400 });
       }
+      logSystemEvent("attachments.storage.write_failed", {
+        error,
+        workspaceId: workspace.id,
+        actorId: user.id,
+      });
       return Response.json(
         {
           error:
@@ -143,11 +149,23 @@ export const POST = withRequestLogging(
         },
         { status: 201 },
       );
-    } catch {
+    } catch (error) {
+      logSystemEvent("attachments.metadata.save_failed", {
+        error,
+        workspaceId: workspace.id,
+        actorId: user.id,
+      });
       await deleteWorkspaceAttachmentFile(
         workspace.id,
         stored.storagePath,
-      ).catch(() => undefined);
+      ).catch((cleanupError) => {
+        logSystemEvent("attachments.storage.cleanup_failed", {
+          error: cleanupError,
+          level: "warn",
+          workspaceId: workspace.id,
+          actorId: user.id,
+        });
+      });
       return Response.json(
         { error: "Could not save attachment metadata." },
         { status: 500 },

@@ -95,7 +95,7 @@ vi.mock("@/lib/agents/execution/executor", () => ({
 vi.mock("@/lib/agents/pi-harness", () => ({
   PiRuntimeInterruptedError: class PiRuntimeInterruptedError extends Error {},
 }));
-vi.mock("@/lib/observability/system", () => ({ systemLog: state.log }));
+vi.mock("@/lib/observability/system", () => ({ logSystemEvent: state.log }));
 vi.mock("@/lib/observability/a2a-log", () => ({
   recordA2AEvent: vi.fn(),
   taskStateName: (name: string) => name,
@@ -545,8 +545,8 @@ describe("A2A worker admission and recovery boundaries", () => {
     await tickAgentWorker();
     expect(row.state).toBe(TaskState.TASK_STATE_FAILED);
     expect(state.log).toHaveBeenCalledWith(
-      "error",
-      "Remote A2A observation failed.",
+      "a2a.remote.reconcile_failed",
+      expect.objectContaining({ domain: "a2a", error: expect.any(Error) }),
     );
     expect(db.a2AContext.deleteMany).toHaveBeenCalledWith(
       expect.objectContaining({

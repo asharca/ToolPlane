@@ -20,7 +20,7 @@ import {
   assertRuntimeOwner,
   trackRuntimeOperation,
 } from "@/lib/runtime/ownership-state";
-import { systemLog } from "@/lib/observability/system";
+import { logSystemEvent } from "@/lib/observability/system";
 import { notifyTaskOutput } from "./execution/live-output";
 
 export const triggerSecretHash = (secret: string) =>
@@ -257,13 +257,21 @@ export function startAgentTriggerScheduler() {
           if (!claimed.count) continue;
           try {
             await runAgentTrigger(trigger);
-          } catch {
-            systemLog("warn", "Agent scheduled trigger admission failed");
+          } catch (error) {
+            logSystemEvent("scheduler.triggers.admission_failed", {
+              domain: "agent",
+              level: "warn",
+              error,
+              agentId: trigger.agentId,
+              workspaceId: trigger.workspaceId,
+              errorCode: triggerError(error),
+              attributes: { triggerId: trigger.id },
+            });
           }
         }
       });
-    } catch {
-      systemLog("error", "Agent trigger scheduler failed");
+    } catch (error) {
+      logSystemEvent("scheduler.triggers.tick_failed", { error });
     } finally {
       busy = false;
     }

@@ -1,5 +1,6 @@
 "use server";
 
+import { logSystemEvent } from "@/lib/observability/system";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
@@ -157,7 +158,13 @@ export async function createCustomSkillAction(
         status: "published",
       },
     });
-  } catch {
+  } catch (error) {
+    logSystemEvent("skills.create.failed", {
+      error,
+      workspaceId: ctx.ws.id,
+      actorId: ctx.user.id,
+      payloadPolicy: "forbidden",
+    });
     return { error: t("formSaveFailed") };
   }
   redirect(`/app/${slug}/skills/${created.id}`);
@@ -181,7 +188,14 @@ export async function updateSkillContentAction(
         status: "published",
       },
     });
-  } catch {
+  } catch (error) {
+    logSystemEvent("skills.content.save_failed", {
+      error,
+      workspaceId: ctx.ws.id,
+      actorId: ctx.user.id,
+      attributes: { installId },
+      payloadPolicy: "forbidden",
+    });
     return { error: t("formSaveFailed") };
   }
   revalidatePath(`/app/${slug}/skills/${installId}`);
@@ -274,6 +288,31 @@ async function selectBundles<T extends UploadedSkillBundle | SkillBundle>(
   return selected;
 }
 
+function logSkillImportFailure(
+  eventName: string,
+  error: unknown,
+  ctx: { ws: { id: string }; user: { id: string } },
+) {
+  // The existing upload/bundle validators use plain Errors for expected input failures.
+  if (
+    error instanceof SyntaxError ||
+    (error instanceof Error &&
+      (/^(?:invalidUpload|importSourceChanged|importSelectRoots|Invalid files payload\.|Invalid or unsafe ZIP archive\.|Format must be |File too large: |Skill (?:bundle|import) (?:is too large\.|has too many)|Skill folder is empty\.|SKILL\.md (?:not found|must be a text file\.|is too large\.)|GitHub repository tree is too large\.)/.test(
+        error.message,
+      ) ||
+        ("code" in error &&
+          typeof error.code === "string" &&
+          /^Z_/.test(error.code))))
+  )
+    return;
+  logSystemEvent(eventName, {
+    error,
+    workspaceId: ctx.ws.id,
+    actorId: ctx.user.id,
+    payloadPolicy: "forbidden",
+  });
+}
+
 export async function previewSkillUploadAction(
   _previous: SkillActionState,
   formData: FormData,
@@ -302,7 +341,8 @@ export async function previewSkillUploadAction(
         fileCount: bundle.files.length + 1,
       })),
     };
-  } catch {
+  } catch (error) {
+    logSkillImportFailure("skills.import.preview_failed", error, ctx);
     return { error: t("invalidUpload") };
   }
 }
@@ -325,6 +365,7 @@ export async function importSkillFromGithubAction(
       formData,
     );
   } catch (error) {
+    logSkillImportFailure("skills.github.import_failed", error, ctx);
     const key =
       error instanceof Error &&
       ["importSourceChanged", "importSelectRoots"].includes(error.message)
@@ -361,7 +402,13 @@ export async function importSkillFromGithubAction(
         }),
       ),
     );
-  } catch {
+  } catch (error) {
+    logSystemEvent("skills.github.save_failed", {
+      error,
+      workspaceId: ctx.ws.id,
+      actorId: ctx.user.id,
+      payloadPolicy: "forbidden",
+    });
     return { error: t("formSaveFailed") };
   }
   revalidatePath(`/app/${slug}/skills`);
@@ -389,6 +436,7 @@ export async function uploadSkillFolderAction(
       formData,
     );
   } catch (error) {
+    logSkillImportFailure("skills.upload.import_failed", error, ctx);
     const key =
       error instanceof Error &&
       ["importSourceChanged", "importSelectRoots"].includes(error.message)
@@ -427,7 +475,13 @@ export async function uploadSkillFolderAction(
         });
       }),
     );
-  } catch {
+  } catch (error) {
+    logSystemEvent("skills.upload.save_failed", {
+      error,
+      workspaceId: ctx.ws.id,
+      actorId: ctx.user.id,
+      payloadPolicy: "forbidden",
+    });
     return { error: t("formSaveFailed") };
   }
   revalidatePath(`/app/${slug}/skills`);

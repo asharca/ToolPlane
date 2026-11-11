@@ -1,3 +1,4 @@
+import { withRequestLogging } from "@/lib/observability/http";
 import { handleConsoleUi } from "@/lib/agents/execution/ui-http";
 export const runtime = "nodejs";
 async function handler(
@@ -7,5 +8,11 @@ async function handler(
   const { slug, agentId } = await params;
   return handleConsoleUi(req, slug, agentId);
 }
-export const GET = handler;
-export const POST = handler;
+export const GET = withRequestLogging(
+  "/api/v1/workspaces/[slug]/agents/[agentId]/a2a/console/ui",
+  handler,
+);
+export const POST = withRequestLogging(
+  "/api/v1/workspaces/[slug]/agents/[agentId]/a2a/console/ui",
+  handler,
+);

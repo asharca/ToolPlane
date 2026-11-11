@@ -1,4 +1,4 @@
-import { systemLog } from "@/lib/observability/system";
+import { logSystemEvent } from "@/lib/observability/system";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
@@ -89,7 +89,13 @@ export const GET = withRequestLogging(
           "x-content-type-options": "nosniff",
         },
       });
-    } catch {
+    } catch (error) {
+      logSystemEvent("attachments.storage.read_failed", {
+        error,
+        workspaceId: attachment.workspaceId,
+        actorId: user.id,
+        attributes: { attachmentId: attachment.id },
+      });
       return Response.json(
         { error: "Attachment storage is unavailable" },
         { status: 502 },
@@ -131,10 +137,12 @@ export const DELETE = withRequestLogging(
         attachment.storagePath,
       );
     } catch (error) {
-      systemLog("error", "[workspace-attachment] file cleanup failed", {
-        attachmentId: attachment.id,
+      logSystemEvent("attachments.storage.cleanup_failed", {
+        error,
+        level: "warn",
         workspaceId: attachment.workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        actorId: user.id,
+        attributes: { attachmentId: attachment.id },
       });
     }
     return new Response(null, { status: 204 });

@@ -1,5 +1,6 @@
 "use server";
 
+import { logSystemEvent } from "@/lib/observability/system";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
@@ -26,6 +27,13 @@ export async function setUserRoleAction(
   try {
     await setUserRole(admin.id, userId, role);
   } catch (e) {
+    if (!(e instanceof Error && /yourself/i.test(e.message))) {
+      logSystemEvent("admin.users.role_failed", {
+        error: e,
+        actorId: admin.id,
+        attributes: { targetUserId: userId },
+      });
+    }
     return {
       error:
         e instanceof Error && /yourself/i.test(e.message)
@@ -51,6 +59,13 @@ export async function setUserStatusAction(
   try {
     await setUserStatus(admin.id, userId, status);
   } catch (e) {
+    if (!(e instanceof Error && /yourself/i.test(e.message))) {
+      logSystemEvent("admin.users.status_failed", {
+        error: e,
+        actorId: admin.id,
+        attributes: { targetUserId: userId },
+      });
+    }
     return {
       error:
         e instanceof Error && /yourself/i.test(e.message)
@@ -79,6 +94,14 @@ export async function deleteUserAction(
   try {
     await deleteManagedUser(admin.id, userId);
   } catch (e) {
+    if (!(e instanceof Error && /yourself/i.test(e.message))) {
+      logSystemEvent("admin.users.delete_failed", {
+        error: e,
+        actorId: admin.id,
+        attributes: { targetUserId: userId },
+        secrets: [confirm, user.email],
+      });
+    }
     return {
       error:
         e instanceof Error && /yourself/i.test(e.message)

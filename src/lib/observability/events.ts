@@ -67,6 +67,7 @@ const state = globalThis as unknown as {
     pending: number;
     failures: number;
     dropped: number;
+    stderrDropped: number;
     lastSuccess: string | null;
   };
 };
@@ -74,8 +75,11 @@ state.logHealth ??= {
   pending: 0,
   failures: 0,
   dropped: 0,
+  stderrDropped: 0,
   lastSuccess: null,
 };
+// Existing development workers may retain the pre-upgrade global health object.
+state.logHealth.stderrDropped ??= 0;
 export const logHealth = state.logHealth;
 
 export function errorOutcome(error: unknown): LogOutcome {
@@ -99,19 +103,23 @@ function emit(line: string) {
   try {
     if (process.stderr.writableLength < 1_048_576)
       process.stderr.write(`${line}\n`);
+    else logHealth.stderrDropped += 1;
   } catch {
     /* Logging must not interrupt a business request, even with a closed stderr. */
   }
 }
 
 // Operational numbers are useful without allowing arbitrary Agent text into metadata.
-function agentTelemetry(value: unknown): Record<string, number | string> {
+function agentTelemetry(
+  value: unknown,
+): Record<string, number | string | boolean> {
   if (!value || typeof value !== "object") return {};
   const input = value as Record<string, unknown>;
-  const result: Record<string, number | string> = {};
+  const result: Record<string, number | string | boolean> = {};
   for (const key of [
     "step",
     "firstOutputMs",
+    "firstByteMs",
     "inputTokens",
     "outputTokens",
     "cacheReadTokens",
@@ -125,6 +133,13 @@ function agentTelemetry(value: unknown): Record<string, number | string> {
     if (typeof number === "number" && Number.isFinite(number) && number >= 0)
       result[key] = number;
   }
+  if (typeof input.stream === "boolean") result.stream = input.stream;
+  // Scheduler identity is resolved from the database, never Agent message content.
+  if (
+    typeof input.triggerId === "string" &&
+    /^[A-Za-z0-9_-]{1,200}$/.test(input.triggerId)
+  )
+    result.triggerId = input.triggerId;
   if (
     typeof input.stopReason === "string" &&
     [
@@ -183,15 +198,27 @@ async function persistEvent(entry: LogEntry): Promise<void> {
     );
   const occurredAt = entry.occurredAt ?? new Date();
   const outcome = fields.outcome ?? (error ? errorOutcome(error) : "success");
-  const errorType = sensitive
-    ? error
-      ? "Error"
-      : undefined
-    : error instanceof Error
+  const name =
+    error &&
+    typeof error === "object" &&
+    "name" in error &&
+    typeof error.name === "string"
       ? error.name
-      : error
-        ? "Error"
-        : undefined;
+      : "Error";
+  const errorType = error
+    ? sensitive
+      ? /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(name)
+        ? name
+        : "Error"
+      : error instanceof Error
+        ? error.name
+        : "Error"
+    : undefined;
+  const errorCode =
+    fields.errorCode ??
+    (error && typeof error === "object" && "code" in error
+      ? String(error.code)
+      : undefined);
   const safe = sanitizeLog(
     {
       ...context,
@@ -206,11 +233,10 @@ async function persistEvent(entry: LogEntry): Promise<void> {
         (outcome === "success" || outcome === "cancelled" ? "info" : "error"),
       errorType,
       errorCode: sensitive
-        ? undefined
-        : (fields.errorCode ??
-          (error && typeof error === "object" && "code" in error
-            ? String(error.code)
-            : undefined)),
+        ? errorCode && /^[A-Z][A-Z0-9_]{1,63}$/.test(errorCode)
+          ? errorCode
+          : undefined
+        : errorCode,
     },
     secrets,
   ).data as Record<string, unknown>;

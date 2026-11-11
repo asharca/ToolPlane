@@ -1,5 +1,6 @@
 "use server";
 
+import { logSystemEvent } from "@/lib/observability/system";
 import { revalidatePath } from "next/cache";
 import { getTranslations } from "next-intl/server";
 import { requireAdmin } from "@/lib/auth/admin";
@@ -72,7 +73,11 @@ export async function updateTransportSettingsAction(
         admin.id,
       );
     }
-  } catch {
+  } catch (error) {
+    logSystemEvent("admin.settings.transport_failed", {
+      error,
+      actorId: admin.id,
+    });
     return { error: t("errorActionFailed") };
   }
   revalidatePath("/admin/settings");

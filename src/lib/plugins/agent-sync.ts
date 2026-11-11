@@ -1,5 +1,6 @@
 import "server-only";
 import { db } from "@/lib/db";
+import { logSystemEvent } from "@/lib/observability/system";
 import {
   AgentExecutionBusyError,
   withAgentDraftLease,
@@ -98,7 +99,7 @@ async function syncAgentPlugin(
     },
     include: { targetRelease: true, marketInstall: true },
   });
-  if (!binding) return;
+  if (!binding) return false;
   const targetReleaseId = binding.targetReleaseId;
   const requestedBy = binding.syncRequestedById;
   const pendingWhere = {
@@ -188,7 +189,28 @@ async function syncAgentPlugin(
         syncTarget: { releaseId: release.id, requestedById: requestedBy },
       });
     });
+    return true;
   } catch (error) {
+    // A busy Agent is deliberately deferred, not a synchronization failure.
+    if (!(error instanceof AgentExecutionBusyError)) {
+      const reason =
+        error instanceof PluginError &&
+        [
+          "not_authorized",
+          "stale_sync",
+          "not_found",
+          "tools_unavailable",
+        ].includes(error.code)
+          ? error.code.toUpperCase()
+          : "PLUGIN_SYNC_FAILED";
+      logSystemEvent("plugins.agent.sync_failed", {
+        domain: "agent",
+        agentId,
+        workspaceId,
+        error,
+        errorCode: reason,
+      });
+    }
     await db.agentPiPackage.updateMany({
       where: pendingWhere,
       data: {
@@ -202,6 +224,7 @@ async function syncAgentPlugin(
               : "Plugin synchronization failed.",
       },
     });
+    return !(error instanceof AgentExecutionBusyError);
   }
 }
 
@@ -225,8 +248,9 @@ export async function syncInstallAgents(
 
 let retrying = false;
 export async function runPendingAgentPluginSyncs() {
-  if (retrying) return;
+  if (retrying) return 0;
   retrying = true;
+  let synced = 0;
   try {
     const pending = await db.agentPiPackage.findMany({
       where: { syncStatus: "pending" },
@@ -239,11 +263,15 @@ export async function runPendingAgentPluginSyncs() {
       take: 100,
     });
     for (const binding of pending)
-      await syncAgentPlugin(
-        binding.agent.workspaceId,
-        binding.agentId,
-        binding.marketInstallId,
-      );
+      if (
+        await syncAgentPlugin(
+          binding.agent.workspaceId,
+          binding.agentId,
+          binding.marketInstallId,
+        )
+      )
+        synced += 1;
+    return synced;
   } finally {
     retrying = false;
   }

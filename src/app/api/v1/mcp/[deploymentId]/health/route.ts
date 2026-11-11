@@ -1,3 +1,4 @@
+import { logSystemEvent } from "@/lib/observability/system";
 import { withRequestLogging } from "@/lib/observability/http";
 import { NextResponse } from "next/server";
 import { resolveRequestUser } from "@/lib/auth/request-user";
@@ -50,7 +51,15 @@ export const GET = withRequestLogging(
           signal: AbortSignal.timeout(1500),
         });
         payload = { status, reachable: true, upstream: await res.json() };
-      } catch {
+      } catch (error) {
+        logSystemEvent("mcp.health.probe_failed", {
+          domain: "mcp",
+          error,
+          deploymentId,
+          workspaceId: dep.workspaceId,
+          actorId: user.id,
+          durationMs: Date.now() - start,
+        });
         statusCode = 502;
       }
     }

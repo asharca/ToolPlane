@@ -7,6 +7,7 @@ import {
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { logSystemEvent } from "@/lib/observability/system";
 
 export { DEFAULT_SANDBOX_IMAGE } from "./images";
 
@@ -198,7 +199,20 @@ function runDockerOwned(
 }
 
 async function dockerBestEffort(args: string[]): Promise<void> {
-  await runDocker(args).catch(() => undefined);
+  await runDocker(args).catch((error) => {
+    // Concurrent cleanup may already have removed the container or volume.
+    if (
+      error instanceof Error &&
+      /no such (object|container|volume)|already removed/i.test(error.message)
+    )
+      return;
+    logSystemEvent("runtime.docker.best_effort_failed", {
+      domain: "runtime",
+      level: "warn",
+      error,
+      errorCode: "DOCKER_CLEANUP_FAILED",
+    });
+  });
 }
 
 async function runDockerIdempotent(
@@ -766,7 +780,23 @@ export async function removeDockerSandboxContainer(
 ): Promise<void> {
   // The volume outlives the container; keep its package list current.
   await syncDockerSandboxEnvironment(sandboxId, { replay: false }).catch(
-    () => undefined,
+    (error) => {
+      // Removed/stopped containers cannot sync their environment and need no recovery.
+      if (
+        error instanceof Error &&
+        /no such (object|container)|container .* is not running/i.test(
+          error.message,
+        )
+      )
+        return;
+      logSystemEvent("runtime.sandbox.environment_sync_failed", {
+        domain: "runtime",
+        level: "warn",
+        error,
+        errorCode: "SANDBOX_ENVIRONMENT_SYNC_FAILED",
+        attributes: { sandboxId },
+      });
+    },
   );
   await dockerBestEffort(["rm", "-f", sandboxContainerName(sandboxId)]);
 }

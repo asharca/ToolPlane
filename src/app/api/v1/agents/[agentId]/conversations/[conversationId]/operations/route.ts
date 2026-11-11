@@ -1,4 +1,4 @@
-import { systemLog } from "@/lib/observability/system";
+import { logSystemEvent } from "@/lib/observability/system";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { getAgentForRequest } from "@/lib/agents/queries";
@@ -74,7 +74,14 @@ export const POST = withRequestLogging(
         );
       if (error instanceof ConversationOperationError)
         return Response.json({ error: error.code }, { status: error.status });
-      systemLog("error", "[conversation] operation failed", error);
+      logSystemEvent("agents.conversation.operation_failed", {
+        domain: "agent",
+        error,
+        workspaceId: agent.workspaceId,
+        agentId,
+        conversationId,
+        actorId: user.id,
+      });
       return Response.json({ error: "failed" }, { status: 502 });
     }
   },

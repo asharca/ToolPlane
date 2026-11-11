@@ -1,4 +1,4 @@
-import { systemLog } from "@/lib/observability/system";
+import { logSystemEvent } from "@/lib/observability/system";
 import "server-only";
 import { db } from "@/lib/db";
 import { hashPassword } from "./password";
@@ -65,12 +65,12 @@ export async function requestPasswordReset(email: string): Promise<void> {
       locale: user.locale,
     });
   } catch (error) {
+    logSystemEvent("auth.password_reset.delivery_failed", {
+      error,
+      actorId: user.id,
+      secrets: [email, user.email, token, tokenHash],
+    });
     await db.passwordResetToken.deleteMany({ where: { tokenHash } });
-    systemLog(
-      "error",
-      "Unable to send password-reset email",
-      error instanceof Error ? error.message : "Unknown error",
-    );
   }
 }
 

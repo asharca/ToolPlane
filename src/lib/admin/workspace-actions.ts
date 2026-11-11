@@ -1,5 +1,6 @@
 "use server";
 
+import { logSystemEvent } from "@/lib/observability/system";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
@@ -24,7 +25,12 @@ export async function deleteWorkspaceAdminAction(
     return { error: t("errorTypeSlug") };
   try {
     await deleteManagedWorkspace(workspaceId, admin.id);
-  } catch {
+  } catch (error) {
+    logSystemEvent("admin.workspaces.delete_failed", {
+      error,
+      actorId: admin.id,
+      workspaceId,
+    });
     return { error: t("errorActionFailed") };
   }
   revalidatePath("/admin/workspaces");

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Prisma, GithubResourceRegistry } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { systemLog } from "@/lib/observability/system";
+import { logSystemEvent } from "@/lib/observability/system";
 import {
   runtimeIsReady,
   trackRuntimeOperation,
@@ -383,8 +383,9 @@ async function publish(
 }
 let processing = false;
 export async function runPendingGithubResourceSyncJobs() {
-  if (processing || !runtimeIsReady()) return;
+  if (processing || !runtimeIsReady()) return 0;
   processing = true;
+  let processed = 0;
   try {
     await trackRuntimeOperation(async () => {
       // A crashed owner's lease must expire before its durable running job can be reclaimed.
@@ -463,6 +464,8 @@ export async function runPendingGithubResourceSyncJobs() {
           return current;
         });
         if (!registry) continue;
+        processed += 1;
+        const started = Date.now();
         const heartbeat = setInterval(() => {
           if (!runtimeIsReady()) return;
           void db.githubResourceRegistry
@@ -470,7 +473,14 @@ export async function runPendingGithubResourceSyncJobs() {
               where: { id: registry.id, leaseToken },
               data: { leaseExpiresAt: new Date(Date.now() + 120_000) },
             })
-            .catch(() => undefined);
+            .catch((error) => {
+              logSystemEvent("plugins.registry.lease_renewal_failed", {
+                error,
+                errorCode: "REGISTRY_LEASE_RENEWAL_FAILED",
+                workspaceId: registry.workspaceId ?? undefined,
+                attributes: { sourceId: registry.id },
+              });
+            });
         }, 20_000);
         heartbeat.unref?.();
         try {
@@ -510,13 +520,27 @@ export async function runPendingGithubResourceSyncJobs() {
             commit,
             prepared,
           );
+          logSystemEvent("plugins.registry.synced", {
+            workspaceId: registry.workspaceId ?? undefined,
+            durationMs: Date.now() - started,
+            attributes: {
+              sourceId: registry.id,
+              resourceCount: prepared.length,
+              releaseCount: prepared.filter((item) => item.manifest).length,
+            },
+          });
         } catch (error) {
           const code =
             error instanceof GithubRegistryError
               ? error.code
               : "registry_sync_failed";
-          if (!(error instanceof GithubRegistryError))
-            systemLog("error", "Plugin source sync failed", error);
+          logSystemEvent("plugins.registry.sync_failed", {
+            error,
+            errorCode: code.toUpperCase(),
+            workspaceId: registry.workspaceId ?? undefined,
+            durationMs: Date.now() - started,
+            attributes: { sourceId: registry.id },
+          });
           await db.$transaction(async (tx) => {
             await tx.githubResourceSyncJob.updateMany({
               where: { id: job.id, status: "running", leaseToken },
@@ -552,6 +576,7 @@ export async function runPendingGithubResourceSyncJobs() {
         }
       }
     });
+    return processed;
   } finally {
     processing = false;
   }

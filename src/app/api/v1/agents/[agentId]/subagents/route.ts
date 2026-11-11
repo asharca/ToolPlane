@@ -1,3 +1,4 @@
+import { withRequestLogging } from "@/lib/observability/http";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { resolveRequestUser } from "@/lib/auth/request-user";
@@ -56,5 +57,11 @@ async function handle(
     return pluginApiError(error);
   }
 }
-export const GET = handle;
-export const PUT = handle;
+export const GET = withRequestLogging(
+  "/api/v1/agents/[agentId]/subagents",
+  handle,
+);
+export const PUT = withRequestLogging(
+  "/api/v1/agents/[agentId]/subagents",
+  handle,
+);

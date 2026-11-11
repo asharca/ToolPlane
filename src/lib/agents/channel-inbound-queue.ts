@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { appendAgentChannelLog } from "./channel-runtime-logs";
 import { runPersistedChannelCallback } from "./message-service";
 import { runtimeCanOperate } from "@/lib/runtime/ownership-state";
+import { logSystemEvent } from "@/lib/observability/system";
 
 const LEASE_MS = 90_000;
 const MAX_ATTEMPTS = 3;
@@ -204,7 +205,13 @@ async function drain(connectionId: string, queueKey: string) {
           });
           if (renewed.count) lease = next;
         })
-        .catch(() => {});
+        .catch((error) => {
+          logSystemEvent("channel.inbound.lease_renewal_failed", {
+            domain: "channel",
+            channelId: connectionId,
+            error,
+          });
+        });
     }, LEASE_MS / 3);
     timer.unref?.();
     try {
@@ -244,6 +251,11 @@ async function drain(connectionId: string, queueKey: string) {
         },
       });
       if (detached) return;
+      logSystemEvent("channel.inbound.processing_failed", {
+        domain: "channel",
+        channelId: connectionId,
+        error,
+      });
       appendAgentChannelLog(
         connectionId,
         "error",
@@ -254,26 +266,35 @@ async function drain(connectionId: string, queueKey: string) {
 }
 
 export async function recoverChannelInboundEvents(connectionId?: string) {
-  const rows = await db.agentChannelInboundEvent.findMany({
-    where: {
-      ...(connectionId ? { connectionId } : {}),
-      OR: [
-        { status: "queued" },
-        { status: "processing", leaseUntil: { lte: new Date() } },
-      ],
-    },
-    distinct: ["connectionId", "queueKey"],
-    select: { connectionId: true, queueKey: true },
-  });
-  await Promise.all(
-    rows.map((row) =>
-      processChannelInboundQueue(row.connectionId, row.queueKey),
-    ),
-  );
-  await db.agentChannelInboundEvent.deleteMany({
-    where: {
-      status: { in: ["done", "failed"] },
-      updatedAt: { lt: new Date(Date.now() - 7 * 86400_000) },
-    },
-  });
+  try {
+    const rows = await db.agentChannelInboundEvent.findMany({
+      where: {
+        ...(connectionId ? { connectionId } : {}),
+        OR: [
+          { status: "queued" },
+          { status: "processing", leaseUntil: { lte: new Date() } },
+        ],
+      },
+      distinct: ["connectionId", "queueKey"],
+      select: { connectionId: true, queueKey: true },
+    });
+    await Promise.all(
+      rows.map((row) =>
+        processChannelInboundQueue(row.connectionId, row.queueKey),
+      ),
+    );
+    await db.agentChannelInboundEvent.deleteMany({
+      where: {
+        status: { in: ["done", "failed"] },
+        updatedAt: { lt: new Date(Date.now() - 7 * 86400_000) },
+      },
+    });
+  } catch (error) {
+    logSystemEvent("channel.inbound.recovery_failed", {
+      domain: "channel",
+      channelId: connectionId,
+      error,
+    });
+    throw error;
+  }
 }
