@@ -10,6 +10,8 @@ import {
   UnsupportedOperationError,
 } from "@a2a-js/sdk/errors";
 import { db } from "@/lib/db";
+import { readTaskOutput } from "@/lib/agents/execution/live-output-read";
+import type { LiveTaskOutput } from "@/lib/agents/execution/live-output-types";
 import {
   assertLocalActor,
   assertLocalGrant,
@@ -59,6 +61,7 @@ export type ConsoleTaskTree = {
     contextId?: string;
   }>;
   selectedTask: Record<string, unknown>;
+  selectedOutput?: LiveTaskOutput;
 };
 
 type ConsoleLocalTarget = { name: string; binding: string; targets: string[] };
@@ -585,6 +588,7 @@ export async function getConsoleTaskTree(
     rootTaskId: root.id,
     nodes,
     restricted: visible.size !== rows.length,
+    selectedOutput: readTaskOutput(selected),
     selectedTask: jsonTask(
       historyView(Task.fromJSON(selected.snapshot), historyLength),
     ),

@@ -132,6 +132,7 @@ import {
   taskOutput,
   startTaskOutput,
   publishTaskText,
+  publishTaskActivity,
 } from "@/lib/agents/execution/live-output";
 
 const consoleCookie = vi.hoisted(() => ({ value: null as string | null }));
@@ -1556,6 +1557,22 @@ describe("console task tree authorization", () => {
     const file = assertDefined((await listTaskFiles(parent.id))[0]);
     startTaskOutput(parent.id, { runtimeKind: "pi-sdk" });
     publishTaskText(parent.id, "Real shared execution output");
+    publishTaskActivity(parent.id, {
+      type: "tool",
+      status: "completed",
+      toolCallId: "retained-mcp-call",
+      toolName: "mcp__history_lookup",
+      input: { query: "retained history" },
+      output: { text: "MCP result retained" },
+    });
+    const childRun = assertDefined(await claimTask(delegated.row.id));
+    await finishTask(
+      childRun.id,
+      assertDefined(childRun.leaseToken),
+      TaskState.TASK_STATE_COMPLETED,
+      undefined,
+      textArtifact("Delegated task complete"),
+    );
     await finishTask(
       parent.id,
       assertDefined(parent.leaseToken),
@@ -1625,7 +1642,44 @@ describe("console task tree authorization", () => {
       owner.id,
     );
     expect(detail.status).toBe(200);
-    expect((await detail.json()).selectedTask).toMatchObject({ id: parent.id });
+    const completed = await detail.json();
+    expect(completed.selectedTask).toMatchObject({ id: parent.id });
+    const retainedActivity = {
+      type: "tool",
+      status: "completed",
+      toolCallId: "retained-mcp-call",
+      toolName: "mcp__history_lookup",
+      input: { query: "retained history" },
+      output: { text: "MCP result retained" },
+    };
+    expect(completed.selectedOutput).toMatchObject({
+      taskId: parent.id,
+      done: true,
+      active: false,
+      activities: expect.arrayContaining([
+        expect.objectContaining(retainedActivity),
+      ]),
+    });
+    // A new viewer must recover tools from the ledger after the process replay expires.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61_000);
+    try {
+      const reopened = await handleA2AConsoleTasks(
+        new Request(tasksUrl),
+        workspace.slug,
+        owner.id,
+      );
+      expect(reopened.status).toBe(200);
+      expect((await reopened.json()).selectedOutput).toMatchObject({
+        taskId: parent.id,
+        done: true,
+        active: false,
+        activities: expect.arrayContaining([
+          expect.objectContaining(retainedActivity),
+        ]),
+      });
+    } finally {
+      clock.mockRestore();
+    }
     expect(
       (
         await getConsoleTaskTree(
