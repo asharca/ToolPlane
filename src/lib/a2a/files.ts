@@ -244,7 +244,7 @@ async function assertAdmittedFileWriteAuthority(
     !file?.source ||
     file.workspaceId !== grant.workspaceId ||
     file.expiresAt <= new Date() ||
-    file.filename !== safeAttachmentFilename(filename) ||
+    file.filename !== filename ||
     file.mimeType !== mimeType
   )
     throw missing();
@@ -312,6 +312,7 @@ async function storeAuthorizedTaskFile(
   const settings = await getTransportSettings();
   const fileBytes = settings.a2aFileBytes;
   const token = randomUUID();
+  // Protocol metadata retains the caller's filename; only disk paths use ASCII.
   const safeName = safeAttachmentFilename(filename);
   const path = `objects/${token}-${safeName}`;
   const reservation = await db.$transaction(async (tx) => {
@@ -368,7 +369,7 @@ async function storeAuthorizedTaskFile(
     );
     const data = {
       workspaceId: task.context.workspaceId,
-      filename: safeName,
+      filename,
       mimeType,
       status: "uploading",
       uploadToken: token,
@@ -409,7 +410,7 @@ async function storeAuthorizedTaskFile(
     if (
       size !== file.size ||
       hash.digest("hex") !== file.sha256 ||
-      safeName !== file.filename ||
+      filename !== file.filename ||
       mimeType !== file.mimeType
     )
       throw new UnsupportedOperationError(
