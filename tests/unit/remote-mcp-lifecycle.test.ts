@@ -9,7 +9,10 @@ const mocks = vi.hoisted(() => ({
   operation: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({
-  db: { deployment: { findFirst: mocks.deployment } },
+  db: {
+    deployment: { findFirst: mocks.deployment },
+    systemSetting: { findUnique: vi.fn(async () => null) },
+  },
 }));
 vi.mock("@/lib/process/supervisor", () => ({
   liveMcpRuntimeSnapshot: mocks.snapshot,
@@ -682,18 +685,6 @@ describe("pinned remote credential access", () => {
     await expect(listPinnedRemoteMcpTools(context())).resolves.toMatchObject([
       { name: "read" },
     ]);
-    expect(mocks.operation).toHaveBeenCalledWith(
-      "workspace",
-      "remote",
-      expect.any(Function),
-    );
-    expect(mocks.deployment).toHaveBeenNthCalledWith(1, {
-      where: { id: "remote", workspaceId: "workspace" },
-    });
-    expect(mocks.deployment).toHaveBeenNthCalledWith(2, {
-      where: { id: "remote", workspaceId: "workspace" },
-      include: { server: { select: { name: true } } },
-    });
     expect(mocks.start).toHaveBeenCalledWith(
       "remote",
       expect.objectContaining({

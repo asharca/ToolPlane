@@ -44,12 +44,12 @@ for (const name of [
 const userBin = join(process.env.HOME, ".local/bin");
 if (!(process.env.PATH ?? "").split(":").includes(userBin))
   process.env.PATH = `${userBin}:${process.env.PATH ?? ""}`;
-// Explicit Agent-wide shared files, linked into each conversation workspace.
-mkdirSync("/workspace/shared", { recursive: true });
+// The trusted runtime supplies Agent-wide files linked into each conversation workspace.
+mkdirSync(config.sharedDir, { recursive: true });
 try {
   lstatSync(join(config.workspaceRoot, "shared"));
 } catch {
-  symlinkSync("/workspace/shared", join(config.workspaceRoot, "shared"));
+  symlinkSync(config.sharedDir, join(config.workspaceRoot, "shared"));
 }
 const sdkEntry = realpathSync(
   join(

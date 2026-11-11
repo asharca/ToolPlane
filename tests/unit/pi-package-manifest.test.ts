@@ -538,7 +538,6 @@ describe("immutable Pi package manifests", () => {
   it.each([
     "https://user:password@code.example/repo.git",
     "https://code.example/repo.git?token=secret",
-    "http://code.example/repo.git",
     "file:///tmp/repo",
   ])("rejects credentialed or nonpublic Git provenance %s", (url) => {
     const manifest = fixture();

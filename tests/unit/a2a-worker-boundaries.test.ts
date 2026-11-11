@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TaskState } from "@a2a-js/sdk";
+import { Task, TaskState } from "@a2a-js/sdk";
 import type { A2ATask } from "@prisma/client";
 import { assertDefined } from "../assert-defined";
 const state = vi.hoisted(() => ({
@@ -54,6 +54,15 @@ vi.mock("@/lib/db", () => ({
     },
     agentSandbox: { findMany: state.assigned },
     a2AContext: { findMany: vi.fn(async () => []), deleteMany: vi.fn() },
+    $transaction: vi.fn(async (operation) =>
+      operation({
+        $queryRaw: vi.fn(async () => []),
+        agentUsage: { createMany: vi.fn(async () => ({ count: 1 })) },
+        agent: {
+          findUniqueOrThrow: vi.fn(async () => ({ monthlyBudgetMicros: null })),
+        },
+      }),
+    ),
   },
 }));
 vi.mock("@/lib/a2a/store", () => ({
@@ -127,6 +136,13 @@ function task(
     contextId: "context",
     state: TaskState.TASK_STATE_SUBMITTED,
     phase: "queued",
+    snapshot: Task.toJSON(
+      Task.fromJSON({
+        id: "task",
+        contextId: "context",
+        status: { state: "TASK_STATE_SUBMITTED" },
+      }),
+    ),
     executionBackend: backend,
     nativeOperationId: bound ? "operation" : null,
     leaseToken: "lease",
