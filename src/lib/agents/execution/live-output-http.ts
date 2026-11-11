@@ -103,8 +103,8 @@ async function conversationObservation(
     task.rootTaskId !== task.id
   )
     throw new TaskNotFoundError();
-  // Ordinary channel history is workspace-visible, but private native chat/control
-  // execution output remains owner-only, just like its console tree.
+  // Channel history and output are workspace-visible. Ordinary private native
+  // chat/control observation keeps its existing owner-only boundary.
   if (binding.kind !== "channel" && grant.actorId !== userId)
     throw new TaskNotFoundError();
   const output = readTaskOutput(task);
@@ -169,8 +169,8 @@ export async function handleConsoleOutputEvents(
         selectedId = parsed.data.selectedTaskId ?? rootId;
       const load = async (): Promise<Observation> => {
         const ctx = await sessionActor(req, slug, agentId);
-        // EXACT same selected/root visibility, edges, remote binding and actor
-        // restrictions as the console history API; no ID-only authorization.
+        // Recheck workspace membership and stored root/child provenance on every load;
+        // observation never mints or validates an execution credential.
         try {
           await getConsoleTaskTree(ctx, rootId, selectedId, 0);
         } catch (error) {

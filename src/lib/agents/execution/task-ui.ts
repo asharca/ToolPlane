@@ -9,7 +9,7 @@ import { assertLocalGrant } from "@/lib/a2a/local-policy";
 import { isLocalGrant, type TaskGrant } from "@/lib/a2a/principal";
 import { lockTask } from "@/lib/a2a/store";
 import { refreshTaskStorage, A2AQuotaError } from "@/lib/a2a/quotas";
-import { getConsoleTaskTree } from "@/lib/a2a/console-tasks";
+import { getConsoleMutationTaskTree } from "@/lib/a2a/console-tasks";
 import type { ConsoleActor } from "@/lib/a2a/console-service";
 import {
   applyNativeUiAction,
@@ -112,7 +112,7 @@ export async function readTaskUi(
   rootTaskId: string,
   taskId: string,
 ) {
-  await getConsoleTaskTree(ctx, rootTaskId, taskId);
+  await getConsoleMutationTaskTree(ctx, rootTaskId, taskId);
   const row = await db.a2ATask.findUniqueOrThrow({ where: { id: taskId } });
   const grant = row.grant as unknown as TaskGrant;
   if (
@@ -148,7 +148,7 @@ export async function respondTaskUi(
   taskId: string,
   response: z.infer<typeof NativeUiResponse>,
 ) {
-  await getConsoleTaskTree(ctx, rootTaskId, taskId);
+  await getConsoleMutationTaskTree(ctx, rootTaskId, taskId);
   return db.$transaction(async (tx) => {
     const initial = await tx.a2ATask.findUniqueOrThrow({
       where: { id: taskId },

@@ -3216,6 +3216,7 @@
         "loadMore": "加载更多会话",
         "task": "任务 {number}"
       },
+      "channelGroup": "频道",
       "completionNotificationTitle": "ToolPlane · 本轮已结束",
       "completionNotificationEnable": "启用此 Work 页面不活跃时的完成通知",
       "completionNotificationDisable": "关闭页面不活跃时的完成通知",

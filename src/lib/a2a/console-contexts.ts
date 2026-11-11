@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import type { ConsoleActor } from "./console-service";
 import { getConsoleTaskTree, type ConsoleTaskTree } from "./console-tasks";
 import { jsonTask } from "./model";
+import { assertLocalActor } from "./local-policy";
 import {
   A2AHttpError,
   isLocalGrant,
@@ -47,10 +48,10 @@ function decodeCursor(value?: string): ContextCursor | undefined {
   }
 }
 
-/** Entry policy is inherited by children: exclude entry roots, not their delegations. */
+/** Ordinary entry roots have separate navigation; published clients are A2A peers. */
 function inbound(grant: TaskGrant, parentTaskId: string | null) {
   return (
-    isWorkspaceGrant(grant) && (Boolean(parentTaskId) || !grant.entryPolicy)
+    !isWorkspaceGrant(grant) || Boolean(parentTaskId) || !grant.entryPolicy
   );
 }
 
@@ -59,11 +60,21 @@ export async function getConsoleContexts(
   ctx: ConsoleActor,
   query: { taskId?: string; cursor?: string } = {},
 ): Promise<{ items: ConsoleContext[]; nextCursor: string | null }> {
+  await assertLocalActor(db, ctx.workspaceId, ctx.actorId);
   let cursor = decodeCursor(query.cursor);
   const owned: Prisma.A2ATaskWhereInput = {
     context: {
       workspaceId: ctx.workspaceId,
-      agentId: ctx.agentId,
+      OR: [
+        { targetKind: "local", agentId: ctx.agentId },
+        {
+          targetKind: "published",
+          endpoint: {
+            workspaceId: ctx.workspaceId,
+            sourceAgentId: ctx.agentId,
+          },
+        },
+      ],
       expiresAt: { gt: new Date() },
       // Ordinary entry contexts already have their own navigation. Delegated
       // children execute in separate contexts and remain eligible.
@@ -73,15 +84,7 @@ export async function getConsoleContexts(
         },
       },
     },
-    AND: [
-      { grant: { path: ["actorId"], equals: ctx.actorId } },
-      { grant: { path: ["workspaceId"], equals: ctx.workspaceId } },
-      {
-        OR: ["local", "remote"].map((kind) => ({
-          grant: { path: ["kind"], equals: kind },
-        })),
-      },
-    ],
+    grant: { path: ["workspaceId"], equals: ctx.workspaceId },
   };
   const trees = new Map<
     string,
@@ -93,13 +96,9 @@ export async function getConsoleContexts(
     grant: Prisma.JsonValue;
   }) {
     const grant = row.grant as unknown as TaskGrant;
-    if (
-      !isWorkspaceGrant(grant) ||
-      grant.actorId !== ctx.actorId ||
-      grant.workspaceId !== ctx.workspaceId
-    )
-      return null;
-    const rootTaskId = row.rootTaskId;
+    if (!grant || grant.workspaceId !== ctx.workspaceId) return null;
+    const rootTaskId =
+      row.rootTaskId ?? (!isWorkspaceGrant(grant) ? row.id : null);
     if (!rootTaskId) return null;
     let authorized = trees.get(rootTaskId);
     if (!authorized) {
@@ -107,16 +106,25 @@ export async function getConsoleContexts(
         where: {
           id: rootTaskId,
           parentTaskId: null,
-          context: { workspaceId: ctx.workspaceId, targetKind: "local" },
+          context: { workspaceId: ctx.workspaceId },
         },
-        select: { context: { select: { agentId: true } } },
+        select: {
+          context: {
+            select: {
+              agentId: true,
+              endpoint: { select: { sourceAgentId: true } },
+            },
+          },
+        },
       });
-      if (!root?.context.agentId) return null;
+      const rootAgentId =
+        root?.context.agentId ?? root?.context.endpoint?.sourceAgentId;
+      if (!rootAgentId) return null;
       try {
         authorized = {
-          rootAgentId: root.context.agentId,
+          rootAgentId,
           tree: await getConsoleTaskTree(
-            { ...ctx, agentId: root.context.agentId },
+            { ...ctx, agentId: rootAgentId },
             rootTaskId,
             row.id,
           ),
@@ -177,10 +185,10 @@ export async function getConsoleContexts(
       if (!inbound(row.grant as unknown as TaskGrant, row.parentTaskId))
         continue;
       const authority = await authorize(row);
-      if (!authority || !row.rootTaskId) continue;
+      if (!authority) continue;
       tasks.push({
         taskId: row.id,
-        rootTaskId: row.rootTaskId,
+        rootTaskId: authority.tree.rootTaskId,
         rootAgentId: authority.rootAgentId,
         createdAt: row.createdAt.toISOString(),
       });
@@ -212,7 +220,10 @@ export async function getConsoleContexts(
       contextId: id,
       peer: sender
         ? { kind: "agent", name: sender.name }
-        : { kind: "client", name: "Console" },
+        : {
+            kind: "client",
+            name: isWorkspaceGrant(grant) ? "Console" : "API client",
+          },
       title: typeof title === "string" ? title.trim().slice(0, 120) : "",
       state: status?.state ?? "TASK_STATE_UNSPECIFIED",
       updatedAt: updated.updatedAt.toISOString(),

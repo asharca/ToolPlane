@@ -1973,6 +1973,7 @@ describe("read-only live execution observation", () => {
       data: { workspaceId: workspace.id, userId: member.id, role: "member" },
     });
     let stream: CollectedEvents | undefined;
+    let consoleStream: CollectedEvents | undefined;
     try {
       expect(
         (
@@ -2005,7 +2006,9 @@ describe("read-only live execution observation", () => {
             }),
           },
         );
-      expect((await consoleReq()).status).toBe(404);
+      const consoleResponse = await consoleReq();
+      expect(consoleResponse.status).toBe(200);
+      consoleStream = await collect(consoleResponse);
       identity.user = owner;
       expect((await consoleReq("unrelated-task-id")).status).toBe(404);
       identity.user = member;
@@ -2019,8 +2022,16 @@ describe("read-only live execution observation", () => {
           timeout: 8000,
         })
         .toBe(true);
+      await expect
+        .poll(
+          () =>
+            consoleStream?.events.some((event) => event.event === "revoked"),
+          { timeout: 8000 },
+        )
+        .toBe(true);
     } finally {
       await stream?.close();
+      await consoleStream?.close();
       identity.user = owner;
       await db.user.delete({ where: { id: member.id } });
       await finishTask(

@@ -50,6 +50,7 @@ import {
 import { assertLocalActor, localTarget, LOCAL_LIMITS } from "./local-policy";
 import { remoteTarget } from "./remote-policy";
 import { assertEntryPolicy } from "@/lib/agents/execution/entry-policy";
+import { getConsoleTaskTree } from "./console-tasks";
 
 export type TaskFile = A2ATaskFile & {
   taskId: string;
@@ -523,6 +524,46 @@ export async function listTaskFiles(taskId: string): Promise<TaskFile[]> {
 }
 export async function openTaskFile(taskId: string, fileId: string) {
   const task = await assertTaskFileReadAuthority(taskId);
+  return openAuthorizedTaskFile(task, fileId);
+}
+
+/** Browser history must not fall back to the initiator's live execution grant. */
+export async function openWorkspaceTaskFile(
+  actorId: string,
+  taskId: string,
+  fileId: string,
+) {
+  const task = await db.a2ATask.findUnique({
+    where: { id: taskId },
+    include: { context: true },
+  });
+  if (!task) throw missing();
+  const root = await db.a2ATask.findFirst({
+    where: {
+      id: task.rootTaskId ?? task.id,
+      parentTaskId: null,
+      context: { workspaceId: task.context.workspaceId },
+    },
+    include: {
+      context: { include: { endpoint: { select: { sourceAgentId: true } } } },
+    },
+  });
+  const agentId =
+    root?.context.agentId ?? root?.context.endpoint?.sourceAgentId;
+  if (!root || !agentId) throw missing();
+  await getConsoleTaskTree(
+    { workspaceId: task.context.workspaceId, actorId, agentId, slug: "" },
+    root.id,
+    task.id,
+  );
+  return openAuthorizedTaskFile(task, fileId);
+}
+
+async function openAuthorizedTaskFile(
+  task: AuthorizedFileTask,
+  fileId: string,
+) {
+  const taskId = task.id;
   const row = await db.a2ATaskFile.findFirst({
     where: { id: fileId, taskId, workspaceId: task.context.workspaceId },
   });

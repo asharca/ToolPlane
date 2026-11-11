@@ -1,15 +1,8 @@
 import "server-only";
 import { TaskNotFoundError } from "@a2a-js/sdk/errors";
-import { resolveRequestUser } from "@/lib/auth/request-user";
+import { resolveRequestPrincipal } from "@/lib/auth/request-user";
 import { safeAttachmentFilename } from "@/lib/attachments/storage";
-import { db } from "@/lib/db";
-import { assertLocalActor } from "./local-policy";
-import { isWorkspaceGrant, type TaskGrant } from "./principal";
-import {
-  assertTaskFileReadAuthority,
-  openTaskFile,
-  openTaskFileCapability,
-} from "./files";
+import { openWorkspaceTaskFile, openTaskFileCapability } from "./files";
 
 function attachmentDisposition(filename: string): string {
   const fallback = safeAttachmentFilename(filename);
@@ -66,7 +59,7 @@ export async function taskFileDownload(
   }
 }
 
-/** Same-user task visibility plus current workspace membership; no transferable ticket. */
+/** Session-only workspace task observation; no transferable ticket or execution authority. */
 export async function taskFileSessionDownload(
   req: Request,
   fileId: string,
@@ -82,16 +75,18 @@ export async function taskFileSessionDownload(
     const site = req.headers.get("sec-fetch-site");
     if (site && !["same-origin", "none"].includes(site))
       return new Response(null, { status: 403, headers });
-    const user = await resolveRequestUser(req);
-    if (!user) return new Response(null, { status: 401, headers });
+    if (req.headers.has("authorization"))
+      return new Response(null, { status: 401, headers });
+    const principal = await resolveRequestPrincipal(req);
+    if (principal?.credential !== "session")
+      return new Response(null, { status: 401, headers });
     const query = new URL(req.url).searchParams;
     if (query.getAll("task").length !== 1) throw new TaskNotFoundError();
-    const task = await assertTaskFileReadAuthority(query.get("task") ?? "");
-    const grant = task.grant as unknown as TaskGrant;
-    if (!isWorkspaceGrant(grant) || grant.actorId !== user.id)
-      throw new TaskNotFoundError();
-    await assertLocalActor(db, grant.workspaceId, user.id);
-    const { file, body } = await openTaskFile(task.id, fileId);
+    const { file, body } = await openWorkspaceTaskFile(
+      principal.user.id,
+      query.get("task") ?? "",
+      fileId,
+    );
     return new Response(body, {
       headers: {
         ...headers,

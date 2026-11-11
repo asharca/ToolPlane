@@ -468,7 +468,7 @@ export const a2aOpenApi = {
         operationId: "listConsoleA2AContexts",
         summary: "List received A2A conversations for Work",
         description:
-          "Read-only, same-origin browser endpoint using the signed-in session cookie; Authorization headers are rejected. Lists unexpired executing contexts visible to this actor through their authorized root task trees, excluding ordinary chat/channel/work/trigger/control entry roots. Delegated children of those roots remain eligible. Console RPC roots use peer client/Console; local delegations use the sending Agent name. Published-service grants without workspace actor authority are not visible. Results are ordered by latest task update, newest first, in pages of 20. Tasks are the latest 20, ordered by creation ascending. Transcripts use the existing console/tasks endpoint on rootAgentId with rootTaskId and selectedTaskId; this endpoint creates no Conversation or Message records.",
+          "Read-only, same-origin browser endpoint using the signed-in session cookie; Authorization headers are rejected. Every active workspace member can observe retained, unexpired A2A contexts, independent of the initiator, current default Agent revision or availability of retired execution capabilities. Includes console RPC roots, incoming local delegations and published-service client tasks (peer client/API client); excludes ordinary chat/channel/work/trigger/control entry roots, whose delegated children remain eligible. Stored root/parent/ancestor provenance and workspace identity are verified, never a bare child ID. Results are ordered by latest task update, newest first, in pages of 20. Tasks are the latest 20, ordered by creation ascending. Transcripts use console/tasks on rootAgentId with rootTaskId and selectedTaskId, live output uses console/tasks/events, and file Parts use their existing session download URL. All these reads recheck workspace membership; streams also recheck while connected. Reading does not grant execution, cancellation, approval or file retry authority. No Conversation or Message records are created.",
         security: [{ consoleSession: [] }],
         parameters: [
           {
@@ -487,7 +487,8 @@ export const a2aOpenApi = {
         ],
         responses: {
           "200": {
-            description: "Received A2A contexts visible to this session actor.",
+            description:
+              "Received A2A contexts visible to the signed-in workspace member.",
             content: jsonContent(ref("A2AConsoleContexts")),
           },
           default: {
