@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.36.0](https://github.com/asharca/ToolPlane/compare/v0.35.2...v0.36.0) (2026-11-11)
+
+
+### Features
+
+* **a2a:** 在工作侧栏以只读会话展示收到的 A2A 任务 ([#211](https://github.com/asharca/ToolPlane/issues/211)) ([c195f19](https://github.com/asharca/ToolPlane/commit/c195f19c091bf81a75b551385192fda60884e737))
+* **sandbox:** 记录共享沙箱安装的软件并在容器重建后重装 ([#208](https://github.com/asharca/ToolPlane/issues/208)) ([8551959](https://github.com/asharca/ToolPlane/commit/8551959b09df1a3ca57c2bfacac60699a7918644))
+
+
+### Bug Fixes
+
+* **a2a:** 保留中文附件文件名并编码下载响应头 ([c117bf6](https://github.com/asharca/ToolPlane/commit/c117bf68a0582c6a250430d826c948e05cdf1cbf))
+* **plugins:** 允许 Agent 执行期间同步插件和修改绑定 ([#209](https://github.com/asharca/ToolPlane/issues/209)) ([cf4322e](https://github.com/asharca/ToolPlane/commit/cf4322e578379c422ac50ae8beeae9f4abebc111))
+
 ## [0.35.2](https://github.com/asharca/ToolPlane/compare/v0.35.1...v0.35.2) (2026-11-10)
 
 
