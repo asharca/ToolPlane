@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.37.0](https://github.com/asharca/ToolPlane/compare/v0.36.2...v0.37.0) (2026-11-11)
+
+
+### Features
+
+* **admin:** 重构管理控制台并完善后台结构化日志 ([#217](https://github.com/asharca/ToolPlane/issues/217)) ([858fbf1](https://github.com/asharca/ToolPlane/commit/858fbf1e87bae17c0b4b3d7db94f735d24870418))
+* 同一智能体的会话共享 HOME 与 shared 目录 ([#218](https://github.com/asharca/ToolPlane/issues/218)) ([3deb1e1](https://github.com/asharca/ToolPlane/commit/3deb1e1a8d0a2646b5d88a0b7f454b779c7efb94))
+
+
+### Bug Fixes
+
+* 修复发布验收的宿主环境与过期测试契约 ([#220](https://github.com/asharca/ToolPlane/issues/220)) ([9ed055e](https://github.com/asharca/ToolPlane/commit/9ed055ef6bf06ae956e8e848e09df26046daa442))
+
 ## [0.36.2](https://github.com/asharca/ToolPlane/compare/v0.36.1...v0.36.2) (2026-11-11)
 
 
