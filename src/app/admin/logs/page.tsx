@@ -7,9 +7,9 @@ import {
   CenterMorphModalTrigger,
 } from "@/components/motion/center-morph-modal";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import {
-  Activity,
   ArrowDown,
   ArrowUpRight,
   Bot,
@@ -53,9 +53,6 @@ import {
 import type { LogFilters as LogFilterValues } from "@/lib/observability/queries";
 import { z } from "zod";
 import { adminHref, adminReturnHref } from "@/lib/admin/navigation";
-import { getLogSettings } from "@/lib/observability/settings";
-import { LogHealth } from "@/components/admin/LogHealth";
-import { LogSettings } from "@/components/admin/LogSettings";
 import { LogExplorer } from "@/components/observability/LogExplorer";
 
 export const dynamic = "force-dynamic";
@@ -66,10 +63,7 @@ const tabs = [
   { value: "mcp", icon: Server },
   { value: "tools", icon: Bot },
   { value: "internal", icon: Server },
-  { value: "http", icon: Activity },
   { value: "a2a", icon: Bot },
-  { value: "agent", icon: Bot },
-  { value: "runtime", icon: Server },
   { value: "audit", icon: ShieldCheck },
 ] as const;
 
@@ -83,10 +77,17 @@ export default async function AdminLogsPage({
     getTranslations("admin"),
     getLocale(),
   ]);
-  const viewerT = await getTranslations("console.observability.viewer");
   const raw = Object.fromEntries(
     Object.entries(await searchParams).filter(([, value]) => Boolean(value)),
   );
+  if (["http", "agent", "runtime"].includes(raw.tab ?? "")) {
+    const legacyQuery = new URLSearchParams(
+      Object.entries(raw) as Array<[string, string]>,
+    );
+    legacyQuery.set("domain", raw.tab ?? "");
+    legacyQuery.set("tab", "all");
+    redirect(`/admin/logs?${legacyQuery}`);
+  }
   const tab = tabs.find(({ value }) => value === raw.tab)?.value ?? "all";
   const protocol =
     tab === "runs" ||
@@ -143,26 +144,24 @@ export default async function AdminLogsPage({
   const scope = { adminId: admin.id };
   await authorizeLogs(scope);
   const auditFilter = auditWhere(filters);
-  const [events, audits, settings, groups, stats, auditCount] =
-    await Promise.all([
-      tab !== "audit" && !protocol ? listLogEvents(scope, filters) : null,
-      tab === "audit"
-        ? db.auditEvent.findMany({
-            where: {
-              AND: [
-                auditFilter,
-                cursorWhere(filters.cursor) as Prisma.AuditEventWhereInput,
-              ],
-            },
-            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-            take: 51,
-          })
-        : null,
-      getLogSettings(),
-      tab !== "audit" ? getErrorGroups(scope, filters) : [],
-      tab !== "audit" ? aggregateLogs(filters) : null,
-      tab === "audit" ? db.auditEvent.count({ where: auditFilter }) : 0,
-    ]);
+  const [events, audits, groups, stats, auditCount] = await Promise.all([
+    tab !== "audit" && !protocol ? listLogEvents(scope, filters) : null,
+    tab === "audit"
+      ? db.auditEvent.findMany({
+          where: {
+            AND: [
+              auditFilter,
+              cursorWhere(filters.cursor) as Prisma.AuditEventWhereInput,
+            ],
+          },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          take: 51,
+        })
+      : null,
+    tab !== "audit" ? getErrorGroups(scope, filters) : [],
+    tab !== "audit" ? aggregateLogs(filters) : null,
+    tab === "audit" ? db.auditEvent.count({ where: auditFilter }) : 0,
+  ]);
   const [workspaceOptions, deployments, agents] = protocol
     ? await Promise.all([
         db.workspace.findMany({
@@ -263,11 +262,7 @@ export default async function AdminLogsPage({
           raw.returnTo ? adminReturnHref(raw.returnTo, "/admin") : undefined
         }
         backLabel={t("viewDetails")}
-        meta={
-          <AdminBadge>
-            {tab === "runs" ? viewerT("runs") : t(`logsTab_${tab}`)}
-          </AdminBadge>
-        }
+        meta={<AdminBadge>{t(`logsTab_${tab}`)}</AdminBadge>}
         actions={
           <>
             <ButtonLink
@@ -314,7 +309,7 @@ export default async function AdminLogsPage({
               aria-current={tab === value ? "page" : undefined}
             >
               <Icon className="hidden size-4 sm:block" aria-hidden="true" />
-              {value === "runs" ? viewerT("runs") : t(`logsTab_${value}`)}
+              {t(`logsTab_${value}`)}
             </ButtonLink>
           );
         })}
@@ -322,7 +317,7 @@ export default async function AdminLogsPage({
 
       {!protocol && (
         <LogFilters
-          tab={tab}
+          tab={tab === "audit" ? "audit" : "all"}
           raw={raw}
           filters={filters}
           observedAt={observedAt}
@@ -507,7 +502,11 @@ export default async function AdminLogsPage({
                           href={detailHref(row.id)}
                           className="block truncate font-medium hover:underline"
                         >
-                          {row.rpcMethod ?? row.toolName ?? row.eventName}
+                          {row.rpcMethod ??
+                            row.toolName ??
+                            (row.eventName === "http.request" && row.path
+                              ? `${row.method ?? ""} ${row.path}`.trim()
+                              : row.eventName)}
                         </Link>
                         <span className="mt-1 block text-xs text-muted-foreground">
                           {t.has(`logDomains.${row.domain}`)
@@ -717,17 +716,6 @@ export default async function AdminLogsPage({
           </nav>
         </section>
       )}
-
-      <LogHealth adminId={admin.id} />
-
-      <LogSettings
-        settings={{
-          ...settings,
-          captures: settings.captures.filter(
-            (item) => new Date(item.expiresAt).getTime() > observedAt,
-          ),
-        }}
-      />
     </AdminPage>
   );
 }

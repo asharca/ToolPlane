@@ -1,18 +1,19 @@
 import "server-only";
-import { recordEvent } from "./events";
+import { recordEvent, type LogEntry } from "./events";
 
-export function systemLog(
-  level: "info" | "warn" | "error" | "debug",
-  message: unknown,
-  ...args: unknown[]
-) {
-  void recordEvent({
-    domain: "system",
-    eventName: `system.${level}`,
-    level,
-    message: typeof message === "string" ? message : "System event",
-    error: [message, ...args].find((value) => value instanceof Error),
-    outcome: level === "error" ? "error" : undefined,
-    attributes: args.filter((value) => !(value instanceof Error)),
-  });
+export type SystemEventOptions = Omit<LogEntry, "domain" | "eventName"> & {
+  domain?: LogEntry["domain"];
+};
+
+/**
+ * Fire-and-forget operational event for background work and caught failures.
+ * `eventName` is a stable dotted code (`scheduler.triggers.tick_failed`), never
+ * free text: dashboards and error groups key on it. Put identities in their
+ * columns (workspaceId, agentId, deploymentId, ...) and counts in `attributes`.
+ */
+export function logSystemEvent(
+  eventName: string,
+  options: SystemEventOptions = {},
+): void {
+  void recordEvent({ domain: "system", ...options, eventName });
 }

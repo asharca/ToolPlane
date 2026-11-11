@@ -1,5 +1,6 @@
 "use server";
 
+import { logSystemEvent } from "@/lib/observability/system";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
@@ -730,7 +731,14 @@ export async function updateMcpJsonConfigAction(
           ).spec,
           mcpProcessOptions(ctx, updated.id),
         );
-      } catch {
+      } catch (error) {
+        logSystemEvent("mcp.deployment.rebuild_failed", {
+          domain: "mcp",
+          error,
+          workspaceId: ctx.ws.id,
+          deploymentId: deployment.id,
+          actorId: ctx.user.id,
+        });
         await db.deployment.update({
           where: { id: deployment.id },
           data: { status: "error" },
@@ -931,7 +939,14 @@ export async function runMcpConsoleToolAction(input: {
       let availableTools: McpTool[];
       try {
         availableTools = await listMcpTools(deployment.id);
-      } catch {
+      } catch (error) {
+        logSystemEvent("mcp.console.discovery_failed", {
+          domain: "mcp",
+          error,
+          workspaceId: ctx.ws.id,
+          deploymentId: deployment.id,
+          actorId: ctx.user.id,
+        });
         return { error: "toolDiscoveryFailed" };
       }
       if (!availableTools.some((tool) => tool.name === toolName)) {
@@ -948,7 +963,16 @@ export async function runMcpConsoleToolAction(input: {
           remoteSpec ? remoteSpec.timeoutMs + 5_000 : 30_000,
           { maxRequestBytes: 16_000, maxResponseBytes: 1_000_000 },
         );
-      } catch {
+      } catch (error) {
+        logSystemEvent("mcp.console.call_failed", {
+          domain: "mcp",
+          error,
+          workspaceId: ctx.ws.id,
+          deploymentId: deployment.id,
+          actorId: ctx.user.id,
+          toolName,
+          durationMs: Date.now() - startedAt,
+        });
         result = null;
       }
       const safeResult =
@@ -987,7 +1011,13 @@ async function remoteMcpSpec(
       deploymentId,
     });
     return spec.kind === "remote" ? spec : null;
-  } catch {
+  } catch (error) {
+    logSystemEvent("mcp.connection.resolve_failed", {
+      domain: "mcp",
+      error,
+      workspaceId,
+      deploymentId,
+    });
     return null;
   }
 }
@@ -1236,7 +1266,15 @@ export async function revealDeploymentEnvAction({
   let env: Record<string, string>;
   try {
     env = resolveMcpEnvironment(dep.installCfg, ctx.ws.id);
-  } catch {
+  } catch (error) {
+    logSystemEvent("mcp.environment.reveal_failed", {
+      domain: "mcp",
+      error,
+      workspaceId: ctx.ws.id,
+      deploymentId,
+      actorId: ctx.user.id,
+      payloadPolicy: "forbidden",
+    });
     // Corrupt or differently scoped ciphertext must not reach the browser.
     return { error: "variableNotFound" };
   }

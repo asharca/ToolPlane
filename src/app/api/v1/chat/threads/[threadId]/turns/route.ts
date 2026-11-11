@@ -224,6 +224,7 @@ export const POST = withRequestLogging(
         ? Response.json({ error: error.message }, { status: error.status })
         : Response.json({ error: "Chat request failed" }, { status: 500 });
     }
+    enrichLogContext({ runId: turn.id });
 
     let executionError: unknown;
     let succeeded = false;
@@ -408,7 +409,7 @@ export const POST = withRequestLogging(
           });
         },
         async (fence) => {
-          if (succeeded)
+          if (succeeded) {
             await completeChatTurn(
               threadId,
               turn.id,
@@ -416,7 +417,8 @@ export const POST = withRequestLogging(
               finalParts,
               fence,
             );
-          else
+            return { outcome: "success" as const };
+          } else {
             await finishChatTurn(
               threadId,
               turn.id,
@@ -428,6 +430,13 @@ export const POST = withRequestLogging(
               finalParts,
               fence,
             );
+            return {
+              outcome: finalCancelled
+                ? ("cancelled" as const)
+                : ("error" as const),
+              error: executionError,
+            };
+          }
         },
       );
     } catch (error) {

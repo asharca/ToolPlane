@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({ findSandboxByConnectorToken: vi.fn() }));
 vi.mock("@/lib/sandboxes/connector-auth", () => ({
   findSandboxByConnectorToken: mocks.findSandboxByConnectorToken,
 }));
-vi.mock("@/lib/observability/system", () => ({ systemLog: vi.fn() }));
+vi.mock("@/lib/observability/system", () => ({ logSystemEvent: vi.fn() }));
 
 let broker: typeof import("@/lib/sandboxes/connector-broker");
 let wsUrl = "";

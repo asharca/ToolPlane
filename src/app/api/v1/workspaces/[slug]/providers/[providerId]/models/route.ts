@@ -1,3 +1,4 @@
+import { logSystemEvent } from "@/lib/observability/system";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { getProvider } from "@/lib/agents/queries";
@@ -36,7 +37,13 @@ export const POST = withRequestLogging(
       return Response.json({
         savedAt: Date.now(),
       });
-    } catch {
+    } catch (error) {
+      logSystemEvent("providers.models.refresh_failed", {
+        error,
+        workspaceId: workspace.id,
+        providerId,
+        actorId: user.id,
+      });
       return Response.json(
         { error: "Could not refresh provider models." },
         { status: 502 },

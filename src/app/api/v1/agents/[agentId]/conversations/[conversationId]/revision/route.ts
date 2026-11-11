@@ -7,7 +7,7 @@ import {
 } from "@/lib/agents/conversation-revisions";
 import { AgentRevisionError } from "@/lib/agents/revisions";
 import { withRequestLogging } from "@/lib/observability/http";
-import { systemLog } from "@/lib/observability/system";
+import { logSystemEvent } from "@/lib/observability/system";
 
 export const runtime = "nodejs";
 type Context = { params: Promise<{ agentId: string; conversationId: string }> };
@@ -41,7 +41,14 @@ async function handle(req: Request, { params }: Context) {
       return Response.json({ error: error.code }, { status: error.status });
     if (error instanceof AgentRevisionError)
       return Response.json({ error: error.code }, { status: 409 });
-    systemLog("error", "[conversation] revision update failed", error);
+    logSystemEvent("agents.conversation.revision_failed", {
+      domain: "agent",
+      error,
+      workspaceId: agent.workspaceId,
+      agentId,
+      conversationId,
+      actorId: user.id,
+    });
     return Response.json({ error: "failed" }, { status: 500 });
   }
 }

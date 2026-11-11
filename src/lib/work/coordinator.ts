@@ -1,4 +1,4 @@
-import { systemLog } from "@/lib/observability/system";
+import { logSystemEvent } from "@/lib/observability/system";
 import "server-only";
 import {
   runtimeCanOperate,
@@ -700,7 +700,12 @@ async function executeWork(workSessionId: string) {
         work.conversationId,
       )
         .catch((error) =>
-          systemLog("warn", `[work] ${work.id} title generation failed`, error),
+          logSystemEvent("work.title.generate_failed", {
+            domain: "agent",
+            level: "warn",
+            runId: work.id,
+            error,
+          }),
         )
         .finally(() => pendingTitles.delete(work.id));
     }
@@ -744,11 +749,11 @@ async function executeWork(workSessionId: string) {
         );
         tracePersisted = true;
       } catch (traceError) {
-        systemLog(
-          "error",
-          `[work] ${work.id} activity persistence failed`,
-          traceError,
-        );
+        logSystemEvent("work.activity.persist_failed", {
+          domain: "runtime",
+          runId: work.id,
+          error: traceError,
+        });
       }
     }
     if (!controller.signal.aborted) {
@@ -795,7 +800,11 @@ async function runClaimedWork(workSessionId: string) {
       ),
     );
   } catch (error) {
-    systemLog("error", `[work] ${workSessionId} execution failed`, error);
+    logSystemEvent("work.run.execution_failed", {
+      domain: "runtime",
+      runId: workSessionId,
+      error,
+    });
   } finally {
     state.active.delete(workSessionId);
     activeAgents.delete(workSessionId);
@@ -860,7 +869,11 @@ async function drainWorkQueue() {
       state.active.add(work.id);
       activeAgents.set(work.id, work.agentId);
       void runClaimedWork(work.id).catch((error) =>
-        systemLog("error", `[work] ${work.id} finalization failed`, error),
+        logSystemEvent("work.run.finalize_failed", {
+          domain: "runtime",
+          runId: work.id,
+          error,
+        }),
       );
     }
   } finally {
@@ -870,7 +883,7 @@ async function drainWorkQueue() {
 
 export function kickWorkCoordinator() {
   void drainWorkQueue().catch((error) =>
-    systemLog("error", "[work] queue drain failed", error),
+    logSystemEvent("work.queue.drain_failed", { domain: "runtime", error }),
   );
 }
 

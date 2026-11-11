@@ -1,3 +1,4 @@
+import { logSystemEvent } from "@/lib/observability/system";
 import { withRequestLogging } from "@/lib/observability/http";
 import { basename } from "node:path";
 import { resolveRequestUser } from "@/lib/auth/request-user";
@@ -125,7 +126,15 @@ export const POST = withRequestLogging(
     });
     try {
       await indexKnowledgeText(document.id, new TextDecoder().decode(bytes));
-    } catch {
+    } catch (error) {
+      logSystemEvent("knowledge.documents.index_failed", {
+        error,
+        level: "warn",
+        workspaceId: base.workspaceId,
+        deploymentId: sandbox.deploymentId,
+        actorId: user.id,
+        attributes: { knowledgeBaseId, documentId: document.id },
+      });
       // The document keeps its failed status and can be retried after provider configuration is fixed.
     }
     const updated = await db.knowledgeDocument.findUnique({

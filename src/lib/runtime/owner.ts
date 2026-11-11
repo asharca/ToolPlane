@@ -2,6 +2,7 @@ import "server-only";
 import { Client } from "pg";
 import { createHash, randomUUID } from "node:crypto";
 import { ownership } from "./ownership-state";
+import { logSystemEvent } from "@/lib/observability/system";
 
 type OwnershipClient = Pick<Client, "connect" | "query" | "end" | "on">;
 const OWNER_LOCK_NAMESPACE = 0x54504c4e;
@@ -24,10 +25,18 @@ export class RuntimeOwnerLease {
     this.domainKey = createHash("sha256").update(domain).digest().readInt32BE();
     this.markerKey = `runtime.owner.${this.domainKey}`;
   }
-  private lose() {
+  private lose(
+    error: unknown = new Error("Runtime ownership connection ended."),
+  ) {
     if (this.stopping || this.lost) return;
     this.lost = true;
     if (this.heartbeat) clearInterval(this.heartbeat);
+    logSystemEvent("runtime.owner.lease_lost", {
+      domain: "runtime",
+      error,
+      errorCode: "RUNTIME_OWNER_LEASE_LOST",
+      attributes: { domainKey: this.domainKey },
+    });
     this.onLost();
   }
   private async probe() {
@@ -35,14 +44,20 @@ export class RuntimeOwnerLease {
     this.probing = true;
     try {
       await this.client.query("SELECT 1");
-    } catch {
-      this.lose();
+    } catch (error) {
+      logSystemEvent("runtime.owner.probe_failed", {
+        domain: "runtime",
+        error,
+        attributes: { domainKey: this.domainKey },
+      });
+      this.lose(error);
     } finally {
       this.probing = false;
     }
   }
   async acquire() {
-    this.client.on("error", () => this.lose());
+    const started = Date.now();
+    this.client.on("error", (error) => this.lose(error));
     this.client.on("end", () => {
       if (this.locked) this.lose();
     });
@@ -84,6 +99,11 @@ export class RuntimeOwnerLease {
       void this.probe();
     }, 5000);
     this.heartbeat.unref?.();
+    logSystemEvent("runtime.owner.acquired", {
+      domain: "runtime",
+      durationMs: Date.now() - started,
+      attributes: { domainKey: this.domainKey },
+    });
   }
   async release(clean: boolean) {
     this.stopping = true;
@@ -97,7 +117,12 @@ export class RuntimeOwnerLease {
           );
         // The advisory lock is session-scoped and released only by this same dedicated connection.
       } finally {
-        await this.client.end().catch(() => undefined);
+        await this.client.end().catch((error) => {
+          logSystemEvent("runtime.owner.connection_close_failed", {
+            domain: "runtime",
+            error,
+          });
+        });
         this.connected = false;
         this.locked = false;
       }
@@ -113,6 +138,7 @@ let shutdownPromise: Promise<boolean> | undefined;
 export async function startRuntimeOwner(recover: () => Promise<void>) {
   if (g.__toolplaneOwnerLease) return;
   ownership.status = "acquiring";
+  const started = Date.now();
   const lease = new RuntimeOwnerLease(
     new Client({
       connectionString: process.env.DATABASE_URL,
@@ -137,6 +163,10 @@ export async function startRuntimeOwner(recover: () => Promise<void>) {
     ownership.status = "recovering";
     await ownership.maintenance.run(true, recover);
     ownership.ready();
+    logSystemEvent("runtime.owner.recovered", {
+      domain: "runtime",
+      durationMs: Date.now() - started,
+    });
   } catch (error) {
     if (!ownership.abort.signal.aborted) ownership.status = "blocked";
     g.__toolplaneStopTimers?.();
@@ -163,8 +193,15 @@ export function shutdownRuntimeOwner(): Promise<boolean> {
         channels.shutdownAgentChannelRunners(),
         connectors.shutdownConnectorBroker(),
       ]);
-      if (results.some((result) => result.status === "rejected"))
+      for (const result of results) {
+        if (result.status !== "rejected") continue;
         ownership.uncertain = true;
+        logSystemEvent("runtime.owner.shutdown_uncertain", {
+          domain: "runtime",
+          error: result.reason,
+          errorCode: "RUNTIME_SHUTDOWN_FAILED",
+        });
+      }
       // Stops only children held by this process; no takeover of external container state.
       await (await import("@/lib/process/supervisor")).shutdownOwnedProcesses();
     };
@@ -177,16 +214,32 @@ export function shutdownRuntimeOwner(): Promise<boolean> {
           timeout = setTimeout(() => resolve(false), 40_000);
         }),
       ]);
-    } catch {
+    } catch (error) {
       ownership.uncertain = true;
+      logSystemEvent("runtime.owner.shutdown_uncertain", {
+        domain: "runtime",
+        error,
+        errorCode: "RUNTIME_SHUTDOWN_FAILED",
+      });
     } finally {
       if (timeout) clearTimeout(timeout);
     }
     if (!stopped) {
       ownership.uncertain = true;
+      logSystemEvent("runtime.owner.shutdown_uncertain", {
+        domain: "runtime",
+        error: new Error("Runtime shutdown did not complete."),
+        errorCode: "RUNTIME_SHUTDOWN_INCOMPLETE",
+      });
       ownership.abort.abort();
     }
     const drained = await ownership.drain(5000);
+    if (!drained)
+      logSystemEvent("runtime.owner.shutdown_uncertain", {
+        domain: "runtime",
+        error: new Error("Runtime operations did not drain."),
+        errorCode: "RUNTIME_DRAIN_INCOMPLETE",
+      });
     const clean = !lost && stopped && drained;
     await g.__toolplaneOwnerLease?.release(clean);
     ownership.status = "stopped";

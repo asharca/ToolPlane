@@ -1,5 +1,7 @@
 "use server";
 
+import { z } from "zod";
+import { logSystemEvent } from "@/lib/observability/system";
 import { revalidatePath } from "next/cache";
 import { getTranslations } from "next-intl/server";
 import { requireAdmin } from "@/lib/auth/admin";
@@ -86,10 +88,22 @@ export async function updateLogSettings(
         changes: { before, after },
       });
     });
-  } catch {
+  } catch (error) {
+    if (
+      !(error instanceof z.ZodError) &&
+      !(
+        error instanceof Error &&
+        ["Resource not found", "Invalid operation"].includes(error.message)
+      )
+    ) {
+      logSystemEvent("admin.logs.settings_failed", {
+        error,
+        actorId: admin.id,
+      });
+    }
     return { error: t("logsSettingsError") };
   }
   invalidateLogSettings();
-  revalidatePath("/admin/logs");
+  revalidatePath("/admin/settings");
   return { ok: true };
 }

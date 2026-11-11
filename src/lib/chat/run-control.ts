@@ -7,7 +7,7 @@ import {
   beginRuntimeOperation,
   runtimeAbortSignal,
 } from "@/lib/runtime/ownership-state";
-import { systemLog } from "@/lib/observability/system";
+import { logSystemEvent } from "@/lib/observability/system";
 import {
   CHAT_TURN_STALE_AFTER_MS,
   completeChatTurn,
@@ -189,7 +189,13 @@ export async function recoverStaleChatRuns(threadId?: string) {
         },
       ],
     },
-    select: { id: true, threadId: true },
+    select: {
+      id: true,
+      threadId: true,
+      createdAt: true,
+      startedAt: true,
+      thread: { select: { workspaceId: true } },
+    },
   });
   for (const candidate of stale) {
     const recovered = await db.$transaction(async (tx) => {
@@ -242,10 +248,22 @@ export async function recoverStaleChatRuns(threadId?: string) {
       });
       return true;
     });
-    if (recovered)
-      runs
-        .get(candidate.threadId)
-        ?.controller.abort(new Error("Chat execution lease expired."));
+    if (recovered) {
+      const active = runs.get(candidate.threadId);
+      if (active?.turnId === candidate.id)
+        active.controller.abort(new Error("Chat execution lease expired."));
+      logSystemEvent("chat.run.settled", {
+        domain: "agent",
+        runId: candidate.id,
+        conversationId: candidate.threadId,
+        workspaceId: candidate.thread.workspaceId,
+        outcome: "error",
+        durationMs:
+          Date.now() - (candidate.startedAt ?? candidate.createdAt).getTime(),
+        error: new Error("Chat execution lease expired."),
+        errorCode: "CHAT_RUN_LEASE_EXPIRED",
+      });
+    }
   }
 }
 
@@ -255,7 +273,10 @@ export async function startChatRun(
     signal: AbortSignal,
     fence: ChatRunFence,
   ) => ReadableStream<UIMessageChunk>,
-  finalize?: (fence: ChatRunFence) => Promise<void>,
+  finalize?: (fence: ChatRunFence) => Promise<{
+    outcome: "success" | "error" | "cancelled";
+    error?: unknown;
+  }>,
 ): Promise<ChatRunOutput> {
   await recoverStaleChatRuns(scope.threadId);
   const fence = await db.$transaction(async (tx) => {
@@ -284,6 +305,12 @@ export async function startChatRun(
     return { leaseToken: token, generation: turn.generation };
   });
   if (fence) {
+    const started = Date.now();
+    let settlement: {
+      outcome: "success" | "error" | "cancelled";
+      error?: unknown;
+    } = { outcome: "error" };
+    let toolCallCount = 0;
     const release = beginRuntimeOperation();
     const controller = new AbortController();
     const ownerSignal = runtimeAbortSignal();
@@ -358,6 +385,7 @@ export async function startChatRun(
           }
           if (value.type === "finish") continue;
           await appendChatRunEvent(scope, fence, value);
+          if (value.type === "tool-input-available") toolCallCount += 1;
         }
         if (signal.aborted) throw signal.reason;
         if (streamFailure) throw streamFailure;
@@ -372,7 +400,7 @@ export async function startChatRun(
           throw new Error(
             "Chat execution interrupted; remote effect outcome unknown. Do not replay.",
           );
-        if (finalize) await finalize(fence);
+        if (finalize) settlement = await finalize(fence);
         else {
           const message = await db.chatMessage.findUniqueOrThrow({
             where: { id: scope.assistantMessageId },
@@ -384,12 +412,17 @@ export async function startChatRun(
             message.parts as Array<Record<string, unknown>>,
             fence,
           );
+          settlement = { outcome: "success" };
         }
       } finally {
         reader.releaseLock();
       }
     })()
       .catch(async (error) => {
+        settlement = {
+          outcome: error?.name === "AbortError" ? "cancelled" : "error",
+          error,
+        };
         controller.abort(error);
         await db.$transaction(async (tx) => {
           await lockChatRun(tx, scope.turnId, fence);
@@ -404,6 +437,7 @@ export async function startChatRun(
         const unknownEffects = await db.chatToolConfirmation.count({
           where: { turnId: scope.turnId, status: "execution_unknown" },
         });
+        if (unknownEffects) settlement.outcome = "error";
         await finishChatTurn(
           scope.threadId,
           scope.turnId,
@@ -420,15 +454,74 @@ export async function startChatRun(
           fence,
         );
       })
-      .catch((error) =>
-        systemLog("error", "[chat] background persistence failed", error),
-      )
-      .finally(() => {
+      .catch((error) => {
+        settlement = { outcome: "error", error };
+        logSystemEvent("chat.run.persistence_failed", {
+          domain: "agent",
+          workspaceId: scope.workspaceId,
+          runId: scope.turnId,
+          conversationId: scope.threadId,
+          error,
+        });
+      })
+      .finally(async () => {
         clearTimeout(deadline);
         clearInterval(timer);
         if (runs.get(scope.threadId)?.controller === controller)
           runs.delete(scope.threadId);
         release();
+        try {
+          const turn = await db.chatTurn.findUnique({
+            where: { id: scope.turnId },
+            select: {
+              generation: true,
+              status: true,
+              startedAt: true,
+              completedAt: true,
+            },
+          });
+          // Recovery increments the generation and owns its terminal event. A failed
+          // persistence attempt is not settled yet and will be logged by recovery.
+          if (!turn?.completedAt || turn.generation !== fence.generation)
+            return;
+          settlement.outcome =
+            turn.status === "completed"
+              ? "success"
+              : turn.status === "cancelled"
+                ? "cancelled"
+                : "error";
+          logSystemEvent("chat.run.settled", {
+            domain: "agent",
+            workspaceId: scope.workspaceId,
+            runId: scope.turnId,
+            conversationId: scope.threadId,
+            outcome: settlement.outcome,
+            durationMs: Math.max(
+              0,
+              turn.completedAt.getTime() -
+                (turn.startedAt?.getTime() ?? started),
+            ),
+            attributes: { toolCallCount },
+            error: settlement.error,
+            errorCode:
+              settlement.outcome === "success"
+                ? undefined
+                : settlement.outcome === "cancelled"
+                  ? "CHAT_RUN_CANCELLED"
+                  : settlement.error instanceof Error &&
+                      settlement.error.name === "TimeoutError"
+                    ? "CHAT_RUN_TIMEOUT"
+                    : "CHAT_RUN_FAILED",
+          });
+        } catch (error) {
+          logSystemEvent("chat.run.settlement_read_failed", {
+            domain: "agent",
+            workspaceId: scope.workspaceId,
+            runId: scope.turnId,
+            conversationId: scope.threadId,
+            error,
+          });
+        }
       });
   }
   const output = await subscribeChatRun(

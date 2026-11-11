@@ -41,6 +41,7 @@ const logColumnKeys = [
   "workspaceId",
   "actorId",
   "deploymentId",
+  "providerId",
   "agentId",
   "channelId",
   "runId",
@@ -51,6 +52,9 @@ const logColumnKeys = [
   "errorType",
   "errorCode",
   "rpcMethod",
+  "method",
+  "path",
+  "toolName",
 ] as const;
 const logSearchKeys = [
   "message",
@@ -79,6 +83,7 @@ export const logFilterSchema = z
     workspaceId: z.string().max(200).optional(),
     actorId: z.string().max(200).optional(),
     deploymentId: z.string().max(200).optional(),
+    providerId: z.string().max(200).optional(),
     agentId: z.string().max(200).optional(),
     channelId: z.string().max(200).optional(),
     runId: z.string().max(200).optional(),
@@ -86,6 +91,14 @@ export const logFilterSchema = z
     traceId: z.string().max(200).optional(),
     requestId: z.string().max(200).optional(),
     eventName: z.string().max(200).optional(),
+    eventNames: z.preprocess(
+      (value) => (typeof value === "string" ? value.split(",") : value),
+      z.array(z.string().min(1).max(200)).min(1).max(20).optional(),
+    ),
+    method: z.string().max(200).optional(),
+    path: z.string().max(500).optional(),
+    toolName: z.string().max(500).optional(),
+    missing: z.enum(["method", "deploymentId", "providerId"]).optional(),
     targetType: z.string().max(200).optional(),
     targetId: z.string().max(200).optional(),
     errorType: z.string().max(200).optional(),
@@ -189,6 +202,9 @@ export async function logWhere(
     .map((key) => ({
       attributes: { path: ["data", "a2a", key], equals: filters[key] },
     }));
+  if (filters.eventNames)
+    conditions.push({ eventName: { in: filters.eventNames } });
+  if (filters.missing) conditions.push({ [filters.missing]: null });
   if (filters.agentId) {
     const endpoints = await db.agentEndpoint.findMany({
       where: {
@@ -424,6 +440,10 @@ export function logSqlWhere(filters: LogFilters) {
     if (key !== "agentId" && filters[key] !== undefined)
       terms.push(Prisma.sql`${Prisma.raw(`"${key}"`)} = ${filters[key]}`);
   }
+  if (filters.eventNames)
+    terms.push(Prisma.sql`"eventName" IN (${Prisma.join(filters.eventNames)})`);
+  if (filters.missing)
+    terms.push(Prisma.sql`${Prisma.raw(`"${filters.missing}"`)} IS NULL`);
   if (filters.agentId)
     terms.push(Prisma.sql`("agentId" = ${filters.agentId} OR (domain = 'a2a' AND EXISTS (
     SELECT 1 FROM "AgentEndpoint" endpoint WHERE endpoint."sourceAgentId" = ${filters.agentId}

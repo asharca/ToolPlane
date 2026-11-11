@@ -7,36 +7,35 @@ import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import { FormCheckbox } from "@/components/ui/FormCheckbox";
-import {
-  ChevronDown,
-  CircleStop,
-  Clock3,
-  Play,
-  Save,
-  Settings,
-} from "lucide-react";
+import { CircleStop, Clock3, Play, Save } from "lucide-react";
+import { AdminPanel } from "@/components/admin/AdminUI";
+import { notify } from "@/components/dashboard/Toaster";
 import { updateLogSettings } from "@/lib/admin/log-actions";
 import type { LogSettings as SettingsValue } from "@/lib/observability/settings";
 
 export function LogSettings({ settings }: { settings: SettingsValue }) {
   const t = useTranslations("admin");
   const fieldId = useId();
-  const [state, action, pending] = useActionState(updateLogSettings, {});
+  const [state, action, pending] = useActionState(
+    async (previous: { ok?: boolean; error?: string }, form: FormData) => {
+      const result = await updateLogSettings(previous, form);
+      if (result.error) notify(result.error, { severity: "error" });
+      else if (result.ok) notify(t("saved"));
+      return result;
+    },
+    {},
+  );
   return (
-    <details id="log-settings" className="group border-t border-border pt-4">
-      <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center gap-2 text-sm font-semibold [&::-webkit-details-marker]:hidden">
-        <Settings className="size-4 text-muted-foreground" aria-hidden="true" />
-        {t("logsSettings")}
-        {settings.captures.length ? (
+    <AdminPanel
+      title={t("logsSettings")}
+      actions={
+        settings.captures.length ? (
           <AnimatedBadge status="warning">
             {t("logsActiveCaptures", { count: settings.captures.length })}
           </AnimatedBadge>
-        ) : null}
-        <ChevronDown
-          className="ml-auto size-4 text-muted-foreground group-open:rotate-180"
-          aria-hidden="true"
-        />
-      </summary>
+        ) : undefined
+      }
+    >
       <fieldset disabled={pending} className="min-w-0 disabled:opacity-60">
         <p className="pt-4 text-xs text-muted-foreground">
           {t("logsDefaultPayloadPolicy")}
@@ -167,11 +166,7 @@ export function LogSettings({ settings }: { settings: SettingsValue }) {
         <p role="alert" className="mt-3 text-sm text-destructive">
           {state.error}
         </p>
-      ) : state.ok ? (
-        <p role="status" className="mt-3 text-sm text-muted-foreground">
-          {t("saved")}
-        </p>
       ) : null}
-    </details>
+    </AdminPanel>
   );
 }

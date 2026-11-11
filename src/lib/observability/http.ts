@@ -50,7 +50,14 @@ export function withRequestLogging<
             path: route,
           };
           try {
-            if (runtimeRequestUnavailable(route, req.method))
+            if (runtimeRequestUnavailable(route, req.method)) {
+              await recordEvent({
+                ...base,
+                outcome: "error",
+                errorCode: "RUNTIME_NOT_READY",
+                httpStatus: 503,
+                durationMs: Math.round(performance.now() - start),
+              });
               return Response.json(
                 { error: "runtime_not_ready" },
                 {
@@ -58,6 +65,7 @@ export function withRequestLogging<
                   headers: { "Retry-After": "5", "cache-control": "no-store" },
                 },
               ) as Exclude<R, undefined>;
+            }
             const response = await handler(req, ...args);
             if (!response)
               throw new Error("Request handler did not return a response");
@@ -136,11 +144,19 @@ export function withRequestLogging<
               headers,
             }) as Exclude<R, undefined>;
           } catch (error) {
-            if (error instanceof RuntimeUnavailableError)
+            if (error instanceof RuntimeUnavailableError) {
+              await recordEvent({
+                ...base,
+                outcome: "error",
+                errorCode: "RUNTIME_NOT_READY",
+                httpStatus: 503,
+                durationMs: Math.round(performance.now() - start),
+              });
               return Response.json(
                 { error: "runtime_not_ready" },
                 { status: 503, headers: { "Retry-After": "5" } },
               ) as Exclude<R, undefined>;
+            }
             const digest =
               error && typeof error === "object" && "digest" in error
                 ? String(error.digest)

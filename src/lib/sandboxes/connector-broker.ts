@@ -1,5 +1,5 @@
 import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
-import { systemLog } from "@/lib/observability/system";
+import { logSystemEvent } from "@/lib/observability/system";
 import "server-only";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -813,10 +813,11 @@ export async function ensureConnectorBroker(): Promise<{
     });
   });
 
-  systemLog(
-    "info",
-    `[connector] WebSocket broker listening on ${s.bind}:${s.port}`,
-  );
+  logSystemEvent("connector.broker.listening", {
+    domain: "runtime",
+    level: "info",
+    attributes: { bind: s.bind, port: s.port },
+  });
   return {
     port: s.port,
     internalUrl: `http://127.0.0.1:${s.port}`,

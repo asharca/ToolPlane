@@ -14,7 +14,7 @@ import { withLogContext } from "@/lib/observability/context";
 import { recordA2AEvent, taskStateName } from "@/lib/observability/a2a-log";
 import { recordEvent } from "@/lib/observability/events";
 import { isEntryRootGrant } from "@/lib/observability/views/task-origin";
-import { systemLog } from "@/lib/observability/system";
+import { logSystemEvent } from "@/lib/observability/system";
 import { ACTIVE, A2A_LIMITS } from "@/lib/a2a/model";
 import {
   claimTask,
@@ -514,8 +514,8 @@ export async function tickAgentWorker() {
   state.ticking = true;
   try {
     await reconcileLocalWaits();
-    void reconcileRemoteTasks().catch(() =>
-      systemLog("error", "Remote A2A observation failed."),
+    void reconcileRemoteTasks().catch((error) =>
+      logSystemEvent("a2a.remote.reconcile_failed", { domain: "a2a", error }),
     );
     const expired = await db.a2ATask.findMany({
       where: {
@@ -590,8 +590,12 @@ export async function tickAgentWorker() {
     );
     for (const rows of queues)
       for (const row of rows) {
-        void executeAgentTask(row.id).catch(() =>
-          systemLog("error", "A2A task could not be settled."),
+        void executeAgentTask(row.id).catch((error) =>
+          logSystemEvent("agent.task.settle_failed", {
+            domain: "agent",
+            taskId: row.id,
+            error,
+          }),
         );
       }
     if (Date.now() - state.prunedAt > 60_000) {
@@ -698,8 +702,8 @@ export async function startAgentWorker() {
   } while (rows.length === 50);
   state.stopped = false;
   state.timer = setInterval(() => {
-    void tickAgentWorker().catch(() =>
-      systemLog("error", "Agent task scheduling failed."),
+    void tickAgentWorker().catch((error) =>
+      logSystemEvent("scheduler.agents.tick_failed", { error }),
     );
   }, 500);
   state.timer.unref?.();
@@ -714,7 +718,7 @@ export function stopAgentWorker() {
     );
 }
 export function wakeAgentWorker() {
-  void tickAgentWorker().catch(() =>
-    systemLog("error", "Agent task admission wake failed."),
+  void tickAgentWorker().catch((error) =>
+    logSystemEvent("scheduler.agents.wake_failed", { error }),
   );
 }

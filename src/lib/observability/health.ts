@@ -5,20 +5,36 @@ import { authorizeLogs } from "@/lib/observability/queries";
 import { logHealth } from "@/lib/observability/events";
 import { effectiveStatuses } from "@/lib/process/supervisor";
 
-export async function getLogHealth(adminId: string) {
+export type LogHealthSnapshot = {
+  since: Date;
+  until: Date;
+  domains: Array<{
+    domain: string;
+    total: number;
+    errors: number;
+    denied: number;
+    last: Date;
+  }>;
+  abnormal: Array<{ id: string; name: string | null; status: string }>;
+  deploymentCount: number;
+  writer: {
+    failures: number;
+    dropped: number;
+    pending: number;
+    lastSuccess: string | null;
+    stderrDropped: number;
+  };
+  state: "attention" | "observed" | "unknown";
+};
+
+export async function getLogHealth(
+  adminId: string,
+): Promise<LogHealthSnapshot> {
   await authorizeLogs({ adminId });
   const until = new Date();
   const since = new Date(until.getTime() - 15 * 60_000);
   const [domains, deployments] = await Promise.all([
-    db.$queryRaw<
-      Array<{
-        domain: string;
-        total: number;
-        errors: number;
-        denied: number;
-        last: Date;
-      }>
-    >(Prisma.sql`
+    db.$queryRaw<LogHealthSnapshot["domains"]>(Prisma.sql`
       SELECT domain, count(*)::int AS total,
         count(*) FILTER (WHERE outcome IN ('error', 'timeout') OR level = 'error')::int AS errors,
         count(*) FILTER (WHERE outcome = 'denied')::int AS denied,
@@ -35,10 +51,20 @@ export async function getLogHealth(adminId: string) {
       ? [{ ...row, status }]
       : [];
   });
-  const writer = { failures: logHealth.failures, dropped: logHealth.dropped };
+  const writer = {
+    failures: logHealth.failures,
+    dropped: logHealth.dropped,
+    pending: logHealth.pending,
+    lastSuccess: logHealth.lastSuccess,
+    stderrDropped: logHealth.stderrDropped ?? 0,
+  };
   const errors = domains.reduce((sum, row) => sum + row.errors, 0);
   const state =
-    abnormal.length || errors || writer.failures || writer.dropped
+    abnormal.length ||
+    errors ||
+    writer.failures ||
+    writer.dropped ||
+    writer.stderrDropped
       ? "attention"
       : domains.length
         ? "observed"

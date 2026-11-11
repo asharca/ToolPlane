@@ -20,6 +20,8 @@ import { PrivateHostsSettingsForm } from "@/components/admin/PrivateHostsSetting
 import { RuntimeSettingsForm } from "@/components/admin/RuntimeSettingsForm";
 import { SkillImportSettingsForm } from "@/components/admin/SkillImportSettingsForm";
 import { TransportSettingsForm } from "@/components/admin/TransportSettingsForm";
+import { LogSettings } from "@/components/admin/LogSettings";
+import { getLogSettings, LOG_SETTINGS_KEY } from "@/lib/observability/settings";
 import {
   TRANSPORT_SETTINGS_KEY,
   getTransportSettings,
@@ -54,6 +56,7 @@ export default async function AdminSettingsPage() {
     agentConcurrency,
     agentSandboxAutoStop,
     transportSettings,
+    logSettings,
   ] = await Promise.all([
     getTranslations("admin"),
     resolveAgentAttachmentLimit(),
@@ -63,6 +66,7 @@ export default async function AdminSettingsPage() {
     getAgentConcurrencySettings(),
     getAgentSandboxAutoStopSettings(),
     getTransportSettings(),
+    getLogSettings(),
   ]);
   const [ops, locale, changes] = await Promise.all([
     getTranslations("adminOps"),
@@ -75,6 +79,7 @@ export default async function AdminSettingsPage() {
       PRIVATE_HOSTS_SETTING_KEY,
       SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
       TRANSPORT_SETTINGS_KEY,
+      LOG_SETTINGS_KEY,
     ]),
   ]);
   const section = (key: string, children: ReactNode) => {
@@ -110,61 +115,87 @@ export default async function AdminSettingsPage() {
       </section>
     );
   };
+  const observedAt = Date.now();
 
   return (
     <AdminPage className="max-w-5xl">
-      <AdminPageHeader
-        title={t("systemSettings")}
-        description={t("systemSettingsDescription")}
-      />
+      <AdminPageHeader title={t("systemSettings")} />
       <SettingsChanges>
-        {section(
-          AGENT_CONCURRENCY_SETTING_KEY,
-          <AgentConcurrencySettingsForm
-            {...agentConcurrency}
-            perAgentLimit={MAX_AGENT_CONCURRENCY}
-            totalLimit={MAX_TOTAL_AGENT_CONCURRENCY}
-          />,
-        )}
-        {section(
-          AGENT_SANDBOX_AUTO_STOP_SETTING_KEY,
-          <AgentSandboxAutoStopSettingsForm {...agentSandboxAutoStop} />,
-        )}
-        {section(
-          AGENT_ATTACHMENT_LIMIT_SETTING_KEY,
-          <RuntimeSettingsForm
-            bytes={attachmentLimit.bytes}
-            source={attachmentLimit.source}
-            cached={attachmentLimit.cached}
-            minMegabytes={MIN_ADMIN_ATTACHMENT_MEGABYTES}
-            maxMegabytes={MAX_ADMIN_ATTACHMENT_MEGABYTES}
-          />,
-        )}
-        {section(
-          TRANSPORT_SETTINGS_KEY,
-          <TransportSettingsForm {...transportSettings} />,
-        )}
-        {section(
-          MCP_STARTUP_TIMEOUTS_SETTING_KEY,
-          <McpRuntimeSettingsForm
-            idleTimeoutMs={mcpStartupTimeouts.idleTimeoutMs}
-            maxTimeoutMs={mcpStartupTimeouts.maxTimeoutMs}
-            source={mcpStartupTimeouts.source}
-            minTimeoutSeconds={MIN_MCP_STARTUP_TIMEOUT_MS / 1_000}
-            maxTimeoutSeconds={MAX_MCP_STARTUP_TIMEOUT_MS / 1_000}
-          />,
-        )}
-        {section(
-          PRIVATE_HOSTS_SETTING_KEY,
-          <PrivateHostsSettingsForm
-            value={privateHosts.value}
-            source={privateHosts.source}
-          />,
-        )}
+        <fieldset className="min-w-0 space-y-6">
+          <legend className="mb-1 text-base font-semibold">
+            {t("settingsAgentExecution")}
+          </legend>
+          {section(
+            AGENT_CONCURRENCY_SETTING_KEY,
+            <AgentConcurrencySettingsForm
+              {...agentConcurrency}
+              perAgentLimit={MAX_AGENT_CONCURRENCY}
+              totalLimit={MAX_TOTAL_AGENT_CONCURRENCY}
+            />,
+          )}
+          {section(
+            AGENT_SANDBOX_AUTO_STOP_SETTING_KEY,
+            <AgentSandboxAutoStopSettingsForm {...agentSandboxAutoStop} />,
+          )}
+          {section(
+            AGENT_ATTACHMENT_LIMIT_SETTING_KEY,
+            <RuntimeSettingsForm
+              bytes={attachmentLimit.bytes}
+              source={attachmentLimit.source}
+              cached={attachmentLimit.cached}
+              minMegabytes={MIN_ADMIN_ATTACHMENT_MEGABYTES}
+              maxMegabytes={MAX_ADMIN_ATTACHMENT_MEGABYTES}
+            />,
+          )}
+        </fieldset>
+        <fieldset className="min-w-0 space-y-6">
+          <legend className="mb-1 text-base font-semibold">
+            {t("settingsMcpRuntime")}
+          </legend>
+          {section(
+            MCP_STARTUP_TIMEOUTS_SETTING_KEY,
+            <McpRuntimeSettingsForm
+              idleTimeoutMs={mcpStartupTimeouts.idleTimeoutMs}
+              maxTimeoutMs={mcpStartupTimeouts.maxTimeoutMs}
+              source={mcpStartupTimeouts.source}
+              minTimeoutSeconds={MIN_MCP_STARTUP_TIMEOUT_MS / 1_000}
+              maxTimeoutSeconds={MAX_MCP_STARTUP_TIMEOUT_MS / 1_000}
+            />,
+          )}
+          {section(
+            PRIVATE_HOSTS_SETTING_KEY,
+            <PrivateHostsSettingsForm
+              value={privateHosts.value}
+              source={privateHosts.source}
+            />,
+          )}
+        </fieldset>
+        <fieldset className="min-w-0 space-y-6">
+          <legend className="mb-1 text-base font-semibold">
+            {t("settingsTransport")}
+          </legend>
+          {section(
+            TRANSPORT_SETTINGS_KEY,
+            <TransportSettingsForm {...transportSettings} />,
+          )}
+        </fieldset>
         {section(
           SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
           <SkillImportSettingsForm maxSkills={skillImportSettings.maxSkills} />,
         )}
+        <div id="log-settings" className="scroll-mt-6">
+          {section(
+            LOG_SETTINGS_KEY,
+            <LogSettings
+              settings={{
+                ...logSettings,
+                captures: logSettings.captures.filter(
+                  (item) => new Date(item.expiresAt).getTime() > observedAt,
+                ),
+              }}
+            />,
+          )}
+        </div>
       </SettingsChanges>
     </AdminPage>
   );

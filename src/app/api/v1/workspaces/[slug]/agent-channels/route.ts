@@ -1,4 +1,4 @@
-import { systemLog } from "@/lib/observability/system";
+import { logSystemEvent } from "@/lib/observability/system";
 import { withRequestLogging } from "@/lib/observability/http";
 import { writeAudit } from "@/lib/observability/audit";
 import { z } from "zod";
@@ -551,7 +551,14 @@ export const POST = withRequestLogging(
     try {
       return await operation;
     } catch (error) {
-      systemLog("error", "[agent-channels] operation failed", error);
+      logSystemEvent("channels.operation.failed", {
+        domain: "channel",
+        error,
+        workspaceId: workspace.id,
+        channelId: connectionId,
+        agentId: existing?.agentId ?? undefined,
+        secrets: Object.values(input.credentials),
+      });
       return Response.json(
         { error: "Channel operation failed" },
         { status: 500 },

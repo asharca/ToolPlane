@@ -1,3 +1,4 @@
+import { logSystemEvent } from "@/lib/observability/system";
 import { withRequestLogging } from "@/lib/observability/http";
 import { z } from "zod";
 import { resolveRequestUser } from "@/lib/auth/request-user";
@@ -95,7 +96,13 @@ export const GET = withRequestLogging(
           description: resource.description ?? resource.serverName,
         })),
       });
-    } catch {
+    } catch (error) {
+      logSystemEvent("chat.composer.list_failed", {
+        domain: "mcp",
+        error,
+        workspaceId: thread.workspaceId,
+        attributes: { threadId },
+      });
       return Response.json(
         { error: "MCP resources are unavailable." },
         { status: 502 },
@@ -146,6 +153,15 @@ export const POST = withRequestLogging(
         text: `Reference material (resource): ${result.resource.name}\n${input.data.id}\n${body}`,
       });
     } catch (error) {
+      if (!(error instanceof McpPromptRequestError) || error.status >= 500) {
+        logSystemEvent("chat.composer.resolve_failed", {
+          domain: "mcp",
+          error,
+          workspaceId: thread.workspaceId,
+          deploymentId: input.data.deploymentId,
+          attributes: { threadId },
+        });
+      }
       if (error instanceof McpPromptRequestError) {
         return Response.json(
           { error: error.message },

@@ -1,6 +1,6 @@
 "use server";
 
-import { systemLog } from "@/lib/observability/system";
+import { logSystemEvent } from "@/lib/observability/system";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
@@ -93,14 +93,31 @@ export async function loginAction(
   const password = boundedText(formData, "password", PASSWORD_MAX_LENGTH);
   const detectedTimeZone = normalizeTimeZone(formData.get("detectedTimeZone"));
 
-  if (!EMAIL_RE.test(email) || password === null)
+  if (!EMAIL_RE.test(email) || password === null) {
+    logSystemEvent("auth.login", {
+      outcome: "denied",
+      errorCode: "INVALID_CREDENTIALS",
+    });
     return { error: t("invalidCredentials") };
+  }
 
   const user = await db.user.findUnique({ where: { email } });
-  if (!user || !(await verifyPassword(password, user.passwordHash)))
+  if (!user || !(await verifyPassword(password, user.passwordHash))) {
+    logSystemEvent("auth.login", {
+      outcome: "denied",
+      errorCode: "INVALID_CREDENTIALS",
+    });
     return { error: t("invalidCredentials") };
+  }
 
-  if (user.status === "suspended") return { error: t("accountSuspended") };
+  if (user.status === "suspended") {
+    logSystemEvent("auth.login", {
+      outcome: "denied",
+      errorCode: "ACCOUNT_SUSPENDED",
+      actorId: user.id,
+    });
+    return { error: t("accountSuspended") };
+  }
 
   await createSession(user.id, user.sessionVersion);
   await reconcileAdminRole(user);
@@ -122,12 +139,18 @@ export async function loginAction(
       maxAge: 60 * 60 * 24 * 365,
     });
   }
+  logSystemEvent("auth.login", { outcome: "success", actorId: user.id });
 
   redirect(safeRelativePath(formData.get("next")) ?? "/app");
 }
 
 export async function logoutAction(): Promise<void> {
+  const actorId = await getSessionUserId();
   await clearSession();
+  logSystemEvent("auth.logout", {
+    outcome: "success",
+    actorId: actorId ?? undefined,
+  });
   redirect("/");
 }
 
@@ -146,11 +169,10 @@ export async function forgotPasswordAction(
         try {
           await requestPasswordReset(email);
         } catch (error) {
-          systemLog(
-            "error",
-            "Unable to process password-reset request",
-            error instanceof Error ? error.message : "Unknown error",
-          );
+          logSystemEvent("auth.password_reset.request_failed", {
+            error,
+            secrets: [email],
+          });
         }
       });
     }

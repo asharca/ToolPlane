@@ -5,6 +5,7 @@ import {
 } from "@/lib/runtime/ownership-state";
 import type { UIMessage } from "ai";
 import { db } from "@/lib/db";
+import { logSystemEvent } from "@/lib/observability/system";
 import { decryptChannelCredentials } from "./channel-connections";
 import { hostedRunnerSpec } from "./platform-runner";
 import { getMessagingPlatform, missingStartCredentialNames } from "./platforms";
@@ -79,7 +80,13 @@ export async function reconcileAgentChannelRunners() {
         !(await startAgentChannelRunner(channel.workspaceId, channel.id)).error
       )
         started += 1;
-    } catch {
+    } catch (error) {
+      logSystemEvent("channel.runner.recovery_failed", {
+        domain: "channel",
+        channelId: channel.id,
+        workspaceId: channel.workspaceId,
+        error,
+      });
       appendAgentChannelLog(
         channel.id,
         "error",
@@ -209,7 +216,14 @@ async function start(
               })
             : undefined,
         )
-        .catch(() => {});
+        .catch((error) => {
+          logSystemEvent("channel.runner.status_write_failed", {
+            domain: "channel",
+            channelId: connectionId,
+            workspaceId,
+            error,
+          });
+        });
     };
     adapter.on("log", (entry: ChannelLogEvent) => {
       if (current())
@@ -238,7 +252,14 @@ async function start(
                 data: { status: "error", runnerPid: null, lastError: error },
               }),
         )
-        .catch(() => {});
+        .catch((error) => {
+          logSystemEvent("channel.runner.status_write_failed", {
+            domain: "channel",
+            channelId: connectionId,
+            workspaceId,
+            error,
+          });
+        });
     });
 
     const processEvent = async (
@@ -492,7 +513,14 @@ async function start(
           )
             return stopAgentChannelRunner(workspaceId, connectionId);
         })
-        .catch(() => {});
+        .catch((error) => {
+          logSystemEvent("channel.runner.heartbeat_failed", {
+            domain: "channel",
+            channelId: connectionId,
+            workspaceId,
+            error,
+          });
+        });
     }, 5000);
     bindingTimer.unref?.();
     active.cleanup = () => {

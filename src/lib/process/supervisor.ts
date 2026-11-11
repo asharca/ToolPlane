@@ -6,6 +6,7 @@ import {
   markRuntimeUncertain,
 } from "@/lib/runtime/ownership-state";
 import { recordEvent } from "@/lib/observability/events";
+import { logSystemEvent } from "@/lib/observability/system";
 import { removeStaleSessionMcpCaptures } from "./mcp-runtime-image";
 import { remoteMcpConnectionIdentity } from "@/lib/remote-mcp/classification";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -343,8 +344,21 @@ async function persist(deploymentId: string, status: string) {
           where: { id: deploymentId },
           data: { status },
         });
-      } catch {
-        // deployment may have been removed; ignore
+      } catch (error) {
+        // P2025 means deletion won the status-write race; all other failures need diagnosis.
+        if (
+          !(
+            error &&
+            typeof error === "object" &&
+            "code" in error &&
+            error.code === "P2025"
+          )
+        )
+          logSystemEvent("runtime.process.status_write_failed", {
+            domain: "runtime",
+            deploymentId,
+            error,
+          });
       }
     });
   queues.set(deploymentId, write);
@@ -563,9 +577,21 @@ function writeRuntimeRecord(record: RuntimeRecord): void {
   runtimeStore().set(record.deploymentId, record);
   try {
     writeAtomic(runtimePath(record.deploymentId), JSON.stringify(record));
-  } catch {
-    // Runtime progress must never affect the deployment lifecycle. The in-memory
-    // record is still useful to the current worker if disk persistence fails.
+  } catch (error) {
+    // Deletion races are benign; keep using the in-memory record on storage outages.
+    if (
+      !(
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "ENOENT"
+      )
+    )
+      logSystemEvent("runtime.process.record_write_failed", {
+        domain: "runtime",
+        deploymentId: record.deploymentId,
+        error,
+      });
   }
 }
 
@@ -697,8 +723,21 @@ function resetRuntimeLog(deploymentId: string): void {
   try {
     ensureRegistryDir();
     writeFileSync(runtimeLogPath(deploymentId), "", { mode: 0o600 });
-  } catch {
-    // The process can still start when local log storage is temporarily bad.
+  } catch (error) {
+    // The process can still start if storage is unavailable; deleted records are benign.
+    if (
+      !(
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "ENOENT"
+      )
+    )
+      logSystemEvent("runtime.process.log_reset_failed", {
+        domain: "runtime",
+        deploymentId,
+        error,
+      });
   }
 }
 
@@ -842,8 +881,21 @@ function appendRuntimeLog(entry: Entry, value: string): string {
       0,
       entry.runtime.logEndCursor - statSync(file).size,
     );
-  } catch {
-    // Failed best-effort writes must not advance the cursor past persisted data.
+  } catch (error) {
+    // Do not advance the cursor past persisted data; deletion races need no recovery.
+    if (
+      !(
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "ENOENT"
+      )
+    )
+      logSystemEvent("runtime.process.log_write_failed", {
+        domain: "runtime",
+        deploymentId: entry.runtime.deploymentId,
+        error,
+      });
   }
   updateRuntime(entry, {}, true);
   return redacted;
