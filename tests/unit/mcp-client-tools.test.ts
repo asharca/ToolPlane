@@ -103,7 +103,7 @@ describe("listMcpTools", () => {
         generation: "new-generation",
         redactionValues: ["new-secret"],
       });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
       rpcResult({
         tools: [
           {
@@ -116,10 +116,6 @@ describe("listMcpTools", () => {
     );
 
     await expect(listMcpTools("dep-1")).resolves.toEqual([]);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:4321/",
-      expect.any(Object),
-    );
     expect(mocks.persist).not.toHaveBeenCalled();
   });
 

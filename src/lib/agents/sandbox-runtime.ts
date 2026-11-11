@@ -2493,6 +2493,7 @@ async function runPiSdk(
       packageRoot: PI_SDK_RUNTIME.directory,
       cwd: workdir,
       workspaceRoot,
+      sharedDir: "/workspace/shared",
       agentDir: stateRoot,
       sessionsDir: `${stateRoot}/sessions/${runtimeSessionId}`,
       statePath: `${stateRoot}/sessions/${runtimeSessionId}.json`,

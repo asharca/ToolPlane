@@ -2,18 +2,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TaskNotFoundError } from "@a2a-js/sdk/errors";
 const mocks = vi.hoisted(() => ({
-  user: vi.fn(),
-  actor: vi.fn(),
-  authority: vi.fn(),
+  principal: vi.fn(),
   open: vi.fn(),
   capability: vi.fn(),
 }));
-vi.mock("@/lib/auth/request-user", () => ({ resolveRequestUser: mocks.user }));
-vi.mock("@/lib/db", () => ({ db: {} }));
-vi.mock("@/lib/a2a/local-policy", () => ({ assertLocalActor: mocks.actor }));
+vi.mock("@/lib/auth/request-user", () => ({
+  resolveRequestPrincipal: mocks.principal,
+}));
 vi.mock("@/lib/a2a/files", () => ({
-  assertTaskFileReadAuthority: mocks.authority,
-  openTaskFile: mocks.open,
+  openWorkspaceTaskFile: mocks.open,
   openTaskFileCapability: mocks.capability,
 }));
 import { taskFileDownload, taskFileSessionDownload } from "@/lib/a2a/file-http";
@@ -23,11 +20,10 @@ const download = (headers: Record<string, string> = {}, query = "task=t") =>
   });
 beforeEach(() => {
   vi.resetAllMocks();
-  mocks.user.mockResolvedValue({ id: "u" });
-  mocks.actor.mockResolvedValue(undefined);
-  mocks.authority.mockResolvedValue({
-    id: "t",
-    grant: { kind: "local", actorId: "u", workspaceId: "w" },
+  mocks.principal.mockResolvedValue({
+    user: { id: "u" },
+    credential: "session",
+    token: null,
   });
   mocks.open.mockImplementation(async () => ({
     file: { filename: "safe.txt", size: 3 },
@@ -40,18 +36,15 @@ beforeEach(() => {
   }));
 });
 describe("task file download boundaries", () => {
-  it.each<Record<string, string>>([
-    {},
-    { authorization: "Bearer personal-token" },
-    { "sec-fetch-site": "same-origin" },
-  ])("accepts authorized user downloads with %j", async (headers) => {
-    const response = await taskFileSessionDownload(download(headers), "f");
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe("abc");
-    expect(mocks.actor).toHaveBeenCalledWith({}, "w", "u");
-    expect(mocks.open).toHaveBeenCalledWith("t", "f");
-    expect(response.headers.get("cache-control")).toContain("no-store");
-  });
+  it.each<Record<string, string>>([{}, { "sec-fetch-site": "same-origin" }])(
+    "accepts authorized session downloads with %j",
+    async (headers) => {
+      const response = await taskFileSessionDownload(download(headers), "f");
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("abc");
+      expect(response.headers.get("cache-control")).toContain("no-store");
+    },
+  );
   it.each(["session", "capability"])(
     "downloads Unicode filenames through %s access",
     async (access) => {
@@ -90,28 +83,50 @@ describe("task file download boundaries", () => {
         )
       ).status,
     ).toBe(403);
-    expect(mocks.user).not.toHaveBeenCalled();
+    expect(mocks.principal).not.toHaveBeenCalled();
+    expect(mocks.open).not.toHaveBeenCalled();
   });
+  it.each(["Bearer personal-token", "Bearer toolkit-token", "invalid", ""])(
+    "rejects explicit Authorization %j without falling back to the session",
+    async (authorization) => {
+      const response = await taskFileSessionDownload(
+        download({ authorization }),
+        "f",
+      );
+      expect(response.status).toBe(401);
+      expect(mocks.principal).not.toHaveBeenCalled();
+      expect(mocks.open).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["personal-token", "toolkit-token"])(
+    "rejects a resolved %s credential for session-only downloads",
+    async (credential) => {
+      mocks.principal.mockResolvedValue({
+        user: { id: "u" },
+        credential,
+        token: {},
+      });
+      expect((await taskFileSessionDownload(download(), "f")).status).toBe(401);
+      expect(mocks.open).not.toHaveBeenCalled();
+    },
+  );
   it("requires an authenticated user", async () => {
-    mocks.user.mockResolvedValue(null);
+    mocks.principal.mockResolvedValue(null);
     expect((await taskFileSessionDownload(download(), "f")).status).toBe(401);
   });
-  it("does not expose another actor's file", async () => {
-    mocks.user.mockResolvedValue({ id: "other" });
-    expect((await taskFileSessionDownload(download(), "f")).status).toBe(404);
-    expect(mocks.open).not.toHaveBeenCalled();
-  });
-  it("does not bypass live task revocation", async () => {
-    mocks.authority.mockRejectedValue(new TaskNotFoundError());
-    expect((await taskFileSessionDownload(download(), "f")).status).toBe(404);
-    expect(mocks.open).not.toHaveBeenCalled();
+  it("does not expose files denied by workspace observation authorization", async () => {
+    mocks.open.mockRejectedValue(new TaskNotFoundError());
+    const response = await taskFileSessionDownload(download(), "f");
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("");
+    expect(mocks.capability).not.toHaveBeenCalled();
   });
   it("rejects ambiguous task parameters", async () => {
     expect(
       (await taskFileSessionDownload(download({}, "task=t&task=other"), "f"))
         .status,
     ).toBe(404);
-    expect(mocks.authority).not.toHaveBeenCalled();
+    expect(mocks.open).not.toHaveBeenCalled();
   });
   it("never falls back from invalid capability to session authentication", async () => {
     mocks.capability.mockRejectedValue(new TaskNotFoundError());
@@ -120,6 +135,7 @@ describe("task file download boundaries", () => {
       "f",
     );
     expect(response.status).toBe(404);
-    expect(mocks.user).not.toHaveBeenCalled();
+    expect(mocks.principal).not.toHaveBeenCalled();
+    expect(mocks.open).not.toHaveBeenCalled();
   });
 });

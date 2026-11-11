@@ -157,6 +157,7 @@ it("refreshes real native task UI projection on the same SDK host and rejects th
     const cwd = join(root, "workspace"),
       privateDir = join(root, "private"),
       sessionsDir = join(root, "sessions");
+    const home = join(root, "home");
     for (const path of [cwd, privateDir, sessionsDir]) await mkdir(path);
     const extension = join(cwd, "fixture.mjs");
     await writeFile(
@@ -175,6 +176,8 @@ it("refreshes real native task UI projection on the same SDK host and rejects th
         sdkVersion: "0.87.1",
         packageRoot: resolve("."),
         cwd,
+        workspaceRoot: root,
+        sharedDir: join(root, "agent-shared"),
         agentDir: privateDir,
         sessionsDir,
         statePath: join(privateDir, "state.json"),
@@ -210,7 +213,18 @@ it("refreshes real native task UI projection on the same SDK host and rejects th
       [resolve("scripts/pi-sdk-session.mjs"), configPath],
       {
         stdio: ["pipe", "ignore", "pipe", "pipe"],
-        env: { ...process.env, PI_OFFLINE: "1", PI_TELEMETRY: "0" },
+        env: {
+          ...process.env,
+          HOME: home,
+          XDG_CONFIG_HOME: join(home, ".config"),
+          XDG_DATA_HOME: join(home, ".local", "share"),
+          XDG_CACHE_HOME: join(home, ".cache"),
+          XDG_STATE_HOME: join(home, ".local", "state"),
+          PI_OFFLINE: "1",
+          PI_TELEMETRY: "0",
+          NODE_CHANNEL_FD: undefined,
+          NODE_CHANNEL_SERIALIZATION_MODE: undefined,
+        },
       },
     );
     const pending = new Map<string, (value: HostResponse) => void>();

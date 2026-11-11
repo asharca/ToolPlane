@@ -16,8 +16,17 @@ it("stops only one conversation's resident SDK host while preserving its sibling
   const driver = join(process.cwd(), "scripts/native-runtime-session.mjs");
   const host = join(process.cwd(), "scripts/pi-sdk-session.mjs");
   const daemons: ChildProcess[] = [];
+  // Sibling conversations share one isolated Agent home, not the runner's home.
+  const home = join(root, "home");
   const environment = {
     ...process.env,
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, ".config"),
+    XDG_DATA_HOME: join(home, ".local", "share"),
+    XDG_CACHE_HOME: join(home, ".cache"),
+    XDG_STATE_HOME: join(home, ".local", "state"),
+    PI_OFFLINE: "1",
+    PI_TELEMETRY: "0",
     NODE_CHANNEL_FD: undefined,
     NODE_CHANNEL_SERIALIZATION_MODE: undefined,
   };
@@ -60,6 +69,8 @@ it("stops only one conversation's resident SDK host while preserving its sibling
         sdkVersion: "0.87.1",
         packageRoot: process.cwd(),
         cwd,
+        workspaceRoot: join(root, name),
+        sharedDir: join(root, "shared"),
         agentDir: stateRoot,
         sessionsDir: join(stateRoot, "sessions", "native"),
         statePath,
@@ -159,6 +170,19 @@ it("stops only one conversation's resident SDK host while preserving its sibling
 
 it("settles real SDK commands without agent_end, rotates context, and kills disconnected process groups", async () => {
   const dir = await mkdtemp(join(tmpdir(), "toolplane-sdk-daemon-"));
+  const home = join(dir, "home");
+  const environment = {
+    ...process.env,
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, ".config"),
+    XDG_DATA_HOME: join(home, ".local", "share"),
+    XDG_CACHE_HOME: join(home, ".cache"),
+    XDG_STATE_HOME: join(home, ".local", "state"),
+    PI_OFFLINE: "1",
+    PI_TELEMETRY: "0",
+    NODE_CHANNEL_FD: undefined,
+    NODE_CHANNEL_SERIALIZATION_MODE: undefined,
+  };
   const driver = join(process.cwd(), "scripts/native-runtime-session.mjs");
   const host = join(process.cwd(), "scripts/pi-sdk-session.mjs");
   const statePath = join(dir, "state.json");
@@ -200,6 +224,8 @@ export default function(pi) {
       sdkVersion: "0.87.1",
       packageRoot: process.cwd(),
       cwd: dir,
+      workspaceRoot: dir,
+      sharedDir: join(dir, "agent-shared"),
       agentDir: join(dir, "agent"),
       sessionsDir: join(dir, "sessions"),
       statePath,
@@ -255,6 +281,7 @@ export default function(pi) {
   await writeFile(inputPath, JSON.stringify(job));
   let daemon = spawn(process.execPath, [driver, inputPath, "serve"], {
     stdio: "ignore",
+    env: environment,
   });
   const until = async (predicate: () => boolean) => {
     const deadline = Date.now() + 15_000;
@@ -274,7 +301,7 @@ export default function(pi) {
       const { stdout } = await promisify(execFile)(
         process.execPath,
         [driver, inputPath],
-        { timeout: 20_000 },
+        { timeout: 20_000, env: environment },
       );
       return stdout
         .trim()
@@ -374,6 +401,7 @@ export default function(pi) {
     });
     daemon = spawn(process.execPath, [driver, inputPath, "serve"], {
       stdio: "ignore",
+      env: environment,
     });
     await until(() => existsSync(socketPath));
     const lost = await run();
@@ -405,6 +433,7 @@ export default function(pi) {
     await rm(statePath);
     daemon = spawn(process.execPath, [driver, inputPath, "serve"], {
       stdio: "ignore",
+      env: environment,
     });
     await until(() => existsSync(socketPath));
     job.command = "";

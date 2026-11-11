@@ -924,6 +924,21 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
       "--name",
       container,
       "--add-host=host.docker.internal:host-gateway",
+      // Container-local temporary CLI state is reused only by this fixture's hosts.
+      "-e",
+      "HOME=/tmp/agent-home",
+      "-e",
+      "XDG_CONFIG_HOME=/tmp/agent-home/.config",
+      "-e",
+      "XDG_DATA_HOME=/tmp/agent-home/.local/share",
+      "-e",
+      "XDG_CACHE_HOME=/tmp/agent-home/.cache",
+      "-e",
+      "XDG_STATE_HOME=/tmp/agent-home/.local/state",
+      "-e",
+      "PI_OFFLINE=1",
+      "-e",
+      "PI_TELEMETRY=0",
       "--entrypoint",
       "sleep",
       "toolplane-pi-package-capture:0.87.1",
@@ -931,6 +946,7 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
     ]);
     for (const file of [
       "pi-sdk-session.mjs",
+      "native-session-paths.mjs",
       "pi-sdk-capabilities.mjs",
       "pi-sdk-ui.mjs",
       "pi-sdk-native-resources.mjs",
@@ -998,6 +1014,8 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
           sdkVersion: "0.87.1",
           packageRoot: "/opt/pi-sdk",
           cwd: "/tmp/workspace",
+          workspaceRoot: "/tmp/workspace",
+          sharedDir: "/tmp/shared",
           agentDir: "/tmp/private",
           sessionsDir: `/tmp/sessions/${session}`,
           statePath: `/tmp/private/${session}.json`,
@@ -1180,7 +1198,11 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
     }
     await configure("original");
     launch();
-    expect(await prompt("/Count")).toMatchObject({
+    const initialCommand = await prompt("/Count");
+    expect(
+      initialCommand,
+      `${JSON.stringify(initialCommand)} ${hostStderr}`,
+    ).toMatchObject({
       success: true,
       result: { text: "Pi 扩展 · fixture\ndependency=DEPENDENCY_V1 count=1" },
     });

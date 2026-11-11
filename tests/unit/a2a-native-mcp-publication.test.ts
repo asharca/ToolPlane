@@ -68,9 +68,6 @@ vi.mock("@/lib/a2a/local-continuation", () => ({
   requestLocalInput: vi.fn(),
   requestLocalWait: vi.fn(),
 }));
-vi.mock("@/lib/observability/context", () => ({
-  withLogContext: (_context: unknown, operation: () => unknown) => operation(),
-}));
 vi.mock("@/lib/observability/a2a-log", () => ({
   recordA2AEvent: vi.fn(),
   a2aTaskOutcome: vi.fn(),

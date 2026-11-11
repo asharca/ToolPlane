@@ -128,6 +128,14 @@ import { executeLocalTask } from "@/lib/agents/execution/pi-executor";
 import { runSandboxAgentTurn } from "@/lib/agents/sandbox-runtime";
 import type * as AgentSandboxRuntime from "@/lib/agents/sandbox-runtime";
 import { taskRuntimeFailure } from "@/lib/agents/runtime-failure";
+
+// Authorization fixtures publish real revisions without exporting a Docker SDK.
+vi.mock("@/lib/agents/pi-runtime", () => ({
+  preparePiRuntime: vi.fn(async () => ({
+    path: "/fixture/pi-sdk.archive",
+    sha256: "a".repeat(64),
+  })),
+}));
 import {
   taskOutput,
   startTaskOutput,

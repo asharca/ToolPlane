@@ -103,6 +103,7 @@ beforeAll(async () => {
   archivedId = (
     await createSandbox("Migrated runtime", {
       ...currentConfig,
+      scope: "conversation",
       readOnly: true,
       migrationArchive: true,
     })
@@ -118,8 +119,8 @@ beforeAll(async () => {
     { id: externalId, role: "external", ownerAgent: null },
   );
   for (const config of [
-    { ...currentConfig, readOnly: true },
-    { ...currentConfig, migrationArchive: true },
+    { ...currentConfig, scope: "conversation", readOnly: true },
+    { ...currentConfig, scope: "conversation", migrationArchive: true },
     { managedBy: "agent-conversation", agentId: owner.id },
     { managedBy: "agent-endpoint", agentId: owner.id },
   ]) {
@@ -214,7 +215,7 @@ beforeAll(async () => {
           port: 2222,
           username: "sandbox-user",
           root: "/srv/sandbox",
-          authType: "password",
+          authType: "key",
           hostKeys: [{ type: "ssh-ed25519", key: "fixture-host-key" }],
           encryptedSecret: { ciphertext: "private-secret-envelope" },
           encryptedPassphrase: { ciphertext: "private-passphrase-envelope" },
@@ -320,7 +321,7 @@ it("keeps SSH credentials and host key material out of both enriched query resul
     port: 2222,
     username: "sandbox-user",
     root: "/srv/sandbox",
-    authType: "password",
+    authType: "key",
   };
   const rows = await listSandboxes(workspaceId);
   expect(rows.find((row) => row.id === sshSandboxId)?.sshServer).toEqual(

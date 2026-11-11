@@ -114,6 +114,8 @@ async function setup() {
   const workspace = join(root, "workspace"),
     agentDir = join(root, "private"),
     sessionsDir = join(root, "sessions");
+  // Mirror the Agent-wide HOME contract without reading or writing the runner's home.
+  const home = join(root, "home");
   const requestEvents = new EventEmitter();
   await Promise.all(
     [workspace, agentDir, sessionsDir].map((path) => mkdir(path)),
@@ -371,6 +373,8 @@ export default function(pi) {
     sdkVersion: "0.87.1",
     packageRoot: resolve("."),
     cwd: workspace,
+    workspaceRoot: root,
+    sharedDir: join(root, "agent-shared"),
     agentDir,
     sessionsDir,
     statePath: join(agentDir, "state.json"),
@@ -419,7 +423,18 @@ export default function(pi) {
       [resolve("scripts/pi-sdk-session.mjs"), configPath],
       {
         stdio: ["pipe", "pipe", "pipe", "pipe"],
-        env: { ...process.env, PI_OFFLINE: "1", PI_TELEMETRY: "0" },
+        env: {
+          ...process.env,
+          HOME: home,
+          XDG_CONFIG_HOME: join(home, ".config"),
+          XDG_DATA_HOME: join(home, ".local", "share"),
+          XDG_CACHE_HOME: join(home, ".cache"),
+          XDG_STATE_HOME: join(home, ".local", "state"),
+          PI_OFFLINE: "1",
+          PI_TELEMETRY: "0",
+          NODE_CHANNEL_FD: undefined,
+          NODE_CHANNEL_SERIALIZATION_MODE: undefined,
+        },
       },
     );
     children.add(child);
