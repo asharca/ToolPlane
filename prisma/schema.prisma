@@ -684,6 +684,13 @@ model AgentTrigger {
   lastStatus String?
   lastError String?
   lastConversationId String?
+  deliveryConnectionId String?
+  deliveryConnection AgentChannelConnection? @relation("TriggerDelivery", fields: [deliveryConnectionId], references: [id], onDelete: SetNull)
+  deliveryChatId String?
+  lastDeliveryStatus String?
+  lastDeliveryError String?
+  lastDeliveryAt DateTime?
+  lastDeliveryText String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([agentId, createdAt])
@@ -929,6 +936,7 @@ model AgentChannelConnection {
   senderApprovals    AgentChannelSenderApproval[]
   pairingRequests    AgentChannelPairingRequest[]
   inboundEvents      AgentChannelInboundEvent[]
+  deliveryTriggers   AgentTrigger[]         @relation("TriggerDelivery")
 
   @@unique([sandboxId, platform, name])
   @@index([workspaceId, agentId])
@@ -1174,6 +1182,8 @@ model Conversation {
   sandboxId             String?
   sandbox               Sandbox?                 @relation(fields: [sandboxId], references: [id], onDelete: Restrict)
   title                 String?
+  // No relation: deleted triggers retain their classified run history.
+  triggerId             String?
   // Some runtimes keep their own state outside this database. These aliases
   // let a cloned ToolPlane conversation retain the source runtime's session
   // identity even though its database primary key must be new.
@@ -1195,6 +1205,7 @@ model Conversation {
   agentUsage AgentUsage[]
 
   @@index([sandboxId])
+  @@index([agentId, triggerId])
 }
 
 model Message {

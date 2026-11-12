@@ -16,6 +16,44 @@ import {
 } from "./triggers";
 import { budgetDto, groupedUsage, usageTotals, utcMonth } from "./usage";
 import { parseRuntimeFailure } from "./runtime-failure";
+import { hostedRunnerSpec } from "./platform-runner";
+import { liveAgentChannelStatus } from "./channel-runtime";
+import { parseMessagingPromptSource } from "./messaging";
+
+const deliveryConnectionSelect = {
+  id: true,
+  name: true,
+  platform: true,
+} as const;
+
+const deliverySchema = z
+  .object({
+    connectionId: z.string().min(1).max(200),
+    chatId: z.string().trim().min(1).max(256),
+  })
+  .strict()
+  .nullable();
+
+async function deliveryData(
+  value: unknown,
+  workspaceId: string,
+  agentId: string,
+) {
+  if (value === undefined) return {};
+  const parsed = deliverySchema.safeParse(value);
+  if (!parsed.success) return null;
+  if (parsed.data === null)
+    return { deliveryConnectionId: null, deliveryChatId: null };
+  const connection = await db.agentChannelConnection.findFirst({
+    where: { id: parsed.data.connectionId, workspaceId, agentId },
+    select: { platform: true },
+  });
+  if (!connection || !hostedRunnerSpec(connection.platform)) return null;
+  return {
+    deliveryConnectionId: parsed.data.connectionId,
+    deliveryChatId: parsed.data.chatId,
+  };
+}
 
 const createSchema = z
   .object({
@@ -25,6 +63,7 @@ const createSchema = z
     cron: z.string().max(200).optional(),
     timezone: z.string().max(100).optional(),
     enabled: z.boolean().optional(),
+    delivery: z.unknown().optional(),
   })
   .strict();
 const patchSchema = createSchema
@@ -52,7 +91,7 @@ function apiFailure(error: unknown) {
 export async function handleAgentAutomation(
   req: Request,
   agentId: string,
-  action: "triggers" | "trigger" | "run" | "usage" | "budget",
+  action: "triggers" | "trigger" | "run" | "usage" | "budget" | "targets",
   triggerId?: string,
 ) {
   const user = await resolveRequestUser(req);
@@ -118,16 +157,94 @@ export async function handleAgentAutomation(
       budget: budgetDto(monthlyBudgetMicros, usageTotals(rows).costUsd),
     });
   }
+  if (action === "targets" && req.method === "GET") {
+    const rows = await db.agentChannelConnection.findMany({
+      where: { workspaceId: agent.workspaceId, agentId },
+      select: { id: true, name: true, platform: true, status: true },
+      orderBy: { createdAt: "asc" },
+    });
+    const connections = await Promise.all(
+      rows
+        .filter((row) => hostedRunnerSpec(row.platform))
+        .map(async (row) => {
+          const conversations = await db.conversation.findMany({
+            where: {
+              agentId,
+              agent: { workspaceId: agent.workspaceId },
+              runtimeSessionKey: { startsWith: `channel:${row.id}:` },
+            },
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            take: 200,
+            select: {
+              messages: {
+                where: { role: "user" },
+                orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+                take: 1,
+                select: { parts: true, createdAt: true },
+              },
+            },
+          });
+          const chats = new Map<
+            string,
+            {
+              chatId: string;
+              chatType: "dm" | "group" | "channel" | "thread";
+              label: string;
+              lastSeenAt: string;
+            }
+          >();
+          const messages = conversations
+            .flatMap((conversation) => conversation.messages)
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+          for (const message of messages) {
+            if (!Array.isArray(message.parts)) continue;
+            const text = message.parts
+              .flatMap((part) =>
+                part &&
+                typeof part === "object" &&
+                "type" in part &&
+                part.type === "text" &&
+                "text" in part &&
+                typeof part.text === "string"
+                  ? [part.text]
+                  : [],
+              )
+              .join("\n");
+            const source = parseMessagingPromptSource(text);
+            if (!source?.chatId || chats.has(source.chatId)) continue;
+            chats.set(source.chatId, {
+              chatId: source.chatId,
+              chatType: source.chatType,
+              label:
+                (source.chatType === "dm" ? source.userName : undefined) ||
+                source.chatId,
+              lastSeenAt: message.createdAt.toISOString(),
+            });
+            if (chats.size === 50) break;
+          }
+          return {
+            ...row,
+            status: ["running", "starting"].includes(row.status)
+              ? liveAgentChannelStatus(row.id)
+              : row.status,
+            chats: [...chats.values()],
+          };
+        }),
+    );
+    return Response.json({ connections });
+  }
   if (action === "triggers" && req.method === "GET") {
     const triggers = await db.agentTrigger.findMany({
       where: { agentId, workspaceId: agent.workspaceId },
       orderBy: { createdAt: "asc" },
+      include: { deliveryConnection: { select: deliveryConnectionSelect } },
     });
     return Response.json({ triggers: triggers.map(triggerDto) });
   }
   const trigger = triggerId
     ? await db.agentTrigger.findFirst({
         where: { id: triggerId, agentId, workspaceId: agent.workspaceId },
+        include: { deliveryConnection: { select: deliveryConnectionSelect } },
       })
     : null;
   if (triggerId && !trigger) return jsonError("Not found", 404);
@@ -149,7 +266,9 @@ export async function handleAgentAutomation(
         "INVALID_TRIGGER",
         body.reason === "too_large" ? 413 : 400,
       );
-    const value = body.value;
+    const { delivery, ...value } = body.value;
+    const target = await deliveryData(delivery, agent.workspaceId, agentId);
+    if (!target) return jsonError("INVALID_TRIGGER_DELIVERY", 400);
     let nextRunAt: Date | null = null;
     try {
       if (value.kind === "schedule")
@@ -161,6 +280,7 @@ export async function handleAgentAutomation(
     const created = await db.agentTrigger.create({
       data: {
         ...value,
+        ...target,
         cron: value.kind === "schedule" ? value.cron : null,
         timezone: value.kind === "schedule" ? (value.timezone ?? "UTC") : null,
         nextRunAt: value.enabled === false ? null : nextRunAt,
@@ -169,6 +289,7 @@ export async function handleAgentAutomation(
         actorId: user.id,
         secretHash: secret?.secretHash,
       },
+      include: { deliveryConnection: { select: deliveryConnectionSelect } },
     });
     return Response.json(
       {
@@ -185,7 +306,9 @@ export async function handleAgentAutomation(
         "INVALID_TRIGGER",
         body.reason === "too_large" ? 413 : 400,
       );
-    const { rotateSecret, ...value } = body.value;
+    const { rotateSecret, delivery, ...value } = body.value;
+    const target = await deliveryData(delivery, agent.workspaceId, agentId);
+    if (!target) return jsonError("INVALID_TRIGGER_DELIVERY", 400);
     if (trigger.kind !== "webhook" && rotateSecret)
       return jsonError("INVALID_TRIGGER", 400);
     if (
@@ -210,9 +333,11 @@ export async function handleAgentAutomation(
       where: { id: trigger.id },
       data: {
         ...value,
+        ...target,
         nextRunAt,
         ...(secret ? { secretHash: secret.secretHash } : {}),
       },
+      include: { deliveryConnection: { select: deliveryConnectionSelect } },
     });
     return Response.json({
       trigger: triggerDto(updated),

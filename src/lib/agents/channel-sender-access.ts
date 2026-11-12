@@ -494,15 +494,12 @@ export async function approveChannelPairing(
     return { chatId: request.chatId };
   });
   if ("error" in result) return { error: result.error };
-  try {
-    await sendChannelNotice(
-      input.connectionId,
-      result.chatId,
-      "Access approved. You can message this bot now.",
-    );
-  } catch {
-    /* Approval is durable even when the platform runner is unavailable. */
-  }
+  // Approval stays durable for every notice outcome, including unavailable runners.
+  await sendChannelNotice(
+    input.connectionId,
+    result.chatId,
+    "Access approved. You can message this bot now.",
+  );
   return {};
 }
 

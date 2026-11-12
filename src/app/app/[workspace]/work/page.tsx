@@ -241,6 +241,7 @@ export default async function WorkspaceWorkPage({
                 id: conversation.id,
                 agentId: conversation.agentId,
                 title: conversation.title,
+                triggerId: conversation.triggerId,
                 source,
                 agentRevisionId: conversation.agentRevisionId,
                 agentRevisionVersion: conversation.agentRevisionVersion,
@@ -284,10 +285,12 @@ export default async function WorkspaceWorkPage({
           })),
         }))}
         hasChannels={agents.some((agent) => Boolean(agent._count?.channels))}
+        hasTriggers={agents.some((agent) => agent._count.triggers > 0)}
         conversations={conversations.map((conversation) => ({
           id: conversation.id,
           agentId: conversation.agentId,
           title: conversation.title,
+          triggerId: conversation.triggerId,
           source: parseMessagingSessionTitle(conversation.title),
         }))}
         agents={agents.map((agent) => {
