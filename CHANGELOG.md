@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.1](https://github.com/asharca/ToolPlane/compare/v0.38.0...v0.38.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **agents:** 理清自进化界面概念与流程 ([#223](https://github.com/asharca/ToolPlane/issues/223)) ([bbbc089](https://github.com/asharca/ToolPlane/commit/bbbc08991543c0037e19175cb0a493eb169cfe96))
+
 ## [0.38.0](https://github.com/asharca/ToolPlane/compare/v0.37.0...v0.38.0) (2026-11-12)
 
 
