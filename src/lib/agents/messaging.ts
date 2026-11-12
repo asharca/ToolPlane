@@ -162,6 +162,41 @@ export function parseMessagingSessionTitle(
   };
 }
 
+export function parseMessagingPromptSource(
+  text: string,
+): NormalizedMessagingSource | null {
+  const header = /^\[Messaging source: ([^\n]*)\](?:\n|$)/.exec(text)?.[1];
+  if (!header) return null;
+  const fields = new Map(
+    header
+      .split(
+        /, (?=(?:platform|chatType|chatId|threadId|userId|userName|scopeId|messageId|attachments)=)/,
+      )
+      .map((field) => {
+        const separator = field.indexOf("=");
+        return [field.slice(0, separator), field.slice(separator + 1)] as const;
+      }),
+  );
+  const platform = fields.get("platform");
+  const chatType = fields.get("chatType");
+  if (
+    !platform ||
+    !chatType ||
+    !["dm", "group", "channel", "thread"].includes(chatType)
+  )
+    return null;
+  return {
+    platform,
+    chatType: chatType as NormalizedMessagingSource["chatType"],
+    chatId: fields.get("chatId"),
+    threadId: fields.get("threadId"),
+    userId: fields.get("userId"),
+    userName: fields.get("userName"),
+    scopeId: fields.get("scopeId"),
+    messageId: fields.get("messageId"),
+  };
+}
+
 export function renderMessagingPromptText(
   message: string,
   source: NormalizedMessagingSource,

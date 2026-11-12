@@ -27,6 +27,21 @@ type TriggerDTO = {
   lastConversationId: string | null;
   webhookUrl: string | null;
   createdAt: string;
+  delivery: {
+    connectionId: string;
+    connectionName: string;
+    platform: string;
+    chatId: string;
+  } | null;
+  lastDeliveryStatus:
+    | "pending"
+    | "sending"
+    | "delivered"
+    | "skipped"
+    | "failed"
+    | null;
+  lastDeliveryError: string | null;
+  lastDeliveryAt: string | null;
 };
 type Draft = {
   id?: string;
@@ -35,6 +50,19 @@ type Draft = {
   prompt: string;
   cron: string;
   timezone: string;
+  delivery: TriggerDTO["delivery"];
+};
+type DeliveryConnection = {
+  id: string;
+  name: string;
+  platform: string;
+  status: string;
+  chats: Array<{
+    chatId: string;
+    chatType: "dm" | "group" | "channel" | "thread";
+    label: string;
+    lastSeenAt: string;
+  }>;
 };
 
 export function AgentTriggersPanel({
@@ -52,6 +80,8 @@ export function AgentTriggersPanel({
   const [triggers, setTriggers] = useState<TriggerDTO[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [targets, setTargets] = useState<DeliveryConnection[] | null>(null);
+  const [targetsFailed, setTargetsFailed] = useState(false);
   const [secret, setSecret] = useState<{ id: string; value: string } | null>(
     null,
   );
@@ -88,6 +118,28 @@ export function AgentTriggersPanel({
     return () => controller.abort();
   }, [base, requestOptions]);
 
+  const draftKey = draft ? (draft.id ?? "new") : null;
+  const loadTargets = useEffectEvent((url: string, signal: AbortSignal) => {
+    setTargets(null);
+    setTargetsFailed(false);
+    void fetch(url, { cache: "no-store", signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        const body: { connections: DeliveryConnection[] } =
+          await response.json();
+        if (!signal.aborted) setTargets(body.connections);
+      })
+      .catch(() => {
+        if (!signal.aborted) setTargetsFailed(true);
+      });
+  });
+  useEffect(() => {
+    if (draftKey === null) return;
+    const controller = new AbortController();
+    loadTargets(`${base}/targets`, controller.signal);
+    return () => controller.abort();
+  }, [base, draftKey]);
+
   async function mutate(path: string, method: string, data?: unknown) {
     const response = await fetch(path, {
       method,
@@ -100,7 +152,9 @@ export function AgentTriggersPanel({
         runtimeError(body.error)?.text ??
           (body.error === "INVALID_TRIGGER"
             ? t("invalidTrigger")
-            : t("operationFailed")),
+            : body.error === "INVALID_TRIGGER_DELIVERY"
+              ? t("invalidTriggerDelivery")
+              : t("operationFailed")),
       );
     return body as {
       trigger?: TriggerDTO;
@@ -134,6 +188,9 @@ export function AgentTriggersPanel({
   }
   const locked = busy || loading || !canManage;
   const date = (value: string) => new Date(value).toLocaleString();
+  const deliveryConnection = targets?.find(
+    (connection) => connection.id === draft?.delivery?.connectionId,
+  );
   return (
     <div className="space-y-5 px-6 py-5">
       <header className="flex items-center justify-between gap-3">
@@ -158,6 +215,7 @@ export function AgentTriggersPanel({
                 name: "",
                 prompt: "",
                 cron: "",
+                delivery: null,
                 timezone:
                   Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
               });
@@ -191,6 +249,12 @@ export function AgentTriggersPanel({
                   ...(!draft.id ? { kind: draft.kind } : {}),
                   name: draft.name,
                   prompt: draft.prompt,
+                  delivery: draft.delivery
+                    ? {
+                        connectionId: draft.delivery.connectionId,
+                        chatId: draft.delivery.chatId.trim(),
+                      }
+                    : null,
                   ...(draft.kind === "schedule"
                     ? { cron: draft.cron, timezone: draft.timezone }
                     : {}),
@@ -267,6 +331,112 @@ export function AgentTriggersPanel({
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </DialogField>
+          <div className="space-y-3">
+            <DialogField
+              label={t("sendResultToChannel")}
+              htmlFor="trigger-delivery-connection"
+            >
+              <FormSelect
+                id="trigger-delivery-connection"
+                label={t("sendResultToChannel")}
+                value={draft.delivery?.connectionId ?? ""}
+                disabled={locked || targets === null}
+                onValueChange={(connectionId) => {
+                  const connection = targets?.find(
+                    (item) => item.id === connectionId,
+                  );
+                  setDraft({
+                    ...draft,
+                    delivery: connection
+                      ? {
+                          connectionId: connection.id,
+                          connectionName: connection.name,
+                          platform: connection.platform,
+                          chatId: "",
+                        }
+                      : null,
+                  });
+                }}
+                options={[
+                  { value: "", label: t("deliveryNone") },
+                  ...(draft.delivery && !deliveryConnection
+                    ? [
+                        {
+                          value: draft.delivery.connectionId,
+                          label: `${draft.delivery.connectionName} · ${draft.delivery.platform}`,
+                        },
+                      ]
+                    : []),
+                  ...(targets ?? []).map((connection) => ({
+                    value: connection.id,
+                    label: `${connection.name} · ${connection.platform}`,
+                  })),
+                ]}
+              />
+            </DialogField>
+            {targetsFailed ? (
+              <p role="alert" className="text-sm text-destructive">
+                {t("deliveryTargetsLoadFailed")}
+              </p>
+            ) : targets === null ? (
+              <p role="status" className="text-sm text-muted-foreground">
+                {common("loading")}
+              </p>
+            ) : null}
+            {draft.delivery ? (
+              <>
+                {deliveryConnection?.chats.length ? (
+                  <FormSelect
+                    label={t("deliveryKnownChat")}
+                    disabled={locked}
+                    value={
+                      deliveryConnection.chats.some(
+                        (chat) => chat.chatId === draft.delivery?.chatId,
+                      )
+                        ? draft.delivery.chatId
+                        : ""
+                    }
+                    onValueChange={(chatId) =>
+                      setDraft({
+                        ...draft,
+                        delivery: draft.delivery
+                          ? { ...draft.delivery, chatId }
+                          : null,
+                      })
+                    }
+                    options={[
+                      { value: "", label: t("deliveryManualChat") },
+                      ...deliveryConnection.chats.map((chat) => ({
+                        value: chat.chatId,
+                        label: `${chat.label} · ${t(`deliveryChatType.${chat.chatType}`)}`,
+                      })),
+                    ]}
+                  />
+                ) : null}
+                <DialogField
+                  label={t("deliveryChatId")}
+                  htmlFor="trigger-delivery-chat-id"
+                  description={t("deliveryChatIdHint")}
+                >
+                  <Input
+                    id="trigger-delivery-chat-id"
+                    required
+                    maxLength={256}
+                    value={draft.delivery.chatId}
+                    disabled={locked}
+                    onChange={(chatId) =>
+                      setDraft({
+                        ...draft,
+                        delivery: draft.delivery
+                          ? { ...draft.delivery, chatId }
+                          : null,
+                      })
+                    }
+                  />
+                </DialogField>
+              </>
+            ) : null}
+          </div>
           <div className="flex justify-end gap-2">
             <Button
               type="button"
@@ -337,6 +507,38 @@ export function AgentTriggersPanel({
               {runtimeError(trigger.lastError)?.text ?? trigger.lastError}
             </p>
           ) : null}
+          {trigger.delivery || trigger.lastDeliveryStatus ? (
+            <div className="space-y-1 text-xs text-muted-foreground">
+              {trigger.delivery ? (
+                <p className="break-words">
+                  {trigger.delivery.connectionName} · {trigger.delivery.chatId}
+                </p>
+              ) : null}
+              {trigger.lastDeliveryStatus ? (
+                <p
+                  role="status"
+                  className={
+                    trigger.lastDeliveryStatus === "failed"
+                      ? "text-destructive"
+                      : undefined
+                  }
+                >
+                  {t(`deliveryStatus.${trigger.lastDeliveryStatus}`)}
+                  {trigger.lastDeliveryAt
+                    ? ` · ${date(trigger.lastDeliveryAt)}`
+                    : ""}
+                </p>
+              ) : null}
+              {trigger.lastDeliveryStatus === "failed" &&
+              trigger.lastDeliveryError ? (
+                <p className="break-words text-destructive">
+                  {t.has(`deliveryError.${trigger.lastDeliveryError}`)
+                    ? t(`deliveryError.${trigger.lastDeliveryError}`)
+                    : trigger.lastDeliveryError}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           {trigger.webhookUrl ? (
             <div className="flex items-center gap-2">
               <code className="min-w-0 flex-1 break-all text-xs">
@@ -375,6 +577,7 @@ export function AgentTriggersPanel({
                   prompt: trigger.prompt,
                   cron: trigger.cron ?? "",
                   timezone: trigger.timezone ?? "UTC",
+                  delivery: trigger.delivery,
                 })
               }
             >

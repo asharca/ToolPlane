@@ -19,7 +19,11 @@ import {
   handleAgentAutomation,
   handleTriggerWebhook,
 } from "@/lib/agents/automation-http";
-import { newTriggerSecret } from "@/lib/agents/triggers";
+import {
+  deliverPendingTrigger,
+  newTriggerSecret,
+  settleAgentTriggerTask,
+} from "@/lib/agents/triggers";
 import { createApiToken } from "@/lib/auth/tokens";
 import type * as SandboxRuntimeModule from "@/lib/agents/sandbox-runtime";
 
@@ -181,7 +185,7 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
   });
 
   it("denies foreign workspace reads and rejects webhook user, toolkit and wrong secrets", async () => {
-    const { agent } = await fixture();
+    const { agent, conversation } = await fixture();
     const outsider = await db.user.create({
       data: {
         email: `automation-outsider-${stamp}@test.invalid`,
@@ -191,7 +195,7 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
     try {
       const token = (await createApiToken(outsider.id, "Outside workspace"))
         .token;
-      for (const action of ["triggers", "usage"] as const) {
+      for (const action of ["triggers", "usage", "targets"] as const) {
         const response = await handleAgentAutomation(
           new Request("http://localhost/api", {
             headers: { authorization: `Bearer ${token}` },
@@ -235,6 +239,149 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
       const toolkitToken = (
         await createApiToken(userId, "Toolkit token", { toolkitId: toolkit.id })
       ).token;
+      const otherAgent = await fixture();
+      const foreignWorkspace = await db.workspace.create({
+        data: {
+          ownerId: outsider.id,
+          slug: `delivery-foreign-${stamp}`,
+          name: "Foreign delivery",
+        },
+      });
+      const foreignAgent = await db.agent.create({
+        data: {
+          workspaceId: foreignWorkspace.id,
+          slug: "foreign",
+          name: "Foreign",
+          runtimeKind: "pi-sdk",
+        },
+      });
+      const channel = async (
+        channelWorkspaceId: string,
+        channelAgentId: string,
+      ) =>
+        db.agentChannelConnection.create({
+          data: {
+            workspaceId: channelWorkspaceId,
+            agentId: channelAgentId,
+            platform: "telegram",
+            name: "Delivery fixture",
+            inboundTokenHash: randomUUID(),
+            inboundTokenSecret: {},
+            inboundTokenPrefix: "fixture",
+          },
+        });
+      const foreignConnections = [
+        await channel(workspaceId, otherAgent.agent.id),
+        await channel(foreignWorkspace.id, foreignAgent.id),
+      ];
+      for (const connection of foreignConnections) {
+        for (const method of ["POST", "PATCH"] as const) {
+          const response = await handleAgentAutomation(
+            new Request("http://localhost/api", {
+              method,
+              headers: {
+                authorization: `Bearer ${userToken}`,
+                "content-type": "application/json",
+              },
+              body: JSON.stringify({
+                ...(method === "POST"
+                  ? {
+                      kind: "webhook",
+                      name: "Rejected delivery",
+                      prompt: "Result",
+                    }
+                  : {}),
+                delivery: {
+                  connectionId: connection.id,
+                  chatId: "raw:chat/id",
+                },
+              }),
+            }),
+            agent.id,
+            method === "POST" ? "triggers" : "trigger",
+            method === "PATCH" ? trigger.id : undefined,
+          );
+          expect(response.status).toBe(400);
+          expect(await response.json()).toEqual({
+            error: "INVALID_TRIGGER_DELIVERY",
+          });
+        }
+      }
+      const deliveryConnection = await channel(workspaceId, agent.id);
+      await db.agentTrigger.update({
+        where: { id: trigger.id },
+        data: {
+          lastConversationId: conversation.id,
+          lastStatus: "running",
+          deliveryConnectionId: deliveryConnection.id,
+          deliveryChatId: "raw:chat/id",
+        },
+      });
+      const admitted = await submitAgentEntry(
+        {
+          kind: "trigger",
+          sourceId: trigger.id,
+          conversationId: conversation.id,
+          workspaceId,
+          agentId: agent.id,
+          actorId: userId,
+          messageId: randomUUID(),
+          text: "Delivery idempotency",
+        },
+        () => {},
+      );
+      const claimed = await claimTask(admitted.row.id);
+      if (!claimed?.leaseToken) throw new Error("Missing trigger task lease");
+      await finishTask(
+        claimed.id,
+        claimed.leaseToken,
+        TaskState.TASK_STATE_FAILED,
+        "PI_SDK_MODEL_FAILED",
+      );
+      const settledTask = await db.a2ATask.findUniqueOrThrow({
+        where: { id: claimed.id },
+      });
+      await settleAgentTriggerTask(settledTask);
+      await vi.waitFor(async () => {
+        expect(
+          await db.agentTrigger.findUniqueOrThrow({
+            where: { id: trigger.id },
+          }),
+        ).toMatchObject({
+          lastStatus: "failed",
+          lastDeliveryStatus: "pending",
+          lastDeliveryError: null,
+          lastDeliveryText: 'Trigger "Webhook" failed (PI_SDK_MODEL_FAILED).',
+        });
+      });
+      const { lastDeliveryAt: queuedAt } =
+        await db.agentTrigger.findUniqueOrThrow({ where: { id: trigger.id } });
+      // Advance only Date so a re-queue would stamp a distinctly later lastDeliveryAt.
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 60_000 });
+      try {
+        await settleAgentTriggerTask(settledTask);
+      } finally {
+        vi.useRealTimers();
+      }
+      await deliverPendingTrigger(trigger.id);
+      // Settlement also starts a background attempt; without a runner each attempt returns to pending.
+      await vi.waitFor(async () => {
+        expect(
+          await db.agentTrigger.findUniqueOrThrow({
+            where: { id: trigger.id },
+          }),
+        ).toMatchObject({
+          lastStatus: "failed",
+          lastDeliveryStatus: "pending",
+          lastDeliveryError: null,
+          lastDeliveryAt: queuedAt,
+        });
+      });
+      expect(
+        await db.message.count({
+          where: { id: `trigger-result-${claimed.id}` },
+        }),
+      ).toBe(1);
       for (const bearer of ["wrong-secret", userToken, toolkitToken]) {
         const response = await handleTriggerWebhook(
           new Request("http://localhost/api", {
@@ -251,6 +398,7 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
         expect(await response.json()).toEqual({ error: "Unauthorized" });
       }
     } finally {
+      await db.workspace.deleteMany({ where: { ownerId: outsider.id } });
       await db.user.delete({ where: { id: outsider.id } });
     }
   });

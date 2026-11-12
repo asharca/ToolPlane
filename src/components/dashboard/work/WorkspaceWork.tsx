@@ -247,6 +247,7 @@ type ConversationSummary = {
   agentId: string;
   title?: string | null;
   source: ParsedMessagingSession | null;
+  triggerId?: string | null;
 };
 type ConversationDetail = ConversationSummary & {
   sandbox?: WorkItem["sandbox"];
@@ -272,6 +273,7 @@ type WorkSidebarAgent = {
   sessions: WorkItem[];
   chats: Array<ConversationSummary & { label: string }>;
   channels: Array<ConversationSummary & { label: string }>;
+  triggers: Array<ConversationSummary & { label: string }>;
   a2aContexts: A2AContextSummary[];
 };
 type WorkTiming = {
@@ -992,6 +994,7 @@ export function WorkspaceWork({
   conversations = [],
   selectedConversation = null,
   hasChannels = false,
+  hasTriggers = false,
   initialExpandedAgents = EMPTY_EXPANDED_AGENTS,
   initialGroupPreferences = EMPTY_SIDEBAR_GROUP_PREFERENCES,
   initialSidebarOpen = true,
@@ -1008,6 +1011,7 @@ export function WorkspaceWork({
   conversations?: ConversationSummary[];
   selectedConversation?: ConversationDetail | null;
   hasChannels?: boolean;
+  hasTriggers?: boolean;
   initialExpandedAgents?: Record<string, boolean>;
   initialGroupPreferences?: SidebarGroupPreferences;
   initialSidebarOpen?: boolean;
@@ -1313,12 +1317,13 @@ export function WorkspaceWork({
   ]);
 
   useEffect(() => {
-    if (!hasChannels || conversation || conversationBusy) return;
+    if ((!hasChannels && !hasTriggers) || conversation || conversationBusy)
+      return;
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") router.refresh();
     }, 15_000);
     return () => window.clearInterval(interval);
-  }, [hasChannels, conversation, conversationBusy, router]);
+  }, [hasChannels, hasTriggers, conversation, conversationBusy, router]);
 
   const streamText =
     streamOutput.workSessionId === selectedWorkSessionId
@@ -1446,8 +1451,13 @@ export function WorkspaceWork({
         return {
           agent: item,
           sessions: agentSessions,
-          chats: agentConversations.filter((entry) => !entry.source),
+          chats: agentConversations.filter(
+            (entry) => !entry.source && !entry.triggerId,
+          ),
           channels: agentConversations.filter((entry) => entry.source),
+          triggers: agentConversations.filter(
+            (entry) => !entry.source && entry.triggerId,
+          ),
           a2aContexts,
         };
       }),
@@ -1492,6 +1502,7 @@ export function WorkspaceWork({
           sessions: agentSessions,
           chats,
           channels,
+          triggers,
           a2aContexts,
         }) => ({
           id: `agent:${itemAgent.id}`,
@@ -1519,6 +1530,28 @@ export function WorkspaceWork({
                         (item, index) =>
                           sidebarSearch.trim() ||
                           fullConversationLists[`channel:${itemAgent.id}`] ||
+                          index < 5 ||
+                          item.id === conversation?.id,
+                      )
+                      .map((item) => ({
+                        id: `conversation:${item.id}`,
+                        label: item.label,
+                        kind: "bookmark" as const,
+                      })),
+                  },
+                ]
+              : []),
+            ...(triggers.length
+              ? [
+                  {
+                    id: `trigger-group:${itemAgent.id}`,
+                    label: t("triggerGroup"),
+                    kind: "folder" as const,
+                    children: triggers
+                      .filter(
+                        (item, index) =>
+                          sidebarSearch.trim() ||
+                          fullConversationLists[`trigger:${itemAgent.id}`] ||
                           index < 5 ||
                           item.id === conversation?.id,
                       )
@@ -1620,9 +1653,11 @@ export function WorkspaceWork({
     if (!activeResourceId) return;
     const folderKey = channelConversation
       ? `channel:${activeAgentId}`
-      : viewingA2A
-        ? `a2a:${activeAgentId}`
-        : null;
+      : conversation?.triggerId
+        ? `trigger:${activeAgentId}`
+        : viewingA2A
+          ? `a2a:${activeAgentId}`
+          : null;
     setExpandedAgents((current) => {
       if (current[activeAgentId] && (!folderKey || current[folderKey]))
         return current;
@@ -1645,6 +1680,7 @@ export function WorkspaceWork({
     activeResourceId,
     activeAgentId,
     channelConversation,
+    conversation?.triggerId,
     viewingA2A,
     setExpandedAgents,
     setGroupPreferences,
@@ -1666,11 +1702,12 @@ export function WorkspaceWork({
               : ["group:ungrouped"]),
             ...visibleAgents
               .filter(
-                ({ agent: itemAgent, chats, channels }) =>
+                ({ agent: itemAgent, chats, channels, triggers }) =>
                   expandedAgents[itemAgent.id] ??
                   (itemAgent.id === activeAgentId ||
                     chats.length > 0 ||
-                    channels.length > 0),
+                    channels.length > 0 ||
+                    triggers.length > 0),
               )
               .map(({ agent: itemAgent }) => `agent:${itemAgent.id}`),
             ...visibleAgents
@@ -1685,6 +1722,12 @@ export function WorkspaceWork({
                   expandedAgents[`channel:${itemAgent.id}`] ?? false,
               )
               .map(({ agent: itemAgent }) => `channel-group:${itemAgent.id}`),
+            ...visibleAgents
+              .filter(
+                ({ agent: itemAgent }) =>
+                  expandedAgents[`trigger:${itemAgent.id}`] ?? false,
+              )
+              .map(({ agent: itemAgent }) => `trigger-group:${itemAgent.id}`),
           ],
     [
       activeAgentId,
@@ -1710,6 +1753,7 @@ export function WorkspaceWork({
           [item.id, expanded.has(`agent:${item.id}`)],
           [`a2a:${item.id}`, expanded.has(`a2a-group:${item.id}`)],
           [`channel:${item.id}`, expanded.has(`channel-group:${item.id}`)],
+          [`trigger:${item.id}`, expanded.has(`trigger-group:${item.id}`)],
         ]),
       ),
     );
@@ -2481,6 +2525,7 @@ export function WorkspaceWork({
           [item.id, !collapsed],
           [`a2a:${item.id}`, !collapsed],
           [`channel:${item.id}`, !collapsed],
+          [`trigger:${item.id}`, !collapsed],
         ]),
       ),
     );
@@ -2623,28 +2668,35 @@ export function WorkspaceWork({
                             ? (item.children ?? [])
                             : [item],
                         );
-                        const channelGroup = roots
+                        const conversationGroup = roots
                           .flatMap((item) => item.children ?? [])
                           .find(
                             (item) =>
-                              item.id.startsWith("channel-group:") &&
+                              (item.id.startsWith("channel-group:") ||
+                                item.id.startsWith("trigger-group:")) &&
                               item.children?.at(-1)?.id === resource.id,
                           );
-                        if (channelGroup) {
-                          const id = channelGroup.id.slice(
-                            "channel-group:".length,
+                        if (conversationGroup) {
+                          const isTriggerGroup =
+                            conversationGroup.id.startsWith("trigger-group:");
+                          const kind = isTriggerGroup ? "trigger" : "channel";
+                          const id = conversationGroup.id.slice(
+                            `${kind}-group:`.length,
                           );
                           const entry = visibleAgents.find(
                             ({ agent }) => agent.id === id,
                           );
-                          if (!entry || entry.channels.length <= 5) return null;
-                          const key = `channel:${id}`;
+                          const count = isTriggerGroup
+                            ? entry?.triggers.length
+                            : entry?.channels.length;
+                          if (!entry || !count || count <= 5) return null;
+                          const key = `${kind}:${id}`;
                           const expanded = Boolean(fullConversationLists[key]);
                           return (
                             <button
                               type="button"
                               aria-expanded={expanded}
-                              aria-label={`${expanded ? t("collapseAll") : t("expandAll")} ${entry.agent.name} · ${t("channelGroup")}`}
+                              aria-label={`${expanded ? t("collapseAll") : t("expandAll")} ${entry.agent.name} · ${t(isTriggerGroup ? "triggerGroup" : "channelGroup")}`}
                               onClick={() =>
                                 setFullConversationLists((current) => ({
                                   ...current,
@@ -3089,6 +3141,7 @@ export function WorkspaceWork({
                                   agentId: item.agentId,
                                   title: item.title,
                                   source: null,
+                                  triggerId: null,
                                   workSessionId: item.id,
                                 });
                               })

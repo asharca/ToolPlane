@@ -306,6 +306,7 @@ export async function listAgents(workspaceId: string) {
           sandboxes: true,
           subAgents: true,
           channels: true,
+          triggers: { where: { enabled: true } },
         },
       },
     },

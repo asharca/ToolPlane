@@ -285,6 +285,33 @@
       "loadFailed": "无法加载触发器。",
       "operationFailed": "无法更新触发器，请检查权限后重试。",
       "invalidTrigger": "触发器配置无效，请检查 Cron 表达式、时区和必填字段。",
+      "invalidTriggerDelivery": "发送目标无效，请选择绑定到此智能体的频道并填写会话 ID。",
+      "sendResultToChannel": "将结果发送到频道",
+      "deliveryNone": "不发送",
+      "deliveryTargetsLoadFailed": "无法加载频道目标，请关闭并重新打开表单后重试。",
+      "deliveryKnownChat": "会话",
+      "deliveryManualChat": "手动输入会话 ID",
+      "deliveryChatId": "会话 ID",
+      "deliveryChatIdHint": "在会话中发送 /whoami 即可查看会话 ID。",
+      "deliveryChatType": {
+        "dm": "私聊",
+        "group": "群聊",
+        "channel": "频道",
+        "thread": "话题"
+      },
+      "deliveryError": {
+        "CHANNEL_UNAVAILABLE": "频道未运行，结果未能发送。请启动频道后重新运行触发器。",
+        "TRIGGER_DELIVERY_FAILED": "频道拒绝了这条消息，请确认机器人仍可向该会话发消息。",
+        "TRIGGER_DELIVERY_TARGET_INVALID": "该频道已不再绑定此智能体，请重新选择发送目标。",
+        "TRIGGER_DELIVERY_INTERRUPTED": "发送因重启中断，消息可能未送达。"
+      },
+      "deliveryStatus": {
+        "pending": "等待发送",
+        "sending": "发送中",
+        "delivered": "已送达",
+        "skipped": "已跳过发送",
+        "failed": "发送失败"
+      },
       "saved": "触发器已保存",
       "deleted": "触发器已删除",
       "enabled": "启用{name}",
@@ -3474,6 +3501,7 @@
         "task": "任务 {number}"
       },
       "channelGroup": "频道",
+      "triggerGroup": "触发器",
       "completionNotificationTitle": "ToolPlane · 本轮已结束",
       "completionNotificationEnable": "启用此 Work 页面不活跃时的完成通知",
       "completionNotificationDisable": "关闭页面不活跃时的完成通知",

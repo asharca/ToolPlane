@@ -102,14 +102,14 @@ export async function sendChannelNotice(
   connectionId: string,
   chatId: string,
   text: string,
-): Promise<boolean> {
+): Promise<"sent" | "unavailable" | "failed"> {
   const state = runners().get(connectionId);
-  if (state?.status !== "running" || !runtimeCanOperate()) return false;
+  if (state?.status !== "running" || !runtimeCanOperate()) return "unavailable";
   try {
     await state.adapter.sendMessage(chatId, text);
-    return true;
+    return "sent";
   } catch {
-    return false;
+    return "failed";
   }
 }
 

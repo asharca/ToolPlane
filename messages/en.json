@@ -285,6 +285,33 @@
       "loadFailed": "Could not load triggers.",
       "operationFailed": "Could not update the trigger. Check your permissions and try again.",
       "invalidTrigger": "Invalid trigger. Check the cron expression, time zone and required fields.",
+      "invalidTriggerDelivery": "Invalid delivery target. Choose a channel connected to this Agent and enter a Chat ID.",
+      "sendResultToChannel": "Send result to channel",
+      "deliveryNone": "None",
+      "deliveryTargetsLoadFailed": "Could not load channel targets. Close and reopen the form to try again.",
+      "deliveryKnownChat": "Chat",
+      "deliveryManualChat": "Enter Chat ID manually",
+      "deliveryChatId": "Chat ID",
+      "deliveryChatIdHint": "Send /whoami in the chat to see its Chat ID.",
+      "deliveryChatType": {
+        "dm": "Direct message",
+        "group": "Group",
+        "channel": "Channel",
+        "thread": "Thread"
+      },
+      "deliveryError": {
+        "CHANNEL_UNAVAILABLE": "The channel was not running, so the result could not be sent. Start the channel and run the trigger again.",
+        "TRIGGER_DELIVERY_FAILED": "The channel rejected the message. Check that the bot can still message this chat.",
+        "TRIGGER_DELIVERY_TARGET_INVALID": "The channel is no longer bound to this Agent. Choose another target.",
+        "TRIGGER_DELIVERY_INTERRUPTED": "Sending was interrupted by a restart; the message may not have arrived."
+      },
+      "deliveryStatus": {
+        "pending": "Delivery pending",
+        "sending": "Sending",
+        "delivered": "Delivered",
+        "skipped": "Delivery skipped",
+        "failed": "Delivery failed"
+      },
       "saved": "Trigger saved",
       "deleted": "Trigger deleted",
       "enabled": "Enable {name}",
@@ -3474,6 +3501,7 @@
         "task": "Task {number}"
       },
       "channelGroup": "Channels",
+      "triggerGroup": "Triggers",
       "completionNotificationTitle": "ToolPlane · Turn finished",
       "completionNotificationEnable": "Enable notifications when this Work page is inactive",
       "completionNotificationDisable": "Disable inactive-page completion notifications",
