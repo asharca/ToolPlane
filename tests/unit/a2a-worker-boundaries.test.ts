@@ -23,11 +23,20 @@ const state = vi.hoisted(() => ({
   execute: vi.fn(),
   admit: vi.fn(),
   stageFiles: vi.fn(),
+  recordEpisode: vi.fn(),
+  tickEvolutionJobs: vi.fn(),
   deferFiles: vi.fn(),
 }));
 vi.mock("@/lib/agents/agent-execution-gate", () => ({
   AgentExecutionBusyError: class AgentExecutionBusyError extends Error {},
   withAgentExecutionLease: state.admit,
+}));
+// Evolution persistence and scheduling are separate from worker admission.
+vi.mock("@/lib/agents/evolution/service", () => ({
+  recordEpisode: state.recordEpisode,
+}));
+vi.mock("@/lib/agents/evolution/jobs", () => ({
+  tickEvolutionJobs: state.tickEvolutionJobs,
 }));
 vi.mock("@/lib/a2a/local-sandbox", () => ({
   localTaskSandbox: () => state.target(),
@@ -175,6 +184,8 @@ beforeEach(async () => {
   state.target.mockResolvedValue({ sandboxId: "sandbox" });
   state.remoteWaits.mockResolvedValue(undefined);
   state.localWaits.mockResolvedValue(undefined);
+  state.recordEpisode.mockResolvedValue(undefined);
+  state.tickEvolutionJobs.mockResolvedValue(undefined);
   state.deferFiles.mockImplementation(async (id) => {
     const row = state.rows.get(id);
     if (row)
