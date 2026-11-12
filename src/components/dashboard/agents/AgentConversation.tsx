@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/motion/button";
 import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
+import { AgentMessageFeedback } from "./AgentMessageFeedback";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -1310,6 +1311,13 @@ export function AgentConversation({
                         <MessageFooter
                           className={`gap-0.5 ${actionVisibility}`}
                         >
+                          {activeConversationId ? (
+                            <AgentMessageFeedback
+                              agentId={agentId}
+                              conversationId={activeConversationId}
+                              messageId={sourceMessage.id}
+                            />
+                          ) : null}
                           {text ? (
                             <CopyButton
                               text={text}

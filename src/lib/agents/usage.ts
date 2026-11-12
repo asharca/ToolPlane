@@ -3,7 +3,11 @@ import type { Prisma, A2ATask, AgentUsage } from "@prisma/client";
 import { Task, TaskState } from "@a2a-js/sdk";
 import { UnsupportedOperationError } from "@a2a-js/sdk/errors";
 import { db } from "@/lib/db";
-import { isLocalGrant, type TaskGrant } from "@/lib/a2a/principal";
+import {
+  isLocalGrant,
+  type TaskGrant,
+  type LocalA2AGrant,
+} from "@/lib/a2a/principal";
 import { parseRuntimeUsage, type RuntimeUsage } from "./runtime-commands";
 
 export function utcMonth(now = new Date()) {
@@ -37,7 +41,7 @@ export class MeteredExecutionError extends Error {
 }
 // The sandbox model definition carries zero rates (pricing stays server-side), so Pi's own
 // cost.total is always 0. Price tokens with the workspace model catalog (USD per 1M tokens).
-async function usageCostUsd(usage: RuntimeUsage, metering?: TaskUsage) {
+export async function usageCostUsd(usage: RuntimeUsage, metering?: TaskUsage) {
   if (usage.costUsd) return usage.costUsd;
   if (!metering?.providerId || !metering.model) return 0;
   const model = await db.providerModel.findFirst({
@@ -59,6 +63,36 @@ async function usageCostUsd(usage: RuntimeUsage, metering?: TaskUsage) {
     1_000_000
   );
 }
+/** Source attribution is independent of whether a model request was billed. */
+export async function agentTaskConversationId(grant: LocalA2AGrant) {
+  const entry = grant.entryPolicy;
+  if (grant.ancestorTaskIds.length || !entry) return null;
+  let conversationId: string | undefined =
+    entry.conversationId ?? entry.sourceId;
+  if (entry.kind === "work") {
+    const work = await db.workSession.findFirst({
+      where: {
+        id: entry.sourceId,
+        workspaceId: grant.workspaceId,
+        agentId: grant.agentId,
+        a2aActorId: grant.actorId,
+      },
+      select: { conversationId: true },
+    });
+    conversationId = work?.conversationId;
+  }
+  if (!conversationId) return null;
+  const conversation = await db.conversation.findFirst({
+    where: {
+      id: conversationId,
+      agentId: grant.agentId,
+      agent: { workspaceId: grant.workspaceId },
+    },
+    select: { id: true },
+  });
+  return conversation?.id ?? null;
+}
+
 export async function recordAgentTaskUsage(row: A2ATask, metering?: TaskUsage) {
   const grant = row.grant as unknown as TaskGrant;
   if (!isLocalGrant(grant)) return;
@@ -96,18 +130,7 @@ export async function recordAgentTaskUsage(row: A2ATask, metering?: TaskUsage) {
     cacheWriteTokens: 0,
   };
   const entry = grant.entryPolicy;
-  let conversationId =
-    entry?.conversationId ??
-    (entry && entry.kind !== "work" && entry.kind !== "trigger"
-      ? entry.sourceId
-      : undefined);
-  if (entry?.kind === "work")
-    conversationId = (
-      await db.workSession.findUnique({
-        where: { id: entry.sourceId },
-        select: { conversationId: true },
-      })
-    )?.conversationId;
+  const conversationId = await agentTaskConversationId(grant);
   const costUsd = await usageCostUsd(usage, metering);
   await db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${grant.workspaceId} FOR UPDATE`;

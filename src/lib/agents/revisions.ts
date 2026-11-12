@@ -1,4 +1,5 @@
 import "server-only";
+import { isDeepStrictEqual } from "node:util";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
@@ -518,7 +519,11 @@ export async function publishAgentRevisionInTransaction(
   tx: Prisma.TransactionClient,
   workspaceId: string,
   agentId: string,
-  input: { expectedRevisionId: string | null; config: unknown },
+  input: {
+    expectedRevisionId: string | null;
+    config: unknown;
+    purpose?: "candidate" | "rollback" | "published";
+  },
 ) {
   await tx.$queryRaw`SELECT id FROM "Agent" WHERE id=${agentId} AND "workspaceId"=${workspaceId} FOR UPDATE`;
   const owner = await tx.agent.findFirst({
@@ -553,6 +558,13 @@ export async function publishAgentRevisionInTransaction(
     agentId,
     config,
   );
+  if (current && !input.purpose) {
+    const existing = await tx.agentRevision.findUniqueOrThrow({
+      where: { id: current.id },
+    });
+    if (isDeepStrictEqual(existing.config, config))
+      return { id: existing.id, version: existing.version, config };
+  }
   const initialSnapshot = config.environment.initialSnapshot;
   if (initialSnapshot) {
     const snapshot = await tx.sandboxSnapshot.findFirst({
@@ -631,17 +643,25 @@ export async function publishAgentRevisionInTransaction(
     });
   }
   await validateRevisionAuthorization(tx, workspaceId, agentId, config);
+  // Candidates consume sequence numbers but never become the default implicitly.
+  const latest = await tx.agentRevision.aggregate({
+    where: { agentId },
+    _max: { version: true },
+  });
   const revision = await tx.agentRevision.create({
     data: {
       agentId,
-      version: owner.currentRevisionVersion + 1,
+      version: (latest._max.version ?? 0) + 1,
+      parentRevisionId: current?.id ?? null,
+      purpose: input.purpose ?? "published",
       config: config as Prisma.InputJsonValue,
     },
   });
-  await tx.agent.update({
-    where: { id: agentId },
-    data: { currentRevisionVersion: revision.version },
-  });
+  if (input.purpose !== "candidate")
+    await tx.agent.update({
+      where: { id: agentId },
+      data: { currentRevisionVersion: revision.version },
+    });
   return { id: revision.id, version: revision.version, config };
 }
 
@@ -867,6 +887,7 @@ export async function rollbackAgentRevision(
       return publishAgentRevisionInTransaction(tx, workspaceId, agentId, {
         expectedRevisionId,
         config: revision.config,
+        purpose: "rollback",
       });
     },
     { timeout: 120_000 },

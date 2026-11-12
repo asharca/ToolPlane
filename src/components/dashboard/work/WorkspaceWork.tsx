@@ -2,6 +2,7 @@
 import { SidebarToolbar } from "@/components/dashboard/SidebarToolbar";
 import { useSidebarScroll } from "@/components/dashboard/useSidebarScroll";
 import { notify } from "@/components/dashboard/Toaster";
+import { AgentMessageFeedback } from "@/components/dashboard/agents/AgentMessageFeedback";
 
 import { Button } from "@/components/motion/button";
 
@@ -588,6 +589,8 @@ function CompactionNote({ message }: { message: WorkMessage }) {
 
 function WorkTranscript({
   agentName,
+  agentId,
+  conversationId,
   modelName: fallbackModelName,
   messages,
   streamText,
@@ -601,6 +604,8 @@ function WorkTranscript({
   streaming,
 }: {
   agentName: string;
+  agentId?: string;
+  conversationId?: string;
   modelName?: string | null;
   messages: WorkMessage[];
   streamText: string;
@@ -921,13 +926,31 @@ function WorkTranscript({
                       ? "error"
                       : "complete"
                 }
-                copyText={text}
+                showActions={false}
                 announce={false}
-                actionsClassName={actionVisibility}
               >
                 {messageBody}
               </StreamingResponse>
             )}
+            {message.role === "assistant" && !isStreamingMessage ? (
+              <MessageFooter className={`gap-0.5 ${actionVisibility}`}>
+                {text ? (
+                  <CopyButton
+                    text={text}
+                    label={common("copy")}
+                    iconOnly
+                    className={messageActionClassName}
+                  />
+                ) : null}
+                {agentId && conversationId ? (
+                  <AgentMessageFeedback
+                    agentId={agentId}
+                    conversationId={conversationId}
+                    messageId={message.id}
+                  />
+                ) : null}
+              </MessageFooter>
+            ) : null}
             {message.role === "user" && text ? (
               <MessageFooter className={`gap-0.5 ${actionVisibility}`}>
                 {messageTime ? (
@@ -3355,6 +3378,10 @@ export function WorkspaceWork({
                         <>
                           <WorkTranscript
                             agentName={controlAgent?.name ?? t("agent")}
+                            agentId={conversation?.agentId ?? selected?.agentId}
+                            conversationId={
+                              conversation?.id ?? selected?.conversationId
+                            }
                             modelName={
                               conversation?.modelOverride?.model ??
                               conversation?.modelName ??

@@ -21,6 +21,7 @@ import {
   type NativeUiResponse,
 } from "./native-ui";
 import type { z } from "zod";
+import { recordTaskToolActivity } from "@/lib/agents/evolution/tool-activity";
 
 async function live(tx: Prisma.TransactionClient, id: string, lease: string) {
   const row = await lockTask(tx, id);
@@ -82,6 +83,9 @@ export async function updateTaskUi(
       input,
     );
     if (input.action !== "poll") {
+      if (input.action === "activity") {
+        await recordTaskToolActivity(tx, grant, taskId, input.activity);
+      }
       await tx.a2ATask.update({
         where: { id: taskId },
         data: { uiProjection: projection as unknown as Prisma.InputJsonValue },

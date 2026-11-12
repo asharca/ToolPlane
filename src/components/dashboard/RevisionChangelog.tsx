@@ -6,16 +6,19 @@ import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button } from "@/components/motion/button";
 import { revisionChangeLines } from "@/components/dashboard/RevisionUpgradeNotice";
 import type { RevisionChangelogPage } from "@/lib/revisions/upgrade-diff";
+import { RevisionDiffLoader } from "./RevisionFileDiff";
 
 /** `url` serves GET `?beforeVersion=` → `RevisionChangelogPage`, newest first. */
 export function RevisionChangelog({
   url,
   title,
   className,
+  diffUrl,
 }: {
   url: string;
   title: string;
   className?: string;
+  diffUrl?: string;
 }) {
   const t = useTranslations("console.revisionUpdate");
   const locale = useLocale();
@@ -105,6 +108,11 @@ export function RevisionChangelog({
                     <li>{t("noChanges")}</li>
                   )}
                 </ul>
+                {diffUrl ? (
+                  <RevisionDiffLoader
+                    url={`${diffUrl}?toVersion=${entry.version}`}
+                  />
+                ) : null}
               </li>
             );
           })}

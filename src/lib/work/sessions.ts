@@ -14,7 +14,7 @@ import { deleteWorkspaceAttachmentFile } from "@/lib/attachments/storage";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 import { resolveModelContext } from "@/lib/agents/model";
 import type { ReasoningEffort } from "@/lib/agents/constants";
-import { pinCurrentAgentRevision } from "@/lib/agents/revisions";
+import { selectNewSessionRevision } from "@/lib/agents/evolution/rollout-selection";
 import { resolveAgentPiPackages } from "@/lib/agents/resolve";
 import type {
   LoadedAgentPiPackages,
@@ -295,7 +295,7 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
         agent.runtimeKind,
         tx,
       );
-    const revision = await pinCurrentAgentRevision(tx, agent.id);
+    const revision = await selectNewSessionRevision(tx, agent.id);
     const config = revision.config;
     const pinnedProvider =
       agent.provider?.id === config.providerId ? agent.provider : null;

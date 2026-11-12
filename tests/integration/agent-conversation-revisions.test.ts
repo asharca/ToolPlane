@@ -8,6 +8,7 @@ import {
   GET,
   POST,
 } from "@/app/api/v1/agents/[agentId]/conversations/[conversationId]/revision/route";
+import { GET as getContentDiff } from "@/app/api/v1/agents/[agentId]/revisions/diff/route";
 
 const auth = vi.hoisted(() => ({ userId: null as string | null }));
 vi.mock("@/lib/auth/request-user", () => ({
@@ -365,4 +366,64 @@ it("upgrades one shared-sandbox session without moving another pin or its enviro
     (await db.sandbox.findUniqueOrThrow({ where: { id: sandbox.id } })).config,
   ).toEqual(sharedConfig);
   expect(changedEnvironment.id).not.toBe(oldRevisionId);
+});
+
+it("shows exact historical prompt changes only to an authorized workspace member", async () => {
+  auth.userId = userId;
+  const response = await getContentDiff(
+    new Request(
+      `http://localhost/api/v1/agents/${agentId}/revisions/diff?fromVersion=1&toVersion=2`,
+    ),
+    { params: Promise.resolve({ agentId }) },
+  );
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  const prompt = body.files.find(
+    (file: { path: string }) => file.path === "systemPrompt.md",
+  );
+  expect(prompt.lines).toEqual([
+    { id: "0", type: "removed", content: "Original prompt", oldLine: 1 },
+    { id: "1", type: "added", content: "Updated prompt", newLine: 1 },
+  ]);
+  auth.userId = outsiderId;
+  const denied = await getContentDiff(
+    new Request(
+      `http://localhost/api/v1/agents/${agentId}/revisions/diff?toVersion=2`,
+    ),
+    { params: Promise.resolve({ agentId }) },
+  );
+  expect(denied.status).toBe(404);
+  expect(await denied.text()).not.toContain("Original prompt");
+});
+
+it("compares a candidate with its recorded parent rather than a newer unrelated publication", async () => {
+  auth.userId = userId;
+  const maximum = await db.agentRevision.aggregate({
+    where: { agentId },
+    _max: { version: true },
+  });
+  const candidate = await db.agentRevision.create({
+    data: {
+      agentId,
+      version: (maximum._max.version ?? 0) + 1,
+      purpose: "candidate",
+      parentRevisionId: oldRevisionId,
+      config: { ...config, systemPrompt: "Candidate prompt" },
+    },
+  });
+  const response = await getContentDiff(
+    new Request(
+      `http://localhost/api/v1/agents/${agentId}/revisions/diff?toVersion=${candidate.version}`,
+    ),
+    { params: Promise.resolve({ agentId }) },
+  );
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body.fromVersion).toBe(1);
+  const prompt = body.files.find(
+    (file: { path: string }) => file.path === "systemPrompt.md",
+  );
+  expect(prompt.lines.map((line: { content: string }) => line.content)).toEqual(
+    ["Original prompt", "Candidate prompt"],
+  );
 });

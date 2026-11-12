@@ -58,6 +58,11 @@ import {
   revokeAgentEnvironmentCredentialAction,
 } from "@/lib/agents/environment-credential-actions";
 import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
+import {
+  buildAgentRevisionDiff,
+  type AgentRevisionDiff,
+} from "@/lib/revisions/config-diff";
+import { RevisionFileDiff } from "../RevisionFileDiff";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
 import {
   agentPermissionAdditions,
@@ -187,6 +192,7 @@ export function AgentSettingsForm(props: Props) {
   const t = useTranslations("console.agents");
   const r = useTranslations("console.agents.revisions");
   const s = useTranslations("console.sandboxes");
+  const diffT = useTranslations("console.revisionDiff");
   const router = useRouter();
   const closeModal = useCloseSettingsModal();
   const formId = useId();
@@ -256,6 +262,7 @@ export function AgentSettingsForm(props: Props) {
     expectedRevisionId: string | null;
     config: AgentRevisionConfig;
     additions: AgentPermissionAddition[];
+    diff: AgentRevisionDiff;
   } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [pending, setPending] = useState(false);
@@ -405,6 +412,9 @@ export function AgentSettingsForm(props: Props) {
       await operation();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
+      notify(failure instanceof Error ? failure.message : String(failure), {
+        severity: "error",
+      });
     } finally {
       setPending(false);
     }
@@ -480,12 +490,14 @@ export function AgentSettingsForm(props: Props) {
         prepared.config,
       );
       setEnvironment(JSON.stringify(prepared.config.environment, null, 2));
-      if (additions.length) {
-        setReview({ ...prepared, additions });
-        setMessage("");
-      } else {
-        await publish(prepared);
+      const diff = buildAgentRevisionDiff(appliedConfig, prepared.config);
+      if (!diff.files.length) {
+        notify(diffT("noChanges"));
+        router.refresh();
+        return;
       }
+      setReview({ ...prepared, additions, diff });
+      setMessage("");
     });
   }
   async function apply() {
@@ -1168,7 +1180,15 @@ export function AgentSettingsForm(props: Props) {
               className="space-y-3 rounded-lg border border-border p-4"
             >
               <h4 className="font-semibold">{r("review")}</h4>
-              <p className="text-sm text-muted-foreground">{r("reviewHelp")}</p>
+              <p className="text-sm text-muted-foreground">
+                {diffT("reviewHelp")}
+              </p>
+              <RevisionFileDiff diff={review.diff} />
+              {review.additions.length ? (
+                <p className="text-sm text-muted-foreground">
+                  {r("reviewHelp")}
+                </p>
+              ) : null}
               <ul className="space-y-3 text-sm">
                 {review.additions.map((addition) => {
                   const nativeDelegation =

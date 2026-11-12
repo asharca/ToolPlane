@@ -128,6 +128,11 @@ import { executeLocalTask } from "@/lib/agents/execution/pi-executor";
 import { runSandboxAgentTurn } from "@/lib/agents/sandbox-runtime";
 import type * as AgentSandboxRuntime from "@/lib/agents/sandbox-runtime";
 import { taskRuntimeFailure } from "@/lib/agents/runtime-failure";
+import {
+  recordEpisode,
+  payload as evolutionPayload,
+} from "@/lib/agents/evolution/service";
+import { recordAgentTaskUsage } from "@/lib/agents/usage";
 
 // Authorization fixtures publish real revisions without exporting a Docker SDK.
 vi.mock("@/lib/agents/pi-runtime", () => ({
@@ -3134,6 +3139,148 @@ describe("unified native ingress mappings", () => {
       }
     },
   );
+
+  it("persists native tool callbacks before freezing terminal experience without treating tool failure as turn failure", async () => {
+    const input = await entry("work");
+    const work = await db.workSession.findUniqueOrThrow({
+      where: { id: input.sourceId },
+    });
+    await db.workSession.update({
+      where: { id: work.id },
+      data: {
+        runtimeSnapshot: {
+          piPackages: [],
+          workingDirectory: ".",
+          deploymentIds: [],
+          installedSkillIds: [],
+        },
+      },
+    });
+    const accepted = await submitAgentEntry(input, vi.fn());
+    const running = assertDefined(await claimTask(accepted.row.id));
+    vi.mocked(runSandboxAgentTurn).mockImplementationOnce(async (turn) => {
+      await turn.onActivity?.({
+        type: "tool",
+        toolCallId: "read-once",
+        toolName: "read",
+        status: "running",
+      });
+      await turn.onActivity?.({
+        type: "tool",
+        toolCallId: "recoverable-bash",
+        toolName: "bash",
+        status: "failed",
+        isError: true,
+      });
+      await turn.onActivity?.({
+        type: "tool",
+        toolCallId: "read-once",
+        toolName: "read",
+        status: "completed",
+      });
+      await turn.onActivity?.({
+        type: "tool",
+        toolCallId: "read-once",
+        toolName: "read",
+        status: "completed",
+      });
+      return "Recovered from the tool error and completed the request";
+    });
+    const result = await executeLocalTask(
+      running,
+      new AbortController().signal,
+    );
+    expect(result.state).toBe(TaskState.TASK_STATE_COMPLETED);
+    const calls = await db.agentEvolutionRecord.findMany({
+      where: {
+        agentId: agents[0],
+        kind: "tool-call",
+        payload: { path: ["taskId"], equals: running.id },
+      },
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls.filter((call) => call.status === "failed")).toHaveLength(1);
+    await finishTask(
+      running.id,
+      assertDefined(running.leaseToken),
+      result.state,
+      result.message,
+      result.artifact,
+    );
+    await recordAgentTaskUsage(running);
+    await recordEpisode(running);
+    const episode = await db.agentEvolutionRecord.findUniqueOrThrow({
+      where: {
+        agentId_kind_key: {
+          agentId: agents[0],
+          kind: "episode",
+          key: running.id,
+        },
+      },
+    });
+    expect(evolutionPayload(episode)).toMatchObject({
+      taskId: running.id,
+      conversationId: work.conversationId,
+      outcome: "succeeded",
+      toolCalls: 2,
+      toolFailures: 1,
+    });
+  });
+
+  it("attributes failed preparation to the real Work conversation even without usage and leaves context-only failures unbound", async () => {
+    const input = await entry("work");
+    const work = await db.workSession.findUniqueOrThrow({
+      where: { id: input.sourceId },
+    });
+    const accepted = await submitAgentEntry(input, vi.fn());
+    const running = assertDefined(await claimTask(accepted.row.id));
+    await finishTask(
+      running.id,
+      assertDefined(running.leaseToken),
+      TaskState.TASK_STATE_FAILED,
+      "PI_EXECUTION_FAILED",
+    );
+    await recordAgentTaskUsage(running);
+    await recordEpisode(running);
+    expect(
+      await db.agentUsage.findUnique({ where: { taskId: running.id } }),
+    ).toBeNull();
+    const episode = await db.agentEvolutionRecord.findUniqueOrThrow({
+      where: {
+        agentId_kind_key: {
+          agentId: agents[0],
+          kind: "episode",
+          key: running.id,
+        },
+      },
+    });
+    expect(evolutionPayload(episode)).toMatchObject({
+      conversationId: work.conversationId,
+      outcome: "failed",
+      inputTokens: 0,
+      outputTokens: 0,
+      toolCalls: 0,
+      toolFailures: 0,
+    });
+    const contextOnly = await root();
+    await finishTask(
+      contextOnly.id,
+      assertDefined(contextOnly.leaseToken),
+      TaskState.TASK_STATE_FAILED,
+      "PI_EXECUTION_FAILED",
+    );
+    await recordEpisode(contextOnly);
+    const unboundEpisode = await db.agentEvolutionRecord.findUniqueOrThrow({
+      where: {
+        agentId_kind_key: {
+          agentId: agents[0],
+          kind: "episode",
+          key: contextOnly.id,
+        },
+      },
+    });
+    expect(evolutionPayload(unboundEpisode).conversationId).toBeNull();
+  });
 
   it("preserves Work slash commands and excludes them from model input", async () => {
     const input = {
