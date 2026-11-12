@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.0](https://github.com/asharca/ToolPlane/compare/v0.37.0...v0.38.0) (2026-11-12)
+
+
+### Features
+
+* **agents:** 添加受控自进化与修订差异审核 ([#221](https://github.com/asharca/ToolPlane/issues/221)) ([2618a82](https://github.com/asharca/ToolPlane/commit/2618a827831dd10e77168514b538d7433e3e7555))
+
 ## [0.37.0](https://github.com/asharca/ToolPlane/compare/v0.36.2...v0.37.0) (2026-11-11)
 
 
