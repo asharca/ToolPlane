@@ -48,6 +48,22 @@ import { createAgentRuntimeToken } from "@/lib/agents/runtime-access";
 import { updateTaskUi } from "@/lib/agents/execution/task-ui";
 import { mapTaskSandbox } from "./task-sandbox-fixture";
 import { withAgentMaintenanceLease } from "@/lib/agents/agent-execution-gate";
+import type * as SandboxRuntimeModule from "@/lib/agents/sandbox-runtime";
+
+// Revision and Work authorization use real persistence, not Docker SDK preparation.
+vi.mock("@/lib/agents/pi-runtime", () => ({
+  preparePiRuntime: vi.fn(async () => ({
+    path: "/fixture/pi-sdk.archive",
+    sha256: "a".repeat(64),
+  })),
+}));
+vi.mock("@/lib/agents/sandbox-runtime", async (original) => ({
+  ...(await original<typeof SandboxRuntimeModule>()),
+  preflightPiSdkCapabilities: vi
+    .fn()
+    .mockResolvedValue({ commands: [], tools: [], skills: [], prompts: [] }),
+}));
+
 const browserActor = vi.hoisted(() => ({ id: "" }));
 vi.mock("@/lib/auth/request-user", () => ({
   resolveRequestPrincipal: async () => ({
