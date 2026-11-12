@@ -116,14 +116,6 @@ jobs:
             TOOLPLANE_VERSION=${{ steps.tag.outputs.name || steps.release.outputs.tag_name }}
           cache-from: type=gha
 
-      - name: Package runtime release artifact
-        if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
-        run: |
-          tar -C dist/release -czf toolplane-runtime-linux-amd64.tar.gz app
-          tar -tzf toolplane-runtime-linux-amd64.tar.gz app/public/ >/dev/null
-          artifact_size=$(stat -c %s toolplane-runtime-linux-amd64.tar.gz)
-          test "$artifact_size" -le $((100 * 1024 * 1024))
-          shasum -a 256 toolplane-runtime-linux-amd64.tar.gz > toolplane-runtime-linux-amd64.tar.gz.sha256
 
       - name: Build and push release image
         if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
@@ -138,7 +130,15 @@ jobs:
             NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
             TOOLPLANE_VERSION=${{ steps.tag.outputs.name || steps.release.outputs.tag_name }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min
+      - name: Package runtime release artifact
+        if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
+        run: |
+          tar -C dist/release -czf toolplane-runtime-linux-amd64.tar.gz app
+          tar -tzf toolplane-runtime-linux-amd64.tar.gz app/public/ >/dev/null
+          artifact_size=$(stat -c %s toolplane-runtime-linux-amd64.tar.gz)
+          test "$artifact_size" -le $((100 * 1024 * 1024))
+          shasum -a 256 toolplane-runtime-linux-amd64.tar.gz > toolplane-runtime-linux-amd64.tar.gz.sha256
 
       - name: Create or update tagged GitHub Release
         if: github.ref_type == 'tag'

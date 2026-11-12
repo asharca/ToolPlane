@@ -113,6 +113,8 @@ A2A 任务结束后，重新打开或刷新会话仍可展开已保存的工具�
 
 默认 CI 不运行完整 `pnpm test`，不追求全仓覆盖率数字。完整验证可手动运行 `ci` 并设置 `full=true`，或在本地运行 `pnpm test`；需要诊断覆盖情况时可运行 `pnpm test:coverage`，报告写入 `coverage/coverage-summary.json` 和 `coverage/lcov.info`，不能代表外部容器或子进程内部的覆盖率。集成测试需要独立的 pgvector PostgreSQL 测试库；先生成 Prisma Client并应用数据库迁移；完整运行时测试还需构建 Pi 包捕获镜像（`docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .`），不要使用业务数据库运行测试。
 
+完整 CI 将测试分为三个独立 runner，每个分片使用自己的 PostgreSQL 和 Docker，分片内仍串行；构建、静态检查与运行制品验证独立并行执行，不减少测试覆盖。发布在镜像构建完成后才打包运行制品，避免生成的校验和污染 Docker context；构建缓存使用 `mode=min` 限制导出范围，代价是冷构建可能需要重新执行中间阶段。
+
 ## 文档
 
 文档站是独立的 [GitHub Pages 站点](https://asharca.github.io/toolplane-docs/docs/zh)，中文优先，描述当前开发中的功能，不是稳定生产版本的承诺；部署者应结合实际运行版本阅读。公开文档唯一维护源为 [`asharca/toolplane-docs`](https://github.com/asharca/toolplane-docs) 的 `content/`，通过该仓库的 PR 更新，不在应用仓库维护第二份正文。根目录 `README.md` 仍介绍本项目，`CHANGELOG.md` 仍由本仓库 CI/CD 生成。
