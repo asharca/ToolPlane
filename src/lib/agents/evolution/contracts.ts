@@ -168,6 +168,8 @@ export interface EvolutionOverviewDto {
   settings: EvolutionSettingsDto;
   permissions: { canReview: boolean; canExecute: boolean };
   reflections: ReflectionDto[];
+  /** Agent revision numbers, so the console can show v3 instead of internal IDs. */
+  revisions: Array<{ id: string; version: number }>;
 }
 export type EvolutionResponse<T> =
   | { data: T }

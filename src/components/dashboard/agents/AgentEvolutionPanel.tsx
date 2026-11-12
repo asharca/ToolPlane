@@ -36,7 +36,17 @@ import type {
 import { evolutionRequest } from "./evolution-client";
 
 const inputClass =
-  "w-full min-w-0 rounded-lg border border-border bg-background p-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "w-full min-w-0 rounded-lg border border-border bg-background p-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60";
+
+const STEPS = [
+  "settings",
+  "experience",
+  "memory",
+  "proposals",
+  "evaluations",
+  "rollout",
+] as const;
+type Step = (typeof STEPS)[number];
 
 type EvolutionSnapshot = {
   overview: EvolutionOverviewDto;
@@ -63,6 +73,86 @@ type ListResource =
   | "evaluations"
   | "reflections";
 
+const STEP_RESOURCES: Record<Step, ListResource[]> = {
+  settings: ["reflections"],
+  experience: ["episodes", "feedback"],
+  memory: ["playbook"],
+  proposals: ["proposals"],
+  evaluations: ["cases", "evaluations"],
+  rollout: ["evaluations"],
+};
+const RESOURCE_LABELS: Record<ListResource, string> = {
+  episodes: "episodes",
+  feedback: "feedback",
+  playbook: "steps.memory",
+  proposals: "steps.proposals",
+  cases: "cases",
+  evaluations: "results",
+  reflections: "reflectionHistory",
+};
+const NO_REVISIONS: EvolutionOverviewDto["revisions"] = [];
+
+interface EvolutionFormat {
+  date(value: string): string;
+  money(micros: string | number): string;
+  score(value: number): string;
+  version(id: string | null | undefined): string;
+  failure(code: string): string;
+}
+// Reads never change state, so any failure other than an access problem gets the
+// plain "could not load" message, not the warning reserved for mutations.
+const LOAD_ERROR_CODES: Record<string, true> = {
+  UNAUTHORIZED: true,
+  NOT_FOUND: true,
+  FORBIDDEN: true,
+};
+function loadFailure(cause: unknown) {
+  return cause instanceof Error &&
+    Object.hasOwn(LOAD_ERROR_CODES, cause.message)
+    ? cause.message
+    : "LOAD_FAILED";
+}
+
+/** Costs are stored in micro-USD; versions are shown by number, never by internal ID. */
+function useEvolutionFormat(
+  revisions: EvolutionOverviewDto["revisions"],
+): EvolutionFormat {
+  const t = useTranslations("console.evolution");
+  const locale = useLocale();
+  return useMemo<EvolutionFormat>(() => {
+    const dates = new Intl.DateTimeFormat(locale, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+    const currency = new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: "USD",
+      currencyDisplay: "narrowSymbol",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 6,
+    });
+    const percent = new Intl.NumberFormat(locale, {
+      style: "percent",
+      maximumFractionDigits: 0,
+    });
+    const versions = new Map(revisions.map((item) => [item.id, item.version]));
+    return {
+      date: (value: string) => dates.format(new Date(value)),
+      money: (micros: string | number) =>
+        currency.format(Number(micros) / 1_000_000),
+      score: (value: number) => percent.format(value),
+      version: (id: string | null | undefined) => {
+        const version = id ? versions.get(id) : undefined;
+        return version === undefined ? t("unknownVersion") : `v${version}`;
+      },
+      failure: (code: string) =>
+        t.has(`failures.${code}`)
+          ? t(`failures.${code}`)
+          : t("failures.unknown", { code }),
+    };
+  }, [locale, revisions, t]);
+}
+
 function mergeRecords<T extends { id: string }>(latest: T[], previous: T[]) {
   const ids = new Set(latest.map((item) => item.id));
   return [...latest, ...previous.filter((item) => !ids.has(item.id))];
@@ -70,20 +160,22 @@ function mergeRecords<T extends { id: string }>(latest: T[], previous: T[]) {
 
 function Field({
   label,
+  help,
   children,
 }: {
   label: string;
+  help?: string;
   children: ReactElement<{ id?: string }>;
 }) {
   const id = useId();
   return (
-    <label
-      htmlFor={id}
-      className="flex min-w-0 flex-col gap-1.5 text-sm font-medium"
-    >
-      {label}
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <label htmlFor={id} className="text-sm font-medium">
+        {label}
+      </label>
       {cloneElement(children, { id })}
-    </label>
+      {help ? <p className="text-xs text-muted-foreground">{help}</p> : null}
+    </div>
   );
 }
 function Empty({ count }: { count: number }) {
@@ -92,18 +184,43 @@ function Empty({ count }: { count: number }) {
     <p className="py-3 text-sm text-muted-foreground">{t("empty")}</p>
   );
 }
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+      {children}
+    </p>
+  );
+}
+function Failure({ text }: { text: string }) {
+  return <p className="break-words text-sm text-destructive">{text}</p>;
+}
 function RecordCard({
   title,
+  meta,
   children,
 }: {
   title: ReactNode;
-  children: ReactNode;
+  meta?: ReactNode;
+  children?: ReactNode;
 }) {
   return (
     <article className="min-w-0 space-y-3 rounded-xl border border-border p-4">
-      <h4 className="break-words font-medium">{title}</h4>
+      <div className="space-y-1">
+        <h5 className="break-words font-medium">{title}</h5>
+        {meta ? (
+          <p className="break-words text-xs text-muted-foreground">{meta}</p>
+        ) : null}
+      </div>
       {children}
     </article>
+  );
+}
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-3">
+      <h4 className="font-medium">{title}</h4>
+      {children}
+    </section>
   );
 }
 
@@ -115,28 +232,19 @@ export function AgentEvolutionPanel({
   currentRevisionId: string | null;
 }) {
   const t = useTranslations("console.evolution");
-  const locale = useLocale();
   const router = useRouter();
   const base = `/api/v1/agents/${encodeURIComponent(agentId)}/evolution`;
   const [snapshot, setSnapshot] = useState<EvolutionSnapshot | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("settings");
-  const [proposal, setProposal] = useState<ProposalDetailDto | null>(null);
-  const [proposalBusy, setProposalBusy] = useState(false);
+  const [tab, setTab] = useState<Step>("settings");
   const [cursors, setCursors] = useState<
     Partial<Record<ListResource, string | null>>
   >({});
-  const dates = useMemo(
-    () =>
-      new Intl.DateTimeFormat(locale, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }),
-    [locale],
+  const format = useEvolutionFormat(
+    snapshot?.overview.revisions ?? NO_REVISIONS,
   );
-  const date = (value: string) => dates.format(new Date(value));
   const errorText = (code: string) =>
     t.has(`errors.${code}`)
       ? t(`errors.${code}`)
@@ -244,7 +352,7 @@ export function AgentEvolutionPanel({
           : previous,
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "EVOLUTION_FAILED");
+      setError(loadFailure(cause));
     } finally {
       setLoading(false);
     }
@@ -254,8 +362,7 @@ export function AgentEvolutionPanel({
     setLoading(true);
     load(controller.signal)
       .catch((cause) => {
-        if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : "EVOLUTION_FAILED");
+        if (!controller.signal.aborted) setError(loadFailure(cause));
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -276,8 +383,7 @@ export function AgentEvolutionPanel({
       try {
         await load(controller.signal, true);
       } catch (cause) {
-        if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : "EVOLUTION_FAILED");
+        if (!controller.signal.aborted) setError(loadFailure(cause));
       } finally {
         if (!controller.signal.aborted) timer = window.setTimeout(poll, 5000);
       }
@@ -294,7 +400,7 @@ export function AgentEvolutionPanel({
     try {
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "EVOLUTION_FAILED");
+      setError(loadFailure(cause));
     } finally {
       setLoading(false);
     }
@@ -308,7 +414,6 @@ export function AgentEvolutionPanel({
       await evolutionRequest(`${base}/${path}`, method, body);
       committed = true;
       await load();
-      setProposal(null);
       router.refresh();
       notify(t("saved"));
       return true;
@@ -325,24 +430,26 @@ export function AgentEvolutionPanel({
       setBusy(false);
     }
   };
-  async function openProposal(id: string) {
-    setProposalBusy(true);
-    setProposal(null);
-    setError("");
-    try {
-      setProposal(
-        await evolutionRequest<ProposalDetailDto>(
-          `${base}/proposals?id=${encodeURIComponent(id)}`,
-        ),
-      );
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "EVOLUTION_FAILED");
-    } finally {
-      setProposalBusy(false);
-    }
-  }
   const review = snapshot?.overview.permissions.canReview ?? false;
   const execute = snapshot?.overview.permissions.canExecute ?? false;
+  const pending: Partial<Record<Step, number>> = snapshot
+    ? {
+        memory: snapshot.playbook.filter((item) => item.status === "pending")
+          .length,
+        proposals: snapshot.proposals.filter(
+          (item) =>
+            item.status === "pending" &&
+            item.baseRevisionId === currentRevisionId,
+        ).length,
+        evaluations: snapshot.evaluations.filter(
+          (item) => item.status === "queued" || item.status === "running",
+        ).length,
+        rollout: snapshot.rollout?.status === "active" ? 1 : 0,
+      }
+    : {};
+  const moreResources = STEP_RESOURCES[tab].filter(
+    (resource) => cursors[resource],
+  );
   return (
     <div className="min-w-0 space-y-5 p-4 sm:p-6" aria-busy={busy || loading}>
       <header className="space-y-2">
@@ -362,27 +469,43 @@ export function AgentEvolutionPanel({
           {t("description")}
         </p>
       </header>
-      <nav aria-label={t("navigation")} className="flex flex-wrap gap-1">
-        {[
-          "settings",
-          "experience",
-          "memory",
-          "proposals",
-          "evaluations",
-          "rollout",
-        ].map((item) => (
-          <Button
-            key={item}
-            type="button"
-            size="sm"
-            variant={tab === item ? "primary" : "ghost"}
-            aria-current={tab === item ? "page" : undefined}
-            onClick={() => setTab(item)}
-          >
-            {t(`tabs.${item}`)}
-          </Button>
-        ))}
+      <nav aria-label={t("navigation")}>
+        <ol className="flex flex-wrap gap-1">
+          {STEPS.map((step, index) => {
+            const count = pending[step] ?? 0;
+            return (
+              <li key={step}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={tab === step ? "primary" : "ghost"}
+                  aria-current={tab === step ? "step" : undefined}
+                  onClick={() => setTab(step)}
+                >
+                  <span className="tabular-nums">{index + 1}.</span>
+                  {t(`steps.${step}`)}
+                  {count ? (
+                    <span
+                      className="rounded-full bg-amber-500/20 px-1.5 text-xs tabular-nums text-amber-700 dark:text-amber-300"
+                      aria-hidden="true"
+                    >
+                      {count}
+                    </span>
+                  ) : null}
+                  {count ? (
+                    <span className="sr-only">
+                      {t("pendingCount", { count })}
+                    </span>
+                  ) : null}
+                </Button>
+              </li>
+            );
+          })}
+        </ol>
       </nav>
+      <p className="text-sm leading-6 text-muted-foreground">
+        {t(`help.${tab}`)}
+      </p>
       {error ? (
         <p role="alert" className="break-words text-sm text-destructive">
           {errorText(error)}
@@ -391,19 +514,23 @@ export function AgentEvolutionPanel({
       {loading && !snapshot ? <p role="status">{t("loading")}</p> : null}
       {snapshot ? (
         <>
-          {!review ? (
+          {!review || !execute ? (
             <p className="text-sm text-muted-foreground">{t("readOnly")}</p>
           ) : null}
           {tab === "settings" ? (
-            <>
+            <div className="space-y-6">
               <EvolutionSettings
-                key={agentId}
                 overview={snapshot.overview}
                 busy={busy}
                 mutate={mutate}
+                format={format}
               />
-              <section className="space-y-3">
-                <h4 className="font-medium">{t("reflections")}</h4>
+              <Section title={t("reflection")}>
+                <p className="text-sm text-muted-foreground">
+                  {snapshot.overview.settings.enabled
+                    ? t("reflectionHelp")
+                    : t("reflectionDisabled")}
+                </p>
                 <Button
                   type="button"
                   disabled={
@@ -413,81 +540,79 @@ export function AgentEvolutionPanel({
                 >
                   {t("reflect")}
                 </Button>
-                <p className="text-xs text-muted-foreground">
-                  {t("reflectionHelp")}
-                </p>
+                <h5 className="pt-2 text-sm font-medium">
+                  {t("reflectionHistory")}
+                </h5>
                 <Empty count={snapshot.reflections.length} />
                 {snapshot.reflections.map((item) => (
                   <RecordCard
                     key={item.id}
-                    title={`${t(`status.${item.status}`)} · ${date(item.createdAt)}`}
+                    title={`${t(`status.${item.status}`)} · ${format.date(item.createdAt)}`}
+                    meta={t("cost", { value: format.money(item.costMicros) })}
                   >
-                    <p className="text-xs">
-                      {t("cost", { value: item.costMicros })}
-                    </p>
                     {item.failureCode ? (
-                      <p
-                        role="alert"
-                        className="break-all text-sm text-destructive"
-                      >
-                        {item.failureCode}
-                      </p>
+                      <Failure text={format.failure(item.failureCode)} />
                     ) : null}
                   </RecordCard>
                 ))}
-              </section>
-            </>
+              </Section>
+            </div>
           ) : null}
           {tab === "experience" ? (
-            <div className="space-y-5">
-              <section className="space-y-3">
-                <h4 className="font-medium">{t("episodes")}</h4>
+            <div className="space-y-6">
+              <Section title={t("episodes")}>
                 <Empty count={snapshot.episodes.length} />
                 {snapshot.episodes.map((item) => (
                   <RecordCard
                     key={item.id}
-                    title={`${t(`status.${item.outcome}`)} · ${date(item.createdAt)}`}
-                  >
-                    <p className="whitespace-pre-wrap break-words text-sm">
-                      {item.summary}
-                    </p>
-                    <p className="break-all text-xs text-muted-foreground">
-                      {t("source")}: {item.taskId ?? item.conversationId} ·{" "}
-                      {t("revision")}: {item.revisionId}
-                    </p>
-                    <p className="text-xs">
-                      {t("tokens", {
+                    title={`${t(`status.${item.outcome}`)} · ${format.date(item.createdAt)}`}
+                    meta={[
+                      `${t("version")} ${format.version(item.revisionId)}`,
+                      t("tokens", {
                         input: item.inputTokens,
                         output: item.outputTokens,
-                      })}{" "}
-                      · {t("cost", { value: item.costMicros })}
-                    </p>
-                    {item.failureCode ? (
-                      <p className="break-all text-xs text-destructive">
-                        {item.failureCode}
+                      }),
+                      t("cost", { value: format.money(item.costMicros) }),
+                      ...(item.toolCalls
+                        ? [
+                            t("toolCalls", {
+                              calls: item.toolCalls,
+                              failures: item.toolFailures ?? 0,
+                            }),
+                          ]
+                        : []),
+                    ].join(" · ")}
+                  >
+                    {item.summary ? (
+                      <p className="line-clamp-6 whitespace-pre-wrap break-words text-sm">
+                        {item.summary}
                       </p>
                     ) : null}
+                    {item.failureCode ? (
+                      <Failure text={format.failure(item.failureCode)} />
+                    ) : null}
+                    <p className="break-all text-xs text-muted-foreground">
+                      {item.taskId
+                        ? `${t("taskId")}: ${item.taskId}`
+                        : `${t("conversationId")}: ${item.conversationId}`}
+                    </p>
                   </RecordCard>
                 ))}
-              </section>
-              <section className="space-y-3">
-                <h4 className="font-medium">{t("feedback")}</h4>
+              </Section>
+              <Section title={t("feedback")}>
                 <Empty count={snapshot.feedback.length} />
                 {snapshot.feedback.map((item) => (
                   <RecordCard
                     key={item.id}
-                    title={`${t(item.rating)} · ${date(item.createdAt)}`}
+                    title={`${t(item.rating)} · ${format.date(item.createdAt)}`}
+                    meta={`${t("conversationId")}: ${item.conversationId}`}
                   >
                     <p className="whitespace-pre-wrap break-words text-sm">
-                      {item.comment}
-                    </p>
-                    <p className="break-all text-xs text-muted-foreground">
-                      {t("source")}: {item.conversationId} / {item.messageId} ·{" "}
-                      {t("author")}: {item.createdById}
+                      {item.comment || t("noComment")}
                     </p>
                   </RecordCard>
                 ))}
-              </section>
+              </Section>
             </div>
           ) : null}
           {tab === "memory" ? (
@@ -499,44 +624,17 @@ export function AgentEvolutionPanel({
             />
           ) : null}
           {tab === "proposals" ? (
-            <section className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                {t("proposalHelp")}
-              </p>
-              <Empty count={snapshot.proposals.length} />
-              {snapshot.proposals.map((item) => (
-                <RecordCard key={item.id} title={item.title}>
-                  <p className="text-xs text-muted-foreground">
-                    {t(`status.${item.status}`)} · {t(`kind.${item.kind}`)} ·{" "}
-                    {date(item.createdAt)}
-                  </p>
-                  <p className="whitespace-pre-wrap break-words text-sm">
-                    {item.rationale}
-                  </p>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    disabled={proposalBusy || busy}
-                    onClick={() => void openProposal(item.id)}
-                  >
-                    {t("reviewProposal")}
-                  </Button>
-                </RecordCard>
-              ))}
-              {proposalBusy ? <p role="status">{t("loading")}</p> : null}
-              {proposal ? (
-                <EvolutionProposal
-                  key={proposal.id}
-                  proposal={proposal}
-                  busy={busy}
-                  canReview={review && execute}
-                  mutate={mutate}
-                  episodes={snapshot.episodes}
-                  feedback={snapshot.feedback}
-                />
-              ) : null}
-            </section>
+            <EvolutionProposals
+              base={base}
+              proposals={snapshot.proposals}
+              episodes={snapshot.episodes}
+              feedback={snapshot.feedback}
+              currentRevisionId={currentRevisionId}
+              busy={busy}
+              canReview={review && execute}
+              mutate={mutate}
+              format={format}
+            />
           ) : null}
           {tab === "evaluations" ? (
             <EvolutionEvaluations
@@ -547,52 +645,9 @@ export function AgentEvolutionPanel({
               canReview={review}
               canExecute={execute}
               mutate={mutate}
+              format={format}
             />
           ) : null}
-          <div className="flex flex-wrap gap-2">
-            {(Object.keys(cursors) as ListResource[])
-              .filter(
-                (resource) =>
-                  cursors[resource] &&
-                  (tab === "settings"
-                    ? resource === "reflections"
-                    : tab === "experience"
-                      ? resource === "episodes" || resource === "feedback"
-                      : tab === "memory"
-                        ? resource === "playbook"
-                        : tab === "proposals"
-                          ? resource === "proposals"
-                          : tab === "evaluations"
-                            ? resource === "cases" ||
-                              resource === "evaluations" ||
-                              resource === "proposals"
-                            : tab === "rollout"
-                              ? resource === "evaluations" ||
-                                resource === "proposals"
-                              : false),
-              )
-              .map((resource) => (
-                <Button
-                  key={resource}
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  disabled={loading || busy}
-                  onClick={() => void loadMore(resource)}
-                >
-                  {t("loadMore")} ·{" "}
-                  {t(
-                    resource === "playbook"
-                      ? "tabs.memory"
-                      : resource === "proposals"
-                        ? "tabs.proposals"
-                        : resource === "evaluations"
-                          ? "results"
-                          : resource,
-                  )}
-                </Button>
-              ))}
-          </div>
           {tab === "rollout" ? (
             <EvolutionRollout
               rollout={snapshot.rollout}
@@ -602,7 +657,24 @@ export function AgentEvolutionPanel({
               busy={busy}
               canExecute={execute && review}
               mutate={mutate}
+              format={format}
             />
+          ) : null}
+          {moreResources.length ? (
+            <div className="flex flex-wrap gap-2">
+              {moreResources.map((resource) => (
+                <Button
+                  key={resource}
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={loading || busy}
+                  onClick={() => void loadMore(resource)}
+                >
+                  {t("loadMore", { label: t(RESOURCE_LABELS[resource]) })}
+                </Button>
+              ))}
+            </div>
           ) : null}
         </>
       ) : null}
@@ -614,20 +686,23 @@ function EvolutionSettings({
   overview,
   busy,
   mutate,
+  format,
 }: {
   overview: EvolutionOverviewDto;
   busy: boolean;
   mutate: Mutation;
+  format: EvolutionFormat;
 }) {
   const t = useTranslations("console.evolution");
-  const [enabled, setEnabled] = useState(overview.settings.enabled);
-  const [automatic, setAutomatic] = useState(
-    overview.settings.reflectionEnabled,
-  );
+  const { settings } = overview;
+  const [enabled, setEnabled] = useState(settings.enabled);
+  const [automatic, setAutomatic] = useState(settings.reflectionEnabled);
   const [interval, setInterval] = useState(
-    String(overview.settings.reflectionIntervalHours),
+    String(settings.reflectionIntervalHours),
   );
-  const [budget, setBudget] = useState(overview.settings.monthlyBudgetMicros);
+  const [budgetUsd, setBudgetUsd] = useState(
+    String(Number(settings.monthlyBudgetMicros) / 1_000_000),
+  );
   return (
     <form
       className="space-y-4"
@@ -637,7 +712,9 @@ function EvolutionSettings({
           enabled,
           reflectionEnabled: automatic,
           reflectionIntervalHours: Number(interval),
-          monthlyBudgetMicros: budget,
+          monthlyBudgetMicros: String(
+            Math.round(Number(budgetUsd) * 1_000_000),
+          ),
         });
       }}
     >
@@ -645,11 +722,14 @@ function EvolutionSettings({
         className="min-w-0 space-y-4"
         disabled={busy || !overview.permissions.canReview}
       >
-        <FormCheckbox
-          checked={enabled}
-          onCheckedChange={setEnabled}
-          label={t("enabled")}
-        />
+        <div className="space-y-1">
+          <FormCheckbox
+            checked={enabled}
+            onCheckedChange={setEnabled}
+            label={t("enabled")}
+          />
+          <p className="text-xs text-muted-foreground">{t("enabledHelp")}</p>
+        </div>
         <FormCheckbox
           checked={automatic}
           onCheckedChange={setAutomatic}
@@ -663,19 +743,21 @@ function EvolutionSettings({
               required
               min={1}
               max={8760}
+              disabled={!automatic}
               value={interval}
               onChange={(event) => setInterval(event.target.value)}
             />
           </Field>
-          <Field label={t("budget")}>
+          <Field label={t("budget")} help={t("budgetHelp")}>
             <input
               className={inputClass}
-              type="text"
-              inputMode="numeric"
+              type="number"
               required
-              pattern="[0-9]+"
-              value={budget}
-              onChange={(event) => setBudget(event.target.value)}
+              min={0}
+              max={1_000_000}
+              step={0.01}
+              value={budgetUsd}
+              onChange={(event) => setBudgetUsd(event.target.value)}
             />
           </Field>
         </div>
@@ -683,17 +765,29 @@ function EvolutionSettings({
           {t("save")}
         </Button>
       </fieldset>
-      <p className="text-xs text-muted-foreground">
-        {t("spent", { value: overview.settings.spentMicros })}
+      <p className="text-sm">
+        {t("spent", {
+          spent: format.money(settings.spentMicros),
+          budget: format.money(settings.monthlyBudgetMicros),
+        })}
       </p>
-      {overview.settings.nextReflectionAt ? (
-        <p className="break-all text-xs text-muted-foreground">
-          {t("nextReflection")}: {overview.settings.nextReflectionAt}
+      {settings.enabled && settings.nextReflectionAt ? (
+        <p className="text-sm text-muted-foreground">
+          {t("nextReflection", {
+            time: format.date(settings.nextReflectionAt),
+          })}
         </p>
       ) : null}
     </form>
   );
 }
+
+const MEMORY_ORDER: Record<PlaybookDto["status"], number> = {
+  pending: 0,
+  approved: 1,
+  rejected: 2,
+  archived: 3,
+};
 
 function EvolutionMemory({
   entries,
@@ -712,11 +806,23 @@ function EvolutionMemory({
   const [scopeId, setScopeId] = useState("");
   const [editing, setEditing] = useState<PlaybookDto | null>(null);
   const [mergeIds, setMergeIds] = useState<string[]>([]);
+  const sorted = useMemo(
+    () =>
+      [...entries].sort(
+        (a, b) => MEMORY_ORDER[a.status] - MEMORY_ORDER[b.status],
+      ),
+    [entries],
+  );
   const mergeEntries = entries.filter((entry) => mergeIds.includes(entry.id));
   const sameScope = mergeEntries.every(
     (entry) =>
       JSON.stringify(entry.scope) === JSON.stringify(mergeEntries[0]?.scope),
   );
+  function reset() {
+    setEditing(null);
+    setContent("");
+    setMergeIds([]);
+  }
   async function save() {
     const scope: EvolutionScope =
       kind === "agent"
@@ -734,11 +840,7 @@ function EvolutionMemory({
             : {}),
         })
       : await mutate("playbook", "POST", { content, scope });
-    if (changed) {
-      setContent("");
-      setEditing(null);
-      setMergeIds([]);
-    }
+    if (changed) reset();
   }
   function edit(entry: PlaybookDto) {
     setEditing(entry);
@@ -753,124 +855,143 @@ function EvolutionMemory({
     );
   }
   return (
-    <section className="space-y-4">
-      <p className="text-sm text-muted-foreground">{t("memoryHelp")}</p>
-      <form
-        className="space-y-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void save();
-        }}
-      >
-        <fieldset className="min-w-0 space-y-3" disabled={busy || !canReview}>
-          <Field label={t("scope")}>
-            <select
-              className={inputClass}
-              disabled={Boolean(editing)}
-              value={kind}
-              onChange={(event) =>
-                setKind(event.target.value as EvolutionScope["kind"])
-              }
+    <div className="space-y-6">
+      <Section title={editing ? t("editMemory") : t("newMemory")}>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void save();
+          }}
+        >
+          <fieldset className="min-w-0 space-y-3" disabled={busy || !canReview}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label={t("scope")}>
+                <select
+                  className={inputClass}
+                  disabled={Boolean(editing)}
+                  value={kind}
+                  onChange={(event) =>
+                    setKind(event.target.value as EvolutionScope["kind"])
+                  }
+                >
+                  {(["agent", "conversation", "task"] as const).map((value) => (
+                    <option key={value} value={value}>
+                      {t(`scopes.${value}`)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {kind !== "agent" ? (
+                <Field
+                  label={
+                    kind === "conversation" ? t("conversationId") : t("taskId")
+                  }
+                >
+                  <input
+                    className={inputClass}
+                    required
+                    disabled={Boolean(editing)}
+                    value={scopeId}
+                    onChange={(event) => setScopeId(event.target.value)}
+                  />
+                </Field>
+              ) : null}
+            </div>
+            <Field
+              label={t("memoryContent")}
+              help={editing ? t("memoryEditHelp") : undefined}
             >
-              {["agent", "conversation", "task"].map((value) => (
-                <option key={value} value={value}>
-                  {t(`scopes.${value}`)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          {kind !== "agent" ? (
-            <Field label={t("scopeId")}>
-              <input
+              <textarea
                 className={inputClass}
                 required
-                disabled={Boolean(editing)}
-                value={scopeId}
-                onChange={(event) => setScopeId(event.target.value)}
+                rows={4}
+                maxLength={20000}
+                value={content}
+                onChange={(event) => setContent(event.target.value)}
               />
             </Field>
-          ) : null}
-          <Field label={t("memoryContent")}>
-            <textarea
-              className={inputClass}
-              required
-              rows={4}
-              maxLength={20000}
-              value={content}
-              onChange={(event) => setContent(event.target.value)}
-            />
-          </Field>
-          {editing ? (
-            <p className="text-xs text-muted-foreground">
-              {t("memoryEditHelp")}
-            </p>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            <Button type="submit">
-              {editing ? t("save") : t("submitMemory")}
-            </Button>
-            {editing ? (
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => {
-                  setEditing(null);
-                  setContent("");
-                  setMergeIds([]);
-                }}
-              >
-                {t("cancel")}
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit">
+                {editing ? t("save") : t("submitMemory")}
               </Button>
-            ) : null}
-          </div>
-        </fieldset>
-      </form>
-      <p className="text-xs text-muted-foreground">{t("mergeHelp")}</p>
-      <Button
-        type="button"
-        variant="secondary"
-        size="sm"
-        disabled={busy || !canReview || mergeEntries.length < 2 || !sameScope}
-        onClick={() => {
-          const first = mergeEntries[0];
-          if (!first) return;
-          edit(first);
-          setContent(first.content);
-        }}
-      >
-        {t("mergeMemory")}
-      </Button>
-      <Empty count={entries.length} />
-      {entries.map((item) => (
-        <RecordCard
-          key={item.id}
-          title={`${t(`scopes.${item.scope.kind}`)} · ${t(`status.${item.status}`)} · v${item.version}`}
-        >
-          <p className="whitespace-pre-wrap break-words text-sm">
-            {item.content}
-          </p>
-          {item.scope.kind !== "agent" ? (
-            <p className="break-all text-xs text-muted-foreground">
-              {item.scope.kind === "conversation"
-                ? item.scope.conversationId
-                : item.scope.taskId}
+              {editing ? (
+                <Button type="button" variant="secondary" onClick={reset}>
+                  {t("cancel")}
+                </Button>
+              ) : null}
+            </div>
+          </fieldset>
+        </form>
+      </Section>
+      <Section title={t("steps.memory")}>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={
+              busy || !canReview || mergeEntries.length < 2 || !sameScope
+            }
+            onClick={() => {
+              const first = mergeEntries[0];
+              if (first) edit(first);
+            }}
+          >
+            {t("mergeMemory")}
+          </Button>
+          <p className="text-xs text-muted-foreground">{t("mergeHelp")}</p>
+        </div>
+        <Empty count={sorted.length} />
+        {sorted.map((item) => (
+          <RecordCard
+            key={item.id}
+            title={`${t(`status.${item.status}`)} · ${t(`scopeTags.${item.scope.kind}`)}`}
+            meta={
+              item.scope.kind === "conversation"
+                ? `${t("conversationId")}: ${item.scope.conversationId}`
+                : item.scope.kind === "task"
+                  ? `${t("taskId")}: ${item.scope.taskId}`
+                  : undefined
+            }
+          >
+            <p className="whitespace-pre-wrap break-words text-sm">
+              {item.content}
             </p>
-          ) : null}
-          <div className="flex flex-wrap items-center gap-2">
             {item.status !== "archived" ? (
-              <>
-                <FormCheckbox
-                  disabled={busy || !canReview || Boolean(editing)}
-                  checked={mergeIds.includes(item.id)}
-                  onCheckedChange={(checked) =>
-                    setMergeIds((previous) =>
-                      checked
-                        ? [...previous, item.id]
-                        : previous.filter((id) => id !== item.id),
-                    )
-                  }
-                  label={t("selectMemory")}
-                />
+              <div className="flex flex-wrap items-center gap-2">
+                {item.status === "pending" ? (
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={busy || !canReview}
+                      onClick={() =>
+                        void mutate("playbook", "PATCH", {
+                          id: item.id,
+                          status: "approved",
+                          expectedVersion: item.version,
+                        })
+                      }
+                    >
+                      {t("approveMemory")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy || !canReview}
+                      onClick={() =>
+                        void mutate("playbook", "PATCH", {
+                          id: item.id,
+                          status: "rejected",
+                          expectedVersion: item.version,
+                        })
+                      }
+                    >
+                      {t("reject")}
+                    </Button>
+                  </>
+                ) : null}
                 <Button
                   type="button"
                   variant="secondary"
@@ -883,67 +1004,162 @@ function EvolutionMemory({
                 >
                   {t("editMemory")}
                 </Button>
-              </>
-            ) : null}
-            {item.status === "pending" ? (
-              <>
                 <Button
                   type="button"
+                  variant="ghost"
                   size="sm"
                   disabled={busy || !canReview}
                   onClick={() =>
                     void mutate("playbook", "PATCH", {
                       id: item.id,
-                      status: "approved",
+                      status: "archived",
                       expectedVersion: item.version,
                     })
                   }
                 >
-                  {t("approveMemory")}
+                  {t("archive")}
                 </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={busy || !canReview}
-                  onClick={() =>
-                    void mutate("playbook", "PATCH", {
-                      id: item.id,
-                      status: "rejected",
-                      expectedVersion: item.version,
-                    })
+                <FormCheckbox
+                  disabled={busy || !canReview || Boolean(editing)}
+                  checked={mergeIds.includes(item.id)}
+                  onCheckedChange={(checked) =>
+                    setMergeIds((previous) =>
+                      checked
+                        ? [...previous, item.id]
+                        : previous.filter((id) => id !== item.id),
+                    )
                   }
-                >
-                  {t("reject")}
-                </Button>
-              </>
+                  label={t("selectMemory")}
+                />
+              </div>
             ) : null}
-            {item.status !== "archived" ? (
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={busy || !canReview}
-                onClick={() =>
-                  void mutate("playbook", "PATCH", {
-                    id: item.id,
-                    status: "archived",
-                    expectedVersion: item.version,
-                  })
-                }
-              >
-                {t("archive")}
-              </Button>
+          </RecordCard>
+        ))}
+      </Section>
+    </div>
+  );
+}
+
+function EvolutionProposals({
+  base,
+  proposals,
+  episodes,
+  feedback,
+  currentRevisionId,
+  busy,
+  canReview,
+  mutate,
+  format,
+}: {
+  base: string;
+  proposals: ProposalDto[];
+  episodes: EpisodeDto[];
+  feedback: FeedbackDto[];
+  currentRevisionId: string | null;
+  busy: boolean;
+  canReview: boolean;
+  mutate: Mutation;
+  format: EvolutionFormat;
+}) {
+  const t = useTranslations("console.evolution");
+  const [detail, setDetail] = useState<ProposalDetailDto | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  async function toggle(id: string) {
+    if (openId === id) {
+      setOpenId(null);
+      setDetail(null);
+      return;
+    }
+    setOpenId(id);
+    setDetail(null);
+    setError("");
+    try {
+      setDetail(
+        await evolutionRequest<ProposalDetailDto>(
+          `${base}/proposals?id=${encodeURIComponent(id)}`,
+        ),
+      );
+    } catch {
+      setError(t("errors.LOAD_FAILED"));
+    }
+  }
+  return (
+    <section className="space-y-4">
+      <Empty count={proposals.length} />
+      {proposals.map((item) => {
+        const stale =
+          item.status === "pending" &&
+          item.baseRevisionId !== currentRevisionId;
+        return (
+          <RecordCard
+            key={item.id}
+            title={item.title}
+            meta={[
+              t(`status.${item.status}`),
+              t(`kind.${item.kind}`),
+              t("basedOn", { version: format.version(item.baseRevisionId) }),
+              ...(item.candidateRevisionId
+                ? [
+                    t("candidateVersion", {
+                      version: format.version(item.candidateRevisionId),
+                    }),
+                  ]
+                : []),
+              format.date(item.createdAt),
+            ].join(" · ")}
+          >
+            <p className="whitespace-pre-wrap break-words text-sm">
+              {item.rationale}
+            </p>
+            {stale ? <Notice>{t("staleProposal")}</Notice> : null}
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              aria-expanded={openId === item.id}
+              disabled={busy}
+              onClick={() => void toggle(item.id)}
+            >
+              {openId === item.id ? t("hideProposal") : t("reviewProposal")}
+            </Button>
+            {openId === item.id ? (
+              detail?.id === item.id ? (
+                <EvolutionProposal
+                  key={`${detail.id}:${detail.status}`}
+                  proposal={detail}
+                  stale={stale}
+                  busy={busy}
+                  canReview={canReview}
+                  mutate={async (...args) => {
+                    const changed = await mutate(...args);
+                    if (changed) {
+                      setOpenId(null);
+                      setDetail(null);
+                    }
+                    return changed;
+                  }}
+                  episodes={episodes}
+                  feedback={feedback}
+                />
+              ) : error ? (
+                <Failure text={error} />
+              ) : (
+                <p role="status" className="text-sm">
+                  {t("loading")}
+                </p>
+              )
             ) : null}
-          </div>
-        </RecordCard>
-      ))}
+          </RecordCard>
+        );
+      })}
     </section>
   );
 }
 
 function EvolutionProposal({
   proposal,
+  stale,
   episodes,
   feedback,
   busy,
@@ -951,6 +1167,7 @@ function EvolutionProposal({
   mutate,
 }: {
   proposal: ProposalDetailDto;
+  stale: boolean;
   episodes: EpisodeDto[];
   feedback: FeedbackDto[];
   busy: boolean;
@@ -1021,71 +1238,79 @@ function EvolutionProposal({
       deletions: result.deletions,
     };
   }, [proposal]);
+  const evidence = [
+    ...(proposal.evidence?.episodeIds ?? []).flatMap((id) => {
+      const summary = episodes.find((episode) => episode.id === id)?.summary;
+      return summary ? [{ id, label: t("episodes"), text: summary }] : [];
+    }),
+    ...(proposal.evidence?.feedbackIds ?? []).flatMap((id) => {
+      const entry = feedback.find((item) => item.id === id);
+      return entry
+        ? [
+            {
+              id,
+              label: t(entry.rating),
+              text: entry.comment || t("noComment"),
+            },
+          ]
+        : [];
+    }),
+  ];
   return (
-    <RecordCard title={proposal.title}>
-      <p className="whitespace-pre-wrap break-words text-sm">
-        {proposal.rationale}
-      </p>
-      <p className="break-all text-xs text-muted-foreground">
-        {t("baseline")}: {proposal.baseRevisionId}
-      </p>
+    <div className="space-y-4 border-t border-border pt-4">
       {proposal.newSkill && !proposal.candidateRevisionId ? (
         <p className="text-sm text-muted-foreground">
           {t("newSkillConsent", { name: proposal.newSkill.name })}
         </p>
       ) : null}
-      <section className="space-y-2">
-        <h5 className="text-sm font-medium">{t("evidence")}</h5>
-        {proposal.evidence &&
-        (proposal.evidence.episodeIds.length ||
-          proposal.evidence.feedbackIds.length) ? (
-          <ul className="space-y-1 text-xs">
-            {proposal.evidence.episodeIds.map((id) => (
-              <li key={`episode:${id}`} className="break-all">
-                {t("episodes")}: {id}
-                <p className="whitespace-pre-wrap break-words">
-                  {episodes.find((episode) => episode.id === id)?.summary}
-                </p>
-              </li>
-            ))}
-            {proposal.evidence.feedbackIds.map((id) => (
-              <li key={`feedback:${id}`} className="break-all">
-                {t("feedback")}: {id}
-                <p className="whitespace-pre-wrap break-words">
-                  {feedback.find((entry) => entry.id === id)?.comment}
+      <RevisionFileDiff diff={diff} />
+      <details>
+        <summary className="cursor-pointer text-sm font-medium">
+          {t("evidence")} ({evidence.length})
+        </summary>
+        {evidence.length ? (
+          <ul className="mt-2 space-y-2 text-xs">
+            {evidence.map((item) => (
+              <li key={item.id} className="rounded-lg bg-muted p-2">
+                <span className="font-medium">{item.label}</span>
+                <p className="line-clamp-4 whitespace-pre-wrap break-words">
+                  {item.text}
                 </p>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-xs text-muted-foreground">
+          <p className="mt-2 text-xs text-muted-foreground">
             {t("evidenceMissing")}
           </p>
         )}
-      </section>
-      <RevisionFileDiff diff={diff} />
+      </details>
       {proposal.status === "pending" ? (
-        <>
-          <FormCheckbox
-            disabled={busy || !canReview}
-            checked={consent}
-            onCheckedChange={setConsent}
-            label={t("proposalConsent")}
-          />
+        <div className="space-y-3">
+          {!stale ? (
+            <FormCheckbox
+              disabled={busy || !canReview}
+              checked={consent}
+              onCheckedChange={setConsent}
+              label={t("proposalConsent")}
+            />
+          ) : null}
           <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              disabled={!canReview || busy || !consent || !diff.files.length}
-              onClick={() =>
-                void mutate("proposals", "PATCH", {
-                  id: proposal.id,
-                  decision: "approve",
-                  expectedBaseRevisionId: proposal.baseRevisionId,
-                })
-              }
-            >
-              {t("publishCandidate")}
-            </Button>
+            {!stale ? (
+              <Button
+                type="button"
+                disabled={!canReview || busy || !consent || !diff.files.length}
+                onClick={() =>
+                  void mutate("proposals", "PATCH", {
+                    id: proposal.id,
+                    decision: "approve",
+                    expectedBaseRevisionId: proposal.baseRevisionId,
+                  })
+                }
+              >
+                {t("publishCandidate")}
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="secondary"
@@ -1101,11 +1326,13 @@ function EvolutionProposal({
               {t("reject")}
             </Button>
           </div>
-        </>
+        </div>
       ) : null}
-    </RecordCard>
+    </div>
   );
 }
+
+type Criterion = NonNullable<EvolutionCaseDto["criterion"]>;
 
 function EvolutionEvaluations({
   cases,
@@ -1115,6 +1342,7 @@ function EvolutionEvaluations({
   canReview,
   canExecute,
   mutate,
+  format,
 }: {
   cases: EvolutionCaseDto[];
   proposals: ProposalDto[];
@@ -1123,25 +1351,28 @@ function EvolutionEvaluations({
   canReview: boolean;
   canExecute: boolean;
   mutate: Mutation;
+  format: EvolutionFormat;
 }) {
   const t = useTranslations("console.evolution");
   const [editing, setEditing] = useState<EvolutionCaseDto | null>(null);
   const [name, setName] = useState("");
   const [input, setInput] = useState("");
   const [expected, setExpected] = useState("");
-  const [criterion, setCriterion] =
-    useState<NonNullable<EvolutionCaseDto["criterion"]>>("exact");
+  const [criterion, setCriterion] = useState<Criterion>("contains");
   const [proposalId, setProposalId] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [recordedTools, setRecordedTools] = useState("[]");
   const [requiredTools, setRequiredTools] = useState("");
+  const candidates = proposals.filter(
+    (item) => item.status === "approved" && item.candidateRevisionId,
+  );
   function resetCase() {
     setEditing(null);
     setName("");
     setInput("");
     setExpected("");
-    setCriterion("exact");
+    setCriterion("contains");
     setRecordedTools("[]");
     setRequiredTools("");
   }
@@ -1174,106 +1405,62 @@ function EvolutionEvaluations({
     cases.some((item) => item.id === id),
   );
   return (
-    <div className="space-y-6">
-      <section className="space-y-3">
-        <h4 className="font-medium">{t("cases")}</h4>
-        <p className="text-sm text-muted-foreground">{t("casesHelp")}</p>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void saveCase();
-          }}
-        >
-          <fieldset className="min-w-0 space-y-3" disabled={busy || !canReview}>
-            <Field label={t("caseName")}>
-              <input
-                className={inputClass}
-                required
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-              />
-            </Field>
-            <Field label={t("caseInput")}>
-              <textarea
-                className={inputClass}
-                required
-                rows={3}
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-              />
-            </Field>
-            <Field label={t("criterion")}>
+    <div className="space-y-8">
+      <Section title={t("runTitle")}>
+        {candidates.length ? (
+          <>
+            <Field label={t("candidate")}>
               <select
                 className={inputClass}
-                value={criterion}
-                onChange={(event) =>
-                  setCriterion(
-                    event.target.value as NonNullable<
-                      EvolutionCaseDto["criterion"]
-                    >,
-                  )
-                }
+                value={proposalId}
+                onChange={(event) => setProposalId(event.target.value)}
               >
-                {["exact", "contains", "rubric"].map((value) => (
-                  <option key={value} value={value}>
-                    {t(`criteria.${value}`)}
+                <option value="">{t("chooseCandidate")}</option>
+                {candidates.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {format.version(item.candidateRevisionId)} · {item.title}
                   </option>
                 ))}
               </select>
             </Field>
-            <Field label={t("caseExpected")}>
-              <textarea
-                className={inputClass}
-                required
-                rows={3}
-                value={expected}
-                onChange={(event) => setExpected(event.target.value)}
-              />
-            </Field>
-            <Field label={t("requiredTools")}>
-              <textarea
-                className={inputClass}
-                rows={2}
-                value={requiredTools}
-                onChange={(event) => setRequiredTools(event.target.value)}
-              />
-            </Field>
-            <Field label={t("recordedTools")}>
-              <textarea
-                className={`${inputClass} font-mono`}
-                rows={6}
-                value={recordedTools}
-                onChange={(event) => setRecordedTools(event.target.value)}
-                spellCheck={false}
-              />
-            </Field>
-            <p className="text-xs text-muted-foreground">
-              {t("recordedToolsHelp")}
-            </p>
-            <div className="flex gap-2">
-              <Button type="submit">
-                {editing ? t("save") : t("addCase")}
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                disabled={
+                  busy || !canExecute || !proposalId || !selectedCaseIds.length
+                }
+                onClick={() =>
+                  void mutate("evaluations", "POST", {
+                    proposalId,
+                    caseIds: selectedCaseIds,
+                  })
+                }
+              >
+                {t("runEvaluation")}
               </Button>
-              {editing ? (
-                <Button type="button" variant="secondary" onClick={resetCase}>
-                  {t("cancel")}
-                </Button>
-              ) : null}
+              <span className="text-sm text-muted-foreground">
+                {t("selectedCases", { count: selectedCaseIds.length })}
+              </span>
             </div>
-          </fieldset>
-        </form>
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">{t("noCandidate")}</p>
+        )}
+      </Section>
+      <Section title={t("cases")}>
         <Empty count={cases.length} />
         {cases.map((item) => (
-          <RecordCard key={item.id} title={item.name}>
+          <RecordCard
+            key={item.id}
+            title={item.name}
+            meta={t(`criteria.${item.criterion ?? "exact"}`)}
+          >
             <p className="whitespace-pre-wrap break-words text-sm">
               {item.input}
             </p>
-            <p className="text-xs text-muted-foreground">
-              {t(`criteria.${item.criterion ?? "exact"}`)}
-            </p>
             <details>
               <summary className="cursor-pointer text-sm">
-                {t("caseExpected")}
+                {t(`expected.${item.criterion ?? "exact"}`)}
               </summary>
               <pre className="whitespace-pre-wrap break-words text-xs">
                 {item.expected}
@@ -1283,16 +1470,6 @@ function EvolutionEvaluations({
               <p className="break-words text-xs">
                 {t("requiredTools")}: {item.requiredTools.join(", ")}
               </p>
-            ) : null}
-            {item.recordedTools?.length ? (
-              <details>
-                <summary className="cursor-pointer text-sm">
-                  {t("recordedTools")}
-                </summary>
-                <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs">
-                  {JSON.stringify(item.recordedTools, null, 2)}
-                </pre>
-              </details>
             ) : null}
             <div className="flex flex-wrap items-center gap-2">
               <FormCheckbox
@@ -1339,94 +1516,209 @@ function EvolutionEvaluations({
             {deleteId === item.id ? (
               <div className="space-y-2">
                 <p className="text-sm">{t("deleteCaseConfirm")}</p>
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={busy || !canReview}
-                  onClick={async () => {
-                    if (
-                      await mutate(
-                        `cases?id=${encodeURIComponent(item.id)}`,
-                        "DELETE",
-                      )
-                    ) {
-                      setDeleteId(null);
-                      setSelected((previous) =>
-                        previous.filter((id) => id !== item.id),
-                      );
-                      if (editing?.id === item.id) resetCase();
-                    }
-                  }}
-                >
-                  {t("confirmDelete")}
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setDeleteId(null)}
-                >
-                  {t("cancel")}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={busy || !canReview}
+                    onClick={async () => {
+                      if (
+                        await mutate(
+                          `cases?id=${encodeURIComponent(item.id)}`,
+                          "DELETE",
+                        )
+                      ) {
+                        setDeleteId(null);
+                        setSelected((previous) =>
+                          previous.filter((id) => id !== item.id),
+                        );
+                        if (editing?.id === item.id) resetCase();
+                      }
+                    }}
+                  >
+                    {t("confirmDelete")}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setDeleteId(null)}
+                  >
+                    {t("cancel")}
+                  </Button>
+                </div>
               </div>
             ) : null}
           </RecordCard>
         ))}
-      </section>
-      <section className="space-y-3">
-        <h4 className="font-medium">{t("runEvaluation")}</h4>
-        <p className="text-sm text-muted-foreground">{t("evaluationHelp")}</p>
-        <Field label={t("candidate")}>
-          <select
-            className={inputClass}
-            value={proposalId}
-            onChange={(event) => setProposalId(event.target.value)}
-          >
-            <option value="">{t("chooseCandidate")}</option>
-            {proposals
-              .filter(
-                (item) =>
-                  item.status === "approved" && item.candidateRevisionId,
-              )
-              .map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.title}
-                </option>
-              ))}
-          </select>
-        </Field>
-        <Button
-          type="button"
-          disabled={
-            busy || !canExecute || !proposalId || !selectedCaseIds.length
-          }
-          onClick={() =>
-            void mutate("evaluations", "POST", {
-              proposalId,
-              caseIds: selectedCaseIds,
-            })
-          }
+      </Section>
+      <Section title={editing ? t("edit") : t("newCase")}>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void saveCase();
+          }}
         >
-          {t("runEvaluation")}
-        </Button>
-      </section>
-      <section className="space-y-3">
-        <h4 className="font-medium">{t("results")}</h4>
+          <fieldset className="min-w-0 space-y-3" disabled={busy || !canReview}>
+            <Field label={t("caseName")}>
+              <input
+                className={inputClass}
+                required
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </Field>
+            <Field label={t("caseInput")}>
+              <textarea
+                className={inputClass}
+                required
+                rows={3}
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+              />
+            </Field>
+            <Field label={t("criterion")}>
+              <select
+                className={inputClass}
+                value={criterion}
+                onChange={(event) =>
+                  setCriterion(event.target.value as Criterion)
+                }
+              >
+                {(["contains", "exact", "rubric"] as const).map((value) => (
+                  <option key={value} value={value}>
+                    {t(`criteria.${value}`)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t(`expected.${criterion}`)}>
+              <textarea
+                className={inputClass}
+                required
+                rows={3}
+                value={expected}
+                onChange={(event) => setExpected(event.target.value)}
+              />
+            </Field>
+            <details className="space-y-3">
+              <summary className="cursor-pointer text-sm font-medium">
+                {t("toolSimulation")}
+              </summary>
+              <div className="mt-3 space-y-3">
+                <Field label={t("requiredTools")}>
+                  <textarea
+                    className={inputClass}
+                    rows={2}
+                    value={requiredTools}
+                    onChange={(event) => setRequiredTools(event.target.value)}
+                  />
+                </Field>
+                <Field label={t("recordedTools")} help={t("recordedToolsHelp")}>
+                  <textarea
+                    className={`${inputClass} font-mono`}
+                    rows={6}
+                    value={recordedTools}
+                    onChange={(event) => setRecordedTools(event.target.value)}
+                    spellCheck={false}
+                  />
+                </Field>
+              </div>
+            </details>
+            <div className="flex gap-2">
+              <Button type="submit">
+                {editing ? t("save") : t("addCase")}
+              </Button>
+              {editing ? (
+                <Button type="button" variant="secondary" onClick={resetCase}>
+                  {t("cancel")}
+                </Button>
+              ) : null}
+            </div>
+          </fieldset>
+        </form>
+      </Section>
+      <Section title={t("results")}>
         <Empty count={evaluations.length} />
         {evaluations.map((evaluation) => (
           <RecordCard
             key={evaluation.id}
-            title={`${proposals.find((item) => item.id === evaluation.proposalId)?.title ?? evaluation.proposalId} · ${t(`status.${evaluation.status}`)}`}
+            title={`${proposals.find((item) => item.id === evaluation.proposalId)?.title ?? t("candidate")} · ${t(`status.${evaluation.status}`)}`}
+            meta={`${t("baseline")} ${format.version(evaluation.baselineRevisionId)} · ${t("candidate")} ${format.version(evaluation.candidateRevisionId)} · ${format.date(evaluation.createdAt)}`}
           >
-            <p className="break-all text-xs">
-              {t("baseline")}: {evaluation.baselineRevisionId}
-              <br />
-              {t("candidate")}: {evaluation.candidateRevisionId}
-            </p>
             {evaluation.pareto ? (
               <p className="text-sm font-medium">
-                {t(`pareto.${evaluation.pareto}`)}
+                {t(`verdict.${evaluation.pareto}`)}
               </p>
+            ) : null}
+            {evaluation.failureCode ? (
+              <Failure text={format.failure(evaluation.failureCode)} />
+            ) : null}
+            {evaluation.results.length ? (
+              <div className="max-w-full overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr>
+                      {[
+                        "caseName",
+                        "variant",
+                        "score",
+                        "costLabel",
+                        "output",
+                      ].map((key) => (
+                        <th key={key} scope="col" className="p-2">
+                          {t(key)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {evaluation.results.map((result) => (
+                      <tr key={result.id} className="border-t border-border">
+                        <td className="p-2">
+                          {cases.find((item) => item.id === result.caseId)
+                            ?.name ?? result.caseId}
+                        </td>
+                        <td className="p-2">{t(result.variant)}</td>
+                        <td className="p-2 tabular-nums">
+                          {format.score(result.quality)}
+                        </td>
+                        <td className="p-2 tabular-nums">
+                          {format.money(result.costMicros)}
+                          {result.judgeCostMicros &&
+                          result.judgeCostMicros !== "0" ? (
+                            <p className="text-muted-foreground">
+                              {t("judgeCost", {
+                                value: format.money(result.judgeCostMicros),
+                              })}
+                            </p>
+                          ) : null}
+                        </td>
+                        <td className="min-w-40 max-w-80 p-2">
+                          <details>
+                            <summary
+                              className={`cursor-pointer ${result.failureCode ? "text-destructive" : ""}`}
+                            >
+                              {result.failureCode
+                                ? format.failure(result.failureCode)
+                                : t("viewOutput")}
+                            </summary>
+                            <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words">
+                              {result.output}
+                            </pre>
+                            <p>
+                              {t("tokens", {
+                                input: result.inputTokens,
+                                output: result.outputTokens,
+                              })}
+                            </p>
+                          </details>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             ) : null}
             {evaluation.excludedCapabilities?.length ? (
               <p className="text-xs text-muted-foreground">
@@ -1437,75 +1729,27 @@ function EvolutionEvaluations({
                       ? t(`excluded.${capability}`)
                       : capability,
                   )
-                  .join(", ")}
+                  .join("、")}
               </p>
             ) : null}
-            {evaluation.failureCode ? (
-              <p className="text-sm text-destructive">
-                {evaluation.failureCode}
-              </p>
-            ) : null}
-            <div className="max-w-full overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr>
-                    {[
-                      "caseName",
-                      "variant",
-                      "quality",
-                      "costLabel",
-                      "output",
-                    ].map((key) => (
-                      <th key={key} scope="col" className="p-2">
-                        {t(key)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {evaluation.results.map((result) => (
-                    <tr key={result.id} className="border-t border-border">
-                      <td className="p-2">
-                        {cases.find((item) => item.id === result.caseId)
-                          ?.name ?? result.caseId}
-                      </td>
-                      <td className="p-2">{t(result.variant)}</td>
-                      <td className="p-2 tabular-nums">{result.quality}</td>
-                      <td className="p-2 tabular-nums">
-                        {result.costMicros}
-                        {result.judgeCostMicros ? (
-                          <p>
-                            {t("judgeCost", { value: result.judgeCostMicros })}
-                          </p>
-                        ) : null}
-                      </td>
-                      <td className="min-w-40 max-w-80 p-2">
-                        <details>
-                          <summary className="cursor-pointer">
-                            {result.failureCode ?? t("viewOutput")}
-                          </summary>
-                          <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words">
-                            {result.output}
-                          </pre>
-                          <p>
-                            {t("tokens", {
-                              input: result.inputTokens,
-                              output: result.outputTokens,
-                            })}
-                          </p>
-                        </details>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           </RecordCard>
         ))}
-      </section>
+      </Section>
     </div>
   );
 }
+
+const ROLLOUT_METRICS = [
+  "tasks",
+  "succeeded",
+  "failed",
+  "successRate",
+  "toolCalls",
+  "toolFailures",
+  "averageCostMicros",
+  "feedbackPositive",
+  "feedbackNegative",
+] as const;
 
 function EvolutionRollout({
   rollout,
@@ -1515,6 +1759,7 @@ function EvolutionRollout({
   busy,
   canExecute,
   mutate,
+  format,
 }: {
   rollout: RolloutDto | null;
   evaluations: EvaluationDto[];
@@ -1523,6 +1768,7 @@ function EvolutionRollout({
   busy: boolean;
   canExecute: boolean;
   mutate: Mutation;
+  format: EvolutionFormat;
 }) {
   const t = useTranslations("console.evolution");
   const [evaluationId, setEvaluationId] = useState("");
@@ -1531,75 +1777,27 @@ function EvolutionRollout({
     "stop" | "promote" | "rollback" | null
   >(null);
   const [isolationRisk, setIsolationRisk] = useState(false);
-  const evaluation = evaluations.find((item) => item.id === evaluationId);
+  const completed = evaluations.filter((item) => item.status === "succeeded");
+  const evaluation = completed.find((item) => item.id === evaluationId);
+  const active = rollout?.status === "active";
+  const staleRollout =
+    active && rollout.baselineRevisionId !== currentRevisionId;
   return (
-    <section className="space-y-4">
-      <p className="text-sm text-muted-foreground">{t("rolloutHelp")}</p>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (evaluation)
-            void mutate("rollout", "POST", {
-              proposalId: evaluation.proposalId,
-              evaluationId,
-              percentage: Number(percentage),
-            });
-        }}
-      >
-        <fieldset
-          className="min-w-0 space-y-3"
-          disabled={busy || !canExecute || rollout?.status === "active"}
-        >
-          <Field label={t("successfulEvaluation")}>
-            <select
-              className={inputClass}
-              required
-              value={evaluationId}
-              onChange={(event) => setEvaluationId(event.target.value)}
-            >
-              <option value="">{t("chooseEvaluation")}</option>
-              {evaluations
-                .filter((item) => item.status === "succeeded")
-                .map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {proposals.find(
-                      (proposal) => proposal.id === item.proposalId,
-                    )?.title ?? item.proposalId}{" "}
-                    · {item.pareto ? t(`pareto.${item.pareto}`) : item.id}
-                  </option>
-                ))}
-            </select>
-          </Field>
-          <Field label={t("percentage")}>
-            <input
-              className={inputClass}
-              type="number"
-              required
-              min={1}
-              max={100}
-              value={percentage}
-              onChange={(event) => setPercentage(event.target.value)}
-            />
-          </Field>
-          <Button type="submit" disabled={!evaluation}>
-            {t("startRollout")}
-          </Button>
-        </fieldset>
-      </form>
+    <section className="space-y-6">
       {rollout ? (
         <RecordCard
-          title={`${t(`status.${rollout.status}`)} · ${rollout.percentage}%`}
+          title={`${t(`status.${rollout.status}`)} · ${t("percentageValue", { value: rollout.percentage })}`}
+          meta={`${t("baseline")} ${format.version(rollout.baselineRevisionId)} · ${t("candidate")} ${format.version(rollout.candidateRevisionId)} · ${format.date(rollout.createdAt)}`}
         >
-          <p className="break-all text-xs">
-            {t("baseline")}: {rollout.baselineRevisionId}
-            <br />
-            {t("candidate")}: {rollout.candidateRevisionId}
-          </p>
+          {staleRollout ? <Notice>{t("staleRollout")}</Notice> : null}
           {rollout.metrics ? (
             <>
               <p className="text-sm font-medium">
-                {t(`sample.${rollout.metrics.sampleStatus}`)} ·{" "}
                 {t(`recommendation.${rollout.metrics.recommendation}`)}
+                <span className="font-normal text-muted-foreground">
+                  {" "}
+                  · {t(`sample.${rollout.metrics.sampleStatus}`)}
+                </span>
               </p>
               <div className="max-w-full overflow-x-auto">
                 <table className="w-full text-left text-xs">
@@ -1609,27 +1807,17 @@ function EvolutionRollout({
                         {t("metric")}
                       </th>
                       <th scope="col" className="p-2">
-                        {t("baseline")}
+                        {t("baseline")}{" "}
+                        {format.version(rollout.baselineRevisionId)}
                       </th>
                       <th scope="col" className="p-2">
-                        {t("candidate")}
+                        {t("candidate")}{" "}
+                        {format.version(rollout.candidateRevisionId)}
                       </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(
-                      [
-                        "tasks",
-                        "succeeded",
-                        "failed",
-                        "toolCalls",
-                        "toolFailures",
-                        "averageCostMicros",
-                        "feedbackPositive",
-                        "feedbackNegative",
-                        "successRate",
-                      ] as const
-                    ).map((metric) => (
+                    {ROLLOUT_METRICS.map((metric) => (
                       <tr key={metric} className="border-t border-border">
                         <th scope="row" className="p-2 font-normal">
                           {t(`metrics.${metric}`)}
@@ -1644,7 +1832,9 @@ function EvolutionRollout({
                                   ? t("successRateValue", {
                                       value: Number(value),
                                     })
-                                  : value}
+                                  : metric === "averageCostMicros"
+                                    ? format.money(value)
+                                    : value}
                             </td>
                           );
                         })}
@@ -1657,7 +1847,7 @@ function EvolutionRollout({
           ) : null}
           <p className="text-sm text-muted-foreground">{t("rollbackAdvice")}</p>
           <div className="flex flex-wrap gap-2">
-            {(rollout.status === "active"
+            {(active
               ? (["stop", "promote", "rollback"] as const)
               : rollout.status === "promoted" || rollout.status === "stopped"
                 ? (["rollback"] as const)
@@ -1666,7 +1856,7 @@ function EvolutionRollout({
               <Button
                 key={action}
                 type="button"
-                variant="secondary"
+                variant={action === "promote" ? "primary" : "secondary"}
                 size="sm"
                 disabled={busy || !canExecute || !currentRevisionId}
                 onClick={() => {
@@ -1689,43 +1879,103 @@ function EvolutionRollout({
                   label={t("isolationRiskConsent")}
                 />
               ) : null}
-              <Button
-                type="button"
-                disabled={
-                  busy ||
-                  !canExecute ||
-                  !currentRevisionId ||
-                  (confirm === "promote" && !isolationRisk)
-                }
-                onClick={async () => {
-                  if (
-                    await mutate("rollout", "PATCH", {
-                      id: rollout.id,
-                      action: confirm,
-                      expectedDefaultRevisionId: currentRevisionId,
-                      ...(confirm === "promote"
-                        ? { acknowledgeIsolationRisk: isolationRisk }
-                        : {}),
-                    })
-                  )
-                    setConfirm(null);
-                }}
-              >
-                {t("confirmAction")}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setConfirm(null)}
-              >
-                {t("cancel")}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  disabled={
+                    busy ||
+                    !canExecute ||
+                    !currentRevisionId ||
+                    (confirm === "promote" && !isolationRisk)
+                  }
+                  onClick={async () => {
+                    if (
+                      await mutate("rollout", "PATCH", {
+                        id: rollout.id,
+                        action: confirm,
+                        expectedDefaultRevisionId: currentRevisionId,
+                        ...(confirm === "promote"
+                          ? { acknowledgeIsolationRisk: isolationRisk }
+                          : {}),
+                      })
+                    )
+                      setConfirm(null);
+                  }}
+                >
+                  {t("confirmAction")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setConfirm(null)}
+                >
+                  {t("cancel")}
+                </Button>
+              </div>
             </div>
           ) : null}
         </RecordCard>
-      ) : (
-        <Empty count={0} />
-      )}
+      ) : null}
+      {!active ? (
+        <Section title={t("startRollout")}>
+          {completed.length ? (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (evaluation)
+                  void mutate("rollout", "POST", {
+                    proposalId: evaluation.proposalId,
+                    evaluationId,
+                    percentage: Number(percentage),
+                  });
+              }}
+            >
+              <fieldset
+                className="min-w-0 space-y-3"
+                disabled={busy || !canExecute}
+              >
+                <Field label={t("successfulEvaluation")}>
+                  <select
+                    className={inputClass}
+                    required
+                    value={evaluationId}
+                    onChange={(event) => setEvaluationId(event.target.value)}
+                  >
+                    <option value="">{t("chooseEvaluation")}</option>
+                    {completed.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {format.version(item.candidateRevisionId)} ·{" "}
+                        {proposals.find(
+                          (proposal) => proposal.id === item.proposalId,
+                        )?.title ?? t("candidate")}
+                        {item.pareto
+                          ? ` · ${t(`verdictShort.${item.pareto}`)}`
+                          : ""}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label={t("percentage")}>
+                  <input
+                    className={inputClass}
+                    type="number"
+                    required
+                    min={1}
+                    max={100}
+                    value={percentage}
+                    onChange={(event) => setPercentage(event.target.value)}
+                  />
+                </Field>
+                <Button type="submit" disabled={!evaluation}>
+                  {t("startRollout")}
+                </Button>
+              </fieldset>
+            </form>
+          ) : (
+            <p className="text-sm text-muted-foreground">{t("noEvaluation")}</p>
+          )}
+        </Section>
+      ) : null}
     </section>
   );
 }

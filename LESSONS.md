@@ -521,3 +521,11 @@
 - **证据（2026-11-12，本地 :3000）**：运行约 2 天的 `next-server` RSS 48 GiB、`--max-old-space-size` 近乎无上限；CPU profile 中约 96% 主线程时间在 React Flight 开发态 `visitAsyncNode`（异步调试链追踪），同时 `psql` 计数查询仅 0.18 秒。Work 准入事务因此连续超时，一条运行卡在“准备中”。受控重启（确认旧 owner 退出、清理其遗留 sandbox-mcp-server，按日志 ACK 单次恢复）后 readiness 200，真实 Work 约 23 秒完成。上游问题：[react#38106](https://github.com/react/react/issues/38106)、[react#36995](https://github.com/react/react/pull/36995)；生产构建不受影响。
 - **下次怎么验证**：`/proc/<pid>/status` 看 next-server RSS，`kill -USR1` 后用 inspector 采 10 秒 CPU profile；若 `visitAsyncNode` 主导即重启开发服务器，并按运行时运维流程恢复 owner。
 - **确认日期**：2026-11-12。
+
+### TP-L050：界面不暴露存储单位和内部 ID，概念按用户要做的事命名
+
+**规则**：控制台展示金额、版本和状态时，换算成用户熟悉的单位（美元、`v3`、本地化时间、翻译后的失败原因）；存储格式（micro-USD、cuid、原始错误码）只留在 API 和数据库。多步骤功能按实际流程排列，并标出待处理数量。
+
+- **证据（2026-11-12，用户纠正）**：自进化面板直接让用户输入“每月预算（微单位）”，显示修订 cuid、记录内部版本号 `v2`、原始 `failureCode` 和 ISO 时间；六个页签平级，读取失败时还显示写操作的“无法确认操作结果”。用户指出“很多概念不清晰”。改为美元输入（提交时换算 micro-USD）、`v3` 版本号（设置接口附带修订号映射）、按流程编号的步骤和待处理角标、本地化失败原因；基于旧版本的建议直接标为过期，不再提示“刷新重试”。
+- **下次怎么验证**：新增管理界面时，逐个字段检查是否出现存储单位、内部 ID 或未翻译代码；用真实数据在浏览器里走一遍完整流程（本次：保存 $2.5 后库内为 2500000，批准建议后显示“候选版本 v4”，停止灰度落库为 `stopped`）。依据：[自进化面板](src/components/dashboard/agents/AgentEvolutionPanel.tsx)。
+- **确认日期**：2026-11-12（用户纠正）。

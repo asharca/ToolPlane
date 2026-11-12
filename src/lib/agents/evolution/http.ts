@@ -154,6 +154,11 @@ export async function handleEvolution(
               take: 10,
             })
           ).map(recordDto),
+          revisions: await db.agentRevision.findMany({
+            where: { agentId },
+            select: { id: true, version: true },
+            orderBy: { version: "desc" },
+          }),
         });
       const input = await body(
         req,
