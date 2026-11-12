@@ -479,7 +479,12 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
   });
   it("rejects mismatched Work and Conversation pins rather than repinning either record", async () => {
     const { agent, revision, conversation } = await fixture();
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { model: "future" },
+    });
     const future = await publishFixtureAgentRevision(workspaceId, agent.id);
+    expect(future.id).not.toBe(revision.id);
     const work = await db.workSession.create({
       data: {
         workspaceId,
@@ -501,6 +506,9 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
       expect(await getConversation(conversation.id, workspaceId)).toMatchObject(
         { readOnly: true, agentRevisionId: revision.id },
       );
+      expect(
+        await db.workSession.findUniqueOrThrow({ where: { id: work.id } }),
+      ).toMatchObject({ agentRevisionId: future.id });
     } finally {
       await db.workSession.delete({ where: { id: work.id } });
     }

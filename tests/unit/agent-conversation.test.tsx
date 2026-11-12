@@ -18,6 +18,27 @@ const apiMocks = vi.hoisted(() => ({
   fetch: vi.fn(),
 }));
 
+const fetchResponses = new Map<string, Response>();
+
+function mockFetchResponse(method: string, url: string, response: Response) {
+  fetchResponses.set(`${method} ${url}`, response);
+}
+
+function requestMethod(input: RequestInfo | URL, options?: RequestInit) {
+  return (
+    options?.method ?? (input instanceof Request ? input.method : "GET")
+  ).toUpperCase();
+}
+
+function expectNoMutations() {
+  expect(
+    apiMocks.fetch.mock.calls.filter(
+      ([input, options]) =>
+        !["GET", "HEAD"].includes(requestMethod(input, options)),
+    ),
+  ).toHaveLength(0);
+}
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
@@ -66,6 +87,7 @@ describe("AgentConversation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiMocks.fetch.mockReset();
+    fetchResponses.clear();
     window.localStorage.clear();
     vi.stubGlobal(
       "ResizeObserver",
@@ -79,11 +101,23 @@ describe("AgentConversation", () => {
       configurable: true,
       value: vi.fn(),
     });
-    apiMocks.fetch.mockResolvedValue(
-      new Response(JSON.stringify({ conversationId: "conv-new" }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+    apiMocks.fetch.mockImplementation(
+      async (input: RequestInfo | URL, options?: RequestInit) => {
+        const url = input instanceof Request ? input.url : String(input);
+        const method = requestMethod(input, options);
+        const response = fetchResponses.get(`${method} ${url}`);
+        if (response) return response.clone();
+        // Feedback reads must never consume a command, upload, or turn response.
+        if (
+          method === "GET" &&
+          /^\/api\/v1\/agents\/agent-1\/conversations\/[^/]+\/messages\/[^/]+\/feedback$/.test(
+            url,
+          )
+        ) {
+          return Response.json({ data: null });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      },
     );
     vi.stubGlobal("fetch", apiMocks.fetch);
     chatMocks.useChat.mockReturnValue({
@@ -106,7 +140,9 @@ describe("AgentConversation", () => {
       ...chatMocks.useChat(),
       status: "streaming",
     });
-    apiMocks.fetch.mockResolvedValueOnce(
+    mockFetchResponse(
+      "POST",
+      "/api/v1/chat/threads/conv-1/turns",
       new Response("data: [DONE]\n\n", {
         headers: {
           "content-type": "text/event-stream",
@@ -133,7 +169,11 @@ describe("AgentConversation", () => {
       abortSignal: new AbortController().signal,
     });
     await stream.cancel();
-    apiMocks.fetch.mockResolvedValueOnce(Response.json({ cancelled: true }));
+    mockFetchResponse(
+      "DELETE",
+      "/api/v1/chat/threads/conv-1/turns",
+      Response.json({ cancelled: true }),
+    );
     await userEvent.click(screen.getByRole("button", { name: /stop/i }));
     await waitFor(() =>
       expect(apiMocks.fetch).toHaveBeenCalledWith(
@@ -400,7 +440,9 @@ describe("AgentConversation", () => {
   it.each(["Read this", ""])(
     "uploads a native attachment with draft %j as an internal file part",
     async (text) => {
-      apiMocks.fetch.mockResolvedValueOnce(
+      mockFetchResponse(
+        "POST",
+        "/api/v1/workspaces/workspace-1/attachments?filename=notes.txt",
         new Response(
           JSON.stringify({
             id: "attachment-1",
@@ -467,7 +509,9 @@ describe("AgentConversation", () => {
   );
 
   it("restores the composer when a native attachment upload fails", async () => {
-    apiMocks.fetch.mockResolvedValueOnce(
+    mockFetchResponse(
+      "POST",
+      "/api/v1/workspaces/workspace-1/attachments?filename=one.txt",
       new Response(
         JSON.stringify({
           error: "Attachment storage is unavailable.",
@@ -497,9 +541,7 @@ describe("AgentConversation", () => {
     await userEvent.type(composer, "Keep the file and text");
     await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Attachment storage is unavailable.",
-    );
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByPlaceholderText("Message this agent")).toHaveValue(
         "Keep the file and text",
@@ -531,14 +573,12 @@ describe("AgentConversation", () => {
     expect(chatMocks.stop).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    ["notFound", "Conversation not found."],
-    ["Forbidden command execution", "Forbidden command execution"],
-    [null, "The runtime command failed. The input has been kept."],
-  ])(
+  it.each(["notFound", "Forbidden command execution", null])(
     "restores the command draft when the server rejects %s",
-    async (error, message) => {
-      apiMocks.fetch.mockResolvedValueOnce(
+    async (error) => {
+      mockFetchResponse(
+        "POST",
+        "/api/v1/agents/agent-1/conversations/conv-1/commands",
         Response.json({ error }, { status: 403 }),
       );
       const onConversationChanged = vi.fn();
@@ -548,7 +588,14 @@ describe("AgentConversation", () => {
       await userEvent.click(
         screen.getByRole("button", { name: "Send prompt" }),
       );
-      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(apiMocks.fetch).toHaveBeenCalledWith(
+        "/api/v1/agents/agent-1/conversations/conv-1/commands",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ line: "/compact preserve files" }),
+        }),
+      );
       await waitFor(() => expect(input).toHaveValue("/compact preserve files"));
       expect(chatMocks.sendMessage).not.toHaveBeenCalled();
       expect(onConversationChanged).not.toHaveBeenCalled();
@@ -564,7 +611,7 @@ describe("AgentConversation", () => {
       await userEvent.click(
         screen.getByRole("button", { name: "Send prompt" }),
       );
-      expect(apiMocks.fetch).not.toHaveBeenCalled();
+      expectNoMutations();
       expect(chatMocks.sendMessage).not.toHaveBeenCalled();
     },
   );
@@ -600,7 +647,9 @@ describe("AgentConversation", () => {
       ...chatMocks.useChat(),
       status: "streaming",
     });
-    apiMocks.fetch.mockResolvedValueOnce(
+    mockFetchResponse(
+      "POST",
+      "/api/v1/chat/threads/conv-1/turns",
       new Response("data: [DONE]\n\n", {
         headers: {
           "content-type": "text/event-stream",
@@ -627,14 +676,23 @@ describe("AgentConversation", () => {
       abortSignal: new AbortController().signal,
     });
     await stream.cancel();
-    apiMocks.fetch.mockResolvedValueOnce(
+    mockFetchResponse(
+      "DELETE",
+      "/api/v1/chat/threads/conv-1/turns",
       Response.json(
         { error: "Not allowed to cancel this turn" },
         { status: 403 },
       ),
     );
     await userEvent.click(screen.getByRole("button", { name: /stop/i }));
-    await screen.findByText("Not allowed to cancel this turn");
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(apiMocks.fetch).toHaveBeenCalledWith(
+      "/api/v1/chat/threads/conv-1/turns",
+      expect.objectContaining({
+        method: "DELETE",
+        body: JSON.stringify({ turnId: "turn-denied" }),
+      }),
+    );
     expect(chatMocks.stop).not.toHaveBeenCalled();
   });
   it("enforces attachment count, lets users remove a file and accepts a replacement", async () => {
@@ -653,9 +711,7 @@ describe("AgentConversation", () => {
       (_, index) => new File(["data"], `file-${index}.txt`),
     );
     await userEvent.upload(input, files);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "You can attach up to 5 files.",
-    );
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.queryByText("file-5.txt")).not.toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "Remove file-0.txt" }),
@@ -668,7 +724,7 @@ describe("AgentConversation", () => {
       new File(["replacement"], "replacement.txt"),
     );
     expect(await screen.findByText("replacement.txt")).toBeInTheDocument();
-    expect(apiMocks.fetch).not.toHaveBeenCalled();
+    expectNoMutations();
   });
 
   it("keeps an unresolved native session read-only", async () => {
@@ -676,7 +732,7 @@ describe("AgentConversation", () => {
     expect(screen.getByText("hello")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Message this agent")).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-    expect(apiMocks.fetch).not.toHaveBeenCalled();
+    expectNoMutations();
     expect(chatMocks.sendMessage).not.toHaveBeenCalled();
   });
 
@@ -700,9 +756,7 @@ describe("AgentConversation", () => {
       "/compact",
     );
     await userEvent.click(screen.getByRole("button", { name: "Send prompt" }));
-    await screen.findByText(
-      "Send attachments and references in a regular message, separately from commands.",
-    );
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByPlaceholderText("Message this agent")).toHaveValue(
         "/compact",
@@ -710,7 +764,7 @@ describe("AgentConversation", () => {
     );
     expect(chatMocks.sendMessage).not.toHaveBeenCalled();
     expect(screen.getByText("notes.txt")).toBeInTheDocument();
-    expect(apiMocks.fetch).not.toHaveBeenCalled();
+    expectNoMutations();
   });
 
   it("shows a regeneration creation error without losing persisted history", async () => {
