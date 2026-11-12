@@ -99,11 +99,23 @@ export async function ownedRecord(
   return row;
 }
 export async function settings(scope: Scope) {
-  return db.agentEvolutionSettings.upsert({
-    where: { agentId: scope.agentId },
-    create: { agentId: scope.agentId, actorId: scope.actorId },
-    update: {},
-  });
+  try {
+    return await db.agentEvolutionSettings.upsert({
+      where: { agentId: scope.agentId },
+      create: { agentId: scope.agentId, actorId: scope.actorId },
+      update: {},
+    });
+  } catch (error) {
+    // Two first reads can both try to create the default row; the loser reads the winner's.
+    if (
+      !(error && typeof error === "object" && "code" in error) ||
+      error.code !== "P2002"
+    )
+      throw error;
+    return db.agentEvolutionSettings.findUniqueOrThrow({
+      where: { agentId: scope.agentId },
+    });
+  }
 }
 export async function settingsDto(scope: Scope) {
   const [row, sum] = await Promise.all([
