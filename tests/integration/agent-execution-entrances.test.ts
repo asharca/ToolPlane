@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { createConversation } from "@/lib/agents/mutations";
 import { getAgentForRun, getConversation } from "@/lib/agents/queries";
@@ -21,6 +21,21 @@ import {
 } from "@/lib/agents/automation-http";
 import { newTriggerSecret } from "@/lib/agents/triggers";
 import { createApiToken } from "@/lib/auth/tokens";
+import type * as SandboxRuntimeModule from "@/lib/agents/sandbox-runtime";
+
+// Entrance authorization exercises real revisions without Docker SDK preparation.
+vi.mock("@/lib/agents/pi-runtime", () => ({
+  preparePiRuntime: vi.fn(async () => ({
+    path: "/fixture/pi-sdk.archive",
+    sha256: "a".repeat(64),
+  })),
+}));
+vi.mock("@/lib/agents/sandbox-runtime", async (original) => ({
+  ...(await original<typeof SandboxRuntimeModule>()),
+  preflightPiSdkCapabilities: vi
+    .fn()
+    .mockResolvedValue({ commands: [], tools: [], skills: [], prompts: [] }),
+}));
 
 const stamp = randomUUID();
 let userId = "";
