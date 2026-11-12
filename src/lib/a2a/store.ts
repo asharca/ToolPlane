@@ -1,4 +1,5 @@
 import "server-only";
+import { selectNewSessionRevision } from "@/lib/agents/evolution/rollout-selection";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import {
   createHash,
@@ -241,6 +242,24 @@ export async function persist(
         : {}),
     },
   });
+  const episodeGrant = row.grant as unknown as TaskGrant;
+  if (terminal(status.state) && isLocalGrant(episodeGrant)) {
+    await tx.agentEvolutionRecord.createMany({
+      skipDuplicates: true,
+      data: [
+        {
+          id: randomUUID(),
+          agentId: episodeGrant.agentId,
+          workspaceId: episodeGrant.workspaceId,
+          actorId: episodeGrant.actorId,
+          kind: "episode-ingest",
+          key: row.id,
+          status: "queued",
+          payload: { taskId: row.id },
+        },
+      ],
+    });
+  }
   await tx.a2AEvent.create({
     data: { taskId: row.id, sequence, payload: json(jsonEvent(event)) },
   });
@@ -385,6 +404,26 @@ export async function submitTaskInTransaction(
     metadata: request.metadata,
   });
   await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${grant.workspaceId} FOR UPDATE`;
+  if (
+    isLocalGrant(grant) &&
+    !grant.entryPolicy &&
+    !message.contextId &&
+    !message.taskId
+  ) {
+    const revision = await selectNewSessionRevision(tx, grant.agentId);
+    const target = await localTarget(
+      tx,
+      grant.workspaceId,
+      grant.agentId,
+      grant.ancestorTaskIds.length ? "delegation" : undefined,
+      revision.id,
+    );
+    grant = {
+      ...grant,
+      agentRevisionId: revision.id,
+      targetBinding: target.binding,
+    };
+  }
   if (isLocalGrant(grant) && (message.contextId || message.taskId)) {
     const owned = await tx.a2AContext.findFirst({
       where: {

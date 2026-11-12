@@ -127,6 +127,7 @@ export default async function AgentDetailPage({
     settings === "a2a" ||
     settings === "channels" ||
     settings === "changelog" ||
+    settings === "evolution" ||
     settings === "triggers" ||
     settings === "usage"
       ? settings

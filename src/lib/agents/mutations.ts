@@ -1,4 +1,5 @@
 import "server-only";
+import { selectNewSessionRevision } from "@/lib/agents/evolution/rollout-selection";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { visiblePluginWhere } from "@/lib/plugins/catalog";
@@ -33,7 +34,6 @@ import {
   MAX_EXTERNAL_SANDBOXES,
 } from "@/lib/sandboxes/external";
 import {
-  pinCurrentAgentRevision,
   captureAgentRevisionConfig,
   publishAgentRevisionInTransaction,
 } from "./revisions";
@@ -1707,7 +1707,7 @@ export async function createConversation(
       select: { id: true },
     });
     if (!agent) return null;
-    const revision = await pinCurrentAgentRevision(tx, agent.id);
+    const revision = await selectNewSessionRevision(tx, agent.id);
     const conversation = await tx.conversation.create({
       data: {
         agentId,

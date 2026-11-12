@@ -583,6 +583,8 @@ model ProviderModel {
 }
 
 model Agent {
+  evolutionRecords AgentEvolutionRecord[]
+  evolutionSettings AgentEvolutionSettings?
   monthlyBudgetMicros BigInt?
   budgetAlertedMonth String?
   usage AgentUsage[]
@@ -1196,6 +1198,7 @@ model Conversation {
 }
 
 model Message {
+  feedback AgentMessageFeedback[]
   id             String       @id @default(cuid())
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -1831,6 +1834,8 @@ model ChatAssistantRevision {
 }
 
 model AgentRevision {
+  parentRevisionId String?
+  purpose String @default("published")
   id String @id @default(cuid())
   agentId String
   agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
@@ -2037,4 +2042,53 @@ model GithubRegistryVersion {
   release MarketRelease? @relation(fields: [releaseId], references: [id], onDelete: Restrict)
 
   @@unique([resourceId, version])
+}
+
+// Evolution records retain immutable inputs and append-only case/result/version snapshots.
+// All access is scoped by the Agent's composite workspace identity.
+model AgentEvolutionSettings {
+  agentId String @id
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  enabled Boolean @default(false)
+  reflectionEnabled Boolean @default(false)
+  reflectionIntervalHours Int @default(24)
+  nextReflectionAt DateTime?
+  monthlyBudgetMicros BigInt @default(1000000)
+  actorId String
+  updatedAt DateTime @updatedAt
+}
+
+model AgentEvolutionRecord {
+  id String @id @default(cuid())
+  agentId String
+  workspaceId String
+  agent Agent @relation(fields: [agentId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  kind String
+  key String
+  status String
+  version Int @default(1)
+  payload Json
+  actorId String
+  costMicros BigInt @default(0)
+  leaseToken String?
+  leaseExpiresAt DateTime?
+  failureCode String?
+  completedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([agentId, kind, key])
+  @@index([agentId, kind, createdAt])
+  @@index([kind, status, leaseExpiresAt])
+}
+
+model AgentMessageFeedback {
+  id String @id @default(cuid())
+  messageId String
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdById String
+  rating String
+  comment String @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([messageId, createdById])
 }

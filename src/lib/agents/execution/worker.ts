@@ -1,4 +1,6 @@
 import "server-only";
+import { tickEvolutionJobs } from "@/lib/agents/evolution/jobs";
+import { recordEpisode } from "@/lib/agents/evolution/service";
 import { A2AQuotaError } from "@/lib/a2a/quotas";
 import { TaskState } from "@a2a-js/sdk";
 import type { A2ATask } from "@prisma/client";
@@ -377,6 +379,7 @@ export function executeAgentTask(
           clearInterval(watchdog);
           release?.();
           await recordAgentTaskUsage(row, metering);
+          await recordEpisode(row);
           await settleAgentTriggerTask(row);
         }
       },
@@ -513,6 +516,12 @@ export async function tickAgentWorker() {
   if (state.ticking || state.stopped || !runtimeCanOperate()) return;
   state.ticking = true;
   try {
+    void tickEvolutionJobs().catch(() =>
+      logSystemEvent("agent.evolution.tick_failed", {
+        domain: "agent",
+        errorCode: "EVOLUTION_FAILED",
+      }),
+    );
     await reconcileLocalWaits();
     void reconcileRemoteTasks().catch((error) =>
       logSystemEvent("a2a.remote.reconcile_failed", { domain: "a2a", error }),
@@ -552,8 +561,11 @@ export async function tickAgentWorker() {
       take: 50,
       select: { id: true },
     });
-    for (const task of expired)
+    for (const task of expired) {
       await interruptTask(task.id, "Task deadline exceeded.");
+      const terminal = await db.a2ATask.findUnique({ where: { id: task.id } });
+      if (terminal) await recordEpisode(terminal);
+    }
     const ready = [
       {
         state: TaskState.TASK_STATE_SUBMITTED,

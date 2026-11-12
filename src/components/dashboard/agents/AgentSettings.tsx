@@ -21,6 +21,7 @@ import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
 import { AgentTriggersPanel } from "./AgentTriggersPanel";
 import { AgentUsagePanel } from "../AgentUsagePanel";
 import { AgentClonePanel } from "./AgentClonePanel";
+import { AgentEvolutionPanel } from "./AgentEvolutionPanel";
 
 const AgentMessagingPanel = dynamic(() =>
   import("@/components/dashboard/agents/AgentMessagingPanel").then(
@@ -76,6 +77,7 @@ type SettingsTab =
   | "channels"
   | "a2a"
   | "changelog"
+  | "evolution"
   | "triggers"
   | "usage"
   | "clone";
@@ -115,6 +117,7 @@ function resolveSettingsTab({
   if (
     requested === "a2a" ||
     requested === "changelog" ||
+    requested === "evolution" ||
     requested === "triggers" ||
     requested === "usage"
   )
@@ -178,6 +181,7 @@ export function AgentSettings({
     { id: "triggers", label: automationT("triggers") },
     { id: "usage", label: usageT("title") },
     { id: "changelog", label: t("changelogTab") },
+    { id: "evolution", label: t("evolutionTab") },
     { id: "clone", label: t("cloneAgent") },
     ...(supportsChannelSettings
       ? [{ id: "channels" as const, label: t("channelSettingsTab") }]
@@ -250,7 +254,15 @@ export function AgentSettings({
                 className="flex h-full min-h-0 flex-col"
               />
             </div>
-            {settingsTab === "triggers" ? (
+            {settingsTab === "evolution" ? (
+              <div className="h-full min-w-0 overflow-y-auto">
+                <AgentEvolutionPanel
+                  key={agentId}
+                  agentId={agentId}
+                  currentRevisionId={settings.publishedRevision?.id ?? null}
+                />
+              </div>
+            ) : settingsTab === "triggers" ? (
               <div className="h-full overflow-y-auto">
                 <AgentTriggersPanel
                   key={`${slug}:${agentId}:triggers`}
@@ -310,6 +322,7 @@ export function AgentSettings({
                 <RevisionChangelog
                   key={agentId}
                   url={`/api/v1/agents/${encodeURIComponent(agentId)}/revisions`}
+                  diffUrl={`/api/v1/agents/${encodeURIComponent(agentId)}/revisions/diff`}
                   title={t("changelogTab")}
                   className="space-y-6 px-6 py-5"
                 />

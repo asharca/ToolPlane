@@ -1,4 +1,5 @@
 import "server-only";
+import { turnPlaybook } from "@/lib/agents/evolution/service";
 import { Task, Role, TaskState } from "@a2a-js/sdk";
 import type { A2ATask } from "@prisma/client";
 import { getAgentForRun } from "@/lib/agents/queries";
@@ -300,6 +301,20 @@ export async function localTaskOptions(
         state: TaskState.TASK_STATE_COMPLETED,
       },
     })) > 0;
+  const playbook = await turnPlaybook(
+    {
+      agentId: grant.agentId,
+      workspaceId: grant.workspaceId,
+      actorId: grant.actorId,
+    },
+    row.id,
+    row.resumeCount,
+    mapped.conversationId,
+    !grant.ancestorTaskIds.length &&
+      ["chat", "work", "control", "trigger"].includes(
+        grant.entryPolicy?.kind ?? "",
+      ),
+  );
   return {
     runtimeKind: "pi-sdk",
     workspaceId: grant.workspaceId,
@@ -320,6 +335,7 @@ export async function localTaskOptions(
     workingDirectory: work ? grant.entryPolicy?.workingDirectory : undefined,
     systemPrompt: [
       agent.systemPrompt,
+      playbook,
       work
         ? workSystemPrompt(
             agentSessionWorkingDirectory(

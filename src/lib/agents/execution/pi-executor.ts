@@ -19,6 +19,8 @@ import { recordTaskExecutionStage } from "@/lib/a2a/store";
 import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
 import { MeteredExecutionError } from "@/lib/agents/usage";
 import { getLogContext } from "@/lib/observability/context";
+import { db } from "@/lib/db";
+import { recordTaskToolActivity } from "@/lib/agents/evolution/tool-activity";
 import {
   startTaskOutput,
   taskOutput,
@@ -72,6 +74,9 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
       },
       onActivity: async (activity) => {
         publishTaskActivity(row.id, activity);
+        if (isLocalGrant(grant)) {
+          await recordTaskToolActivity(db, grant, row.id, activity);
+        }
         await observer?.onActivity?.(activity);
       },
       onExecutionStage,
