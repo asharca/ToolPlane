@@ -26,11 +26,24 @@ import { GET, POST } from "@/app/api/v1/workspaces/[slug]/agent-channels/route";
 import { sendChannelNotice } from "@/lib/agents/channel-runtime";
 
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
+import type * as SandboxRuntimeModule from "@/lib/agents/sandbox-runtime";
+vi.mock("@/lib/agents/pi-runtime", () => ({
+  preparePiRuntime: vi.fn(async () => ({
+    path: "/fixture/pi-sdk.archive",
+    sha256: "a".repeat(64),
+  })),
+}));
+vi.mock("@/lib/agents/sandbox-runtime", async (original) => ({
+  ...(await original<typeof SandboxRuntimeModule>()),
+  preflightPiSdkCapabilities: vi
+    .fn()
+    .mockResolvedValue({ commands: [], tools: [], skills: [], prompts: [] }),
+}));
 const identity = vi.hoisted(() => ({ user: null as { id: string } | null }));
 vi.mock("@/lib/auth/request-user", () => ({
   resolveAccountRequestUser: async () => identity.user,
 }));
-// Only transport and identity are substituted; admission, routes, audits and persistence use Postgres.
+// Transport, identity and native preparation are substituted; admission, routes, audits and persistence use Postgres.
 vi.mock("@/lib/agents/channel-runtime", () => ({
   liveAgentChannelStatus: vi.fn(() => "stopped"),
   startAgentChannelRunner: vi.fn(async () => ({

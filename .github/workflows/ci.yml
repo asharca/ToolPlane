@@ -92,6 +92,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.full
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -138,20 +142,36 @@ jobs:
       - name: Apply database migrations
         run: pnpm exec prisma migrate deploy
 
-      - name: Biome lint, format and typecheck
-        run: pnpm check
 
       - name: Build Pi package capture sandbox
         if: inputs.full
         run: docker build --target pi-package-capture -t toolplane-pi-package-capture:0.87.1 .
 
-      - name: Test core boundaries
-        if: ${{ !inputs.full }}
-        run: pnpm vitest run tests/unit/auth.test.ts tests/unit/agent-control-auth.test.ts tests/integration/auth-status.test.ts tests/integration/workspace-management.test.ts tests/integration/logging.test.ts tests/integration/a2a-logging.test.ts --testTimeout=30000 --hookTimeout=60000
 
       - name: Test core functionality
-        if: inputs.full
-        run: pnpm test
+        run: pnpm test --shard=${{ matrix.shard }}/3
+
+  runtime-build:
+    if: github.event_name == 'workflow_dispatch' && inputs.full
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+      NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
+      NEXT_TELEMETRY_DISABLED: 1
+      TOOLPLANE_VERSION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - run: pnpm check
 
       - name: Build
         if: inputs.full

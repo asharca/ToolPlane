@@ -62,6 +62,21 @@ import type * as Worker from "@/lib/agents/execution/worker";
 import type { LocalA2AGrant } from "@/lib/a2a/principal";
 import type { A2ALogBinding } from "@/lib/observability/a2a-log";
 import { withLogContext } from "@/lib/observability/context";
+import type * as AgentSandboxRuntime from "@/lib/agents/sandbox-runtime";
+
+// Publish real authorized revisions without Docker SDK export or native capability execution.
+vi.mock("@/lib/agents/pi-runtime", () => ({
+  preparePiRuntime: vi.fn(async () => ({
+    path: "/fixture/pi-sdk.archive",
+    sha256: "a".repeat(64),
+  })),
+}));
+vi.mock("@/lib/agents/sandbox-runtime", async (original) => ({
+  ...(await original<typeof AgentSandboxRuntime>()),
+  preflightPiSdkCapabilities: vi
+    .fn()
+    .mockResolvedValue({ commands: [], tools: [], skills: [], prompts: [] }),
+}));
 
 import type * as AttachmentStorage from "@/lib/attachments/storage";
 const network = vi.hoisted(() => ({

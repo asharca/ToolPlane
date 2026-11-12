@@ -33,6 +33,12 @@ const external = vi.hoisted(() => ({
   starts: vi.fn(),
   stops: vi.fn(),
 }));
+vi.mock("@/lib/agents/pi-runtime", () => ({
+  preparePiRuntime: vi.fn(async () => ({
+    path: "/fixture/pi-sdk.archive",
+    sha256: "a".repeat(64),
+  })),
+}));
 vi.mock("@/lib/process/supervisor", async (original) => ({
   ...(await original<typeof SupervisorModule>()),
   startProcess: external.starts,

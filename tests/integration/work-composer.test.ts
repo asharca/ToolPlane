@@ -18,6 +18,7 @@ import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import type { SessionMcpContext } from "@/lib/process/session-mcp";
 import type * as SessionMcpModule from "@/lib/process/session-mcp";
 import type * as SupervisorModule from "@/lib/process/supervisor";
+import type * as SandboxRuntimeModule from "@/lib/agents/sandbox-runtime";
 
 const identity = vi.hoisted(() => ({ id: "" }));
 const transport = vi.hoisted(() => ({ resource: vi.fn() }));
@@ -25,6 +26,19 @@ vi.mock("@/lib/auth/request-user", () => ({
   resolveRequestUser: async () => ({ id: identity.id }),
 }));
 vi.mock("@/lib/process/mcp-client", () => ({ mcpRpc: vi.fn() }));
+// Composer fixtures need real revision authority, not Docker SDK export or native preflight.
+vi.mock("@/lib/agents/pi-runtime", () => ({
+  preparePiRuntime: vi.fn(async () => ({
+    path: "/fixture/pi-sdk.archive",
+    sha256: "a".repeat(64),
+  })),
+}));
+vi.mock("@/lib/agents/sandbox-runtime", async (original) => ({
+  ...(await original<typeof SandboxRuntimeModule>()),
+  preflightPiSdkCapabilities: vi
+    .fn()
+    .mockResolvedValue({ commands: [], tools: [], skills: [], prompts: [] }),
+}));
 vi.mock("@/lib/process/supervisor", async (original) => ({
   ...(await original<typeof SupervisorModule>()),
   liveStatus: () => "running",
