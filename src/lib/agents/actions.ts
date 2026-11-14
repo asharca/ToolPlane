@@ -59,7 +59,7 @@ import {
   type ModelPrimaryType,
   type ProviderModelValues,
 } from "@/lib/agents/model-catalog";
-import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
+import { AGENT_STEP_BOUNDS, REASONING_LEVELS } from "@/lib/agents/constants";
 import {
   createAgentChannelConnection,
   deleteAgentChannelConnection,
@@ -189,6 +189,15 @@ function agentMaxSteps(formData: FormData): number {
         Math.max(AGENT_STEP_BOUNDS.min, Math.trunc(value)),
       )
     : AGENT_STEP_BOUNDS.default;
+}
+
+function agentReasoningEffort(formData: FormData) {
+  const value = formData.get("reasoningEffort") ?? "";
+  if (value === "" || value === "default") return null;
+  const parsed = z.enum(REASONING_LEVELS).safeParse(value);
+  if (!parsed.success)
+    throw new AgentConfigurationError("Invalid reasoning effort.");
+  return parsed.data;
 }
 
 const piPackagesFormSchema = z
@@ -720,6 +729,7 @@ export async function createAgentAction(
           .getAll("disabledBuiltinTool")
           .map(String),
         maxSteps: agentMaxSteps(formData),
+        reasoningEffort: agentReasoningEffort(formData),
         piPackages: piPackagesFromForm(formData),
       },
       {
@@ -961,6 +971,7 @@ export async function updateAgentAction(
           .getAll("disabledBuiltinTool")
           .map(String),
         maxSteps,
+        reasoningEffort: agentReasoningEffort(formData),
         piPackages: piPackagesFromForm(formData),
       });
       await setAgentTools(ctx.ws.id, agentId, {

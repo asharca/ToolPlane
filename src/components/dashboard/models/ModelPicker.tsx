@@ -51,6 +51,8 @@ export type ModelProviderOption = {
   name: string;
   models: string[];
   modelRecords?: ModelRecordOption[];
+  /** Server-computed via `reasoningModelIds`; drives reasoning controls. */
+  reasoningModels?: string[];
 };
 
 export type ModelSelection = { providerId: string; model: string };

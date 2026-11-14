@@ -10,7 +10,10 @@ import {
   resolveAgentPiPackages,
 } from "@/lib/agents/resolve";
 import { resolveModelContext } from "@/lib/agents/model";
-import { normalizeReasoningEffort } from "@/lib/agents/constants";
+import {
+  DEFAULT_REASONING_LEVEL,
+  normalizeReasoningLevel,
+} from "@/lib/agents/constants";
 import type { RunSandboxAgentTurnOptions } from "@/lib/agents/sandbox-runtime";
 import {
   createAgentRuntimeToken,
@@ -232,7 +235,7 @@ export async function localTaskOptions(
   });
   const modelContext = resolveModelContext(provider, model);
   const chat =
-    grant.entryPolicy?.kind === "chat"
+    grant.entryPolicy?.kind === "chat" && !grant.ancestorTaskIds.length
       ? await db.conversation.findFirst({
           where: {
             id: grant.entryPolicy.sourceId,
@@ -242,9 +245,12 @@ export async function localTaskOptions(
           select: { reasoningEffort: true },
         })
       : null;
-  const reasoning = normalizeReasoningEffort(
-    work?.conversation.reasoningEffort ?? chat?.reasoningEffort,
-  );
+  const reasoning =
+    normalizeReasoningLevel(
+      work?.conversation.reasoningEffort ?? chat?.reasoningEffort,
+    ) ??
+    normalizeReasoningLevel(agent.reasoningEffort) ??
+    DEFAULT_REASONING_LEVEL;
   const communicationEnabled = agent.a2aOutboundEnabled;
   let files: StagedTaskFile[] = [];
   try {
@@ -385,8 +391,6 @@ export async function localTaskOptions(
         invocation,
       );
     },
-    ...(reasoning && reasoning !== "default"
-      ? { reasoningEffort: reasoning }
-      : {}),
+    ...(reasoning ? { reasoningEffort: reasoning } : {}),
   };
 }

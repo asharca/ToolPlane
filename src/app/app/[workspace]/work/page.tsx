@@ -19,9 +19,12 @@ import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { WorkspaceWork } from "@/components/dashboard/work/WorkspaceWork";
 import { WorkspaceWelcome } from "@/components/dashboard/WorkspaceWelcome";
 import { effectiveStatus } from "@/lib/process/supervisor";
-import { resolveModelContext } from "@/lib/agents/model";
+import { reasoningModelIds, resolveModelContext } from "@/lib/agents/model";
 import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
-import { normalizeReasoningEffort } from "@/lib/agents/constants";
+import {
+  normalizeReasoningEffort,
+  normalizeReasoningLevel,
+} from "@/lib/agents/constants";
 import { isWorkSessionTitlePending } from "@/lib/work/coordinator";
 import {
   parseBooleanRecordCookie,
@@ -277,6 +280,7 @@ export default async function WorkspaceWorkPage({
           id: provider.id,
           name: provider.name,
           models: provider.models,
+          reasoningModels: reasoningModelIds(provider),
           modelRecords: provider.modelRecords.map((model) => ({
             modelId: model.modelId,
             primaryType: model.primaryType,
@@ -319,6 +323,8 @@ export default async function WorkspaceWorkPage({
             providerId: agent.providerId,
             providerLabel: agent.provider?.name ?? "",
             model: agent.model,
+            reasoningEffort:
+              normalizeReasoningLevel(agent.reasoningEffort) ?? null,
             contextWindow: modelContext?.maxTokens ?? null,
             contextWindowEstimated: modelContext?.estimated ?? true,
             sandboxes: agent.sandboxes

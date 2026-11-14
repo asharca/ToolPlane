@@ -27,7 +27,15 @@ import {
   type ModelProviderOption,
 } from "@/components/dashboard/models/ModelPicker";
 import { SystemPromptEditor } from "@/components/dashboard/SystemPromptEditor";
-import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
+import {
+  AGENT_STEP_BOUNDS,
+  DEFAULT_REASONING_LEVEL,
+  REASONING_LEVELS,
+  normalizeReasoningEffort,
+  selectionSupportsReasoning,
+  type ReasoningEffort,
+} from "@/lib/agents/constants";
+import { REASONING_EFFORT_LABELS } from "@/components/dashboard/agents/ReasoningEffortControl";
 import { cn as cx } from "@/lib/utils";
 import type { ChatAssistantItem } from "./WorkspaceAssistantChat";
 
@@ -91,6 +99,7 @@ export function AssistantEditor({
   workspaceId: string;
 }) {
   const t = useTranslations("console.chatAssistants");
+  const agentsT = useTranslations("console.agents");
   const common = useTranslations("common");
   const creating = !assistant;
   const [closing, setClosing] = useState(false);
@@ -104,6 +113,9 @@ export function AssistantEditor({
     providers.find((provider) => provider.id === providerId) ?? null;
   const [model, setModel] = useState(
     assistant?.model ?? selectedProvider?.models[0] ?? "",
+  );
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
+    assistant?.reasoningEffort ?? DEFAULT_REASONING_LEVEL,
   );
   const initialModelParameters = assistant?.modelParameters ?? {};
   const [temperatureEnabled, setTemperatureEnabled] = useState(
@@ -155,6 +167,8 @@ export function AssistantEditor({
   const nameDirty = name !== (assistant?.name ?? "");
   const descriptionDirty = description !== (assistant?.description ?? "");
   const modelDirty = providerId !== initialProviderId || model !== initialModel;
+  const reasoningDirty =
+    reasoningEffort !== (assistant?.reasoningEffort ?? DEFAULT_REASONING_LEVEL);
   const promptDirty = systemPrompt !== initialSystemPrompt;
   const temperatureDirty =
     temperatureEnabled !== (initialModelParameters.temperature !== undefined) ||
@@ -178,7 +192,8 @@ export function AssistantEditor({
         parameter.value !== initial.value
       );
     });
-  const basicDirty = nameDirty || descriptionDirty || modelDirty;
+  const basicDirty =
+    nameDirty || descriptionDirty || modelDirty || reasoningDirty;
   const parametersDirty =
     temperatureDirty ||
     topPDirty ||
@@ -250,6 +265,8 @@ export function AssistantEditor({
             systemPrompt: systemPrompt.trim() || null,
             modelProviderId: providerId || null,
             model: model || null,
+            reasoningEffort:
+              reasoningEffort === "default" ? null : reasoningEffort,
             modelParameters: Object.keys(modelParameters).length
               ? modelParameters
               : null,
@@ -394,6 +411,32 @@ export function AssistantEditor({
                     }
                   />
                 </DialogField>
+                {selectionSupportsReasoning(providers, {
+                  providerId,
+                  model,
+                }) && (
+                  <DialogField
+                    label={agentsT("defaultReasoningEffort")}
+                    htmlFor="assistant-settings-reasoning-effort"
+                    dirty={reasoningDirty}
+                  >
+                    <FormSelect
+                      id="assistant-settings-reasoning-effort"
+                      label={agentsT("defaultReasoningEffort")}
+                      value={reasoningEffort}
+                      disabled={saving}
+                      options={REASONING_LEVELS.map((value) => ({
+                        value,
+                        label: agentsT(REASONING_EFFORT_LABELS[value]),
+                      }))}
+                      onValueChange={(value) =>
+                        setReasoningEffort(
+                          normalizeReasoningEffort(value) ?? "default",
+                        )
+                      }
+                    />
+                  </DialogField>
+                )}
               </section>
 
               <section

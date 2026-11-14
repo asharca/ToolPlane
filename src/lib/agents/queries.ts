@@ -255,6 +255,7 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       providerId: true,
       model: true,
       maxSteps: true,
+      reasoningEffort: true,
       provider: { select: { name: true } },
       servers: {
         select: { deploymentId: true, allowedToolNames: true },

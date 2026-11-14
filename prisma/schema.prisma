@@ -619,6 +619,7 @@ model Agent {
   capabilityImport Json?
   disabledBuiltinTools    String[]                 @default([])
   maxSteps                Int                      @default(100)
+  reasoningEffort         String?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
   servers                 AgentServer[]
@@ -1243,6 +1244,7 @@ model ChatAssistant {
   model                   String?
   modelParameters         Json?
   maxSteps                Int                     @default(100)
+  reasoningEffort         String?
   mcpGrants               ChatAssistantMcpGrant[]
   threads                 ChatThread[]
   createdAt               DateTime                @default(now())

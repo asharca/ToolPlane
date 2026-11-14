@@ -202,6 +202,7 @@ export function diffAgentRevisions(
       [b.providerId, b.model, b.modelProviderIds, b.nativeRoleModels ?? []],
     ],
     ["maxSteps", a.maxSteps, b.maxSteps],
+    ["reasoningEffort", a.reasoningEffort ?? null, b.reasoningEffort ?? null],
     ["packages", a.packages, b.packages],
     ["knowledge", a.knowledgeBaseIds, b.knowledgeBaseIds],
     [

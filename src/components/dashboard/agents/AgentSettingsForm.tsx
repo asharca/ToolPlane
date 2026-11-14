@@ -63,7 +63,16 @@ import {
   type AgentRevisionDiff,
 } from "@/lib/revisions/config-diff";
 import { RevisionFileDiff } from "../RevisionFileDiff";
-import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
+import {
+  AGENT_STEP_BOUNDS,
+  DEFAULT_REASONING_LEVEL,
+  REASONING_LEVELS,
+  normalizeReasoningEffort,
+  selectionSupportsReasoning,
+  type ReasoningEffort,
+  type ReasoningLevel,
+} from "@/lib/agents/constants";
+import { REASONING_EFFORT_LABELS } from "./ReasoningEffortControl";
 import {
   agentPermissionAdditions,
   type AgentPermissionAddition,
@@ -144,6 +153,7 @@ type Props = {
   disabledBuiltinTools?: string[];
   providerId: string | null;
   model: string | null;
+  reasoningEffort: ReasoningLevel | null;
   maxSteps: number;
   providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
@@ -204,6 +214,9 @@ export function AgentSettingsForm(props: Props) {
   const [prompt, setPrompt] = useState(props.systemPrompt);
   const [provider, setProvider] = useState(props.providerId ?? "");
   const [model, setModel] = useState(props.model ?? "");
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
+    props.reasoningEffort ?? DEFAULT_REASONING_LEVEL,
+  );
   const [steps, setSteps] = useState(String(props.maxSteps));
   const [disabledTools, setDisabledTools] = useState(
     new Set(props.disabledBuiltinTools ?? []),
@@ -284,6 +297,8 @@ export function AgentSettingsForm(props: Props) {
     description: description !== (props.description ?? ""),
     model:
       provider !== (props.providerId ?? "") || model !== (props.model ?? ""),
+    reasoningEffort:
+      reasoningEffort !== (props.reasoningEffort ?? DEFAULT_REASONING_LEVEL),
     instructions: prompt !== props.systemPrompt,
     builtInTools: !sameSet(
       disabledTools,
@@ -315,7 +330,10 @@ export function AgentSettingsForm(props: Props) {
     advanced: steps !== String(props.maxSteps),
   };
   const dirtySections: AgentSettingsSection[] = [
-    ...(fieldDirty.name || fieldDirty.description || fieldDirty.model
+    ...(fieldDirty.name ||
+    fieldDirty.description ||
+    fieldDirty.model ||
+    fieldDirty.reasoningEffort
       ? ["general" as const]
       : []),
     ...(
@@ -599,6 +617,11 @@ export function AgentSettingsForm(props: Props) {
               <input type="hidden" name="model" value={model} />
               <input
                 type="hidden"
+                name="reasoningEffort"
+                value={reasoningEffort}
+              />
+              <input
+                type="hidden"
                 name="piPackages"
                 value={JSON.stringify(packages)}
               />
@@ -678,6 +701,33 @@ export function AgentSettingsForm(props: Props) {
                       }
                     />
                   </DialogField>
+                  {selectionSupportsReasoning(providers, {
+                    providerId: provider,
+                    model,
+                  }) && (
+                    <DialogField
+                      label={t("defaultReasoningEffort")}
+                      htmlFor={`${formId}-reasoning-effort`}
+                      dirty={fieldDirty.reasoningEffort}
+                    >
+                      <FormSelect
+                        id={`${formId}-reasoning-effort`}
+                        label={t("defaultReasoningEffort")}
+                        value={reasoningEffort}
+                        disabled={pending}
+                        options={REASONING_LEVELS.map((value) => ({
+                          value,
+                          label: t(REASONING_EFFORT_LABELS[value]),
+                        }))}
+                        onValueChange={(value) => {
+                          setReasoningEffort(
+                            normalizeReasoningEffort(value) ?? "default",
+                          );
+                          changed();
+                        }}
+                      />
+                    </DialogField>
+                  )}
                 </section>
                 <section
                   hidden={active !== "instructions"}

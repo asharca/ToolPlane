@@ -247,6 +247,9 @@ export async function captureAgentRevisionConfig(
     model: agent.model,
     modelProviderIds: [],
     maxSteps: agent.maxSteps,
+    ...(agent.reasoningEffort != null
+      ? { reasoningEffort: agent.reasoningEffort }
+      : {}),
     disabledBuiltinTools: agent.disabledBuiltinTools,
     sandboxTemplateId: template?.id ?? null,
     environment: frozenEnvironment,
@@ -998,6 +1001,7 @@ export async function resolvePinnedAgent<
       provider,
       model: config.model,
       maxSteps: config.maxSteps,
+      reasoningEffort: config.reasoningEffort ?? null,
       disabledBuiltinTools: [
         ...new Set([
           ...config.disabledBuiltinTools,

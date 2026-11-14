@@ -2,8 +2,8 @@
 // runaway backstop for responses that keep requesting another tool round.
 export const AGENT_STEP_BOUNDS = { min: 1, max: 1000, default: 100 } as const;
 
-export const REASONING_EFFORTS = [
-  "default",
+/** Concrete levels, lowest first. */
+export const REASONING_LEVELS = [
   "minimal",
   "low",
   "medium",
@@ -11,6 +11,14 @@ export const REASONING_EFFORTS = [
   "xhigh",
   "max",
 ] as const;
+
+export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
+
+/** Applied when neither the turn nor the Agent/Assistant sets a level. */
+export const DEFAULT_REASONING_LEVEL: ReasoningLevel = "medium";
+
+/** "default" defers to the Agent/Assistant default, then the provider's own. */
+export const REASONING_EFFORTS = ["default", ...REASONING_LEVELS] as const;
 
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
@@ -21,6 +29,26 @@ export function normalizeReasoningEffort(
     (REASONING_EFFORTS as readonly string[]).includes(value)
     ? (value as ReasoningEffort)
     : null;
+}
+
+export function normalizeReasoningLevel(value: unknown): ReasoningLevel | null {
+  return typeof value === "string" &&
+    (REASONING_LEVELS as readonly string[]).includes(value)
+    ? (value as ReasoningLevel)
+    : null;
+}
+
+/** Client-safe check against server-computed `reasoningModels` per provider. */
+export function selectionSupportsReasoning(
+  providers: ReadonlyArray<{ id: string; reasoningModels?: readonly string[] }>,
+  selection: { providerId: string; model: string } | null | undefined,
+): boolean {
+  if (!selection) return false;
+  return (
+    providers
+      .find((provider) => provider.id === selection.providerId)
+      ?.reasoningModels?.includes(selection.model) ?? false
+  );
 }
 
 export function resolveMaxSteps(maxSteps: number): number {

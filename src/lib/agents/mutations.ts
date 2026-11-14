@@ -1,4 +1,5 @@
 import "server-only";
+import type { ReasoningLevel } from "./constants";
 import { selectNewSessionRevision } from "@/lib/agents/evolution/rollout-selection";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
@@ -313,6 +314,7 @@ export async function cloneAgent(
           ompConfig: true,
           disabledBuiltinTools: true,
           maxSteps: true,
+          reasoningEffort: true,
         },
       });
       if (!source) return null;
@@ -340,6 +342,7 @@ export async function cloneAgent(
             source.disabledBuiltinTools,
           ),
           maxSteps: source.maxSteps,
+          reasoningEffort: source.reasoningEffort,
         },
       });
       if (deployments.length) {
@@ -499,6 +502,7 @@ export type AgentConfig = {
   model: string | null;
   disabledBuiltinTools?: string[];
   maxSteps: number;
+  reasoningEffort?: ReasoningLevel | null;
   piPackages?: Array<{ marketInstallId: string; releaseId?: string }>;
 };
 
@@ -957,6 +961,7 @@ export async function createConfiguredAgent(
             cfg.disabledBuiltinTools,
           ),
           maxSteps: cfg.maxSteps,
+          reasoningEffort: cfg.reasoningEffort ?? null,
         },
       });
       await tx.agentServer.createMany({
@@ -1053,6 +1058,9 @@ export async function updateAgent(
                 ),
               }),
           maxSteps: cfg.maxSteps,
+          ...(cfg.reasoningEffort !== undefined
+            ? { reasoningEffort: cfg.reasoningEffort }
+            : {}),
         },
       });
       await validateAndWritePiPackages(

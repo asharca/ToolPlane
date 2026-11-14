@@ -1,7 +1,7 @@
 import type { Sandbox } from "@prisma/client";
 import type { SkillBundleFile } from "@/lib/skills/bundle";
 import { z } from "zod";
-import { AGENT_STEP_BOUNDS } from "./constants";
+import { AGENT_STEP_BOUNDS, REASONING_LEVELS } from "./constants";
 import { OMP_VERSION, OmpConfigSnapshotSchema } from "./omp-config";
 import {
   SubagentPinSchema,
@@ -160,6 +160,7 @@ const PiRevisionConfigSchema = z
     providerId: reference.nullable(),
     model: reference.nullable(),
     modelProviderIds: references,
+    reasoningEffort: z.enum(REASONING_LEVELS).optional(),
     maxSteps: z
       .number()
       .int()

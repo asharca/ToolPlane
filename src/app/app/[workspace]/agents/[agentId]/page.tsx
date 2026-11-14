@@ -26,6 +26,8 @@ import {
   buildAgentPluginOptions,
 } from "@/lib/plugins/agent-options";
 import { listPluginBindingDeployments } from "@/lib/plugins/binding-deployments";
+import { reasoningModelIds } from "@/lib/agents/model";
+import { normalizeReasoningLevel } from "@/lib/agents/constants";
 
 export const dynamic = "force-dynamic";
 
@@ -157,11 +159,14 @@ export default async function AgentDetailPage({
           providerId: agent.providerId,
           model: agent.model,
           maxSteps: agent.maxSteps,
+          reasoningEffort:
+            normalizeReasoningLevel(agent.reasoningEffort) ?? null,
           providers: providers.map((provider) => ({
             id: provider.id,
             name: provider.name,
             format: provider.format,
             models: provider.models,
+            reasoningModels: reasoningModelIds(provider),
             modelRecords: (provider.modelRecords ?? []).map((model) => ({
               modelId: model.modelId,
               primaryType: model.primaryType,

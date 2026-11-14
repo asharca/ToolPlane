@@ -18,6 +18,7 @@ import type { PluginBindingDeployment } from "@/lib/plugins/binding-deployments"
 import type { AgentChannelConnectionClientView } from "@/lib/agents/channel-connection-client";
 import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
 import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
+import type { ReasoningLevel } from "@/lib/agents/constants";
 import { AgentTriggersPanel } from "./AgentTriggersPanel";
 import { AgentUsagePanel } from "../AgentUsagePanel";
 import { AgentClonePanel } from "./AgentClonePanel";
@@ -50,6 +51,7 @@ type SettingsData = {
   disabledBuiltinTools?: string[];
   providerId: string | null;
   model: string | null;
+  reasoningEffort: ReasoningLevel | null;
   maxSteps: number;
   providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
@@ -232,6 +234,7 @@ export function AgentSettings({
                 disabledBuiltinTools={settings.disabledBuiltinTools}
                 providerId={settings.providerId}
                 model={settings.model}
+                reasoningEffort={settings.reasoningEffort}
                 maxSteps={settings.maxSteps}
                 providers={settings.providers}
                 deployments={settings.deployments}
