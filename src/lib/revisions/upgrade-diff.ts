@@ -3,6 +3,7 @@ export type RevisionChangedField =
   | "systemPrompt"
   | "model"
   | "modelParameters"
+  | "reasoningEffort"
   | "maxSteps"
   | "packages"
   | "knowledge"

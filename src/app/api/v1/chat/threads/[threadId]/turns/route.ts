@@ -11,6 +11,9 @@ import { buildChatToolSet } from "@/lib/chat/tools";
 import { wrapChatTools } from "@/lib/chat/durable-tools";
 import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 import { runNativeAgent, uiMessagesToPi } from "@/lib/agents/native";
+import { db } from "@/lib/db";
+import { modelReasoningSupported } from "@/lib/agents/model";
+import { DEFAULT_REASONING_LEVEL } from "@/lib/agents/constants";
 import { createNativeUiStreamBridge } from "@/lib/agents/ui-stream";
 import {
   AttachmentMessageError,
@@ -180,6 +183,26 @@ export const POST = withRequestLogging(
     }
     const effectiveProvider = provider;
     const effectiveModel = modelId;
+    const requestedReasoning =
+      input.reasoningEffort && input.reasoningEffort !== "default"
+        ? input.reasoningEffort
+        : (assistant.reasoningEffort ?? DEFAULT_REASONING_LEVEL);
+    const modelRecord = requestedReasoning
+      ? await db.providerModel.findUnique({
+          where: {
+            providerId_modelId: {
+              providerId: effectiveProvider.id,
+              modelId: effectiveModel,
+            },
+          },
+          select: { capabilities: true },
+        })
+      : null;
+    const reasoningEffort =
+      requestedReasoning &&
+      modelReasoningSupported(effectiveProvider, effectiveModel, modelRecord)
+        ? requestedReasoning
+        : undefined;
 
     const targetMessageId =
       input.trigger === "regenerate-message"
@@ -342,7 +365,7 @@ export const POST = withRequestLogging(
                   modelParameters: parseChatAssistantModelParameters(
                     assistant.modelParameters,
                   ),
-                  reasoningEffort: input.reasoningEffort,
+                  reasoningEffort,
                   signal,
                   onModelRequest: () => publishStage("waiting-model"),
                   onEvent: async (event) => {

@@ -54,6 +54,7 @@ import {
 } from "@/components/dashboard/chat/ChatBranchFlow";
 import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
 import type { ModelSelection } from "@/components/dashboard/ComposerModelSelect";
+import type { ReasoningLevel } from "@/lib/agents/constants";
 import {
   CenterMorphModal,
   CenterMorphModalContent,
@@ -118,6 +119,7 @@ export type ChatAssistantItem = {
   systemPrompt: string | null;
   modelProviderId: string | null;
   model: string | null;
+  reasoningEffort: ReasoningLevel | null;
   modelParameters?: AssistantModelParameters | null;
   maxSteps: number;
   providerName: string | null;
@@ -157,7 +159,7 @@ export function WorkspaceAssistantChat({
   initialMessages,
   providers,
   defaultModelSelection = null,
-  reasoningAvailable,
+  defaultReasoningEffort,
   selectedAssistantId,
   selectedThreadId,
   slug,
@@ -175,7 +177,7 @@ export function WorkspaceAssistantChat({
   initialMessages: AgentUIMessage[];
   providers: ProviderOption[];
   defaultModelSelection?: ModelSelection | null;
-  reasoningAvailable: boolean;
+  defaultReasoningEffort: ReasoningLevel | null;
   selectedAssistantId: string | null;
   selectedThreadId: string | null;
   slug: string;
@@ -1299,7 +1301,7 @@ export function WorkspaceAssistantChat({
                       [activeThread.id]: selection,
                     }))
                   }
-                  reasoningAvailable={reasoningAvailable}
+                  defaultReasoningEffort={defaultReasoningEffort}
                   attachmentUploadUrl={`/api/v1/workspaces/${workspaceId}/attachments`}
                   readOnly={activeThread.legacyRevisionUnresolved === true}
                   initialMessages={initialMessages}

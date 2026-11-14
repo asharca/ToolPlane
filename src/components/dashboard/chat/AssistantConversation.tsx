@@ -75,7 +75,11 @@ import {
 } from "@/components/dashboard/composer-menu";
 import { useMcpComposerMenu } from "@/components/dashboard/composer-mcp-menu";
 import { ReasoningEffortControl } from "@/components/dashboard/agents/ReasoningEffortControl";
-import type { ReasoningEffort } from "@/lib/agents/constants";
+import {
+  selectionSupportsReasoning,
+  type ReasoningEffort,
+  type ReasoningLevel,
+} from "@/lib/agents/constants";
 import { ComposerToolsButton } from "@/components/dashboard/ComposerToolsButton";
 import { ComposerToolbarCustomizer } from "@/components/dashboard/ComposerToolbarCustomizer";
 import {
@@ -146,7 +150,7 @@ type Submission = {
   messageId: string;
   editMessageId?: string;
   regenerateId?: string;
-  reasoningEffort: ReasoningEffort;
+  reasoningEffort?: ReasoningEffort;
   webSearchEnabled: boolean;
   modelOverride?: ModelSelection;
 };
@@ -195,7 +199,7 @@ export function AssistantConversation({
   onConversationChanged,
   onStartBranch,
   onThreadUpgraded,
-  reasoningAvailable = false,
+  defaultReasoningEffort = null,
   attachmentUploadUrl,
   assistantName,
   assistantDescription,
@@ -215,7 +219,7 @@ export function AssistantConversation({
   onConversationChanged: () => void;
   onStartBranch: (id: string) => void;
   onThreadUpgraded?: () => void;
-  reasoningAvailable?: boolean;
+  defaultReasoningEffort?: ReasoningLevel | null;
   attachmentUploadUrl?: string;
   assistantName: string;
   assistantDescription?: string | null;
@@ -238,6 +242,10 @@ export function AssistantConversation({
   const attachmentInput = useRef<HTMLInputElement>(null);
   const [reasoningEffort, setReasoningEffort] =
     useState<ReasoningEffort>("default");
+  const reasoningAvailable = selectionSupportsReasoning(
+    providers,
+    modelSelection ?? defaultModelSelection,
+  );
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [customizing, setCustomizing] = useState(false);
   const composerRef = useRef<HTMLDivElement>(null);
@@ -380,7 +388,9 @@ export function AssistantConversation({
             admittedBody.current = {
               key: request.key,
               body: {
-                reasoningEffort: request.reasoningEffort,
+                ...(request.reasoningEffort !== undefined
+                  ? { reasoningEffort: request.reasoningEffort }
+                  : {}),
                 webSearchEnabled: request.webSearchEnabled,
                 modelOverride: request.modelOverride,
                 messages: messages.slice(-1),
@@ -575,7 +585,7 @@ export function AssistantConversation({
         editMessageId,
         text,
         files,
-        reasoningEffort,
+        ...(reasoningAvailable ? { reasoningEffort } : {}),
         webSearchEnabled,
         modelOverride: modelSelection ?? undefined,
       };
@@ -621,7 +631,7 @@ export function AssistantConversation({
       regenerateId: messageId,
       text: "",
       files: [],
-      reasoningEffort,
+      ...(reasoningAvailable ? { reasoningEffort } : {}),
       webSearchEnabled,
       modelOverride: modelSelection ?? undefined,
     };
@@ -857,6 +867,7 @@ export function AssistantConversation({
       return (
         <ReasoningEffortControl
           value={reasoningEffort}
+          inherited={defaultReasoningEffort}
           disabled={readOnly || running}
           onChange={setReasoningEffort}
         />

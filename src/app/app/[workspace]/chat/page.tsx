@@ -18,10 +18,8 @@ import type { AgentUIMessage } from "@/lib/agents/message-segments";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { WorkspaceAssistantChat } from "@/components/dashboard/chat/WorkspaceAssistantChat";
-import {
-  modelSupportsReasoning,
-  resolveModelContext,
-} from "@/lib/agents/model";
+import { reasoningModelIds, resolveModelContext } from "@/lib/agents/model";
+import { normalizeReasoningLevel } from "@/lib/agents/constants";
 import {
   assistantChatExpandedCookieName,
   assistantChatGroupPreferencesCookieName,
@@ -149,18 +147,6 @@ export default async function WorkspaceChatPage({
           model: pinnedConfig.data.model,
         }
       : null;
-  const defaultProvider = defaultModelSelection
-    ? providersById.get(defaultModelSelection.providerId)
-    : null;
-  const defaultModelRecord = defaultProvider?.modelRecords.find(
-    (model) => model.modelId === defaultModelSelection?.model,
-  );
-  const reasoningAvailable = Boolean(
-    defaultProvider &&
-      defaultModelSelection &&
-      (defaultModelRecord?.capabilities.includes("reasoning") ||
-        modelSupportsReasoning(defaultProvider, defaultModelSelection.model)),
-  );
   const timeZone = resolveUserTimeZone(user);
   const initialMessages: AgentUIMessage[] = (activeThread?.messages ?? []).map(
     (message) => ({
@@ -184,7 +170,11 @@ export default async function WorkspaceChatPage({
         startEditing={query.settings === "1"}
         selectedAssistantId={activeAssistant?.id ?? null}
         selectedThreadId={activeThread?.id ?? null}
-        reasoningAvailable={reasoningAvailable}
+        defaultReasoningEffort={
+          pinnedConfig.success
+            ? (pinnedConfig.data.reasoningEffort ?? null)
+            : null
+        }
         defaultModelSelection={defaultModelSelection}
         branch={activeThread?.branch ?? null}
         initialMessages={initialMessages}
@@ -195,6 +185,7 @@ export default async function WorkspaceChatPage({
             name: provider.name,
             format: provider.format,
             models: provider.models,
+            reasoningModels: reasoningModelIds(provider),
             modelRecords: (provider.modelRecords ?? []).map((model) => ({
               modelId: model.modelId,
               name: model.name,
@@ -278,6 +269,8 @@ export default async function WorkspaceChatPage({
               parseChatAssistantModelParameters(assistant.modelParameters) ??
               null,
             maxSteps: assistant.maxSteps,
+            reasoningEffort:
+              normalizeReasoningLevel(assistant.reasoningEffort) ?? null,
             providerName: assistant.modelProvider?.name ?? null,
             contextWindow: modelContext?.maxTokens ?? null,
             contextWindowEstimated: modelContext?.estimated ?? true,

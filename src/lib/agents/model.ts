@@ -172,6 +172,36 @@ export const modelSupportsReasoning = (
       .some((model) => model.id === modelId && model.reasoning),
   );
 
+/** A workspace model record is authoritative; unrecorded models use the built-in catalog. */
+export function modelReasoningSupported(
+  provider: ProviderConfig,
+  modelId: string,
+  record?: { capabilities: readonly string[] } | null,
+): boolean {
+  return record
+    ? record.capabilities.includes("reasoning")
+    : modelSupportsReasoning(provider, modelId);
+}
+
+/** Model IDs offered to composer/settings reasoning controls for one provider. */
+export function reasoningModelIds(
+  provider: ProviderConfig & {
+    models: readonly string[];
+    modelRecords?: ReadonlyArray<{
+      modelId: string;
+      capabilities: readonly string[];
+    }>;
+  },
+): string[] {
+  return provider.models.filter((modelId) =>
+    modelReasoningSupported(
+      provider,
+      modelId,
+      provider.modelRecords?.find((record) => record.modelId === modelId),
+    ),
+  );
+}
+
 export function resolveModelContext(
   provider: ProviderConfig,
   modelId: string,

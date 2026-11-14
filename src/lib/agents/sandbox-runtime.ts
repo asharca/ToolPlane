@@ -23,6 +23,7 @@ import { StringDecoder } from "node:string_decoder";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { db } from "@/lib/db";
+import { modelReasoningSupported } from "./model";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import { effectiveStatus } from "@/lib/process/supervisor";
@@ -2673,6 +2674,23 @@ export async function runSandboxAgentTurn(
 ): Promise<string> {
   if (options.runtimeKind !== "pi-sdk")
     throw new Error("AGENT_RUNTIME_RETIRED");
+  if (options.reasoningEffort && options.reasoningEffort !== "default") {
+    const provider = await db.modelProvider.findFirst({
+      where: { id: options.provider.id, workspaceId: options.workspaceId },
+      include: {
+        modelRecords: { where: { modelId: options.modelId } },
+      },
+    });
+    if (
+      !provider ||
+      !modelReasoningSupported(
+        provider,
+        options.modelId,
+        provider.modelRecords[0],
+      )
+    )
+      options = { ...options, reasoningEffort: undefined };
+  }
   // A turn without a durable session still gets a private one-shot session.
   const session =
     options.runtimeSessionId ??

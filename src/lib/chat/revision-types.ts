@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
+import { AGENT_STEP_BOUNDS, REASONING_LEVELS } from "@/lib/agents/constants";
 import { ChatAssistantModelParametersSchema } from "./schemas";
 
 const reference = z.string().trim().min(1).max(240);
@@ -11,6 +11,7 @@ export const ChatAssistantRevisionConfigSchema = z
     modelProviderId: reference.nullable(),
     model: z.string().trim().min(1).max(240).nullable(),
     modelParameters: ChatAssistantModelParametersSchema.nullable(),
+    reasoningEffort: z.enum(REASONING_LEVELS).optional(),
     maxSteps: z
       .number()
       .int()

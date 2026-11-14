@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   AGENT_STEP_BOUNDS,
   REASONING_EFFORTS,
+  REASONING_LEVELS,
   type ReasoningEffort,
 } from "@/lib/agents/constants";
 import type { ModelParameters } from "@/lib/agents/model";
@@ -81,6 +82,7 @@ const assistantFields = {
   modelProviderId: z.string().trim().min(1).nullable().optional(),
   model: nullableTrimmedString(240).optional(),
   modelParameters: ChatAssistantModelParametersSchema.nullable().optional(),
+  reasoningEffort: z.enum(REASONING_LEVELS).nullable().optional(),
   maxSteps: z
     .number()
     .int()

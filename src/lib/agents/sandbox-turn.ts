@@ -30,6 +30,7 @@ import { getAgentForRun } from "./queries";
 import { resolvePinnedAgent } from "./revisions";
 import { resolveAgentTools, resolveAgentPiPackages } from "./resolve";
 import type { ReasoningEffort } from "./constants";
+import { DEFAULT_REASONING_LEVEL, normalizeReasoningLevel } from "./constants";
 import type { AgentModelOverride } from "./chat-body";
 import {
   resolveAgentModelOverride,
@@ -142,6 +143,12 @@ export async function runDedicatedSandboxTurn(
   input = {
     ...input,
     agent: { ...agent, ...effective },
+    reasoningEffort:
+      normalizeReasoningLevel(
+        input.reasoningEffort ?? conversation?.reasoningEffort,
+      ) ??
+      normalizeReasoningLevel(agent.reasoningEffort) ??
+      DEFAULT_REASONING_LEVEL,
     systemPrompt: agent.systemPrompt,
     skills: resolved.skills,
     piPackages: resolveAgentPiPackages(agent),

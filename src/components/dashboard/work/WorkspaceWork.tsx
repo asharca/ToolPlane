@@ -108,7 +108,12 @@ import {
   deleteConversationAction,
   pinAgentAction,
 } from "@/lib/agents/actions";
-import type { ReasoningEffort } from "@/lib/agents/constants";
+import {
+  selectionSupportsReasoning,
+  type ReasoningEffort,
+  type ReasoningLevel,
+} from "@/lib/agents/constants";
+import { ReasoningEffortControl } from "@/components/dashboard/agents/ReasoningEffortControl";
 import {
   SubagentConversationScope,
   type SubagentSource,
@@ -184,6 +189,7 @@ type WorkAgent = {
   providerId?: string | null;
   providerLabel?: string;
   model?: string | null;
+  reasoningEffort?: ReasoningLevel | null;
   contextWindow?: number | null;
   contextWindowEstimated?: boolean;
   sandboxes: Array<{
@@ -1136,6 +1142,9 @@ export function WorkspaceWork({
   const [modelChoices, setModelChoices] = useState<
     Record<string, ModelSelection | null>
   >({});
+  const [reasoningChoices, setReasoningChoices] = useState<
+    Record<string, ReasoningEffort>
+  >({});
   const [attachments, setAttachments] = useState<File[]>([]);
   const [referenceSelection, setReferenceSelection] = useState<{
     scope: string;
@@ -1196,6 +1205,19 @@ export function WorkspaceWork({
         : t("noSandbox");
   const controlWorkspaceRoot = "/workspace";
   const composerScope = `${controlAgent?.id}:${controlSandbox?.id}:${selected?.id ?? conversation?.id ?? "new"}`;
+  const defaultModelSelection =
+    controlAgent?.providerId && controlAgent.model
+      ? { providerId: controlAgent.providerId, model: controlAgent.model }
+      : null;
+  const reasoningAvailable = selectionSupportsReasoning(
+    providers,
+    modelChoices[composerScope] ?? defaultModelSelection,
+  );
+  const reasoningEffort =
+    reasoningChoices[composerScope] ??
+    conversation?.reasoningEffort ??
+    selected?.reasoningEffort ??
+    "default";
   const references =
     referenceSelection.scope === composerScope ? referenceSelection.items : [];
   const commandRuntimeKind = conversation
@@ -2207,6 +2229,7 @@ export function WorkspaceWork({
           ...(modelChoices[composerScope]
             ? { modelOverride: modelChoices[composerScope] }
             : {}),
+          ...(reasoningAvailable ? { reasoningEffort } : {}),
           ...(references.length ? { references } : {}),
           workingDirectory,
           attachmentIds,
@@ -2222,6 +2245,10 @@ export function WorkspaceWork({
       setModelChoices((choices) => ({
         ...choices,
         [nextScope]: choices[composerScope] ?? null,
+      }));
+      setReasoningChoices((choices) => ({
+        ...choices,
+        [nextScope]: reasoningEffort,
       }));
       setItems((current) => [
         {
@@ -2377,6 +2404,7 @@ export function WorkspaceWork({
         ...(modelChoices[composerScope]
           ? { modelOverride: modelChoices[composerScope] }
           : {}),
+        ...(reasoningAvailable ? { reasoningEffort } : {}),
         ...(references.length ? { references } : {}),
         ...(attachmentIds.length ? { attachmentIds } : {}),
       })
@@ -3376,14 +3404,7 @@ export function WorkspaceWork({
                       modelPicker={
                         <ComposerModelSelect
                           providers={providers}
-                          defaultSelection={
-                            controlAgent.providerId && controlAgent.model
-                              ? {
-                                  providerId: controlAgent.providerId,
-                                  model: controlAgent.model,
-                                }
-                              : null
-                          }
+                          defaultSelection={defaultModelSelection}
                           value={modelChoices[composerScope] ?? null}
                           onChange={(value) =>
                             setModelChoices((choices) => ({
@@ -3401,7 +3422,10 @@ export function WorkspaceWork({
                       initialReasoningEffort={
                         conversation.reasoningEffort ?? "default"
                       }
-                      reasoningAvailable={false}
+                      reasoningAvailable={reasoningAvailable}
+                      inheritedReasoningEffort={
+                        controlAgent.reasoningEffort ?? null
+                      }
                       creatingConversation={false}
                       ensureConversation={async () => conversation.id}
                       attachmentUploadUrl={`/api/v1/workspaces/${workspaceId}/attachments`}
@@ -3672,14 +3696,7 @@ export function WorkspaceWork({
                             />
                             <ComposerModelSelect
                               providers={providers}
-                              defaultSelection={
-                                controlAgent?.providerId && controlAgent.model
-                                  ? {
-                                      providerId: controlAgent.providerId,
-                                      model: controlAgent.model,
-                                    }
-                                  : null
-                              }
+                              defaultSelection={defaultModelSelection}
                               value={modelChoices[composerScope] ?? null}
                               onChange={(value) =>
                                 setModelChoices((choices) => ({
@@ -3688,6 +3705,27 @@ export function WorkspaceWork({
                                 }))
                               }
                             />
+                            {reasoningAvailable && (
+                              <ReasoningEffortControl
+                                value={reasoningEffort}
+                                inherited={
+                                  controlAgent?.reasoningEffort ?? null
+                                }
+                                disabled={
+                                  sessionReadOnly ||
+                                  unappliedDraft ||
+                                  Boolean(busy) ||
+                                  running ||
+                                  composerPending
+                                }
+                                onChange={(value) =>
+                                  setReasoningChoices((choices) => ({
+                                    ...choices,
+                                    [composerScope]: value,
+                                  }))
+                                }
+                              />
+                            )}
                           </>
                         }
                       />

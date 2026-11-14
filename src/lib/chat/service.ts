@@ -32,6 +32,7 @@ import {
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
 import { conversationTitleFromParts } from "@/lib/agents/conversation-title";
 import { inferModelPrimaryType } from "@/lib/agents/model-catalog";
+import { modelReasoningSupported } from "@/lib/agents/model";
 import {
   chatBranchNavigation,
   chatMessagePath,
@@ -271,6 +272,7 @@ function revisionConfig(
     model: string | null;
     modelParameters: unknown;
     maxSteps: number;
+    reasoningEffort: string | null;
     mcpGrants: Array<{ deploymentId: string; allowedToolNames: string[] }>;
   },
   definitionChecksums: Readonly<Record<string, string>> = {},
@@ -282,6 +284,9 @@ function revisionConfig(
     model: assistant.model,
     modelParameters: assistant.modelParameters,
     maxSteps: assistant.maxSteps,
+    ...(assistant.reasoningEffort != null
+      ? { reasoningEffort: assistant.reasoningEffort }
+      : {}),
     mcpGrants: assistant.mcpGrants.map(
       ({ deploymentId, allowedToolNames }) => ({
         deploymentId,
@@ -468,6 +473,7 @@ export async function createChatAssistant(
           ? (input.modelParameters as Prisma.InputJsonValue)
           : Prisma.DbNull,
         maxSteps: input.maxSteps ?? AGENT_STEP_BOUNDS.default,
+        reasoningEffort: input.reasoningEffort ?? null,
         mcpGrants: {
           create: grants,
         },
@@ -536,6 +542,7 @@ export async function updateChatAssistant(
     input.model !== undefined ||
     input.modelParameters !== undefined ||
     input.maxSteps !== undefined ||
+    input.reasoningEffort !== undefined ||
     input.mcpGrants !== undefined;
   if (!changesRevision) {
     const access = {
@@ -634,6 +641,9 @@ export async function updateChatAssistant(
               : {}),
             ...(input.maxSteps !== undefined
               ? { maxSteps: input.maxSteps }
+              : {}),
+            ...(input.reasoningEffort !== undefined
+              ? { reasoningEffort: input.reasoningEffort }
               : {}),
           },
           include: {
@@ -788,6 +798,7 @@ export async function copyChatAssistant(
               ? (config.modelParameters as Prisma.InputJsonValue)
               : Prisma.DbNull,
             maxSteps: config.maxSteps,
+            reasoningEffort: config.reasoningEffort ?? null,
             mcpGrants: {
               create: grants,
             },
@@ -1054,6 +1065,11 @@ function diffAssistantRevisionConfigs(
     changedFields.push("modelParameters");
   if (from?.config.maxSteps !== to.config.maxSteps)
     changedFields.push("maxSteps");
+  if (
+    (from?.config.reasoningEffort ?? null) !==
+    (to.config.reasoningEffort ?? null)
+  )
+    changedFields.push("reasoningEffort");
   const mcp = diffRevisionMcpGrants(
     from?.config.mcpGrants ?? [],
     to.config.mcpGrants,
@@ -1548,6 +1564,7 @@ export async function getChatThreadForExecution(
     assistant: {
       ...thread.assistant,
       ...config,
+      reasoningEffort: config.reasoningEffort ?? null,
       modelProvider,
       mcpGrants: grants,
     },
@@ -1575,11 +1592,11 @@ export async function resolveChatTurnModel(
   if (
     (record?.primaryType ?? inferModelPrimaryType(selection.model)) !==
       "text" ||
+    (requirements.reasoning &&
+      !modelReasoningSupported(provider, selection.model, record)) ||
     (record &&
       ((requirements.tools &&
         !record.capabilities.includes("function_calling")) ||
-        (requirements.reasoning &&
-          !record.capabilities.includes("reasoning")) ||
         requirements.modalities.some(
           (modality) => !record.inputModalities.includes(modality),
         )))

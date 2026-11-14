@@ -78,7 +78,7 @@ import {
 import { ConversationContextUsage } from "@/components/dashboard/ConversationComposer";
 import { resolveContextUsage } from "@/lib/context-usage";
 import type { ChatBranchNavigation } from "@/lib/chat/branches";
-import type { ReasoningEffort } from "@/lib/agents/constants";
+import type { ReasoningEffort, ReasoningLevel } from "@/lib/agents/constants";
 import { ReasoningEffortControl } from "@/components/dashboard/agents/ReasoningEffortControl";
 import { displayMessagingUserText } from "@/lib/agents/messaging";
 import {
@@ -586,6 +586,7 @@ export function AgentConversation({
   onStartBranch,
   ready: configuredReady,
   reasoningAvailable = false,
+  inheritedReasoningEffort = null,
   runtimeKind,
   readOnly: configuredReadOnly = false,
   agentRevisionVersion,
@@ -634,6 +635,7 @@ export function AgentConversation({
   onStartBranch?: (messageId: string) => void | Promise<void>;
   ready: boolean;
   reasoningAvailable?: boolean;
+  inheritedReasoningEffort?: ReasoningLevel | null;
   runtimeKind: string | null;
   readOnly?: boolean;
   agentRevisionVersion?: number | null;
@@ -1541,6 +1543,7 @@ export function AgentConversation({
                 {reasoningAvailable ? (
                   <ReasoningEffortControl
                     value={reasoningEffort}
+                    inherited={inheritedReasoningEffort}
                     disabled={blocked}
                     onChange={setReasoningEffort}
                   />
