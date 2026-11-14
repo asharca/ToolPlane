@@ -1053,6 +1053,14 @@
       "environmentSaved": "环境变量已保存并同步。",
       "contextUsage": "上下文占用",
       "contextUsageEstimated": "根据当前会话内容估算。",
+      "contextCategories": {
+        "systemPrompt": "系统提示词",
+        "systemTools": "工具",
+        "systemContext": "系统上下文",
+        "instructionFiles": "指令文件",
+        "skills": "Skills",
+        "messages": "消息"
+      },
       "composerTools": "工具",
       "openComposerTools": "打开工具",
       "addAttachment": "添加附件",

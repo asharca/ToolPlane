@@ -311,6 +311,87 @@ function persist() {
   renameSync(temporary, config.statePath);
   lastState = value;
 }
+// Category split of the current request context. Pi only reports a total, so the
+// provider-anchored total stays authoritative and categories use Pi's chars/4 estimate;
+// messages absorb the remainder, as in omp's /context.
+const SYSTEM_PROMPT_SECTIONS = new Set(["preamble", "addendum"]);
+const textTokens = (text) => Math.ceil(text.length / 4);
+function contextBreakdown(session) {
+  const sections = new Map();
+  let content = "",
+    messageTokens = 0,
+    anchored = false;
+  for (const message of session.messages) {
+    if (message.role !== "system") {
+      messageTokens += sdk.estimateTokens(message);
+      // Same anchor rule as Pi: aborted/failed replies carry no trustworthy usage.
+      if (
+        message.role === "assistant" &&
+        message.stopReason !== "aborted" &&
+        message.stopReason !== "error" &&
+        message.usage &&
+        sdk.calculateContextTokens(message.usage) > 0
+      )
+        anchored = true;
+      continue;
+    }
+    content +=
+      typeof message.content === "string"
+        ? message.content
+        : message.content
+            .filter((block) => block.type === "text")
+            .map((block) => block.text)
+            .join("");
+    for (const [name, value] of Object.entries(message.sections ?? {}))
+      if (value === null) sections.delete(name);
+      else sections.set(name, value);
+  }
+  const categories = {
+    systemPrompt: 0,
+    systemTools: textTokens(
+      JSON.stringify(
+        session.agent.state.tools.map(({ name, description, parameters }) => ({
+          name,
+          description,
+          parameters,
+        })),
+      ),
+    ),
+    systemContext: textTokens(content),
+    instructionFiles: 0,
+    skills: 0,
+    messages: 0,
+  };
+  if (!sections.size && !content)
+    categories.systemPrompt = textTokens(session.systemPrompt);
+  for (const [name, text] of sections) {
+    const tokens = textTokens(text);
+    if (SYSTEM_PROMPT_SECTIONS.has(name)) categories.systemPrompt += tokens;
+    else if (name === "project_context") categories.instructionFiles += tokens;
+    else if (name === "skills") categories.skills += tokens;
+    else categories.systemContext += tokens;
+  }
+  const nonMessageTokens =
+    categories.systemPrompt +
+    categories.systemTools +
+    categories.systemContext +
+    categories.instructionFiles +
+    categories.skills;
+  // Pi returns null after compaction until a newer reply reports usage.
+  const reported = anchored ? session.getContextUsage()?.tokens : undefined;
+  const estimated = typeof reported !== "number" || reported <= 0;
+  const usedTokens = estimated ? nonMessageTokens + messageTokens : reported;
+  categories.messages = Math.max(0, usedTokens - nonMessageTokens);
+  return { usedTokens, estimated, categories };
+}
+// Display-only: a malformed transcript must not fail an otherwise completed turn.
+function contextBreakdownResult(session) {
+  try {
+    return { contextBreakdown: contextBreakdown(session) };
+  } catch {
+    return {};
+  }
+}
 function diagnostics(services) {
   const loader = services.resourceLoader;
   if (
@@ -796,6 +877,7 @@ async function handle(request) {
         text,
         commands: commands(),
         ...(usage ? { usage } : {}),
+        ...contextBreakdownResult(runtime.session),
         ...(command
           ? { commandResult: { command, text, status: "completed" } }
           : {}),
