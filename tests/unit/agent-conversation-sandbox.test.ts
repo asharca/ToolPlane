@@ -157,7 +157,7 @@ const revision = {
       kind: "docker",
       image: `native@sha256:${"a".repeat(64)}`,
       network: "isolated",
-      piVersion: "0.87.1",
+      piVersion: "1.5.2",
       initialSnapshot: null as null | {
         snapshotId: string;
         volumeName: string;
@@ -700,7 +700,7 @@ describe("durable conversation sandbox bindings", () => {
         installCfg: expect.objectContaining({
           image: revision.config.environment.image,
           resourceLimits: revision.config.environment.resourceLimits,
-          piVersion: "0.87.1",
+          piVersion: "1.5.2",
         }),
       }),
     });

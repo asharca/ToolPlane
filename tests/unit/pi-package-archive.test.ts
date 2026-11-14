@@ -60,7 +60,7 @@ describe("portable Pi artifact download", () => {
         version: "1.0.0",
         runtime: {
           kind: "pi-sdk",
-          piVersion: "0.87.1",
+          piVersion: "1.5.2",
           nodeMajor: 26,
           platform: "any",
           arch: "any",

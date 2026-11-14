@@ -51,7 +51,7 @@ export function flattenPiPackages(
     "changelog",
     "quit",
   ])
-    names.set(`command:${command}`, "Pi 0.87.1 built-in command");
+    names.set(`command:${command}`, "Pi built-in command");
   const content = new Map<string, (typeof origins)[number]>();
   const trees = new Set<string>();
   const mcp = new Map<

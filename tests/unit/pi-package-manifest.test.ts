@@ -48,7 +48,7 @@ function fixture(): PiPackageManifestV1 {
       version: "1.2.3",
       runtime: {
         kind: "pi-sdk",
-        piVersion: "0.87.1",
+        piVersion: "1.5.2",
         nodeMajor: 26,
         platform: "linux",
         arch: "arm64",
@@ -144,7 +144,7 @@ describe("immutable Pi package manifests", () => {
     };
     manifest.package.runtime = {
       kind: "pi-sdk",
-      piVersion: "0.87.1",
+      piVersion: "1.5.2",
       nodeMajor: 26,
       platform: "any",
       arch: "any",

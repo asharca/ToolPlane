@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { publishAgentRevision } from "@/lib/agents/revisions";
 import { OMP_VERSION } from "@/lib/agents/omp-config";
+import { PI_SDK_VERSION } from "@/lib/agents/pi-version";
 
 /** Publish real immutable fixtures without resolving images or starting native runtimes. */
 export async function publishFixtureAgentRevision(
@@ -27,7 +28,7 @@ export async function publishFixtureAgentRevision(
       network: "isolated",
       ...(owner.runtimeKind === "omp"
         ? { ompVersion: OMP_VERSION }
-        : { piVersion: "0.87.1" }),
+        : { piVersion: PI_SDK_VERSION }),
       initialSnapshot: null,
       resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
       credentialReferences: [],

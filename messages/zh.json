@@ -1759,7 +1759,7 @@
       "PI_SDK_SESSION_MISSING": "SDK 会话文件或尚未持久化的活会话已丢失，请新建会话或 Work；原历史仍可阅读。",
       "PI_SDK_PACKAGE_SET_CHANGED": "已启用的扩展集合发生变化，请新建会话或 Work 使用新配置；原历史仍可阅读。",
       "PI_SDK_TOOLSET_CHANGED": "可用工具集合已改变，请新建会话或 Work 使用当前工具。",
-      "PI_SDK_VERSION_MISMATCH": "此扩展需要固定的 Pi SDK 0.87.1，请联系管理员检查运行时安装。",
+      "PI_SDK_VERSION_MISMATCH": "此扩展所需的 Pi SDK 版本与当前安装不符，请联系管理员检查运行时安装。",
       "PI_SDK_SESSION_SCOPE": "扩展试图离开 Agent 的私有会话目录，已阻止执行。",
       "PI_SDK_TOOL_FAILED": "Pi SDK 工具执行失败，请检查工具结果后继续；未自动重放任务。",
       "PI_SDK_MODEL_FAILED": "Pi SDK 模型请求失败或被中断，请检查模型供应商后重新发起请求。",

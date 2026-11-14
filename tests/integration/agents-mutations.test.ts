@@ -55,6 +55,7 @@ import {
 } from "@/lib/agents/revisions";
 import { resolveAgentRuntimeGrant } from "@/lib/agents/runtime-grant";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
+import { PI_SDK_VERSION } from "@/lib/agents/pi-version";
 
 // Database revision fixtures exercise persistence/pinning without pretending to
 // exercise the sandbox-native publication preflight in this mutation suite.
@@ -70,7 +71,7 @@ async function seedPublishedRevision(agentId: string) {
       kind: "docker",
       image: `toolplane-test@sha256:${"0".repeat(64)}`,
       network: "isolated",
-      piVersion: "0.87.1",
+      piVersion: PI_SDK_VERSION,
       initialSnapshot: null,
       resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
       credentialReferences: [],
@@ -267,7 +268,7 @@ describe("agents mutations", () => {
       kind: "docker",
       image: `toolplane-test@sha256:${"0".repeat(64)}`,
       network: "isolated",
-      piVersion: "0.87.1",
+      piVersion: PI_SDK_VERSION,
       initialSnapshot: null,
       resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
       credentialReferences: [],
@@ -298,6 +299,50 @@ describe("agents mutations", () => {
       sandboxes: await db.sandbox.count({ where: { workspaceId } }),
       deployments: await db.deployment.count({ where: { workspaceId } }),
     }).toEqual(before);
+  });
+
+  it("publishes legacy Pi configs with the current SDK version and rejects unsupported versions", async () => {
+    const agent = await createAgent(workspaceId, "Pi SDK upgrade publication");
+    vi.spyOn(agentRuntime, "preflightPiSdkCapabilities").mockResolvedValue({
+      commands: [],
+      tools: [],
+      skills: [],
+      prompts: [],
+    });
+    const config = await captureAgentRevisionConfig(db, agent.id, {
+      kind: "docker",
+      image: `toolplane-test@sha256:${"0".repeat(64)}`,
+      network: "isolated",
+      piVersion: PI_SDK_VERSION,
+      initialSnapshot: null,
+      resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
+      credentialReferences: [],
+    });
+    if (config.runtimeKind !== "pi-sdk") throw new Error("Expected Pi fixture");
+    config.environment.piVersion = "0.87.1";
+    const revision = await publishAgentRevision(workspaceId, agent.id, {
+      expectedRevisionId: null,
+      config,
+    });
+    const stored = await db.agentRevision.findUniqueOrThrow({
+      where: { id: revision.id },
+    });
+    expect(
+      AgentRevisionConfigSchema.parse(stored.config).environment,
+    ).toMatchObject({
+      piVersion: PI_SDK_VERSION,
+    });
+
+    config.environment.piVersion = "0.86.0";
+    await expect(
+      publishAgentRevision(workspaceId, agent.id, {
+        expectedRevisionId: revision.id,
+        config,
+      }),
+    ).rejects.toMatchObject({ code: "PI_SDK_VERSION_MISMATCH" });
+    expect(await db.agentRevision.count({ where: { agentId: agent.id } })).toBe(
+      1,
+    );
   });
 
   it("rejects enabling a new Agent with another workspace's model provider", async () => {

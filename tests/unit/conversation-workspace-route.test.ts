@@ -61,7 +61,7 @@ const revision = {
       kind: "docker",
       image: `native@sha256:${"a".repeat(64)}`,
       network: "isolated",
-      piVersion: "0.87.1",
+      piVersion: "1.5.2",
       initialSnapshot: null,
       resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
       credentialReferences: [],

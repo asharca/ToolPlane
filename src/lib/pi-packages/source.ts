@@ -22,6 +22,7 @@ import {
 } from "@/lib/pi-packages/manifest";
 import type { PiSourceAuthentication } from "@/lib/pi-packages/network";
 import { piSourceUrl, sourceAuthorization } from "@/lib/pi-packages/network";
+import { PI_PACKAGE_CAPTURE_IMAGE as IMAGE } from "@/lib/agents/pi-version";
 
 export type PiPackageCaptureOptions = {
   registry?: string;
@@ -31,7 +32,6 @@ export type PiPackageCaptureOptions = {
   archive?: Buffer;
 };
 
-const IMAGE = "toolplane-pi-package-capture:0.87.1";
 const TIMEOUT = 300_000;
 const FRAME = 96 * 1024;
 const BLOCK = 64 * 1024;

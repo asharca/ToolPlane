@@ -1,5 +1,5 @@
 // Shared native namespace policy. This module never imports or executes extension factories.
-// Pi 0.87.1 core/slash-commands.js; platform-only reservations are added by the host.
+// Pi 1.5.2 core/slash-commands.js; platform-only reservations are added by the host.
 export const PI_RESERVED_COMMANDS = [
   "settings",
   "model",

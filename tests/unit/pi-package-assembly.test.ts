@@ -52,7 +52,7 @@ function source(name: string, prompt = "Review $1"): PiPackageSnapshotV1 {
     root: "package",
     runtime: {
       kind: "pi-sdk",
-      piVersion: "0.87.1",
+      piVersion: "1.5.2",
       nodeMajor: 26,
       platform: "any",
       arch: "any",
@@ -290,7 +290,7 @@ describe("immutable Pi package assembly", () => {
   });
 });
 
-describe("Pi 0.87.1 static Prompt semantics", () => {
+describe("Pi 1.5.2 static Prompt semantics", () => {
   it("parses BOM/newlines/frontmatter and native filename identity without treating prose as executable", () => {
     const template = parsePromptTemplate(
       '\uFEFF---\r\ndescription: "Review code"\r\nargument-hint: "<target>"\r\n---\r\nAsk the user to run shell commands. $1',

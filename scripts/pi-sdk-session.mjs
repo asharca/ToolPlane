@@ -123,7 +123,7 @@ function modelFailureReason(errorMessage) {
   return "PROVIDER_ERROR";
 }
 // Gateways that already sent HTTP 200 report an upstream that produced nothing,
-// or a stream cut before finish_reason, as an in-stream error. Pi 0.87.1 does
+// or a stream cut before finish_reason, as an in-stream error. Pi 1.5.2 does
 // not classify either as transient.
 const EMPTY_STREAM = /empty_stream|empty .{0,40}stream/i;
 const TRANSIENT_STREAM =
@@ -249,13 +249,15 @@ try {
     );
     await migrateNativeSessionPaths(config);
   }
-  if (config.sdkVersion !== "0.87.1" || sdkVersion !== "0.87.1")
-    fail("PI_SDK_VERSION_MISMATCH");
+  if (sdkVersion !== config.sdkVersion) fail("PI_SDK_VERSION_MISMATCH");
   if (!existsSync(config.statePath) && config.historyRequired)
     fail("PI_SDK_SESSION_MISSING");
   if (existsSync(config.statePath)) {
     saved = JSON.parse(readFileSync(config.statePath, "utf8"));
-    if (saved.runtimeKind !== "pi-sdk" || saved.sdkVersion !== "0.87.1")
+    if (
+      saved.runtimeKind !== "pi-sdk" ||
+      !config.compatibleSdkVersions.includes(saved.sdkVersion)
+    )
       fail("PI_SDK_SESSION_MISSING");
     // Only an explicitly changed, server-authorized revision can change packages.
     // SessionManager.open below keeps the same persisted transcript and files.
@@ -300,7 +302,7 @@ function state() {
 function persist() {
   const value = {
     runtimeKind: "pi-sdk",
-    sdkVersion: "0.87.1",
+    sdkVersion: config.sdkVersion,
     ...state(),
     packageSetChecksum: config.packageSetChecksum,
     packageReferences,
@@ -548,10 +550,10 @@ function applyConfiguredThinkingLevel(session) {
   if (level === undefined || level === "default") return;
   if (!["minimal", "low", "medium", "high", "xhigh", "max"].includes(level))
     fail("PI_SDK_REASONING_INVALID");
-  // Pi 0.87.1 clamps to the current model and persists the change in this session only.
+  // Pi 1.5.2 clamps to the current model and persists the change in this session only.
   session.setThinkingLevel(level, { persist: false });
 }
-// Pinned 0.87.1 exposes no retry matcher setting; extend its instance check so
+// Pinned 1.5.2 exposes no retry matcher setting; extend its instance check so
 // empty/incomplete gateway streams retry under the same budget and backoff.
 function allowTransientStreamRetry(session) {
   const piRetryable = session._isRetryableError;
