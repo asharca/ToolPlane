@@ -25,7 +25,10 @@ import { tmpdir } from "node:os";
 import { db } from "@/lib/db";
 import { modelReasoningSupported } from "./model";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
-import type { ContextUsageSnapshot } from "@/lib/context-usage";
+import {
+  parseContextBreakdown,
+  type ContextUsageSnapshot,
+} from "@/lib/context-usage";
 import { effectiveStatus } from "@/lib/process/supervisor";
 import {
   sandboxContainerName,
@@ -2022,6 +2025,7 @@ async function reportContextUsage(
   options: RunSandboxAgentTurnOptions,
   usedTokens: number,
   estimated: boolean,
+  breakdown?: ContextUsageSnapshot["breakdown"],
 ) {
   if (
     !Number.isFinite(usedTokens) ||
@@ -2034,6 +2038,7 @@ async function reportContextUsage(
     maxTokens: options.contextWindow,
     modelName: options.modelId,
     estimated: estimated || options.contextWindowEstimated === true,
+    ...(breakdown ? { breakdown } : {}),
   });
 }
 
@@ -2563,6 +2568,15 @@ async function runPiSdk(
       text = redact(String(event.result?.text ?? ""), [
         options.runtimeAccessToken,
       ]);
+      const context = event.result?.contextBreakdown;
+      const breakdown = parseContextBreakdown(context?.categories);
+      if (breakdown && typeof context.usedTokens === "number")
+        await reportContextUsage(
+          options,
+          context.usedTokens,
+          context.estimated === true,
+          breakdown,
+        );
       const commands = RuntimeCommandsSchema.safeParse(event.result?.commands);
       if (commands.success) await options.onCommands?.(commands.data);
       const result = event.result?.commandResult;

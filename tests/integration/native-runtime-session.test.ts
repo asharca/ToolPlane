@@ -325,6 +325,15 @@ export default function(pi) {
           text: expect.stringContaining("count=1"),
           status: "completed",
         },
+        // Without a model response the total is Pi's estimate; the broker must keep it.
+        contextBreakdown: {
+          usedTokens: expect.any(Number),
+          estimated: true,
+          categories: expect.objectContaining({
+            systemPrompt: expect.any(Number),
+            messages: expect.any(Number),
+          }),
+        },
       },
     });
     expect(response[0].result).not.toHaveProperty("state");

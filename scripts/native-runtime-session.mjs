@@ -179,6 +179,9 @@ async function serve() {
           text: event.result.text,
           commands: event.result.commands,
           ...(event.result.usage ? { usage: event.result.usage } : {}),
+          ...(event.result.contextBreakdown
+            ? { contextBreakdown: event.result.contextBreakdown }
+            : {}),
           ...(event.result.commandResult
             ? { commandResult: event.result.commandResult }
             : {}),

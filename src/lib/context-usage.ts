@@ -1,10 +1,23 @@
 export const CONTEXT_USAGE_PART = "data-context-usage";
 
+export const CONTEXT_CATEGORIES = [
+  "systemPrompt",
+  "systemTools",
+  "systemContext",
+  "instructionFiles",
+  "skills",
+  "messages",
+] as const;
+
+export type ContextCategory = (typeof CONTEXT_CATEGORIES)[number];
+
 export type ContextUsageSnapshot = {
   usedTokens: number;
   maxTokens: number;
   modelName: string;
   estimated: boolean;
+  /** Estimated per-category split; `messages` is the remainder of `usedTokens`. */
+  breakdown?: Record<ContextCategory, number>;
 };
 
 type MessageLike = {
@@ -17,6 +30,21 @@ function positiveNumber(value: unknown): number | null {
     : null;
 }
 
+export function parseContextBreakdown(
+  value: unknown,
+): Record<ContextCategory, number> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input = value as Record<string, unknown>;
+  const breakdown = {} as Record<ContextCategory, number>;
+  for (const category of CONTEXT_CATEGORIES) {
+    const tokens = input[category];
+    if (typeof tokens !== "number" || !Number.isFinite(tokens) || tokens < 0)
+      return null;
+    breakdown[category] = Math.round(tokens);
+  }
+  return breakdown;
+}
+
 export function parseContextUsage(value: unknown): ContextUsageSnapshot | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const input = value as Record<string, unknown>;
@@ -25,11 +53,13 @@ export function parseContextUsage(value: unknown): ContextUsageSnapshot | null {
   const modelName =
     typeof input.modelName === "string" ? input.modelName.trim() : "";
   if (!usedTokens || !maxTokens || !modelName) return null;
+  const breakdown = parseContextBreakdown(input.breakdown);
   return {
     usedTokens: Math.round(usedTokens),
     maxTokens: Math.round(maxTokens),
     modelName,
     estimated: input.estimated === true,
+    ...(breakdown ? { breakdown } : {}),
   };
 }
 

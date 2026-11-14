@@ -1053,6 +1053,14 @@
       "environmentSaved": "Environment saved and synced.",
       "contextUsage": "Context usage",
       "contextUsageEstimated": "Estimated from the current conversation.",
+      "contextCategories": {
+        "systemPrompt": "System prompt",
+        "systemTools": "Tools",
+        "systemContext": "System context",
+        "instructionFiles": "Instruction files",
+        "skills": "Skills",
+        "messages": "Messages"
+      },
       "composerTools": "Tools",
       "openComposerTools": "Open tools",
       "addAttachment": "Add attachment",

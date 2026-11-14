@@ -9,7 +9,11 @@ import { Tooltip } from "@/components/motion/tooltip";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
 import { previewType } from "@/lib/file-preview";
-import type { ContextUsageSnapshot } from "@/lib/context-usage";
+import {
+  CONTEXT_CATEGORIES,
+  type ContextCategory,
+  type ContextUsageSnapshot,
+} from "@/lib/context-usage";
 import {
   PromptInput,
   type PromptInputProps,
@@ -54,6 +58,59 @@ export function ConversationComposer({
   );
 }
 
+const CONTEXT_CATEGORY_COLOR: Record<ContextCategory, string> = {
+  systemPrompt: "bg-violet",
+  systemTools: "bg-primary",
+  systemContext: "bg-muted-foreground/50",
+  instructionFiles: "bg-warning",
+  skills: "bg-success",
+  messages: "bg-foreground/80",
+};
+
+function ContextBreakdown({
+  breakdown,
+  maxTokens,
+}: {
+  breakdown: Record<ContextCategory, number>;
+  maxTokens: number;
+}) {
+  const t = useTranslations("console.agents.contextCategories");
+  return (
+    <div className="min-w-56 space-y-2">
+      <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
+        {CONTEXT_CATEGORIES.map((category) => (
+          <span
+            key={category}
+            className={CONTEXT_CATEGORY_COLOR[category]}
+            style={{
+              width: `${Math.min(100, (breakdown[category] / maxTokens) * 100)}%`,
+            }}
+          />
+        ))}
+      </div>
+      <dl className="space-y-1">
+        {CONTEXT_CATEGORIES.filter((category) => breakdown[category] > 0).map(
+          (category) => (
+            <div key={category} className="flex items-center gap-2">
+              <span
+                aria-hidden
+                className={cn(
+                  "size-2 shrink-0 rounded-full",
+                  CONTEXT_CATEGORY_COLOR[category],
+                )}
+              />
+              <dt className="flex-1">{t(category)}</dt>
+              <dd className="tabular-nums">
+                {breakdown[category].toLocaleString()}
+              </dd>
+            </div>
+          ),
+        )}
+      </dl>
+    </div>
+  );
+}
+
 export function ConversationContextUsage({
   busy = false,
   usage,
@@ -77,6 +134,12 @@ export function ConversationContextUsage({
             {usage.maxTokens.toLocaleString()} ({percentage}%)
           </p>
           <p>{usage.modelName}</p>
+          {usage.breakdown ? (
+            <ContextBreakdown
+              breakdown={usage.breakdown}
+              maxTokens={usage.maxTokens}
+            />
+          ) : null}
           {usage.estimated ? <p>{t("contextUsageEstimated")}</p> : null}
         </div>
       }
