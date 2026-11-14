@@ -19,6 +19,7 @@ import { readPluginChangelog } from "./changelog";
 import { PluginError, requirePluginWorkspace } from "./catalog";
 import { updatePlugin } from "./installs";
 import { resolveOmpPluginResources } from "../../../scripts/omp-plugin-resources.mjs";
+import { PI_SDK_VERSION } from "@/lib/agents/pi-version";
 
 function resolveDeclaredSubagents(
   declaration: unknown,
@@ -150,7 +151,7 @@ export function buildPrivatePluginManifest(input: PrivatePluginInput) {
           kind: input.runtimeKind,
           ...(input.runtimeKind === "omp"
             ? { ompVersion: "18.14.0" }
-            : { piVersion: "0.87.1" }),
+            : { piVersion: PI_SDK_VERSION }),
           nodeMajor: 26,
           platform: input.platform ?? "any",
           arch: input.arch ?? "any",

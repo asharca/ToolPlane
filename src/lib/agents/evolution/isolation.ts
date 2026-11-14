@@ -19,6 +19,7 @@ import type { RecordedEvolutionTool } from "./contracts";
 import { logSystemEvent } from "@/lib/observability/system";
 import { z } from "zod";
 import { agentRuntimeBuiltinToolGroups } from "@/lib/agents/runtime-kind";
+import { PI_PACKAGE_CAPTURE_IMAGE } from "@/lib/agents/pi-version";
 const nativeToolNames = agentRuntimeBuiltinToolGroups("pi-sdk").flatMap(
   (group) => group.tools,
 );
@@ -144,7 +145,7 @@ export function isolatedPi(input: {
     const image = await docker([
       "image",
       "inspect",
-      "toolplane-pi-package-capture:0.87.1",
+      PI_PACKAGE_CAPTURE_IMAGE,
       "--format",
       "{{.Id}}",
     ]).then((v) => v.trim());

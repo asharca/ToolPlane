@@ -11,6 +11,7 @@ import { readMcpToolCatalog } from "@/lib/process/mcp-tool-catalog";
 import { PluginError, visiblePluginWhere } from "@/lib/plugins/catalog";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import { flattenPiPackages } from "@/lib/pi-packages/flatten";
+import { PI_SDK_VERSION } from "@/lib/agents/pi-version";
 
 export type PiPackageMcpBindings = Record<
   string,
@@ -308,7 +309,7 @@ export async function assemblePiPackage(
       version: input.version,
       runtime: {
         kind: "pi-sdk",
-        piVersion: "0.87.1",
+        piVersion: PI_SDK_VERSION,
         nodeMajor: 26,
         platform: "any",
         arch: "any",

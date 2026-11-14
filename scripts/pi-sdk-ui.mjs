@@ -6,7 +6,7 @@ const transportError = () =>
     code: "PI_SDK_UI_FAILED",
   });
 const MAX_PAYLOAD_BYTES = 256 * 1024;
-// Pi 0.87.1 RPC UI semantics, transported over the current task's authenticated HTTP
+// Pi 1.5.2 RPC UI semantics, transported over the current task's authenticated HTTP
 // endpoint. This adapter does not make tool or permission decisions.
 export function createNativeUi({ getContext, theme, onError }) {
   const pending = new Map();

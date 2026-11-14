@@ -28,6 +28,10 @@ const require = createRequire(sdkEntry);
 const semver = require("semver");
 const { ProxyAgent, fetch } = require("undici");
 const sdkRoot = dirname(sdkEntry);
+// Captures record the SDK this image actually provides.
+const piVersion = JSON.parse(
+  await readFile(join(sdkRoot, "..", "package.json"), "utf8"),
+).version;
 const { parseGitUrl } = await import(
   pathToFileURL(join(sdkRoot, "utils/git.js"))
 );
@@ -1037,7 +1041,7 @@ async function main() {
         }
       : {
           kind: "pi-sdk",
-          piVersion: "0.87.1",
+          piVersion,
           nodeMajor: 26,
           platform: "linux",
           arch: process.arch,

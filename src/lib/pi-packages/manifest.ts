@@ -5,6 +5,7 @@ import { resourceListingSchema } from "@/lib/pi-packages/listing-schema";
 import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 import { readPluginSubagentMembers } from "@/lib/plugins/subagent-members";
 import { NativeRoleModelsSchema } from "@/lib/agents/capability-contracts";
+import { PI_SDK_VERSIONS } from "@/lib/agents/pi-version";
 import {
   scanMarketArtifact,
   type MarketSecretScan,
@@ -103,7 +104,7 @@ const piPackageRuntimeSchema = z.union([
   z
     .object({
       kind: z.literal("pi-sdk"),
-      piVersion: z.literal("0.87.1"),
+      piVersion: z.enum(PI_SDK_VERSIONS),
       nodeMajor: z.literal(26),
       platform: z.literal("linux"),
       arch: z.enum(["x64", "arm64"]),
@@ -112,7 +113,7 @@ const piPackageRuntimeSchema = z.union([
   z
     .object({
       kind: z.literal("pi-sdk"),
-      piVersion: z.literal("0.87.1"),
+      piVersion: z.enum(PI_SDK_VERSIONS),
       nodeMajor: z.literal(26),
       platform: z.literal("any"),
       arch: z.literal("any"),

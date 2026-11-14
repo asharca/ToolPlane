@@ -117,7 +117,8 @@ function load(item) {
     runtime?.arch === "any";
   const supported =
     runtime?.kind === "pi-sdk"
-      ? runtime.piVersion === "0.87.1"
+      ? // Keep in sync with PI_SDK_VERSIONS in src/lib/agents/pi-version.ts.
+        ["1.5.2", "0.87.1"].includes(runtime.piVersion)
       : runtime?.kind === "omp" && runtime.ompVersion === "18.14.0";
   if (
     !supported ||
