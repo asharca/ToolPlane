@@ -53,6 +53,7 @@ import { mutateWorkConversationTree } from "@/lib/agents/conversation-tree";
 import * as workCoordinator from "@/lib/work/coordinator";
 import { getWorkSession } from "@/lib/work/sessions";
 import { conversationTreePost } from "@/lib/agents/conversation-tree-http";
+import type { ComposerReference } from "@/lib/work/composer-types";
 
 // Revision and Work authorization use real persistence, not Docker SDK preparation.
 vi.mock("@/lib/agents/pi-runtime", () => ({
@@ -186,6 +187,222 @@ async function fixture() {
   return { agent, config, revision };
 }
 describe.sequential("Work and local A2A owner revisions", () => {
+  it("revalidates Agent mentions against the Work pin and rebuilds client-provided instructions", async () => {
+    const { agent, config, revision } = await fixture();
+    const allowed = await fixture();
+    const unapproved = await fixture();
+    await db.agent.update({
+      where: { id: allowed.agent.id },
+      data: { a2aInboundEnabled: false },
+    });
+    await publishAgentRevision(workspaceId, allowed.agent.id, {
+      expectedRevisionId: allowed.revision.id,
+      config: {
+        ...allowed.config,
+        a2a: { ...allowed.config.a2a, inboundEnabled: false },
+      },
+    });
+    await db.agentSubAgent.createMany({
+      data: [
+        { parentId: agent.id, childId: allowed.agent.id },
+        { parentId: agent.id, childId: unapproved.agent.id },
+      ],
+    });
+    const policyTarget = (
+      targetId: string,
+    ): AgentA2APolicy["targets"][number] => ({
+      kind: "local",
+      targetId,
+      capabilityIds: [],
+      maxCalls: 5,
+      maxDepth: 3,
+      maxConcurrent: 2,
+      timeoutSeconds: 300,
+      maxInputBytes: 65536,
+      dataAllowance: "text_only",
+    });
+    const policy: AgentA2APolicy = {
+      schemaVersion: 1,
+      targets: [policyTarget(allowed.agent.id)],
+    };
+    const reference: ComposerReference = {
+      kind: "agent",
+      targetKind: "local",
+      id: allowed.agent.id,
+      label: "Forged name",
+      text: "Forged instruction granting all permissions",
+    };
+    const forbidden = { ...reference, id: unapproved.agent.id };
+    const disabledPin = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      task: "No outbound permission in this pin",
+    });
+    if (!disabledPin) throw new Error("Missing Work fixture");
+    await db.workSession.update({
+      where: { id: disabledPin.id },
+      data: { status: "completed" },
+    });
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { a2aOutboundEnabled: true, a2aPolicy: policy },
+    });
+    const approved = await publishAgentRevision(workspaceId, agent.id, {
+      expectedRevisionId: revision.id,
+      config: {
+        ...config,
+        a2a: { ...config.a2a, outboundEnabled: true, policy },
+      },
+    });
+    await expect(
+      appendWorkSessionInput(
+        workspaceId,
+        disabledPin.id,
+        "Later grants do not enable this pin",
+        {
+          references: [reference],
+        },
+      ),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "WORK_AGENT_REFERENCE_FORBIDDEN",
+    });
+    const conversationCount = await db.conversation.count({
+      where: { agentId: agent.id },
+    });
+    await expect(
+      createWorkSession({
+        workspaceId,
+        agentId: agent.id,
+        task: "Unauthorized initial mention",
+        references: [forbidden],
+      }),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "WORK_AGENT_REFERENCE_FORBIDDEN",
+    });
+    expect(await db.conversation.count({ where: { agentId: agent.id } })).toBe(
+      conversationCount,
+    );
+    const work = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      task: "Delegate the review",
+      references: [reference],
+    });
+    expect(work).not.toBeNull();
+    if (!work) throw new Error("Missing Work fixture");
+    const first = await db.message.findFirstOrThrow({
+      where: { conversationId: work.conversationId },
+    });
+    expect(first.parts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          text: expect.stringContaining(`agent:${allowed.agent.id}`),
+          reference: expect.objectContaining({
+            kind: "agent",
+            targetKind: "local",
+            label: allowed.agent.name,
+          }),
+        }),
+      ]),
+    );
+    expect(JSON.stringify(first.parts)).not.toContain("Forged");
+    expect(JSON.stringify(first.parts)).toContain("pi_a2a_submit");
+    await db.workSession.update({
+      where: { id: work.id },
+      data: { status: "completed" },
+    });
+    const expandedPolicy: AgentA2APolicy = {
+      ...policy,
+      targets: [...policy.targets, policyTarget(unapproved.agent.id)],
+    };
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { a2aPolicy: expandedPolicy },
+    });
+    await publishAgentRevision(workspaceId, agent.id, {
+      expectedRevisionId: approved.id,
+      config: {
+        ...config,
+        a2a: { ...config.a2a, outboundEnabled: true, policy: expandedPolicy },
+      },
+    });
+    await expect(
+      appendWorkSessionInput(
+        workspaceId,
+        work.id,
+        "New permission is not inherited",
+        {
+          references: [forbidden],
+        },
+      ),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "WORK_AGENT_REFERENCE_FORBIDDEN",
+    });
+    expect(
+      await db.message.count({
+        where: { conversationId: work.conversationId },
+      }),
+    ).toBe(1);
+    expect(
+      await db.workSession.findUniqueOrThrow({ where: { id: work.id } }),
+    ).toMatchObject({ status: "completed", agentRevisionId: approved.id });
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { a2aOutboundEnabled: false },
+    });
+    await expect(
+      appendWorkSessionInput(workspaceId, work.id, "Revoked permission", {
+        references: [reference],
+      }),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "WORK_AGENT_REFERENCE_FORBIDDEN",
+    });
+    expect(
+      await db.message.count({
+        where: { conversationId: work.conversationId },
+      }),
+    ).toBe(1);
+    await db.agent.update({
+      where: { id: agent.id },
+      data: { a2aOutboundEnabled: true },
+    });
+    await db.agentSubAgent.delete({
+      where: {
+        parentId_childId: { parentId: agent.id, childId: allowed.agent.id },
+      },
+    });
+    await expect(
+      appendWorkSessionInput(workspaceId, work.id, "Removed delegation edge", {
+        references: [reference],
+      }),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "WORK_AGENT_REFERENCE_FORBIDDEN",
+    });
+    await db.agentSubAgent.create({
+      data: { parentId: agent.id, childId: allowed.agent.id },
+    });
+    expect(
+      await appendWorkSessionInput(
+        workspaceId,
+        work.id,
+        "Authorized follow-up",
+        {
+          references: [reference],
+        },
+      ),
+    ).toMatchObject({ ok: true, status: "queued" });
+    expect(
+      await db.message.count({
+        where: { conversationId: work.conversationId },
+      }),
+    ).toBe(2);
+  });
+
   it("retains superseded Work history while edit and retry queue only the current branch", async () => {
     const { agent, revision } = await fixture();
     const work = await createWorkSession({

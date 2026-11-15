@@ -845,6 +845,7 @@ function WorkTranscript({
 }) {
   const t = useTranslations("console.work");
   const agentsT = useTranslations("console.agents");
+  const composerT = useTranslations("console.workComposer");
   const common = useTranslations("common");
   const [treeAction, setTreeAction] = useState<WorkTreeAction | null>(null);
   const [editText, setEditText] = useState("");
@@ -1104,7 +1105,22 @@ function WorkTranscript({
                     // biome-ignore lint/suspicious/noArrayIndexKey: Streamed reference parts are append-only and can repeat the same reference; preserve existing disclosure identity.
                     <details key={index} className="my-1 text-xs">
                       <summary className="cursor-pointer break-words">
+                        {part.reference.kind === "agent" ? (
+                          <Bot
+                            aria-hidden="true"
+                            className="mr-1 inline size-3.5 align-text-bottom"
+                          />
+                        ) : null}
                         @{part.reference.label}
+                        {part.reference.kind === "agent" ? (
+                          <span className="ml-2 text-muted-foreground">
+                            {composerT(
+                              part.reference.targetKind === "remote"
+                                ? "remoteAgent"
+                                : "localAgent",
+                            )}
+                          </span>
+                        ) : null}
                       </summary>
                       <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">
                         {part.text}
@@ -1415,6 +1431,7 @@ export function WorkspaceWork({
 }) {
   const t = useTranslations("console.work");
   const tAgents = useTranslations("console.agents");
+  const composerT = useTranslations("console.workComposer");
   const tChannels = useTranslations("console.agentMessaging");
   const operationsT = useTranslations("console.conversationOperations");
   const tSandboxes = useTranslations("console.sandboxes");
@@ -1706,7 +1723,13 @@ export function WorkspaceWork({
         ? workHref(slug, selected.id)
         : `/app/${encodeURIComponent(slug)}/work`;
   const selectedStatus = selected?.status;
-  const visibleError = error ?? selected?.error;
+  const errorMessage = error ?? selected?.error;
+  const visibleError =
+    errorMessage === "WORK_AGENT_REFERENCE_FORBIDDEN"
+      ? composerT("agentReferenceForbidden")
+      : errorMessage === "Invalid references"
+        ? composerT("referenceFailed")
+        : errorMessage;
   const describeRuntimeError = useRuntimeErrorText();
   const runtimeError = describeRuntimeError(visibleError);
   const configurationError = /no configured model/i.test(visibleError ?? "");

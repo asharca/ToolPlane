@@ -21,6 +21,7 @@ import type {
   ResolvedAgentPiPackage,
 } from "@/lib/agents/resolve";
 import type { ComposerReference } from "./composer-types";
+import { resolveSubmittedAgentReferences } from "./agent-references";
 import {
   claimWorkAttachments,
   workMessageParts,
@@ -298,6 +299,16 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
       );
     const revision = await selectNewSessionRevision(tx, agent.id);
     const config = revision.config;
+    const references = await resolveSubmittedAgentReferences(
+      tx,
+      {
+        workspaceId: input.workspaceId,
+        agentId: agent.id,
+        agentRevisionId: revision.id,
+      },
+      config,
+      input.references,
+    );
     const pinnedProvider =
       agent.provider?.id === config.providerId ? agent.provider : null;
     const modelContext =
@@ -403,17 +414,14 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
         conversationId: conversation.id,
         role: "user",
         parts: [
-          ...workMessageParts(task, attachments, input.references),
+          ...workMessageParts(task, attachments, references),
           ...(input.modelOverride
             ? [{ type: AGENT_MODEL_OVERRIDE_PART, data: input.modelOverride }]
             : []),
         ],
         textCharacters:
           task.length +
-          (input.references ?? []).reduce(
-            (total, item) => total + item.text.length,
-            0,
-          ),
+          references.reduce((total, item) => total + item.text.length, 0),
       },
     });
     return tx.workSession.create({
@@ -701,7 +709,7 @@ export async function appendWorkSessionInput(
       select: workSessionExecutionSelect,
     });
     if (!work) return { ok: false, reason: "not_found" } as const;
-    if (workSessionRevisionMetadata(work).readOnly)
+    if (!work.agentRevision || workSessionRevisionMetadata(work).readOnly)
       return {
         ok: false,
         reason: "invalid_transition",
@@ -723,6 +731,16 @@ export async function appendWorkSessionInput(
         work.runtimeKind,
         tx,
       );
+    const references = await resolveSubmittedAgentReferences(
+      tx,
+      {
+        workspaceId,
+        agentId: work.agentId,
+        agentRevisionId: work.agentRevision.id,
+      },
+      AgentRevisionConfigSchema.parse(work.agentRevision.config),
+      options.references,
+    );
 
     const updated = await tx.workSession.updateMany({
       where: {
@@ -775,17 +793,14 @@ export async function appendWorkSessionInput(
         conversationId: work.conversationId,
         role: "user",
         parts: [
-          ...workMessageParts(text, attachments, options.references),
+          ...workMessageParts(text, attachments, references),
           ...(options.modelOverride
             ? [{ type: AGENT_MODEL_OVERRIDE_PART, data: options.modelOverride }]
             : []),
         ],
         textCharacters:
           text.length +
-          (options.references ?? []).reduce(
-            (total, item) => total + item.text.length,
-            0,
-          ),
+          references.reduce((total, item) => total + item.text.length, 0),
       },
     });
     return { ok: true, changed: true, status: "queued" } as const;
