@@ -1,4 +1,6 @@
 import "server-only";
+import { channelToolApprovalReply } from "./execution/tool-approvals";
+import type { NormalizedMessagingSource } from "./messaging";
 import {
   assertRuntimeOwner,
   runtimeCanOperate,
@@ -113,6 +115,31 @@ export async function sendChannelNotice(
   }
 }
 
+export async function sendChannelApprovalNotice(
+  connectionId: string,
+  source: NormalizedMessagingSource,
+  text: string,
+): Promise<boolean> {
+  const state = runners().get(connectionId);
+  if (state?.status !== "running" || !runtimeCanOperate() || !source.chatId)
+    return false;
+  try {
+    await state.adapter.sendMessage(source.chatId, text, {
+      replyToMessageId:
+        source.platform === "telegram"
+          ? source.messageId && /^\d+$/.test(source.messageId)
+            ? Number(source.messageId)
+            : undefined
+          : source.platform === "discord"
+            ? source.messageId
+            : (source.threadId ?? source.messageId),
+      replyInThread: Boolean(source.threadId),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 export function startAgentChannelRunner(
   workspaceId: string,
   connectionId: string,
@@ -431,6 +458,25 @@ async function start(
               "This command is not allowed by the channel access policy.",
               { replyToMessageId: event.messageId },
             );
+          return;
+        }
+        const approvalReply = await channelToolApprovalReply({
+          connectionId,
+          workspaceId,
+          agentId: active.agentId,
+          source: {
+            ...event,
+            platform: row.platform,
+            chatType: event.chatType ?? "dm",
+          },
+          text: event.text,
+          roleIds: event.roleIds,
+        });
+        if (approvalReply !== null) {
+          await adapter.sendMessage(event.chatId, approvalReply, {
+            replyToMessageId: event.threadId ?? event.messageId,
+            replyInThread: event.replyInThread,
+          });
           return;
         }
         const bounded: ChannelMessageEvent = {

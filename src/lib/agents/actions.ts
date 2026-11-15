@@ -1,4 +1,5 @@
 "use server";
+import { ToolApprovalPolicySchema } from "./tool-approval-policy";
 
 import type {
   ModelCost,
@@ -756,6 +757,11 @@ export async function createAgentAction(
         maxSteps: agentMaxSteps(formData),
         reasoningEffort: agentReasoningEffort(formData),
         contextFiles: agentContextFiles(formData) ?? true,
+        toolApproval: formData.has("toolApproval")
+          ? ToolApprovalPolicySchema.parse(
+              JSON.parse(String(formData.get("toolApproval"))),
+            )
+          : undefined,
         piPackages: piPackagesFromForm(formData),
       },
       {
@@ -1000,6 +1006,11 @@ export async function updateAgentAction(
         maxSteps,
         reasoningEffort: agentReasoningEffort(formData),
         contextFiles: agentContextFiles(formData),
+        toolApproval: formData.has("toolApproval")
+          ? ToolApprovalPolicySchema.parse(
+              JSON.parse(String(formData.get("toolApproval"))),
+            )
+          : undefined,
         piPackages: piPackagesFromForm(formData),
       });
       await setAgentTools(ctx.ws.id, agentId, {

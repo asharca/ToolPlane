@@ -1654,16 +1654,36 @@ export function WorkspaceWork({
       isExecutableAgentRuntimeKind(conversation.runtimeKind) &&
       (channelConversation || sessionReadOnly),
   );
+  const approvalConversationBase = conversation
+    ? `/api/v1/agents/${encodeURIComponent(conversation.agentId)}/conversations/${encodeURIComponent(conversation.id)}`
+    : selected?.conversationId
+      ? `/api/v1/agents/${encodeURIComponent(selected.agentId)}/conversations/${encodeURIComponent(selected.conversationId)}`
+      : null;
   const conversationLive = useLiveTaskOutput({
+    // Conversation events currently exclude WorkSession-backed conversations.
+    // Work approvals recover from the authenticated Work native UI projection.
     url:
-      observingConversation && conversation
-        ? `/api/v1/agents/${encodeURIComponent(conversation.agentId)}/conversations/${encodeURIComponent(conversation.id)}/events`
+      conversation && approvalConversationBase
+        ? `${approvalConversationBase}/events`
         : null,
     onSettled: () => router.refresh(),
     onTranscriptChange: () => router.refresh(),
     onRevoked: () => router.refresh(),
   });
-  const conversationOutput = conversationLive.output;
+  const approvalParts =
+    conversation && conversationLive.connection === "revoked"
+      ? []
+      : conversation && conversationLive.connection === "live"
+        ? conversationLive.dataParts
+        : null;
+  const approvalEndpoint =
+    approvalConversationBase &&
+    (!conversation || conversationLive.connection !== "revoked")
+      ? `${approvalConversationBase}/tool-approvals`
+      : undefined;
+  const conversationOutput = observingConversation
+    ? conversationLive.output
+    : null;
   const conversationOutputPersisted = Boolean(
     conversationOutput &&
       !conversationOutput.active &&
@@ -4082,6 +4102,8 @@ export function WorkspaceWork({
                         <ConversationExecution
                           key={`${controlAgent.id}:${conversation.id}`}
                           endpoint={`/api/v1/agents/${encodeURIComponent(controlAgent.id)}/conversations/${encodeURIComponent(conversation.id)}/execution`}
+                          toolApprovalEndpoint={approvalEndpoint}
+                          toolApprovalParts={approvalParts}
                           showStatus={false}
                           showActivities={false}
                           active={conversationBusy}
@@ -4284,6 +4306,8 @@ export function WorkspaceWork({
                 <ConversationExecution
                   key={`${conversation.agentId}:${conversation.id}`}
                   endpoint={`/api/v1/agents/${encodeURIComponent(conversation.agentId)}/conversations/${encodeURIComponent(conversation.id)}/execution`}
+                  toolApprovalEndpoint={approvalEndpoint}
+                  toolApprovalParts={approvalParts}
                   showStatus
                   showActivities={false}
                   onBusyChange={setConversationBusy}
@@ -4354,6 +4378,8 @@ export function WorkspaceWork({
                         <ConversationExecution
                           key={selected.id}
                           endpoint={`/api/v1/workspaces/${encodeURIComponent(slug)}/work-sessions/${encodeURIComponent(selected.id)}/ui`}
+                          toolApprovalEndpoint={approvalEndpoint}
+                          toolApprovalParts={approvalParts}
                           showStatus={false}
                           showActivities={false}
                           active={selectedActive}

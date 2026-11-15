@@ -1,4 +1,5 @@
 import "server-only";
+import { pendingToolApprovals } from "./tool-approvals";
 import type { Prisma } from "@prisma/client";
 import { TaskState } from "@a2a-js/sdk";
 import { TaskNotFoundError } from "@a2a-js/sdk/errors";
@@ -136,6 +137,7 @@ export async function readTaskUi(
     await db.$transaction((tx) => live(tx, row.id, row.leaseToken as string));
   return {
     row,
+    toolApprovals: await pendingToolApprovals(row.id, row.leaseToken),
     ...nativeUiView(
       row.uiProjection,
       row.leaseToken,

@@ -15,6 +15,7 @@ export type EntryIdentity = {
   sourceId: string;
   conversationId?: string;
   channelId?: string;
+  channelSource?: NonNullable<LocalA2AGrant["entryPolicy"]>["channelSource"];
 };
 const missing = () => new TaskNotFoundError();
 /** Never infer a platform user from a channel sender or workspace owner. */
@@ -131,6 +132,8 @@ export async function createEntryPolicy(
       ];
     }
   }
+  // Routing belongs to this turn, not the stable session authorization identity.
+  const { channelSource: _channelSource, ...identity } = source;
   return {
     ...source,
     sourceAgentId: grant.agentId,
@@ -140,7 +143,7 @@ export async function createEntryPolicy(
         JSON.stringify([
           grant.workspaceId,
           grant.agentId,
-          source,
+          identity,
           authorization,
         ]),
       )
@@ -158,6 +161,7 @@ export async function assertEntryPolicy(tx: Tx, grant: LocalA2AGrant) {
       sourceId: entry.sourceId,
       ...(entry.conversationId ? { conversationId: entry.conversationId } : {}),
       ...(entry.channelId ? { channelId: entry.channelId } : {}),
+      ...(entry.channelSource ? { channelSource: entry.channelSource } : {}),
     },
   );
   if (

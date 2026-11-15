@@ -50,6 +50,7 @@ export async function refreshTaskStorage(
       + 512 * (SELECT COUNT(*) FROM "A2ARequest" r WHERE r."taskId"=t.id)
       + 1024 * (SELECT COUNT(*) FROM "A2AEntryReceipt" r WHERE r."taskId"=t.id)
       + 1024 * (SELECT COUNT(*) FROM "A2AEntryBinding" b WHERE b."lastTaskId"=t.id)
+      + COALESCE((SELECT SUM(octet_length(to_jsonb(a)::text)) FROM "AgentToolApproval" a WHERE a."taskId"=t.id), 0)
       + octet_length(t."uiProjection"::text) AS bytes, t.sequence
     FROM "A2ATask" t WHERE t.id=${id}`;
   const row = rows[0];

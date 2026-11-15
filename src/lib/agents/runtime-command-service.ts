@@ -52,7 +52,7 @@ export async function executeRuntimeCommand(input: {
   line: string;
   sandboxId?: string;
   signal?: AbortSignal;
-  entry?: Pick<EntryIdentity, "kind" | "channelId">;
+  entry?: Pick<EntryIdentity, "kind" | "channelId" | "channelSource">;
   messageId?: string;
   modelOverride?: AgentModelOverride;
 }) {
@@ -208,6 +208,9 @@ export async function executeRuntimeCommand(input: {
           sourceId: conversation.id,
           ...(grant.entryPolicy.channelId
             ? { channelId: grant.entryPolicy.channelId }
+            : {}),
+          ...(input.entry?.channelSource
+            ? { channelSource: input.entry.channelSource }
             : {}),
         };
       }

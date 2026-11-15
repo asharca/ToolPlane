@@ -133,6 +133,9 @@ export async function submitAgentEntry(
       kind: input.kind,
       sourceId: input.sourceId,
       ...(input.channelId ? { channelId: input.channelId } : {}),
+      ...(input.kind === "channel" && input.channelSource
+        ? { channelSource: input.channelSource }
+        : {}),
       ...(input.conversationId ? { conversationId: input.conversationId } : {}),
     });
     const grant = await createLocalEntryGrant(

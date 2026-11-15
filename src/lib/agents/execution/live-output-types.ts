@@ -1,3 +1,4 @@
+import type { ToolApprovalCard } from "./tool-approvals";
 import type {
   WorkOutputActivity,
   WorkOutputSnapshot,
@@ -9,5 +10,13 @@ export type LiveTaskOutput = WorkOutputSnapshot & {
   truncated?: boolean;
 };
 export type LiveTaskActivity = WorkOutputActivity;
-export type LiveTaskSnapshotEvent = { output: LiveTaskOutput | null };
+export type ToolApprovalDataPart = {
+  type: "data-tool-approval";
+  id: string;
+  data: ToolApprovalCard;
+};
+export type LiveTaskSnapshotEvent = {
+  output: LiveTaskOutput | null;
+  dataParts?: ToolApprovalDataPart[];
+};
 export type LiveTaskSettledEvent = { taskId: string };

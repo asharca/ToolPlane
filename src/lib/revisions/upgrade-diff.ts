@@ -6,6 +6,7 @@ export type RevisionChangedField =
   | "modelParameters"
   | "reasoningEffort"
   | "streamRules"
+  | "toolApproval"
   | "maxSteps"
   | "packages"
   | "knowledge"

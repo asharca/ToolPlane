@@ -1,3 +1,4 @@
+import type { ToolApprovalPolicy } from "./tool-approval-policy";
 import "server-only";
 import type { ReasoningLevel } from "./constants";
 import { selectNewSessionRevision } from "@/lib/agents/evolution/rollout-selection";
@@ -319,6 +320,7 @@ export async function cloneAgent(
           maxSteps: true,
           reasoningEffort: true,
           streamRules: true,
+          toolApproval: true,
         },
       });
       if (!source) return null;
@@ -350,6 +352,7 @@ export async function cloneAgent(
           ...(source.streamRules != null
             ? { streamRules: source.streamRules as Prisma.InputJsonValue }
             : {}),
+          ...(source.toolApproval ? { toolApproval: source.toolApproval } : {}),
         },
       });
       if (deployments.length) {
@@ -512,6 +515,7 @@ export type AgentConfig = {
   optionalBuiltinTools?: string[];
   maxSteps: number;
   reasoningEffort?: ReasoningLevel | null;
+  toolApproval?: ToolApprovalPolicy;
   piPackages?: Array<{ marketInstallId: string; releaseId?: string }>;
 };
 
@@ -1006,6 +1010,7 @@ export async function createConfiguredAgent(
           ),
           maxSteps: cfg.maxSteps,
           reasoningEffort: cfg.reasoningEffort ?? null,
+          toolApproval: cfg.toolApproval ?? { mode: "off" },
         },
       });
       await tx.agentServer.createMany({
@@ -1114,6 +1119,9 @@ export async function updateAgent(
           maxSteps: cfg.maxSteps,
           ...(cfg.reasoningEffort !== undefined
             ? { reasoningEffort: cfg.reasoningEffort }
+            : {}),
+          ...(cfg.toolApproval !== undefined
+            ? { toolApproval: cfg.toolApproval }
             : {}),
         },
       });

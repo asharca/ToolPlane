@@ -219,6 +219,11 @@ export function diffAgentRevisions(
     ["maxSteps", a.maxSteps, b.maxSteps],
     ["reasoningEffort", a.reasoningEffort ?? null, b.reasoningEffort ?? null],
     ["streamRules", a.streamRules ?? [], b.streamRules ?? []],
+    [
+      "toolApproval",
+      a.runtimeKind === "pi-sdk" ? (a.toolApproval ?? { mode: "off" }) : null,
+      b.runtimeKind === "pi-sdk" ? (b.toolApproval ?? { mode: "off" }) : null,
+    ],
     ["packages", a.packages, b.packages],
     ["knowledge", a.knowledgeBaseIds, b.knowledgeBaseIds],
     [

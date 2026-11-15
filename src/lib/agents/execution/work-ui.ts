@@ -1,4 +1,5 @@
 import "server-only";
+import { pendingToolApprovals } from "./tool-approvals";
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { TaskNotFoundError } from "@a2a-js/sdk/errors";
@@ -283,8 +284,14 @@ export async function handleWorkUi(
           work.uiLease,
           live && taskLive,
         );
+        const toolApprovals =
+          task && live && taskLive
+            ? await pendingToolApprovals(task.id, task.leaseToken, tx)
+            : [];
         const status =
-          view.uiRequests.length || work.status === "waiting_user"
+          view.uiRequests.length ||
+          toolApprovals.length ||
+          work.status === "waiting_user"
             ? "input-required"
             : ["idle", "completed", "archived"].includes(work.status)
               ? "completed"
@@ -295,7 +302,9 @@ export async function handleWorkUi(
                   : work.status === "queued"
                     ? "queued"
                     : "running";
-        return uiReply({ execution: { id: work.id, status, ...view } });
+        return uiReply({
+          execution: { id: work.id, status, ...view, toolApprovals },
+        });
       });
     } catch (error) {
       return uiFailure(error);

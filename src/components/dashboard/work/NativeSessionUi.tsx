@@ -17,6 +17,11 @@ import {
   SubagentActivity,
 } from "../agents/SubagentActivity";
 import { HookActivity, HookActivitySchema } from "../agents/HookActivity";
+import {
+  ToolApprovalCardSchema,
+  ToolApprovalRequest,
+  type ToolApprovalDecision,
+} from "./ToolApprovalRequest";
 
 const base = {
   type: z.literal("extension_ui_request"),
@@ -95,6 +100,7 @@ const NativeEventSchema = z.discriminatedUnion("method", [
 export const NativeProjectionSchema = z.object({
   activities: z.array(SubagentActivitySchema).default([]),
   hooks: z.array(HookActivitySchema).default([]),
+  toolApprovals: z.array(ToolApprovalCardSchema).default([]),
   uiRequests: z.array(NativeDialogSchema),
   todos: z.array(
     z.object({
@@ -372,6 +378,9 @@ export function NativeSessionUi({
   onRespond,
   onSetEditorText,
   belowEditorElement,
+  onToolApproval,
+  onToolApprovalExpire,
+  toolApprovalDisabled = disabled,
 }: {
   projection: NativeProjection;
   scope: string;
@@ -380,6 +389,9 @@ export function NativeSessionUi({
   onRespond: (response: NativeResponse) => void;
   onSetEditorText?: (text: string) => void;
   belowEditorElement?: HTMLDivElement | null;
+  onToolApproval?: (decision: ToolApprovalDecision) => void;
+  onToolApprovalExpire?: (id: string) => void;
+  toolApprovalDisabled?: boolean;
 }) {
   const t = useTranslations("console.work.nativeUi");
   const seen = useRef<{ scope: string; ids: Set<string> }>({
@@ -578,6 +590,18 @@ export function NativeSessionUi({
           {editorText}
         </p>
       ) : null}
+      {projection.toolApprovals
+        .filter((card) => card.status === "pending")
+        .map((card) => (
+          <ToolApprovalRequest
+            key={`${scope}:${card.id}`}
+            card={card}
+            busy={busyId === card.id}
+            disabled={toolApprovalDisabled || busyId !== null}
+            onDecide={onToolApproval}
+            onExpire={onToolApprovalExpire}
+          />
+        ))}
       {projection.uiRequests.map((request) => (
         <NativeDialog
           key={`${scope}:${request.id}`}

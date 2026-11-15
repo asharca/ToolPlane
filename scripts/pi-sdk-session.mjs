@@ -892,10 +892,94 @@ function allowTransientStreamRetry(session) {
     return result;
   };
 }
+const approvedToolArguments = new WeakMap();
+const approvalDenied = () => ({
+  block: true,
+  reason: "TOOL_APPROVAL_DENIED: Tool execution was not approved.",
+});
+async function approveToolCall(event) {
+  if (!context?.toolApprovalBridge) return;
+  const admitted = context;
+  try {
+    const url = new URL(admitted.uiUrl);
+    if (
+      !/^\/api\/v1\/agent-runtime\/tasks\/[^/]+\/ui$/.test(url.pathname) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !["http:", "https:"].includes(url.protocol)
+    )
+      return approvalDenied();
+    url.pathname = url.pathname.replace(/\/ui$/, "/tool-approvals");
+    // Capture once; any later extension mutation is rejected by the final native hook.
+    const argumentsJson = canonicalJson(event.input);
+    const args = JSON.parse(argumentsJson);
+    const toolName = event.toolName,
+      toolCallId = event.toolCallId;
+    const post = async (action) => {
+      if (aborted || admitted !== context)
+        throw new Error("TOOL_APPROVAL_DENIED");
+      const response = await fetch(url, {
+        method: "POST",
+        redirect: "error",
+        headers: {
+          authorization: `Bearer ${admitted.runtimeToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ action, toolCallId, toolName, arguments: args }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error("TOOL_APPROVAL_DENIED");
+      return response.json();
+    };
+    let result = await post("request");
+    const deadline = Math.min(
+      Date.now() + 120_000,
+      Date.parse(result.expiresAt) || Date.now() + 120_000,
+    );
+    while (result.status === "pending" && Date.now() < deadline && !aborted) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      result = await post("poll");
+    }
+    if (!["approved", "allowed"].includes(result.status) || aborted) {
+      await post("consume").catch(() => {});
+      return approvalDenied();
+    }
+    result = await post("consume");
+    if (result.allowed !== true || admitted !== context || aborted)
+      return approvalDenied();
+    approvedToolArguments.set(event.input, {
+      argumentsJson,
+      toolName,
+      toolCallId,
+    });
+    return;
+  } catch {
+    // Native Pi turns a blocked call into an isError tool result, never a turn error.
+    return approvalDenied();
+  }
+}
 async function bindSession(session) {
   unsubscribe?.();
   unsubscribe = session.subscribe(event);
   allowTransientStreamRetry(session);
+  const beforeToolCall = session.agent.beforeToolCall;
+  if (!beforeToolCall?.toolplaneApproval) {
+    const checked = async (call) => {
+      const result = await beforeToolCall?.(call);
+      if (result?.block || !context?.toolApprovalBridge) return result;
+      const approved = approvedToolArguments.get(call.args);
+      approvedToolArguments.delete(call.args);
+      return approved?.argumentsJson === canonicalJson(call.args) &&
+        approved.toolName === call.toolCall.name &&
+        approved.toolCallId === call.toolCall.id
+        ? result
+        : approvalDenied();
+    };
+    checked.toolplaneApproval = true;
+    session.agent.beforeToolCall = checked;
+  }
   await session.bindExtensions({
     mode: context?.uiUrl ? "rpc" : "json",
     uiContext: context?.uiUrl ? nativeUi.uiContext : undefined,
@@ -989,6 +1073,7 @@ async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }) {
             pi.on("before_provider_request", () => {
               if (active) emit({ type: "model_request" });
             });
+            pi.on("tool_call", approveToolCall);
           },
         },
       ],

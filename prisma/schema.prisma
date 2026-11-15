@@ -623,6 +623,7 @@ model Agent {
   maxSteps                Int                      @default(100)
   reasoningEffort         String?
   streamRules             Json?
+  toolApproval            Json?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
   servers                 AgentServer[]
@@ -1642,6 +1643,7 @@ model A2AContext {
 
 model A2ATask {
   files               A2ATaskFile[]
+  toolApprovals AgentToolApproval[]
   remoteFilesStatus   String            @default("ready")
   remoteObservedState Int?
   entryReceipts A2AEntryReceipt[]
@@ -1694,6 +1696,33 @@ model A2ATask {
   @@index([deadlineAt])
 }
 
+
+model AgentToolApproval {
+  id String @id @default(uuid())
+  taskId String
+  task A2ATask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  workspaceId String
+  agentId String
+  conversationId String?
+  lease String
+  toolCallId String
+  toolName String
+  argumentHash String
+  argumentSummary String
+  entryKind String
+  channelId String?
+  channelSource Json?
+  shortCode String @unique
+  status String @default("pending")
+  expiresAt DateTime
+  decidedAt DateTime?
+  decidedBy String?
+  consumedAt DateTime?
+  createdAt DateTime @default(now())
+  @@unique([taskId, lease, toolCallId])
+  @@index([taskId, lease, status, expiresAt])
+  @@index([conversationId, status])
+}
 // File identity is stable; source contains only an encrypted transfer descriptor.
 // Download capabilities are generated on authorized egress and are never stored here.
 model A2ATaskFile {
