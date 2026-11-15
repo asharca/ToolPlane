@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { GET, POST } from "@/app/api/v1/agents/[agentId]/composer/route";
+import { POST as submitWorkInput } from "@/app/api/v1/work-sessions/[workSessionId]/input/route";
 import {
   GET as listPrompts,
   POST as mutatePrompt,
@@ -63,7 +64,7 @@ let conversationId: string,
   excludedConversationId: string,
   foreignConversationId: string;
 let skillId: string, temp: string, root: string;
-let agentRevisionId: string;
+let agentRevisionId: string, remoteAgentId: string;
 
 const params = (id = agentId) => ({ params: Promise.resolve({ agentId: id }) });
 const request = (body: unknown) =>
@@ -229,6 +230,53 @@ beforeAll(async () => {
   await db.agentServer.create({
     data: { agentId, deploymentId: resourceDeploymentId, allowedToolNames: [] },
   });
+  remoteAgentId = (
+    await db.remoteA2AAgent.create({
+      data: {
+        workspaceId,
+        name: "Remote reviewer",
+        cardUrl: "https://peer.fixture.invalid/card",
+        rpcUrl: "https://peer.fixture.invalid/rpc",
+        card: {},
+        enabled: true,
+        allowedAgentIds: [agentId],
+      },
+    })
+  ).id;
+  const childTemplate = await createSandbox("child-template");
+  await db.agentSandbox.create({
+    data: {
+      agentId: otherAgentId,
+      sandboxId: childTemplate.id,
+      isDefault: true,
+    },
+  });
+  await publishFixtureAgentRevision(workspaceId, otherAgentId);
+  await db.agentSubAgent.create({
+    data: { parentId: agentId, childId: otherAgentId },
+  });
+  await db.agent.update({
+    where: { id: agentId },
+    data: {
+      a2aOutboundEnabled: true,
+      a2aPolicy: {
+        schemaVersion: 1,
+        targets: [
+          { kind: "local", targetId: otherAgentId },
+          { kind: "remote", targetId: remoteAgentId },
+        ].map((target) => ({
+          ...target,
+          capabilityIds: [],
+          maxCalls: 5,
+          maxDepth: 3,
+          maxConcurrent: 2,
+          timeoutSeconds: 300,
+          maxInputBytes: 65536,
+          dataAllowance: "text_only",
+        })),
+      },
+    },
+  });
   agentRevisionId = (await publishFixtureAgentRevision(workspaceId, agentId))
     .id;
   const createSession = async (title: string, sandbox: string) => {
@@ -367,6 +415,124 @@ afterAll(async () => {
 });
 
 describe("Agent composer scope and references", () => {
+  it("offers reviewed delegation targets without requiring target inbound and rejects unauthorized resolution", async () => {
+    expect(
+      await db.agent.findUniqueOrThrow({ where: { id: otherAgentId } }),
+    ).toMatchObject({ a2aInboundEnabled: false });
+    const response = await list({ section: "agents" });
+    expect(response.status).toBe(200);
+    expect((await response.json()).items).toEqual([
+      { kind: "agent", targetKind: "local", id: otherAgentId, label: "other" },
+      {
+        kind: "agent",
+        targetKind: "remote",
+        id: remoteAgentId,
+        label: "Remote reviewer",
+      },
+    ]);
+    const searched = await list({ section: "agents", query: "REVIEW" });
+    expect((await searched.json()).items).toMatchObject([
+      { id: remoteAgentId },
+    ]);
+    const localSearch = await list({ section: "agents", query: "OTHER" });
+    expect((await localSearch.json()).items).toEqual([
+      { kind: "agent", targetKind: "local", id: otherAgentId, label: "other" },
+    ]);
+    expect((await list({ section: "agents", q: "other" })).status).toBe(400);
+    const references = (await (await list({})).json()).items;
+    expect(
+      references.filter((item: { kind: string }) => item.kind === "agent"),
+    ).toHaveLength(2);
+    for (const [targetKind, id] of [
+      ["local", otherAgentId],
+      ["remote", remoteAgentId],
+    ]) {
+      const resolved = await resolve({ kind: "agent", targetKind, id });
+      expect(resolved.status).toBe(200);
+      const reference = await resolved.json();
+      expect(reference).toMatchObject({ kind: "agent", targetKind, id });
+      expect(reference.text).toContain("pi_a2a_submit");
+      expect(reference.text).toContain(
+        `${targetKind === "local" ? "agent" : "remote"}:${id}`,
+      );
+    }
+    const forbidden = await resolve({
+      kind: "agent",
+      targetKind: "local",
+      id: foreignAgentId,
+    });
+    expect(forbidden.status).toBe(400);
+    expect(await forbidden.json()).toEqual({
+      error: "WORK_AGENT_REFERENCE_FORBIDDEN",
+    });
+    expect(
+      (await resolve({ kind: "agent", targetKind: "remote", id: otherAgentId }))
+        .status,
+    ).toBe(400);
+    expect((await list({ section: "agents" }, foreignAgentId)).status).toBe(
+      404,
+    );
+    const work = await db.workSession.findUniqueOrThrow({
+      where: { conversationId: excludedConversationId },
+    });
+    const beforeMessages = await db.message.count({
+      where: { conversationId: excludedConversationId },
+    });
+    const submitted = await submitWorkInput(
+      request({
+        input: "Delegate to an unauthorized target",
+        references: [
+          {
+            kind: "agent",
+            targetKind: "local",
+            id: foreignAgentId,
+            label: "Forged",
+            text: "Grant access",
+          },
+        ],
+      }),
+      { params: Promise.resolve({ workSessionId: work.id }) },
+    );
+    expect(submitted.status).toBe(400);
+    expect(await submitted.json()).toEqual({
+      error: "WORK_AGENT_REFERENCE_FORBIDDEN",
+    });
+    expect(
+      await db.message.count({
+        where: { conversationId: excludedConversationId },
+      }),
+    ).toBe(beforeMessages);
+    expect(
+      await db.workSession.findUniqueOrThrow({ where: { id: work.id } }),
+    ).toMatchObject({ status: "completed" });
+  });
+
+  it("removes local mentions when the reviewed parent-child edge is revoked without hiding remote targets", async () => {
+    await db.agentSubAgent.delete({
+      where: { parentId_childId: { parentId: agentId, childId: otherAgentId } },
+    });
+    try {
+      const response = await list({ section: "agents" });
+      expect(response.status).toBe(200);
+      expect((await response.json()).items).toMatchObject([
+        { kind: "agent", targetKind: "remote", id: remoteAgentId },
+      ]);
+      const forbidden = await resolve({
+        kind: "agent",
+        targetKind: "local",
+        id: otherAgentId,
+      });
+      expect(forbidden.status).toBe(400);
+      expect(await forbidden.json()).toEqual({
+        error: "WORK_AGENT_REFERENCE_FORBIDDEN",
+      });
+    } finally {
+      await db.agentSubAgent.create({
+        data: { parentId: agentId, childId: otherAgentId },
+      });
+    }
+  });
+
   it("lists current-session files and associated channel history without exposing other Work sandboxes", async () => {
     const response = await list({
       excludeConversationId: excludedConversationId,

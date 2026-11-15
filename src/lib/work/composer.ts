@@ -15,6 +15,12 @@ import { buildInstalledSkillMarkdown } from "@/lib/skills/artifact";
 import { mcpRpc } from "@/lib/process/mcp-client";
 import type { ComposerItem, ComposerReference } from "./composer-types";
 import { normalizeWorkDirectory } from "./sessions";
+import { requireAgentRevision } from "@/lib/agents/revisions";
+import {
+  AgentReferenceError,
+  agentTargetReference,
+  listAgentReferenceTargets,
+} from "./agent-references";
 
 type Agent = AgentForRun;
 import type { SessionMcpContext } from "@/lib/process/session-mcp";
@@ -197,7 +203,7 @@ function attachedSkills(agent: Agent) {
 export async function listComposerItems(
   agent: Agent,
   input: {
-    section: "references" | "resources" | "skills";
+    section: "references" | "resources" | "skills" | "agents";
     query: string;
     sandboxId?: string;
     workSessionId?: string;
@@ -206,6 +212,30 @@ export async function listComposerItems(
   signal?: AbortSignal,
   context?: SessionMcpContext,
 ): Promise<{ items: ComposerItem[]; filesUnavailable?: boolean }> {
+  const agentTargets = async () => {
+    if (
+      !context ||
+      context.agentId !== agent.id ||
+      context.workspaceId !== agent.workspaceId
+    )
+      throw new ComposerRequestError(400, "A pinned conversation is required.");
+    const { config } = await requireAgentRevision(
+      db,
+      agent.id,
+      context.agentRevisionId,
+    );
+    return listAgentReferenceTargets(
+      db,
+      {
+        workspaceId: agent.workspaceId,
+        agentId: agent.id,
+        agentRevisionId: context.agentRevisionId,
+      },
+      config,
+      input.query,
+    );
+  };
+  if (input.section === "agents") return { items: await agentTargets() };
   if (input.section === "skills") {
     return {
       items: attachedSkills(agent).map((skill) => ({
@@ -239,7 +269,7 @@ export async function listComposerItems(
     input.workSessionId,
     context,
   );
-  const [files, sessions] = await Promise.all([
+  const [files, sessions, agents] = await Promise.all([
     sandboxFiles(
       sandbox.deploymentId,
       sandbox.workspaceRoot,
@@ -260,6 +290,7 @@ export async function listComposerItems(
       orderBy: { createdAt: "desc" },
       take: 40,
     }),
+    agentTargets(),
   ]);
   const fileItems = Array.isArray(files?.items) ? files.items : [];
   return {
@@ -271,6 +302,7 @@ export async function listComposerItems(
         label: session.title ?? session.id,
         description: session.agent.name,
       })),
+      ...agents,
     ],
     ...(!files ? { filesUnavailable: true } : {}),
   };
@@ -282,12 +314,41 @@ export async function resolveComposerReference(
     kind: ComposerReference["kind"];
     id: string;
     deploymentId?: string;
+    targetKind?: "local" | "remote";
     sandboxId?: string;
     workSessionId?: string;
   },
   signal?: AbortSignal,
   context?: SessionMcpContext,
 ): Promise<ComposerReference> {
+  if (input.kind === "agent") {
+    if (
+      !context ||
+      context.agentId !== agent.id ||
+      context.workspaceId !== agent.workspaceId
+    )
+      throw new ComposerRequestError(400, "A pinned conversation is required.");
+    const { config } = await requireAgentRevision(
+      db,
+      agent.id,
+      context.agentRevisionId,
+    );
+    const targets = await listAgentReferenceTargets(
+      db,
+      {
+        workspaceId: agent.workspaceId,
+        agentId: agent.id,
+        agentRevisionId: context.agentRevisionId,
+      },
+      config,
+    );
+    const target = targets.find(
+      (target) =>
+        target.id === input.id && target.targetKind === input.targetKind,
+    );
+    if (!target) throw new AgentReferenceError();
+    return agentTargetReference(target);
+  }
   let label: string;
   let text: string;
   if (input.kind === "skill") {

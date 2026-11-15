@@ -12,6 +12,7 @@ import {
 import { kickWorkCoordinator } from "@/lib/work/coordinator";
 import { startWorkOutput } from "@/lib/work/run-control";
 import { ComposerReferencesSchema } from "@/lib/work/composer-types";
+import { AgentReferenceError } from "@/lib/work/agent-references";
 import {
   parseRuntimeCommand,
   runtimeCommands,
@@ -198,6 +199,8 @@ export const POST = withRequestLogging(
         ...(attachments.length ? { uploadedById: user.id, attachments } : {}),
       });
     } catch (error) {
+      if (error instanceof AgentReferenceError)
+        return Response.json({ error: error.code }, { status: error.status });
       if (error instanceof AgentModelOverrideError)
         return Response.json({ error: error.code }, { status: error.status });
       return error instanceof WorkAttachmentError

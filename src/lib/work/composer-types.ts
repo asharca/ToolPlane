@@ -2,13 +2,20 @@ import { z } from "zod";
 
 export const ComposerReferenceSchema = z
   .object({
-    kind: z.enum(["file", "session", "resource", "skill"]),
+    kind: z.enum(["file", "session", "resource", "skill", "agent"]),
     id: z.string().min(1).max(4000),
     deploymentId: z.string().min(1).max(200).optional(),
+    targetKind: z.enum(["local", "remote"]).optional(),
     label: z.string().min(1).max(1000),
     text: z.string().min(1).max(20_000),
   })
-  .strict();
+  .strict()
+  .refine(
+    (item) => (item.kind === "agent") === (item.targetKind !== undefined),
+    {
+      message: "Agent references require a target kind.",
+    },
+  );
 
 export const ComposerReferencesSchema = z
   .array(ComposerReferenceSchema)
@@ -26,6 +33,7 @@ export type ComposerItem = {
   label: string;
   description?: string;
   deploymentId?: string;
+  targetKind?: "local" | "remote";
 };
 
 export function composerTrigger(text: string, start: number, end = start) {

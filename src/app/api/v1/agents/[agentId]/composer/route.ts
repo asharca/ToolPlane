@@ -16,6 +16,7 @@ import {
   resolveAgentRequestSession,
 } from "@/lib/agents/request-session";
 
+import { AgentReferenceError } from "@/lib/work/agent-references";
 export const runtime = "nodejs";
 type Params = { params: Promise<{ agentId: string }> };
 const scope = {
@@ -26,7 +27,7 @@ const scope = {
 const ListSchema = z
   .object({
     ...scope,
-    section: z.enum(["references", "skills", "resources", "mcp"]),
+    section: z.enum(["references", "skills", "resources", "mcp", "agents"]),
     query: z.string().max(200).default(""),
     excludeConversationId: z.string().max(240).optional(),
   })
@@ -34,11 +35,15 @@ const ListSchema = z
 const ResolveSchema = z
   .object({
     ...scope,
-    kind: z.enum(["file", "session", "skill", "resource"]),
+    kind: z.enum(["file", "session", "skill", "resource", "agent"]),
     id: z.string().min(1).max(4000),
     deploymentId: z.string().min(1).max(240).optional(),
+    targetKind: z.enum(["local", "remote"]).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input) => (input.kind === "agent") === (input.targetKind !== undefined),
+  );
 
 async function handle(req: Request, { params }: Params) {
   const user = await resolveRequestUser(req);
@@ -95,6 +100,7 @@ async function handle(req: Request, { params }: Params) {
   } catch (error) {
     if (
       error instanceof ComposerRequestError ||
+      error instanceof AgentReferenceError ||
       error instanceof McpPromptRequestError ||
       error instanceof AgentSessionRequestError
     )
