@@ -1089,7 +1089,7 @@ describe("official Pi SDK headless session host", () => {
     });
     expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("1");
     await host.stop();
-    }, 60000);
+  }, 60000);
   it("emits unified edit patches independently of the bounded tool output", async () => {
     const f = await setup();
     await writeFile(join(f.workspace, "edit.txt"), "before\n");
