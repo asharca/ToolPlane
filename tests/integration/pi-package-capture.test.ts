@@ -946,6 +946,7 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
     ]);
     for (const file of [
       "pi-sdk-session.mjs",
+      "pi-sdk-advisor.mjs",
       "native-session-paths.mjs",
       "pi-sdk-capabilities.mjs",
       "pi-sdk-ui.mjs",
