@@ -58,6 +58,7 @@
     "file-type": "22.0.1",
     "geist": "^1.7.2",
     "grammy": "1.41.1",
+    "hast-util-from-html": "2.0.3",
     "jose": "^6.2.3",
     "lucide-react": "^1.21.0",
     "motion": "^11.18.2",

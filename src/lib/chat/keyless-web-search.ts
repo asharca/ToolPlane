@@ -63,7 +63,7 @@ function responseText(raw: string): string {
   throw new Error("Exa MCP returned no readable search results.");
 }
 
-async function searchWeb(query: unknown, requestSignal?: AbortSignal) {
+export async function searchKeylessWeb(query: unknown, requestSignal?: AbortSignal, limit = 5) {
   const normalized = typeof query === "string" ? query.trim() : "";
   if (!normalized) throw new Error("Search query is required.");
   if (normalized.length > MAX_QUERY_LENGTH)
@@ -86,7 +86,7 @@ async function searchWeb(query: unknown, requestSignal?: AbortSignal) {
         arguments: {
           query: normalized,
           type: "auto",
-          numResults: 5,
+          numResults: Math.max(1, Math.min(10, limit)),
           livecrawl: "fallback",
         },
       },
@@ -125,7 +125,7 @@ export function buildKeylessWebSearchToolSet(
         additionalProperties: false,
       }),
       execute: async ({ query }: { query: string }) =>
-        searchWeb(query, requestSignal),
+        searchKeylessWeb(query, requestSignal),
     }),
   };
 }

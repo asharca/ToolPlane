@@ -30,8 +30,11 @@ import { requireAgentRevision } from "@/lib/agents/revisions";
 import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
 import { publishLocalArtifact } from "@/lib/a2a/local-artifacts";
 import { agentOptionalBuiltinTool } from "../runtime-kind";
+import { isWebTool, WebToolError } from "./web-tool-errors";
 
 /** Trusted platform dispatch; implementations must validate arguments and preserve task authority. */
+// Registry-selected optional plugins stay lazy: static loading initializes the session-MCP
+// search subsystem for artifact-only task requests, which do not require it.
 export const optionalBuiltinPlatformHandlers: Readonly<
   Record<
     string,
@@ -41,7 +44,16 @@ export const optionalBuiltinPlatformHandlers: Readonly<
       signal: AbortSignal,
     ) => Promise<unknown>
   >
-> = {};
+> = {
+  web_search: async (token, raw, signal) => {
+    const { executeWebTool } = await import("./web-tools");
+    return executeWebTool(token, "web_search", raw, signal);
+  },
+  web_fetch: async (token, raw, signal) => {
+    const { executeWebTool } = await import("./web-tools");
+    return executeWebTool(token, "web_fetch", raw, signal);
+  },
+};
 
 const optionalBuiltinDeniedMessage = "Optional built-in tool is not enabled.";
 
@@ -204,8 +216,7 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
           toolName,
           outcome: a2aTaskOutcome(state),
           durationMs: performance.now() - started,
-          request: args,
-          response,
+          ...(!isWebTool(request.params.name) ? { request: args, response } : {}),
           responseKind: "json",
           responseComplete: true,
           secrets: credential ? [credential] : undefined,
@@ -217,18 +228,19 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
           error instanceof A2AHttpError &&
           error.status === 403 &&
           error.message === optionalBuiltinDeniedMessage;
+        const webFailure = error instanceof WebToolError ? error : undefined;
         const response = {
           content: [
             {
               type: "text" as const,
               text: JSON.stringify({
                 code: rpc.code,
-                message: optionalDenied
+                message: webFailure ? webFailure.message : optionalDenied
                   ? optionalBuiltinDeniedMessage
                   : rpc.code === -32603
                     ? "Agent runtime tool operation failed."
                     : rpc.message,
-                ...(optionalDenied
+                ...(webFailure ? { reason: webFailure.reason } : optionalDenied
                   ? { reason: "OPTIONAL_BUILTIN_TOOL_FORBIDDEN" }
                   : {}),
               }),
@@ -251,7 +263,7 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
           toolName,
           outcome: denied ? "denied" : "error",
           durationMs: performance.now() - started,
-          ...(!denied && known ? { request: args, response } : {}),
+          ...(!denied && known && !isWebTool(request.params.name) ? { request: args, response } : {}),
           responseKind: "json",
           responseComplete: true,
           secrets: credential ? [credential] : undefined,
@@ -314,7 +326,12 @@ async function executeRuntimeTool(
     );
     if (!definition)
       throw new Error("Optional built-in tool definition unavailable.");
-    return handler(token, definition.schema.parse(raw), signal);
+    const parsed = definition.schema.safeParse(raw);
+    if (!parsed.success) {
+      if (isWebTool(name)) throw new WebToolError("WEB_TOOL_INVALID_ARGUMENTS");
+      throw parsed.error;
+    }
+    return handler(token, parsed.data, signal);
   }
   if (name === "a2a_publish_artifact")
     return publishLocalArtifact(row.id, row.leaseToken, raw);
