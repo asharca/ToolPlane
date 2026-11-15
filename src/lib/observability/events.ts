@@ -128,6 +128,9 @@ function agentTelemetry(
     "reasoningTokens",
     "durationMs",
     "toolCallCount",
+    "responseBytes",
+    "outputChars",
+    "resultCount",
   ]) {
     const number = input[key];
     if (typeof number === "number" && Number.isFinite(number) && number >= 0)

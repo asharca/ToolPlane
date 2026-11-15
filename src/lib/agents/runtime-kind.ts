@@ -100,7 +100,10 @@ export type AgentOptionalBuiltinTool = {
 
 /** Register only implemented, trusted tools. Optional tools are always opt-in. */
 export const AGENT_OPTIONAL_BUILTIN_TOOLS: readonly AgentOptionalBuiltinTool[] =
-  [];
+  [
+    { name: "web_search", category: "search", implementation: "platform" },
+    { name: "web_fetch", category: "search", implementation: "platform" },
+  ];
 
 export function agentOptionalBuiltinTools(value: unknown) {
   return isExecutableAgentRuntimeKind(value)
