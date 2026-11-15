@@ -2,18 +2,60 @@
 
 import { useMemo } from "react";
 import { useTranslations } from "next-intl";
-import { FileDiff, type FileDiffLine } from "@/components/agents/file-diff";
+import {
+  FileDiff,
+  type FileDiffLine,
+  type FileDiffProps,
+} from "@/components/agents/file-diff";
 
-/** Keep headers and incomplete tails visible; never infer a patch from tool output. */
-function patchLines(patch: string): FileDiffLine[] {
+type DiffLanguage = NonNullable<FileDiffProps["language"]>;
+
+const LANGUAGE_BY_EXTENSION: Record<string, DiffLanguage> = {
+  ts: "typescript",
+  mts: "typescript",
+  cts: "typescript",
+  tsx: "tsx",
+  js: "tsx",
+  mjs: "tsx",
+  cjs: "tsx",
+  jsx: "tsx",
+  json: "json",
+  sh: "bash",
+  bash: "bash",
+};
+
+function headerPath(line: string, marker: "--- " | "+++ ") {
+  const path = line.slice(marker.length).split("\t")[0]?.trim();
+  return path && path !== "/dev/null" ? path : undefined;
+}
+
+/**
+ * Map a unified patch onto FileDiff rows. File headers become the panel title;
+ * the leading hunk header is implied by the line numbers, later ones stay as
+ * gap markers. Unparsed tails stay visible; never infer a patch from output.
+ */
+function parsePatch(patch: string) {
   const source = patch.split("\n");
   if (source.at(-1) === "") source.pop();
+  const lines: FileDiffLine[] = [];
+  let oldPath: string | undefined;
+  let newPath: string | undefined;
   let oldLine = 0;
   let newLine = 0;
   let oldRemaining = 0;
   let newRemaining = 0;
+  let hunks = 0;
 
-  return source.map((content, index) => {
+  source.forEach((content, index) => {
+    const inHunk = oldRemaining > 0 || newRemaining > 0;
+    if (!inHunk && hunks === 0 && content.startsWith("--- ")) {
+      oldPath = headerPath(content, "--- ");
+      return;
+    }
+    if (!inHunk && hunks === 0 && content.startsWith("+++ ")) {
+      newPath = headerPath(content, "+++ ");
+      return;
+    }
     const line: FileDiffLine = { id: String(index), content };
     const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(content);
     if (hunk) {
@@ -21,6 +63,7 @@ function patchLines(patch: string): FileDiffLine[] {
       newLine = Number(hunk[3]);
       oldRemaining = Number(hunk[2] ?? 1);
       newRemaining = Number(hunk[4] ?? 1);
+      if (hunks++ === 0) return;
     } else if (content.startsWith("+") && newRemaining > 0) {
       line.type = "added";
       line.newLine = newLine++;
@@ -42,12 +85,20 @@ function patchLines(patch: string): FileDiffLine[] {
       oldRemaining--;
       newRemaining--;
     } else if (!content.startsWith("\\")) {
-      // Headers (including a truncated hunk header) have no file line numbers.
+      // Unrecognized or truncated rows have no file line numbers.
       oldRemaining = 0;
       newRemaining = 0;
     }
-    return line;
+    lines.push(line);
   });
+
+  const path = newPath ?? oldPath;
+  const extension = path?.split(".").at(-1)?.toLowerCase();
+  return {
+    path,
+    lines,
+    language: (extension && LANGUAGE_BY_EXTENSION[extension]) || "text",
+  };
 }
 
 export function ConversationToolDiff({
@@ -60,7 +111,7 @@ export function ConversationToolDiff({
   firstChangedLine?: number;
 }) {
   const t = useTranslations("console.agents");
-  const lines = useMemo(() => patchLines(patch), [patch]);
+  const { path, lines, language } = useMemo(() => parsePatch(patch), [patch]);
 
   return (
     <section
@@ -72,19 +123,20 @@ export function ConversationToolDiff({
           <span
             title={
               firstChangedLine === undefined
-                ? undefined
+                ? path
                 : t("toolDiffFirstChangedLine", { line: firstChangedLine })
             }
           >
-            {t("toolDiff")}
+            {path ?? t("toolDiff")}
           </span>
         }
         lines={lines}
-        language="text"
+        language={language}
         status="complete"
         collapseOnComplete={false}
         defaultOpen={lines.length <= 40 && patch.length <= 8000}
         maxHeight={440}
+        copyText={patch}
         className="min-w-0 max-w-full"
       />
       {truncated ? (
