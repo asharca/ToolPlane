@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { parse as parseYaml } from "yaml";
 
-// Pi 0.87.1's static semantics, kept local because Pi exposes no safe parser
+// Pi 1.5.2's static semantics, kept local because Pi exposes no safe parser
 // subpath export. Do not import its executable index into the web process.
 function parseFrontmatter(markdown: string): {
   frontmatter: Record<string, unknown>;
@@ -17,30 +17,48 @@ function parseFrontmatter(markdown: string): {
     : -1;
   if (end === -1) return { frontmatter: {}, body: normalized };
   const yaml = normalized.slice(4, end);
-  if (!yaml) return { frontmatter: {}, body: normalized };
-  return {
-    frontmatter: parseYaml(yaml) ?? {},
-    body: normalized.slice(end + 4).trim(),
-  };
+  const body = normalized.slice(end + 4).trim();
+  return { frontmatter: yaml ? (parseYaml(yaml) ?? {}) : {}, body };
 }
 
 function parseCommandArgs(value: string): string[] {
   const args: string[] = [];
   let current = "";
+  // Quoted empty strings are arguments, so track token start separately.
+  let started = false;
   let quote: string | null = null;
-  for (const char of value) {
+  let quoteStart = 0;
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
     if (quote) {
-      if (char === quote) quote = null;
+      if (char === "\\" && value[index + 1] === quote) {
+        current += quote;
+        index++;
+      } else if (char === quote) quote = null;
       else current += char;
-    } else if (char === '"' || char === "'") quote = char;
-    else if (/\s/.test(char)) {
-      if (current) {
+    } else if ((char === '"' || char === "'") && !started) {
+      // Quotes open only at an argument start; apostrophes inside words stay text.
+      quote = char;
+      quoteStart = index;
+      started = true;
+    } else if (/\s/.test(char)) {
+      if (started) {
         args.push(current);
         current = "";
+        started = false;
       }
-    } else current += char;
+    } else {
+      current += char;
+      started = true;
+    }
+    if (quote && index === value.length - 1) {
+      // An unclosed quote is literal text; reparse the rest normally.
+      quote = null;
+      current = value[quoteStart];
+      index = quoteStart;
+    }
   }
-  if (current) args.push(current);
+  if (started) args.push(current);
   return args;
 }
 
@@ -104,7 +122,7 @@ export type ParsedPromptTemplate = {
   incompatibilities: string[];
 };
 
-/** Parse immutable Markdown with Pi 0.87.1 frontmatter/name/description semantics.
+/** Parse immutable Markdown with Pi 1.5.2 frontmatter/name/description semantics.
  * Dependencies are explicit `toolplane.requires` frontmatter (or supplied requirements),
  * never inferred from prose. Invalid/unknown required semantics fail closed.
  */

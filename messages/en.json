@@ -1759,7 +1759,7 @@
       "PI_SDK_SESSION_MISSING": "The SDK session file or live unpersisted session is missing. Start a new conversation or Work; existing history remains readable.",
       "PI_SDK_PACKAGE_SET_CHANGED": "Enabled packages changed. Start a new conversation or Work to use them; existing history remains readable.",
       "PI_SDK_TOOLSET_CHANGED": "Available tools changed. Start a new conversation or Work to use the current tools.",
-      "PI_SDK_VERSION_MISMATCH": "This package requires the fixed Pi SDK 0.87.1 runtime. Ask an administrator to check the installation.",
+      "PI_SDK_VERSION_MISMATCH": "This package requires a Pi SDK version this installation does not provide. Ask an administrator to check the installation.",
       "PI_SDK_SESSION_SCOPE": "The extension tried to leave this Agent's private session directory. Execution was blocked.",
       "PI_SDK_TOOL_FAILED": "A Pi SDK tool failed. Check the tool result before continuing; no automatic replay was attempted.",
       "PI_SDK_MODEL_FAILED": "The Pi SDK model request failed or was interrupted. Check the provider and start a new request.",

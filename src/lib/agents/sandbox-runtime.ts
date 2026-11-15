@@ -67,13 +67,19 @@ import {
   observeAgentExecutionStage,
   type AgentExecutionStage,
 } from "./execution-stages";
+import {
+  isSupportedPiVersion,
+  PI_PACKAGE_CAPTURE_IMAGE,
+  PI_SDK_VERSION,
+  PI_SDK_VERSIONS,
+} from "./pi-version";
 
 export const PI_SDK_RUNTIME = {
   specs: [
-    "@earendil-works/pi-coding-agent@0.87.1",
-    "@earendil-works/pi-ai@0.87.1",
+    `@earendil-works/pi-coding-agent@${PI_SDK_VERSION}`,
+    `@earendil-works/pi-ai@${PI_SDK_VERSION}`,
   ],
-  directory: "/workspace/.toolplane/runtime-packages/pi-sdk-0.87.1",
+  directory: `/workspace/.toolplane/runtime-packages/pi-sdk-${PI_SDK_VERSION}`,
   binary: "pi",
   ignoreScripts: true,
   allowBuilds: [],
@@ -1681,7 +1687,7 @@ export async function preflightPiSdkCapabilities(input: {
         `type=bind,source=${directory},target=/opt/toolplane-preflight,readonly`,
         "--entrypoint",
         "/usr/bin/env",
-        "toolplane-pi-package-capture:0.87.1",
+        PI_PACKAGE_CAPTURE_IMAGE,
         "-i",
         "PATH=/usr/local/bin:/usr/bin:/bin",
         "HOME=/tmp",
@@ -2213,7 +2219,7 @@ async function runNativeSessionExec(
               JSON.stringify({
                 binary: exec.executable,
                 args: exec.args,
-                sdkVersion: "0.87.1",
+                sdkVersion: PI_SDK_VERSION,
                 // Reload resident hosts when the trusted adapter or path contract changes.
                 hostProtocol: "session-workspaces-v1",
                 hostSourceChecksum: sdk.hostSourceChecksum,
@@ -2360,7 +2366,7 @@ export async function readLegacyPiSdkPackageReferences(input: {
         throw Error('PI_SDK_LEGACY_RECOVERY_REQUIRED');
       } else {
         const saved = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-        if (saved.runtimeKind !== 'pi-sdk' || saved.sdkVersion !== '0.87.1') throw Error('PI_SDK_LEGACY_RECOVERY_REQUIRED');
+        if (saved.runtimeKind !== 'pi-sdk' || !${JSON.stringify(PI_SDK_VERSIONS)}.includes(saved.sdkVersion)) throw Error('PI_SDK_LEGACY_RECOVERY_REQUIRED');
         const config = saved.packageReferences ? null : JSON.parse(fs.readFileSync(configPath, 'utf8'));
         const refs = (saved.packageReferences ?? config.packages).map(({marketInstallId, releaseId, checksum, mcpBindingsChecksum}) => ({marketInstallId, releaseId, checksum, ...(mcpBindingsChecksum ? {mcpBindingsChecksum} : {})}));
         process.stdout.write(JSON.stringify({ packageSetChecksum: saved.packageSetChecksum, packages: refs }));
@@ -2495,7 +2501,9 @@ async function runPiSdk(
   hostFiles.push({
     path: configPath,
     content: JSON.stringify({
-      sdkVersion: "0.87.1",
+      sdkVersion: PI_SDK_VERSION,
+      // Sessions saved by these pins resume on sdkVersion and are rewritten as it.
+      compatibleSdkVersions: PI_SDK_VERSIONS,
       packageRoot: PI_SDK_RUNTIME.directory,
       cwd: workdir,
       workspaceRoot,
@@ -2788,7 +2796,10 @@ async function runSessionSandboxAgentTurn(
     workspaceRoot,
     options.agentRevisionId,
   );
-  if (options.piVersion !== undefined && options.piVersion !== "0.87.1")
+  if (
+    options.piVersion !== undefined &&
+    !isSupportedPiVersion(options.piVersion)
+  )
     throw new Error("PI_SDK_VERSION_MISMATCH");
   try {
     return await runPiSdk(

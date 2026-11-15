@@ -127,7 +127,7 @@ describe("revision source release retention", () => {
         kind: "docker",
         image: `example.invalid/test@sha256:${checksum}`,
         network: "none",
-        piVersion: "0.87.1",
+        piVersion: "1.5.2",
         initialSnapshot: null,
         resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
         credentialReferences: [],

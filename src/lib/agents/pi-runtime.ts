@@ -24,8 +24,11 @@ import {
   trackRuntimeOperation,
 } from "@/lib/runtime/ownership-state";
 
-const IMAGE = "toolplane-pi-package-capture:0.87.1";
-const VERSION = "0.87.1";
+import {
+  PI_PACKAGE_CAPTURE_IMAGE as IMAGE,
+  PI_SDK_VERSION as VERSION,
+} from "./pi-version";
+
 const LIMIT = 1024 * 1024 * 1024 + 32 * 1024 * 1024;
 type Artifact = { path: string; sha256: string };
 type Identity = {

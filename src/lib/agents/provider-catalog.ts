@@ -123,7 +123,7 @@ export function matchingPiModelReferences(
     if (matches.length && !match) return [];
     if (!match) continue;
     const { provider, model } = match;
-    // Pi 0.87.1 lists the 272K pricing threshold as these models' context window.
+    // Pi 1.5.2 still lists the 272K pricing threshold as these models' context window.
     // OpenAI documents 1.05M: https://developers.openai.com/api/docs/models/gpt-6-astra
     // The same maximum is documented on the gpt-6-sol and gpt-6-luna model pages.
     const contextWindow =

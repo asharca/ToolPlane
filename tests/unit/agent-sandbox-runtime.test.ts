@@ -80,7 +80,7 @@ describe("sandbox Agent runtime helpers", () => {
       sandboxRuntimeSkillRoot("pi-sdk", "agent", firstRoot, "revision-two"),
     );
     expect(PI_SDK_RUNTIME.directory).toBe(
-      "/workspace/.toolplane/runtime-packages/pi-sdk-0.87.1",
+      "/workspace/.toolplane/runtime-packages/pi-sdk-1.5.2",
     );
     const attachment = (runtimePath: string) => [
       {
@@ -594,8 +594,8 @@ describe("sandbox Agent runtime helpers", () => {
 
   it("pins SDK install specs and disables package lifecycle scripts", () => {
     expect(PI_SDK_RUNTIME.specs).toEqual([
-      "@earendil-works/pi-coding-agent@0.87.1",
-      "@earendil-works/pi-ai@0.87.1",
+      "@earendil-works/pi-coding-agent@1.5.2",
+      "@earendil-works/pi-ai@1.5.2",
     ]);
     expect(PI_SDK_RUNTIME).toMatchObject({
       ignoreScripts: true,

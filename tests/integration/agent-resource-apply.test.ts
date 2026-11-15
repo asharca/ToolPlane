@@ -16,7 +16,7 @@ import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 
 // These tests intentionally run the real publisher and Docker native preflight.
-// Requires the integration database and toolplane-pi-package-capture:0.87.1;
+// Requires the integration database and toolplane-pi-package-capture:1.5.2;
 // the fake environment digest from the shared fixture is never executed.
 const stamp = randomUUID();
 let workspaceId = "";

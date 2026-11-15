@@ -1,5 +1,14 @@
 import type { AgentRevisionConfig } from "./revision-types";
 import { agentRuntimeBuiltinToolGroups } from "./runtime-kind";
+import { isSupportedPiVersion, PI_SDK_VERSION } from "./pi-version";
+
+// Legacy Pi pins run on the installed SDK; only a different runtime is a change.
+const runtimeVersion = (env: AgentRevisionConfig["environment"]) =>
+  "piVersion" in env
+    ? isSupportedPiVersion(env.piVersion)
+      ? PI_SDK_VERSION
+      : env.piVersion
+    : env.ompVersion;
 
 export type AgentPermissionAddition = {
   kind:
@@ -125,8 +134,7 @@ export function agentPermissionAdditions(
     !oldEnv ||
     oldEnv.image !== env.image ||
     previous?.runtimeKind !== next.runtimeKind ||
-    ("piVersion" in oldEnv ? oldEnv.piVersion : oldEnv.ompVersion) !==
-      ("piVersion" in env ? env.piVersion : env.ompVersion)
+    runtimeVersion(oldEnv) !== runtimeVersion(env)
   )
     environmentChanges.push("image");
   if (env.network !== "none" && oldEnv?.network !== env.network)

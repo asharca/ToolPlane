@@ -31,7 +31,7 @@ import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
-export const PI_SDK_VERSION = "0.87.1";
+export const PI_SDK_VERSION = "1.5.2";
 const DIRECTORY = `/workspace/.toolplane/runtime-packages/pi-sdk-${PI_SDK_VERSION}`;
 const MARKER = ".toolplane-pi-sdk.json";
 const MAGIC = "TOOLPLANE_PI_SDK_1\n";

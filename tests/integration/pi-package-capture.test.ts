@@ -105,7 +105,7 @@ vi.mock("node:child_process", async (original) => {
   ) => {
     const rewritten = [...args];
     if (routing.active && command === "docker") {
-      const index = rewritten.indexOf("toolplane-pi-package-capture:0.87.1");
+      const index = rewritten.indexOf("toolplane-pi-package-capture:1.5.2");
       if (index >= 0)
         rewritten.splice(
           index,
@@ -302,7 +302,7 @@ beforeAll(async () => {
   ]);
   await writeFile(
     join(directory, "Dockerfile"),
-    "FROM toolplane-pi-package-capture:0.87.1\nCOPY ca.pem /fixture-ca.pem\n",
+    "FROM toolplane-pi-package-capture:1.5.2\nCOPY ca.pem /fixture-ca.pem\n",
   );
   await exec("docker", ["build", "-t", routing.image, directory], {
     timeout: 120_000,
@@ -941,7 +941,7 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
       "PI_TELEMETRY=0",
       "--entrypoint",
       "sleep",
-      "toolplane-pi-package-capture:0.87.1",
+      "toolplane-pi-package-capture:1.5.2",
       "infinity",
     ]);
     for (const file of [
@@ -1011,7 +1011,8 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
       await write(
         "/tmp/private/config.json",
         JSON.stringify({
-          sdkVersion: "0.87.1",
+          sdkVersion: "1.5.2",
+          compatibleSdkVersions: ["1.5.2", "0.87.1"],
           packageRoot: "/opt/pi-sdk",
           cwd: "/tmp/workspace",
           workspaceRoot: "/tmp/workspace",

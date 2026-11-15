@@ -1,7 +1,10 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
-import { Type } from "@earendil-works/pi-ai";
-import { agentTool, type AgentToolSet } from "@/lib/agents/agent-tool";
+import {
+  agentTool,
+  jsonSchema,
+  type AgentToolSet,
+} from "@/lib/agents/agent-tool";
 import { db } from "@/lib/db";
 
 const MAX_QUERY_LENGTH = 4_000;
@@ -196,10 +199,15 @@ export function buildKnowledgeTool(bases: SearchBase[]): AgentToolSet {
       name: "knowledge_search",
       description:
         "Search the Agent's authorized workspace knowledge bases. Returns source citations and excerpts.",
-      parameters: Type.Object({
-        query: Type.String({
-          description: "The question or terms to search for.",
-        }),
+      parameters: jsonSchema({
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "The question or terms to search for.",
+          },
+        },
+        required: ["query"],
       }),
       execute: async ({ query }: { query: string }) => ({
         sources: await searchKnowledgeBases(bases, query),

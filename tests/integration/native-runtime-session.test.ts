@@ -66,7 +66,8 @@ it("stops only one conversation's resident SDK host while preserving its sibling
     await writeFile(
       configPath,
       JSON.stringify({
-        sdkVersion: "0.87.1",
+        sdkVersion: "1.5.2",
+        compatibleSdkVersions: ["1.5.2", "0.87.1"],
         packageRoot: process.cwd(),
         cwd,
         workspaceRoot: join(root, name),
@@ -221,7 +222,8 @@ export default function(pi) {
   await writeFile(
     configPath,
     JSON.stringify({
-      sdkVersion: "0.87.1",
+      sdkVersion: "1.5.2",
+      compatibleSdkVersions: ["1.5.2", "0.87.1"],
       packageRoot: process.cwd(),
       cwd: dir,
       workspaceRoot: dir,
@@ -342,7 +344,7 @@ export default function(pi) {
     const sdkState = JSON.parse(await readFile(statePath, "utf8"));
     expect(sdkState).toMatchObject({
       runtimeKind: "pi-sdk",
-      sdkVersion: "0.87.1",
+      sdkVersion: "1.5.2",
       sessionPersisted: false,
     });
     expect(sdkState).not.toHaveProperty("seeded");

@@ -24,6 +24,7 @@ import type {
   AgentEnvironmentSnapshot,
 } from "./revision-types";
 import { resolveAgentPiPackages } from "./resolve";
+import { isSupportedPiVersion, PI_SDK_VERSION } from "./pi-version";
 import { assertAgentEnvironmentCredentialReferences } from "./environment-credentials";
 import {
   preflightPiSdkCapabilities,
@@ -230,7 +231,7 @@ export async function captureAgentRevisionConfig(
           kind: "docker" as const,
           image: await resolveDockerImageDigest(template.image),
           network: template.network,
-          piVersion: "0.87.1",
+          piVersion: PI_SDK_VERSION,
           initialSnapshot: null,
           resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
           credentialReferences: [],
@@ -550,11 +551,12 @@ export async function publishAgentRevisionInTransaction(
   if (!isExecutableAgentRuntimeKind(config.runtimeKind))
     throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
   AgentEnvironmentSnapshotSchema.parse(config.environment);
-  if (
-    config.runtimeKind === "pi-sdk" &&
-    config.environment.piVersion !== "0.87.1"
-  )
-    throw new AgentRevisionError("PI_SDK_VERSION_MISMATCH");
+  if (config.runtimeKind === "pi-sdk") {
+    if (!isSupportedPiVersion(config.environment.piVersion))
+      throw new AgentRevisionError("PI_SDK_VERSION_MISMATCH");
+    // Legacy pins run on the installed SDK, so republished configs record it.
+    config.environment.piVersion = PI_SDK_VERSION;
+  }
   const authorized = await validateRevisionAuthorization(
     tx,
     workspaceId,

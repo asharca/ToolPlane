@@ -3,6 +3,7 @@ import { agentPermissionAdditions } from "@/lib/agents/permission-additions";
 import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 import { emptyOmpConfig, OMP_VERSION } from "@/lib/agents/omp-config";
+import { PI_SDK_VERSION } from "@/lib/agents/pi-version";
 import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 
 function config(): AgentRevisionConfig {
@@ -21,7 +22,7 @@ function config(): AgentRevisionConfig {
       kind: "docker",
       image: `image@sha256:${"a".repeat(64)}`,
       network: "none",
-      piVersion: "0.87.1",
+      piVersion: PI_SDK_VERSION,
       initialSnapshot: null,
       resourceLimits: { memoryBytes: 1024, cpus: 1, pidsLimit: 64 },
       credentialReferences: [{ name: "KEY", credentialId: "credential" }],
@@ -76,6 +77,21 @@ describe("settings permission additions", () => {
     after.mcpGrants[0].allowedToolNames.reverse();
     after.a2a.policy.targets[0].capabilityIds.reverse();
     expect(agentPermissionAdditions(before, after)).toEqual([]);
+  });
+
+  it("does not request image permission for a supported Pi upgrade but still flags unsupported versions", () => {
+    const before = config();
+    const after = config();
+    if (before.runtimeKind !== "pi-sdk" || after.runtimeKind !== "pi-sdk")
+      throw new Error("Expected Pi fixtures");
+    before.environment.piVersion = "0.87.1";
+    expect(agentPermissionAdditions(before, after)).toEqual([]);
+    after.environment.piVersion = "0.86.0";
+    expect(agentPermissionAdditions(before, after)).toContainEqual({
+      kind: "environment",
+      resourceId: "environment",
+      values: ["image"],
+    });
   });
   it("does not require permission to reduce access", () => {
     const before = config();

@@ -54,7 +54,7 @@ function manifest(name: string, version: number): PiPackageManifestV1 {
       root: "package",
       runtime: {
         kind: "pi-sdk",
-        piVersion: "0.87.1",
+        piVersion: "1.5.2",
         nodeMajor: 26,
         platform: "linux",
         arch,
@@ -162,7 +162,7 @@ async function fixture() {
       kind: "docker",
       image: `fixture@sha256:${"a".repeat(64)}`,
       network: "isolated",
-      piVersion: "0.87.1",
+      piVersion: "1.5.2",
       initialSnapshot: null,
       resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
       credentialReferences: [],

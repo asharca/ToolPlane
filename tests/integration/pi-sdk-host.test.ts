@@ -19,6 +19,7 @@ import { join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
+import { PI_SDK_VERSION, PI_SDK_VERSIONS } from "@/lib/agents/pi-version";
 import {
   buildPiMcpConfig,
   nativePiMcpToolName,
@@ -370,7 +371,8 @@ export default function(pi) {
   );
   await writeFile(factory, piMcpExtensionSource({ eventFd: 3 }));
   const config = {
-    sdkVersion: "0.87.1",
+    sdkVersion: PI_SDK_VERSION,
+    compatibleSdkVersions: PI_SDK_VERSIONS,
     packageRoot: resolve("."),
     cwd: workspace,
     workspaceRoot: root,
@@ -596,6 +598,42 @@ describe("official Pi SDK headless session host", () => {
       sessionFile: initialState.sessionFile,
       agentRevisionId: f.config.agentRevisionId,
       packageSetChecksum: f.config.packageSetChecksum,
+    });
+  }, 60000);
+  it("resumes legacy Pi 0.87.1 saved state on 1.5.2 and rewrites its SDK version", async () => {
+    const f = await setup();
+    const first = await f.launch();
+    const initial = await first.request(
+      "prompt",
+      "Persist native counter history",
+    );
+    expect(initial.success).toBe(true);
+    const original = assertDefined(initial.result).state;
+    await first.stop();
+    const transcript = await readFile(original.sessionFile, "utf8");
+    const saved = JSON.parse(await readFile(f.config.statePath, "utf8"));
+    await writeFile(
+      f.config.statePath,
+      JSON.stringify({ ...saved, sdkVersion: "0.87.1" }),
+    );
+
+    const resumed = await f.launch({ historyRequired: true });
+    const result = await resumed.request(
+      "prompt",
+      "Continue the native counter",
+    );
+    expect(result.success, JSON.stringify(result)).toBe(true);
+    expect(assertDefined(result.result).state.sessionId).toBe(
+      original.sessionId,
+    );
+    expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("2");
+    expect(await readFile(original.sessionFile, "utf8")).toContain(transcript);
+    expect(
+      JSON.parse(await readFile(f.config.statePath, "utf8")),
+    ).toMatchObject({
+      sdkVersion: PI_SDK_VERSION,
+      sessionFile: original.sessionFile,
+      sessionId: original.sessionId,
     });
   }, 60000);
   it("streams reasoning and successive text through the runtime parser before completion", async () => {

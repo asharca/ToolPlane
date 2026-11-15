@@ -66,7 +66,7 @@ function inspectSession(input) {
   );
   if (
     saved.runtimeKind !== "pi-sdk" ||
-    saved.sdkVersion !== "0.87.1" ||
+    saved.sdkVersion !== "1.5.2" ||
     !saved.sessionPersisted
   )
     throw Error("NATIVE_SDK_STATE_REQUIRED");
@@ -117,7 +117,7 @@ function inspectSession(input) {
 async function main() {
   if (process.argv.includes("--help")) {
     console.log(
-      `Paid native Pi SDK A2A/tool/file/continuation smoke. Set ${required.map((key) => `TOOLPLANE_SMOKE_${key}`).join(", ")}. Existing Agents must start pi-smoke-disposable-, have published native Pi0.87.1 revisions and explicit A->B bounded policy. Explicit database must be local isolated test DB. No installation, configuration mutation, process kills or unknown-effect replay.`,
+      `Paid native Pi SDK A2A/tool/file/continuation smoke. Set ${required.map((key) => `TOOLPLANE_SMOKE_${key}`).join(", ")}. Existing Agents must start pi-smoke-disposable-, have published native Pi 1.5.2 revisions and explicit A->B bounded policy. Explicit database must be local isolated test DB. No installation, configuration mutation, process kills or unknown-effect replay.`,
     );
     return;
   }
@@ -215,7 +215,7 @@ async function main() {
       const config = revision.config;
       assert(
         config.runtimeKind === "pi-sdk" &&
-          config.environment.piVersion === "0.87.1" &&
+          config.environment.piVersion === "1.5.2" &&
           /@sha256:[a-f0-9]{64}$/.test(config.environment.image) &&
           config.a2a.inboundEnabled,
         "IMMUTABLE_NATIVE_REVISION_REQUIRED",

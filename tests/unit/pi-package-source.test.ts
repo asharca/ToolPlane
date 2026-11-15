@@ -118,7 +118,7 @@ function fixture(requested = "npm:fixture@1.0.0") {
     root: "package",
     runtime: {
       kind: "pi-sdk",
-      piVersion: "0.87.1",
+      piVersion: "1.5.2",
       nodeMajor: 26,
       platform: "linux",
       arch: "arm64",

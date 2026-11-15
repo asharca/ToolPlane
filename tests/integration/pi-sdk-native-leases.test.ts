@@ -126,7 +126,7 @@ it("refreshes real native task UI projection on the same SDK host and rejects th
             kind: "docker",
             image: `fixture@sha256:${"0".repeat(64)}`,
             network: "isolated",
-            piVersion: "0.87.1",
+            piVersion: "1.5.2",
             initialSnapshot: null,
             resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 64 },
             credentialReferences: [],
@@ -173,7 +173,8 @@ it("refreshes real native task UI projection on the same SDK host and rejects th
     await writeFile(
       configPath,
       JSON.stringify({
-        sdkVersion: "0.87.1",
+        sdkVersion: "1.5.2",
+        compatibleSdkVersions: ["1.5.2", "0.87.1"],
         packageRoot: resolve("."),
         cwd,
         workspaceRoot: root,

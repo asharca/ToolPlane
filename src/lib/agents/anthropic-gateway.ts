@@ -1,17 +1,16 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
-import {
-  Type,
-  type Api,
-  type AssistantMessage,
-  type AssistantMessageEvent,
-  type Context,
-  type ImageContent,
-  type Message,
-  type Model,
-  type TextContent,
-  type ThinkingLevel,
-  type ToolCall,
+import type {
+  Api,
+  AssistantMessage,
+  AssistantMessageEvent,
+  Context,
+  ImageContent,
+  Message,
+  Model,
+  TextContent,
+  ThinkingLevel,
+  ToolCall,
 } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import { buildModel, type ProviderConfig } from "./model";
@@ -302,7 +301,7 @@ function requestContext(
           tools: body.tools.map((tool) => ({
             name: names.toProvider(tool.name),
             description: tool.description ?? "",
-            parameters: Type.Unsafe(tool.input_schema),
+            parameters: tool.input_schema,
           })),
         }
       : {}),

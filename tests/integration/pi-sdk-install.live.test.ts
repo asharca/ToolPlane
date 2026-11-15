@@ -17,7 +17,7 @@ await (async () => {
   const fs = await import("node:fs/promises");
   const { createReadStream, createWriteStream } = await import("node:fs");
   const { createHash } = await import("node:crypto");
-  const directory = "/workspace/.toolplane/runtime-packages/pi-sdk-0.87.1";
+  const directory = "/workspace/.toolplane/runtime-packages/pi-sdk-1.5.2";
   const archive = "/tmp/sdk.archive";
   const damaged = "/tmp/damaged.archive";
   const checksum = async (path) => {
@@ -72,7 +72,7 @@ await (async () => {
         "/workspace:rw,exec,nosuid,nodev,uid=1000,gid=1000,size=512m",
         "--entrypoint",
         "node",
-        "toolplane-pi-package-capture:0.87.1",
+        "toolplane-pi-package-capture:1.5.2",
         "--input-type=module",
         "-",
       ],
