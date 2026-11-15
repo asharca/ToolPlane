@@ -73,6 +73,12 @@ import { ConversationExecution } from "./ConversationExecution";
 import { useLiveTaskOutput } from "./useLiveTaskOutput";
 import { LiveOutputStatus, LiveOutputView } from "./LiveOutputView";
 import {
+  AgentMessageQueueView,
+  useAgentMessageQueue,
+  type QueueMode,
+} from "@/components/dashboard/AgentMessageQueue";
+import type { AgentMessageQueue } from "@/lib/agents/execution/message-queue";
+import {
   A2AContextView,
   useA2AContexts,
   a2aStateKey,
@@ -1637,6 +1643,7 @@ export function WorkspaceWork({
         ? `/api/v1/agents/${encodeURIComponent(conversation.agentId)}/conversations/${encodeURIComponent(conversation.id)}/events`
         : null,
     onSettled: () => router.refresh(),
+    onTranscriptChange: () => router.refresh(),
     onRevoked: () => router.refresh(),
   });
   const conversationOutput = conversationLive.output;
@@ -2312,6 +2319,38 @@ export function WorkspaceWork({
   const selectedActive = Boolean(
     selectedStatus && ACTIVE_STATUSES.has(selectedStatus),
   );
+  const messageQueue = useAgentMessageQueue({
+    agentId: selected?.agentId,
+    conversationId: selected?.conversationId,
+    active: selectedActive,
+    onRefresh: () => {
+      void refreshSelected();
+    },
+  });
+  const observeMessageQueue = messageQueue.observe;
+  const queueT = useTranslations("console.messageQueue");
+
+  async function sendQueuedMessage(mode: QueueMode) {
+    if (
+      sessionReadOnly ||
+      busy ||
+      composerPending ||
+      messageQueue.pending ||
+      messageQueue.forbidden ||
+      !draft.trim()
+    )
+      return;
+    if (attachments.length || references.length) {
+      notify(queueT("textOnly"), { severity: "error" });
+      return;
+    }
+    const text = draft;
+    const resource = activeResourceId;
+    if (await messageQueue.send(mode, text)) {
+      if (activeResourceIdRef.current === resource)
+        setDraft((current) => (current === text ? "" : current));
+    }
+  }
 
   useEffect(() => {
     if (!selected?.titlePending) return;
@@ -2381,9 +2420,13 @@ export function WorkspaceWork({
         runtimeKind?: string;
         modelName?: string;
         executionStage?: AgentExecutionStage;
+        messageQueue?: AgentMessageQueue;
       }>(event);
       if (!next) return;
       completion.observe("snapshot", next);
+      observeMessageQueue(
+        next.messageQueue ?? { messages: [], pendingMessageCount: 0 },
+      );
       setStreamOutput({
         workSessionId: selectedWorkSessionId,
         text: next.text ?? "",
@@ -2435,6 +2478,7 @@ export function WorkspaceWork({
           : {}),
       });
       void refreshSelected();
+      observeMessageQueue({ messages: [], pendingMessageCount: 0 });
     });
     source.addEventListener("stream_rule_triggered", (event) => {
       const next = payload<{
@@ -2471,14 +2515,26 @@ export function WorkspaceWork({
     });
     source.addEventListener("stage", (event) => {
       receiveBudgetWarning(event);
-      const next = payload<{ executionStage?: AgentExecutionStage }>(event);
+      const next = payload<{
+        text: string;
+        activities: WorkActivity[];
+        executionStage?: AgentExecutionStage;
+        messageQueue?: AgentMessageQueue;
+      }>(event);
       if (!next) return;
+      observeMessageQueue(
+        next.messageQueue ?? { messages: [], pendingMessageCount: 0 },
+      );
       setStreamOutput((current) => ({
         ...(current.workSessionId === selectedWorkSessionId
           ? current
-          : { workSessionId: selectedWorkSessionId, text: "", activities: [] }),
+          : { workSessionId: selectedWorkSessionId }),
+        text: next.text,
+        activities: next.activities,
         executionStage: next.executionStage,
       }));
+      // Stage snapshots also carry consumption boundaries, not just stage labels.
+      void refreshSelected();
     });
     source.addEventListener("delta", (event) => {
       receiveBudgetWarning(event);
@@ -2608,6 +2664,7 @@ export function WorkspaceWork({
     selectedActive,
     selectedWorkSessionId,
     notifyCompletion,
+    observeMessageQueue,
   ]);
 
   function openAgentGroup(nextAgentId: string) {
@@ -2897,7 +2954,14 @@ export function WorkspaceWork({
 
   async function sendMessage(event?: FormEvent) {
     event?.preventDefault();
-    if (sessionReadOnly || conversation || busy || running || composerPending)
+    if (
+      sessionReadOnly ||
+      conversation ||
+      busy ||
+      messageQueue.pending ||
+      (running && !messageQueue.fallback) ||
+      composerPending
+    )
       return;
     const input = draft.trim();
     if (!input) return;
@@ -2962,7 +3026,7 @@ export function WorkspaceWork({
       setError(operationsT("channelCommandOnly"));
       return;
     }
-    if (!canSend) return;
+    if (!canSend && !messageQueue.fallback) return;
     if (!selected) return createWork();
     setBusy("input");
     setError(null);
@@ -3996,6 +4060,7 @@ export function WorkspaceWork({
                           key={`${controlAgent.id}:${conversation.id}`}
                           endpoint={`/api/v1/agents/${encodeURIComponent(controlAgent.id)}/conversations/${encodeURIComponent(conversation.id)}/execution`}
                           showStatus={false}
+                          showActivities={false}
                           active={conversationBusy}
                           onSetEditorText={setEditorText}
                           belowEditorElement={widgetTarget}
@@ -4276,6 +4341,15 @@ export function WorkspaceWork({
                           className="mb-3"
                         />
                       ) : null}
+                      <AgentMessageQueueView
+                        queue={messageQueue.queue}
+                        onClear={() => void messageQueue.clear()}
+                        disabled={
+                          messageQueue.pending ||
+                          messageQueue.forbidden ||
+                          sessionReadOnly
+                        }
+                      />
                       <WorkComposer
                         key={composerScope}
                         agentId={controlAgent?.id}
@@ -4305,11 +4379,17 @@ export function WorkspaceWork({
                           sessionReadOnly ||
                           unappliedDraft ||
                           Boolean(busy) ||
-                          running ||
-                          (!canSend && !localCommand) ||
+                          messageQueue.forbidden ||
+                          (!canSend && !selectedActive && !localCommand) ||
                           composerPending
                         }
-                        loading={running}
+                        loading={running && !messageQueue.fallback}
+                        onRunningSubmit={
+                          selectedActive && !messageQueue.fallback
+                            ? (mode) => void sendQueuedMessage(mode)
+                            : undefined
+                        }
+                        queuePending={messageQueue.pending}
                         onStop={
                           selected && busy !== "cancel"
                             ? () => void postAction("cancel")

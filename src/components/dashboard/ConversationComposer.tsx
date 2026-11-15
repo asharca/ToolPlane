@@ -19,6 +19,7 @@ import {
   type PromptInputProps,
 } from "@/components/agents/prompt-input";
 import { cn } from "@/lib/utils";
+import { AgentQueueActions, type QueueMode } from "./AgentMessageQueue";
 
 /** Shared card surface for every prompt input; the theme border token is too faint on dark backgrounds. */
 export const conversationComposerSurfaceClassName =
@@ -32,8 +33,14 @@ export const conversationComposerDockClassName =
 export function ConversationComposer({
   className,
   attachments,
+  onRunningSubmit,
+  queuePending = false,
   ...props
-}: PromptInputProps & { attachments?: ReactNode }) {
+}: PromptInputProps & {
+  attachments?: ReactNode;
+  onRunningSubmit?: (mode: QueueMode) => void;
+  queuePending?: boolean;
+}) {
   const input = (
     <PromptInput
       minRows={1}
@@ -46,6 +53,44 @@ export function ConversationComposer({
         className,
       )}
       {...props}
+      leadingAction={
+        onRunningSubmit ? (
+          <>
+            {props.leadingAction}
+            <AgentQueueActions
+              disabled={Boolean(
+                props.disabled ||
+                  props.readOnly ||
+                  queuePending ||
+                  !props.value?.trim(),
+              )}
+              onSend={onRunningSubmit}
+            />
+          </>
+        ) : (
+          props.leadingAction
+        )
+      }
+      onKeyDown={(event) => {
+        props.onKeyDown?.(event);
+        if (
+          event.defaultPrevented ||
+          !onRunningSubmit ||
+          event.key !== "Enter" ||
+          event.shiftKey ||
+          event.nativeEvent.isComposing ||
+          event.keyCode === 229
+        )
+          return;
+        event.preventDefault();
+        if (
+          !props.disabled &&
+          !props.readOnly &&
+          !queuePending &&
+          props.value?.trim()
+        )
+          onRunningSubmit(event.altKey ? "follow_up" : "steer");
+      }}
     />
   );
   return attachments ? (

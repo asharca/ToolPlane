@@ -258,6 +258,26 @@
     "whatIsAnMcpServerToolplane": "什么是 MCP 服务器？ | ToolPlane"
   },
   "console": {
+    "messageQueue": {
+      "steer": "插话",
+      "follow_up": "排队追问",
+      "steerHint": "当前工具结束后插话（Enter）",
+      "followUpHint": "本次回复结束后追问（Alt+Enter）",
+      "pending": "{count} 条待处理消息",
+      "clear": "清空待处理消息",
+      "clearHint": "清空全部运行时待处理消息。已消费的消息无法撤回；已接受的频道消息仍会在后续回合执行。",
+      "cleared": "已清空待处理消息",
+      "handled": "输入已由运行时扩展处理",
+      "textOnly": "运行中仅支持文本。请移除附件和引用，或等本轮结束后发送。",
+      "AGENT_QUEUE_INVALID": "此输入或命令无法排队。",
+      "Unauthorized": "请重新登录后发送消息。",
+      "AGENT_QUEUE_FORBIDDEN": "仅本轮执行用户可以操作待处理队列。",
+      "CONVERSATION_NOT_FOUND": "此会话已不可访问。",
+      "AGENT_QUEUE_NOT_RUNNING": "本轮暂不接收排队输入。草稿已保留，可在运行就绪或结束后普通发送。",
+      "CONVERSATION_READ_ONLY": "此历史会话为只读。",
+      "AGENT_QUEUE_FULL": "待处理队列已满。草稿已保留，请等待空位后再发送。",
+      "AGENT_QUEUE_FAILED": "无法确认是否送达。草稿已保留，请先查看队列和会话，再决定是否重新发送。"
+    },
     "liveOutput": {
       "truncated": "实时预览已截断，完整回复请查看保存后的记录。",
       "connecting": "连接中",

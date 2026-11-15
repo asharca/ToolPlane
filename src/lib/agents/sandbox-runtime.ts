@@ -81,6 +81,14 @@ import {
   PI_SDK_VERSION,
   PI_SDK_VERSIONS,
 } from "./pi-version";
+import {
+  AgentMessageQueueError,
+  registerAgentMessageQueue,
+  type AgentMessageQueue,
+  type QueuedAgentMessage,
+  type QueueControl,
+  type QueueResult,
+} from "./execution/message-queue";
 
 export const PI_SDK_RUNTIME = {
   specs: [
@@ -214,6 +222,12 @@ export type RunSandboxAgentTurnOptions = {
     invocation: AgentPromptInvocation,
   ) => void | Promise<void>;
   onCommandResult?: (result: RuntimeCommandResult) => void | Promise<void>;
+  messageQueue?: Omit<QueueControl, "send">;
+  onMessageQueue?: (queue: AgentMessageQueue) => void | Promise<void>;
+  onQueuedMessage?: (
+    message: QueuedAgentMessage,
+    assistantText: string,
+  ) => void | Promise<void>;
 };
 
 export type SandboxRuntimeActivity = {
@@ -2393,6 +2407,7 @@ async function runNativeSessionExec(
   const temporaryRoot = `${workspaceRoot}/.toolplane/runtime-tmp`;
   const driverPath = `${temporaryRoot}/${id}-session.mjs`;
   const inputPath = `${temporaryRoot}/${id}-session.json`;
+  let unregisterQueue: (() => void) | undefined;
   try {
     const brokerSource = await readFile(
       `${process.cwd()}/scripts/native-runtime-session.mjs`,
@@ -2403,58 +2418,57 @@ async function runNativeSessionExec(
       where: { id: options.workspaceId },
       select: { modelRetryAttempts: true },
     });
+    const job = {
+      runId: id,
+      kind: "pi-sdk",
+      binary: exec.executable,
+      args: exec.args,
+      cwd: exec.workdir,
+      statePath: `${sandboxRuntimeStateRoot("pi-sdk", options.agentId, workspaceRoot)}/sessions/${options.runtimeSessionId}.json`,
+      signature: createHash("sha256")
+        .update(
+          JSON.stringify({
+            binary: exec.executable,
+            args: exec.args,
+            sdkVersion: PI_SDK_VERSION,
+            // Reload resident hosts when the trusted adapter or path contract changes.
+            hostProtocol: "session-workspaces-v1",
+            hostSourceChecksum: sdk.hostSourceChecksum,
+            brokerSourceChecksum: createHash("sha256")
+              .update(brokerSource)
+              .digest("hex"),
+            packageSetChecksum: sdk.packageSetChecksum,
+            agentRevisionId: options.agentRevisionId,
+            optionalBuiltinTools: options.optionalBuiltinTools ?? [],
+            nativeUi: Boolean(options.nativeUiUrl),
+            workdir: exec.workdir,
+            system: options.systemPrompt,
+            skills: options.skills,
+            streamRules: options.streamRules,
+          }),
+        )
+        .digest("hex"),
+      command: options.command,
+      navigateBeforeEntryId: options.navigateBeforeEntryId,
+      message: buildSandboxTranscript(
+        options.messages.slice(-1),
+        workspaceRoot !== "/workspace" &&
+          (options.conversationId || options.a2aContextId)
+          ? options
+          : undefined,
+      ),
+      context: {
+        runtimeToken: options.runtimeAccessToken,
+        uiUrl: options.nativeUiUrl,
+        mcpConfig: sdk.mcpConfig,
+        model: sdk.model,
+        reasoningEffort: options.reasoningEffort,
+        modelRetries: retrySetting?.modelRetryAttempts ?? 0,
+      },
+    };
     preparation.files.push(
       { path: driverPath, content: brokerSource },
-      {
-        path: inputPath,
-        content: JSON.stringify({
-          kind: "pi-sdk",
-          binary: exec.executable,
-          args: exec.args,
-          cwd: exec.workdir,
-          statePath: `${sandboxRuntimeStateRoot("pi-sdk", options.agentId, workspaceRoot)}/sessions/${options.runtimeSessionId}.json`,
-          signature: createHash("sha256")
-            .update(
-              JSON.stringify({
-                binary: exec.executable,
-                args: exec.args,
-                sdkVersion: PI_SDK_VERSION,
-                // Reload resident hosts when the trusted adapter or path contract changes.
-                hostProtocol: "session-workspaces-v1",
-                hostSourceChecksum: sdk.hostSourceChecksum,
-                brokerSourceChecksum: createHash("sha256")
-                  .update(brokerSource)
-                  .digest("hex"),
-                packageSetChecksum: sdk.packageSetChecksum,
-                agentRevisionId: options.agentRevisionId,
-                optionalBuiltinTools: options.optionalBuiltinTools ?? [],
-                nativeUi: Boolean(options.nativeUiUrl),
-                workdir: exec.workdir,
-                system: options.systemPrompt,
-                skills: options.skills,
-                streamRules: options.streamRules,
-              }),
-            )
-            .digest("hex"),
-          command: options.command,
-          navigateBeforeEntryId: options.navigateBeforeEntryId,
-          message: buildSandboxTranscript(
-            options.messages.slice(-1),
-            workspaceRoot !== "/workspace" &&
-              (options.conversationId || options.a2aContextId)
-              ? options
-              : undefined,
-          ),
-          context: {
-            runtimeToken: options.runtimeAccessToken,
-            uiUrl: options.nativeUiUrl,
-            mcpConfig: sdk.mcpConfig,
-            model: sdk.model,
-            reasoningEffort: options.reasoningEffort,
-            modelRetries: retrySetting?.modelRetryAttempts ?? 0,
-          },
-        }),
-      },
+      { path: inputPath, content: JSON.stringify(job) },
     );
     // Sessions of one sandbox share the runtime directory. Verify and install
     // one turn at a time: a second concurrent installer finds the runtime
@@ -2494,6 +2508,91 @@ async function runNativeSessionExec(
       },
     );
     await waitForSandboxRuntimeInstall(prepared, options.signal);
+    const queueControl = options.messageQueue;
+    if (queueControl) {
+      let pending = Promise.resolve();
+      const accepted = new Map<string, QueueResult>();
+      unregisterQueue = registerAgentMessageQueue({
+        ...queueControl,
+        send: (message) => {
+          const operation = pending.then(async () => {
+            await queueControl.authorize();
+            const receipt = message ? accepted.get(message.id) : undefined;
+            if (receipt) return receipt;
+            const output = await runTrackedDockerExec({
+              container: exec.container,
+              workdir: exec.workdir,
+              executable: "node",
+              args: [
+                SANDBOX_NODE_FLAG,
+                "-e",
+                `
+                const {createConnection} = require('node:net');
+                const {createHash} = require('node:crypto');
+                const job = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+                const path = '/tmp/toolplane-runtime-' + createHash('sha256').update(job.statePath).digest('hex').slice(0,32) + '.sock';
+                const socket = createConnection(path);
+                let connected = false;
+                socket.on('connect', () => { connected = true; socket.write(JSON.stringify(job) + '\\n'); });
+                socket.on('data', chunk => process.stdout.write(chunk));
+                socket.on('error', () => {
+                  const code = connected ? 'PI_SDK_RUNTIME_FAILED' : 'PI_SDK_QUEUE_NOT_RUNNING';
+                  process.stdout.write(JSON.stringify({success:false,error:{code}}) + '\\n');
+                });
+              `,
+              ],
+              stdin: JSON.stringify({
+                kind: job.kind,
+                signature: job.signature,
+                statePath: job.statePath,
+                cwd: job.cwd,
+                runId: id,
+                control: message
+                  ? {
+                      type: message.mode,
+                      message: message.text,
+                      messageId: message.id,
+                      deduplicate: message.deduplicate,
+                    }
+                  : { type: "clear_queue" },
+              }),
+              timeoutMs: 15_000,
+              maxStdoutBytes: 4 * 1024 * 1024,
+              signal: options.signal,
+            }).catch(() => {
+              throw new AgentMessageQueueError("AGENT_QUEUE_FAILED", 502);
+            });
+            const response = JSON.parse(output.trim());
+            if (!response.success)
+              throw new AgentMessageQueueError(
+                response.error?.code === "PI_SDK_QUEUE_INVALID"
+                  ? "AGENT_QUEUE_INVALID"
+                  : response.error?.code === "PI_SDK_QUEUE_FULL"
+                    ? "AGENT_QUEUE_FULL"
+                    : response.error?.code === "PI_SDK_QUEUE_NOT_RUNNING"
+                      ? "AGENT_QUEUE_NOT_RUNNING"
+                      : "AGENT_QUEUE_FAILED",
+                response.error?.code === "PI_SDK_QUEUE_INVALID"
+                  ? 400
+                  : response.error?.code === "PI_SDK_QUEUE_FULL"
+                    ? 429
+                    : response.error?.code === "PI_SDK_QUEUE_NOT_RUNNING"
+                      ? 409
+                      : 502,
+              );
+            const result = response.result as QueueResult;
+            if (message?.deduplicate) accepted.set(message.id, result);
+            else if (!message) accepted.clear();
+            return result;
+          });
+          pending = operation.then(
+            () => {},
+            () => {},
+          );
+          return operation;
+        },
+      });
+    }
     return await runTrackedDockerExec({
       ...exec,
       executable: "node",
@@ -2501,6 +2600,7 @@ async function runNativeSessionExec(
       stdin: undefined,
     });
   } finally {
+    unregisterQueue?.();
     await removeSandboxFiles(exec.container, [driverPath, inputPath]);
   }
 }
@@ -2795,6 +2895,18 @@ async function runPiSdk(
   const consume = async (line: string) => {
     const event = JSON.parse(line);
     await observeStage?.(event);
+    if (event.type === "message_queue") {
+      await options.onMessageQueue?.(event.queue as AgentMessageQueue);
+      return;
+    }
+    if (event.type === "queued_message_consumed") {
+      await options.onQueuedMessage?.(
+        event.message as QueuedAgentMessage,
+        redact(String(event.assistantText ?? ""), [options.runtimeAccessToken]),
+      );
+      streamed = "";
+      return;
+    }
     if (event.type === "toolplane_mcp_unavailable") {
       const server = mcpServers.find(
         (item) => item.deploymentId === event.deploymentId,

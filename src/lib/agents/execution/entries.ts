@@ -68,6 +68,8 @@ import {
   type BudgetWarning,
 } from "@/lib/agents/budget-warning";
 import { taskOutput } from "./live-output";
+import type { AgentMessageQueue } from "./message-queue";
+import { isSilentAgentReply } from "@/lib/agents/messaging";
 
 export type EntryMessage = { id?: string; role: string; parts: unknown };
 export type AgentEntryInput = EntryIdentity & {
@@ -345,6 +347,7 @@ export async function runAgentEntry(
     ) => void | Promise<void>;
     onActivity?: (activity: SandboxRuntimeActivity) => void | Promise<void>;
     onBudgetWarning?: (warning: BudgetWarning) => void | Promise<void>;
+    onMessageQueue?: (queue: AgentMessageQueue) => void | Promise<void>;
   },
 ) {
   const accepted = await submitAgentEntry(input);
@@ -378,6 +381,7 @@ export async function runAgentEntry(
       await input.onBudgetWarning(warning);
     }
   };
+  let observedQueue = "";
   const observeActivities = async (projection: unknown) => {
     if (!input.onActivity) return;
     for (const activity of nativeUiView(projection).activities) {
@@ -423,6 +427,15 @@ export async function runAgentEntry(
         }
       }
       await observeBudgetWarning();
+      const queue = taskOutput(row.id)?.messageQueue;
+      if (
+        queue &&
+        input.onMessageQueue &&
+        JSON.stringify(queue) !== observedQueue
+      ) {
+        observedQueue = JSON.stringify(queue);
+        await input.onMessageQueue(queue);
+      }
       await observeActivities(row.uiProjection);
       await observePrompts(task);
       if (settled(row.state)) return { task, path };
@@ -478,13 +491,28 @@ export async function runAgentEntry(
     throw error;
   }
 }
-export function agentEntryResult(task: Task, path: string) {
+export function agentEntryResult(
+  task: Task,
+  path: string,
+  includeQueuedReplies = false,
+) {
   const text = task.artifacts
-    .flatMap((a) =>
-      a.parts.flatMap((p) =>
-        p.content?.$case === "text" ? [p.content.value] : [],
-      ),
-    )
+    .flatMap((a) => {
+      const queued =
+        includeQueuedReplies &&
+        typeof a.metadata?.toolplaneQueuedReplyText === "string"
+          ? a.metadata.toolplaneQueuedReplyText
+          : "";
+      return [
+        ...(queued ? [queued] : []),
+        ...a.parts.flatMap((p) =>
+          p.content?.$case === "text" &&
+          (!queued || !isSilentAgentReply(p.content.value))
+            ? [p.content.value]
+            : [],
+        ),
+      ];
+    })
     .join("\n\n");
   const detail = task.status?.message?.parts
     .flatMap((p) => (p.content?.$case === "text" ? [p.content.value] : []))

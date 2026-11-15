@@ -62,6 +62,16 @@ import {
   publishTaskStage,
   notifyTaskOutput,
 } from "@/lib/agents/execution/live-output";
+import { persistChannelInboundEvent } from "@/lib/agents/channel-inbound-queue";
+import {
+  queueRunningChannelMessages,
+  settleQueuedChannelMessage,
+} from "@/lib/agents/channel-message-queue";
+import {
+  registerAgentMessageQueue,
+  AgentMessageQueueError,
+  type QueuedAgentMessage,
+} from "@/lib/agents/execution/message-queue";
 function executionRequest(
   agent: string,
   conversationId: string,
@@ -413,6 +423,133 @@ async function piCommandChannel() {
     });
   return { agent, channel, run };
 }
+
+it("keeps channel follow-ups durable on an ended-round race and rechecks sender authorization before queueing", async () => {
+  // Exercise durable ingress and sender policy, not revision publication or task
+  // admission: piCommandChannel() also prepares the SDK on its cold first use.
+  const channel = await db.agentChannelConnection.create({
+    data: {
+      workspaceId: workspace.id,
+      agentId,
+      platform: "weixin",
+      name: "Follow-up queue",
+      credentials: {},
+      inboundTokenHash: randomUUID(),
+      inboundTokenSecret: encryptSecretText("queue-fixture-token"),
+      inboundTokenPrefix: "queue-fixture",
+      status: "running",
+      openToAll: true,
+      a2aActorId: assertDefined(identity.user).id,
+    },
+  });
+  const sessionKey = `channel:${channel.id}:pi-commands-user`;
+  const conversation = await db.conversation.create({
+    data: { agentId, title: "Queue fixture", runtimeSessionKey: sessionKey },
+  });
+  const conversationId = conversation.id;
+  const input = {
+    connectionId: channel.id,
+    workspaceId: workspace.id,
+    queueKey: sessionKey,
+    dedupeKey: randomUUID(),
+    kind: "callback" as const,
+    payload: {
+      workspaceId: workspace.id,
+      agentId,
+      sandboxId: channel.sandboxId,
+      body: {
+        message: "The next message",
+        source: {
+          platform: "weixin",
+          chatId: "pi-commands-user",
+          userId: "external-sender-not-platform-actor",
+          messageId: randomUUID(),
+        },
+      },
+    },
+  };
+  const saved = await persistChannelInboundEvent(input);
+  expect((await persistChannelInboundEvent(input)).event.id).toBe(
+    saved.event.id,
+  );
+  let ended = true;
+  const delivered: QueuedAgentMessage[] = [];
+  const dispose = registerAgentMessageQueue({
+    workspaceId: workspace.id,
+    agentId,
+    conversationId,
+    actorId: assertDefined(identity.user).id,
+    taskId: "channel-queue-transport-fixture",
+    channelId: channel.id,
+    sessionKey,
+    authorize: async () => {},
+    send: async (message) => {
+      if (ended) throw new AgentMessageQueueError("AGENT_QUEUE_NOT_RUNNING");
+      if (!message) throw new Error("Unexpected clear");
+      delivered.push(message);
+      return {
+        disposition: "queued",
+        queue: { messages: [message], pendingMessageCount: 1 },
+      };
+    },
+  });
+  try {
+    await queueRunningChannelMessages(channel.id, sessionKey);
+    expect(
+      (
+        await db.agentChannelInboundEvent.findUniqueOrThrow({
+          where: { id: saved.event.id },
+        })
+      ).status,
+    ).toBe("queued");
+    ended = false;
+    await db.agentChannelConnection.update({
+      where: { id: channel.id },
+      data: {
+        senderPolicyVersion: 2,
+        openToAll: false,
+        unauthorizedDm: "ignore",
+      },
+    });
+    await queueRunningChannelMessages(channel.id, sessionKey);
+    expect(delivered).toEqual([]);
+    await db.agentChannelConnection.update({
+      where: { id: channel.id },
+      data: { openToAll: true },
+    });
+    await queueRunningChannelMessages(channel.id, sessionKey);
+    expect(delivered).toEqual([
+      expect.objectContaining({
+        id: saved.event.id,
+        mode: "follow_up",
+        text: expect.stringContaining("The next message"),
+      }),
+    ]);
+    expect(
+      (
+        await db.agentChannelInboundEvent.findUniqueOrThrow({
+          where: { id: saved.event.id },
+        })
+      ).status,
+    ).toBe("queued");
+    await settleQueuedChannelMessage(
+      db,
+      saved.event.id,
+      channel.id,
+      conversationId,
+    );
+    expect(
+      (
+        await db.agentChannelInboundEvent.findUniqueOrThrow({
+          where: { id: saved.event.id },
+        })
+      ).status,
+    ).toBe("done");
+    expect((await persistChannelInboundEvent(input)).duplicate).toBe(true);
+  } finally {
+    dispose();
+  }
+});
 
 describe("workspace channels", () => {
   // Cold first case: ~4.9s on unmodified HEAD alone (2026-11-06), times out under full-suite load.

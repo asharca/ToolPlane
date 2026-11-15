@@ -29,11 +29,15 @@ export function useLiveTaskOutput({
   paused = false,
   onSettled,
   onRevoked,
+  onSnapshot,
+  onTranscriptChange,
 }: {
   url: string | null;
   paused?: boolean;
   onSettled?: (taskId: string) => void;
   onRevoked?: () => void;
+  onSnapshot?: (output: LiveTaskOutput | null) => void;
+  onTranscriptChange?: () => void;
 }) {
   const [state, setState] = useState<StreamState>({
     scope: url,
@@ -43,6 +47,10 @@ export function useLiveTaskOutput({
   const settled = useEffectEvent((taskId: string) => onSettled?.(taskId));
   const revoked = useEffectEvent(() => onRevoked?.());
   const deniedScope = useRef<string | null>(null);
+  const snapshot = useEffectEvent((output: LiveTaskOutput | null) =>
+    onSnapshot?.(output),
+  );
+  const transcriptChanged = useEffectEvent(() => onTranscriptChange?.());
 
   useEffect(() => {
     let alive = true;
@@ -51,6 +59,7 @@ export function useLiveTaskOutput({
     let reconnectTimer: number | undefined;
     let watchdog: number | undefined;
     let failures = 0;
+    let previousOutput: LiveTaskOutput | null = null;
     const update = (patch: Partial<StreamState>) => {
       if (!alive) return;
       setState((previous) => ({
@@ -104,6 +113,25 @@ export function useLiveTaskOutput({
           throw new Error("Invalid live output snapshot");
         }
         failures = 0;
+        const next = value.output;
+        if (
+          next &&
+          (next.taskId !== previousOutput?.taskId ||
+            next.startedAt !== previousOutput?.startedAt ||
+            (previousOutput &&
+              (!next.text.startsWith(previousOutput.text) ||
+                next.activities.length < previousOutput.activities.length ||
+                previousOutput.messageQueue?.messages.some(
+                  (message) =>
+                    !next.messageQueue?.messages.some(
+                      (item) => item.id === message.id,
+                    ),
+                ))))
+        ) {
+          transcriptChanged();
+        }
+        previousOutput = next;
+        snapshot(next);
         // Every event is authoritative, including a null snapshot after reconnect.
         update({ output: value.output, connection: "live" });
       } else if (event === "settled") {

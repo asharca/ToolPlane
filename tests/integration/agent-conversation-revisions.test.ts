@@ -9,6 +9,10 @@ import {
   POST,
 } from "@/app/api/v1/agents/[agentId]/conversations/[conversationId]/revision/route";
 import { GET as getContentDiff } from "@/app/api/v1/agents/[agentId]/revisions/diff/route";
+import {
+  POST as queueMessage,
+  DELETE as clearQueue,
+} from "@/app/api/v1/agents/[agentId]/conversations/[conversationId]/queue/route";
 
 import {
   GET as getStreamRules,
@@ -281,6 +285,72 @@ it("rejects another Agent's URL, non-current targets, and users outside the work
       })
     ).agentRevisionId,
   ).toBe(oldRevisionId);
+});
+
+it("rejects queue mutations without a running round and isolates conversation Agent/workspace ownership", async () => {
+  const { conversation } = await createSession();
+  const queue = (routeAgentId = agentId) =>
+    queueMessage(
+      new Request(
+        `http://localhost/api/v1/agents/${routeAgentId}/conversations/${conversation.id}/queue`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            mode: "steer",
+            text: "Do not persist rejected input",
+          }),
+        },
+      ),
+      {
+        params: Promise.resolve({
+          agentId: routeAgentId,
+          conversationId: conversation.id,
+        }),
+      },
+    );
+  const idle = await queue();
+  expect(idle.status).toBe(409);
+  expect(await idle.json()).toEqual({ error: "AGENT_QUEUE_NOT_RUNNING" });
+  const cleared = await clearQueue(
+    new Request("http://localhost/queue", { method: "DELETE" }),
+    {
+      params: Promise.resolve({ agentId, conversationId: conversation.id }),
+    },
+  );
+  expect(cleared.status).toBe(409);
+  expect((await queue(otherAgentId)).status).toBe(404);
+  auth.userId = outsiderId;
+  try {
+    expect((await queue()).status).toBe(404);
+  } finally {
+    auth.userId = userId;
+  }
+  auth.userId = null;
+  try {
+    expect((await queue()).status).toBe(401);
+  } finally {
+    auth.userId = userId;
+  }
+  expect(
+    await db.message.count({ where: { conversationId: conversation.id } }),
+  ).toBe(1);
+  const historical = await db.conversation.create({
+    data: {
+      agentId,
+      title: "Read-only queue fixture",
+      legacyRevisionUnresolved: true,
+    },
+  });
+  const readOnly = await queueMessage(
+    new Request("http://localhost/queue", {
+      method: "POST",
+      body: JSON.stringify({ mode: "follow_up", text: "Cannot execute" }),
+    }),
+    { params: Promise.resolve({ agentId, conversationId: historical.id }) },
+  );
+  expect(readOnly.status).toBe(410);
+  expect(await readOnly.json()).toEqual({ error: "CONVERSATION_READ_ONLY" });
 });
 it("rejects queued Work and an admitted conversation turn without moving either pin", async () => {
   const { conversation, work } = await createSession("queued");

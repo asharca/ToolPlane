@@ -318,6 +318,7 @@ export default function(pi) {
   );
   const job = {
     kind: "pi-sdk",
+    runId: "broker-queue-regression",
     binary: process.execPath,
     args: [host, configPath],
     sdkConfigPath: configPath,
@@ -391,6 +392,7 @@ export default function(pi) {
             messages: expect.any(Number),
           }),
         },
+        queue: { messages: [], pendingMessageCount: 0 },
       },
     });
     expect(response[0].result).not.toHaveProperty("state");
@@ -453,6 +455,38 @@ export default function(pi) {
     socket.write(`${JSON.stringify({ ...job, command: "/Wait" })}\n`);
     await until(() => existsSync(started));
     const descendantPid = Number(await readFile(started, "utf8"));
+    const control = (runId: string) => {
+      const { promise, resolve, reject } =
+        Promise.withResolvers<Record<string, unknown>>();
+      const client = createConnection(socketPath);
+      let output = "";
+      client.once("connect", () =>
+        client.write(
+          `${JSON.stringify({
+            ...job,
+            runId,
+            control: { type: "clear_queue" },
+          })}\n`,
+        ),
+      );
+      client.on("data", (chunk) => {
+        output += chunk;
+      });
+      client.once("error", reject);
+      client.once("end", () => resolve(JSON.parse(output.trim())));
+      return promise;
+    };
+    expect(await control("different-round")).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_QUEUE_NOT_RUNNING" },
+    });
+    expect(await control(job.runId)).toMatchObject({
+      success: true,
+      result: {
+        disposition: "cleared",
+        queue: { messages: [], pendingMessageCount: 0 },
+      },
+    });
     // A second socket must not attach to an already-running SDK request.
     const busy = await run();
     expect(busy).toEqual([

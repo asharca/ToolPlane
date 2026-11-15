@@ -45,6 +45,7 @@ import {
   type ComposerReference,
 } from "@/lib/work/composer-types";
 import type { RuntimeCommand } from "@/lib/agents/runtime-commands";
+import type { QueueMode } from "@/components/dashboard/AgentMessageQueue";
 
 const referenceIcon = {
   file: FileText,
@@ -92,6 +93,8 @@ export function WorkComposer({
   toolbarEnd,
   loading: running = false,
   onStop,
+  onRunningSubmit,
+  queuePending,
   commands = [],
 }: {
   agentId?: string;
@@ -115,6 +118,8 @@ export function WorkComposer({
   commands?: readonly RuntimeCommand[];
   loading?: boolean;
   onStop?: () => void;
+  onRunningSubmit?: (mode: QueueMode) => void;
+  queuePending?: boolean;
 }) {
   const t = useTranslations("console.workComposer");
   const agentsT = useTranslations("console.agents");
@@ -361,7 +366,7 @@ export function WorkComposer({
     setText: onDraftChange,
     textareaRef: inputRef,
     containerRef: formRef,
-    disabled: disabled || resolving,
+    disabled: disabled || resolving || running,
     rootItems,
     views,
     mentionView: endpoint ? "references" : undefined,
@@ -519,6 +524,8 @@ export function WorkComposer({
             disabled={disabled || resolving}
             loading={running}
             onStop={onStop}
+            onRunningSubmit={onRunningSubmit}
+            queuePending={queuePending}
             maxLength={20_000}
             onFocus={(event) => {
               inputRef.current = event.currentTarget;
@@ -538,7 +545,12 @@ export function WorkComposer({
                 event.keyCode !== 229
               ) {
                 event.preventDefault();
-                if (!resolving) event.currentTarget.form?.requestSubmit();
+                if (!resolving) {
+                  if (onRunningSubmit) {
+                    if (!disabled && !queuePending && draft.trim())
+                      onRunningSubmit(event.altKey ? "follow_up" : "steer");
+                  } else event.currentTarget.form?.requestSubmit();
+                }
               }
             }}
             onSelect={(event) =>
@@ -558,7 +570,7 @@ export function WorkComposer({
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                 <ComposerToolsButton
                   open={menu.open}
-                  disabled={disabled || resolving}
+                  disabled={disabled || resolving || running}
                   aria-label={agentsT("openComposerTools")}
                   title={agentsT("openComposerTools")}
                   onMouseDown={(event) => event.preventDefault()}
@@ -571,7 +583,9 @@ export function WorkComposer({
                       key={option.id}
                       type="button"
                       data-composer-shortcut={option.id}
-                      disabled={disabled || resolving || option.disabled}
+                      disabled={
+                        disabled || resolving || running || option.disabled
+                      }
                       aria-label={option.label}
                       title={option.label}
                       onClick={() => activateShortcut(option)}

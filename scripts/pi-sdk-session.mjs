@@ -303,6 +303,21 @@ function triggerRule(rule, toolCall) {
   }
 }
 let lastState;
+let queuedInputs = [];
+let queueRequest;
+let queueOperation = Promise.resolve();
+let acceptingQueue = false;
+let queueContinuation = Promise.resolve();
+const queueReceipts = new Map();
+const queueState = () => ({
+  messages: ["steer", "follow_up"].flatMap((mode) =>
+    queuedInputs
+      .filter((item) => item.mode === mode)
+      .map(({ id, mode, text }) => ({ id, mode, text })),
+  ),
+  pendingMessageCount: queuedInputs.length,
+});
+const emitQueue = () => emit({ type: "message_queue", queue: queueState() });
 const nativeUi = createNativeUi({
   getContext: () => context,
   theme,
@@ -622,6 +637,37 @@ function toolPatch(event) {
 }
 function event(event) {
   if (!active) return;
+  if (event.type === "queue_update" && queueRequest) {
+    const mode = queueRequest.type;
+    const native = mode === "steer" ? event.steering : event.followUp;
+    const known = queuedInputs.filter((item) => item.mode === mode).length;
+    if (native.length > known) {
+      queuedInputs.push({
+        id: queueRequest.messageId ?? queueRequest.id,
+        mode,
+        text: queueRequest.message,
+        injectedText: native.at(-1),
+      });
+    }
+  }
+  if (event.type === "message_start" && event.message.role === "user") {
+    const text = contentText(event.message.content);
+    let index = queuedInputs.findIndex(
+      (item) => item.mode === "steer" && item.injectedText === text,
+    );
+    if (index < 0)
+      index = queuedInputs.findIndex((item) => item.injectedText === text);
+    if (index >= 0) {
+      const [message] = queuedInputs.splice(index, 1);
+      emit({
+        type: "queued_message_consumed",
+        message: { id: message.id, mode: message.mode, text },
+        assistantText: texts.join("\n\n"),
+      });
+      texts = [];
+      emitQueue();
+    }
+  }
   if (event.type === "auto_retry_start") modelRetried = event.attempt;
   if (event.type === "message_start" && event.message?.role === "assistant")
     ruleText = "";
@@ -982,6 +1028,78 @@ async function handle(request) {
     }
     return;
   }
+  if (["steer", "follow_up", "clear_queue"].includes(request.type)) {
+    queueOperation = queueOperation
+      .catch(() => {})
+      .then(async () => {
+        if (
+          !active ||
+          !acceptingQueue ||
+          !runtime ||
+          (request.type !== "clear_queue" && !runtime.session.isStreaming)
+        ) {
+          respond(false, undefined, "PI_SDK_QUEUE_NOT_RUNNING");
+          return;
+        }
+        if (
+          request.type !== "clear_queue" &&
+          (typeof request.message !== "string" ||
+            !request.message.trim() ||
+            request.message.length > 100_000)
+        ) {
+          respond(false, undefined, "PI_SDK_QUEUE_INVALID");
+          return;
+        }
+        if (request.deduplicate && queueReceipts.has(request.messageId)) {
+          respond(true, {
+            disposition: queueReceipts.get(request.messageId),
+            queue: queueState(),
+          });
+          return;
+        }
+        if (
+          request.type !== "clear_queue" &&
+          (queuedInputs.length >= 32 ||
+            Buffer.byteLength(JSON.stringify(queueState())) +
+              Buffer.byteLength(JSON.stringify(request.message)) >
+              1024 * 1024)
+        ) {
+          respond(false, undefined, "PI_SDK_QUEUE_FULL");
+          return;
+        }
+        try {
+          let disposition;
+          if (request.type === "clear_queue") {
+            runtime.session.clearQueue();
+            queuedInputs = [];
+            disposition = "cleared";
+          } else {
+            queueRequest = request;
+            disposition = await runtime.session[
+              request.type === "steer" ? "steer" : "followUp"
+            ](request.message);
+            if (disposition === "queued" && !runtime.session.isStreaming) {
+              const pending = runtime.session.clearQueue();
+              queueContinuation = (async () => {
+                for (const text of [...pending.steering, ...pending.followUp]) {
+                  if (aborted) break;
+                  await runtime.session.sendUserMessage(text);
+                }
+              })();
+            }
+          }
+          if (request.deduplicate && typeof request.messageId === "string")
+            queueReceipts.set(request.messageId, disposition);
+          emitQueue();
+          respond(true, { disposition, queue: queueState() });
+        } catch {
+          respond(false, undefined, "PI_SDK_QUEUE_INVALID");
+        } finally {
+          queueRequest = undefined;
+        }
+      });
+    return;
+  }
   if (active) {
     respond(false, undefined, "PI_SDK_BUSY");
     return;
@@ -1026,6 +1144,8 @@ async function handle(request) {
   remindedRules = new Set();
   ruleDeliveries = [];
   turnExistingEntries = undefined;
+  acceptingQueue = true;
+  queueReceipts.clear();
   let terminal;
   try {
     if (initialError) fail(initialError);
@@ -1114,6 +1234,8 @@ async function handle(request) {
     do {
       current = runtime.session;
       await current.waitForIdle();
+      await queueOperation;
+      await queueContinuation;
     } while (current !== runtime.session);
     await Promise.all(ruleDeliveries);
     if (aborted) fail("PI_SDK_ABORTED");
@@ -1139,6 +1261,7 @@ async function handle(request) {
       result: {
         text,
         commands: commands(),
+        queue: queueState(),
         ...(usage ? { usage } : {}),
         ...(sessionEntries() ? { sessionEntries: sessionEntries() } : {}),
         ...contextBreakdownResult(runtime.session),
@@ -1190,6 +1313,13 @@ async function handle(request) {
           : undefined,
     };
   } finally {
+    acceptingQueue = false;
+    await queueOperation;
+    if (queuedInputs.length) {
+      runtime?.session.clearQueue();
+      queuedInputs = [];
+      emitQueue();
+    }
     nativeUi.cancel();
     await nativeUi.drain();
     context = undefined;

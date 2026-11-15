@@ -1010,16 +1010,29 @@ async function runLoadedAgentMessage(params: {
     );
     const runtimeParts = agentEntryRuntimeParts(result.task);
     params.signal?.throwIfAborted();
+    const previous = await db.message.findFirst({
+      where: { conversationId: conversation.id },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      select: { createdAt: true },
+    });
     await db.message.create({
       data: {
         id: assistantMessageId,
         conversationId: conversation.id,
         role: "assistant",
+        createdAt: new Date(
+          Math.max(Date.now(), (previous?.createdAt.getTime() ?? 0) + 1),
+        ),
         parts: [{ type: "text", text: replyText }, ...runtimeParts],
       },
     });
     notifyTaskOutput(result.task.id);
-    return response(conversation.id, replyText);
+    return response(
+      conversation.id,
+      params.connectionId
+        ? agentEntryResult(result.task, result.path, true)
+        : replyText,
+    );
   } catch (error) {
     const failureCode =
       error instanceof Error
@@ -1052,11 +1065,19 @@ async function runLoadedAgentMessage(params: {
         if (replay.success)
           startedAt = replay.data.metadata.toolplaneLiveOutput.startedAt;
       }
+      const previous = await db.message.findFirst({
+        where: { conversationId: persistedConversationId },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { createdAt: true },
+      });
       await db.message.create({
         data: {
           id: assistantMessageId,
           conversationId: persistedConversationId,
           role: "assistant",
+          createdAt: new Date(
+            Math.max(Date.now(), (previous?.createdAt.getTime() ?? 0) + 1),
+          ),
           parts: [
             ...(persistedTaskId
               ? [

@@ -74,6 +74,8 @@ async function request() {
 
 async function serve() {
   let child, active, sdkRequestId, idle;
+  let activeRunId;
+  const controls = new Map();
   let buffer = "",
     stopping = false;
   const send = (event) => active?.write(`${JSON.stringify(event)}\n`);
@@ -101,6 +103,35 @@ async function serve() {
       socket.removeAllListeners("data");
       try {
         const job = JSON.parse(requestBuffer.slice(0, newline));
+        if (job.control) {
+          if (
+            !active ||
+            !child ||
+            job.runId !== activeRunId ||
+            job.kind !== "pi-sdk" ||
+            job.signature !== input.signature ||
+            job.statePath !== input.statePath ||
+            job.cwd !== input.cwd
+          ) {
+            socket.end(
+              `${JSON.stringify({ type: "toolplane_sdk_response", success: false, error: { code: "PI_SDK_QUEUE_NOT_RUNNING", message: "PI_SDK_QUEUE_NOT_RUNNING" } })}\n`,
+            );
+            return;
+          }
+          if (
+            !["steer", "follow_up", "clear_queue"].includes(job.control.type)
+          ) {
+            socket.end(
+              `${JSON.stringify({ type: "toolplane_sdk_response", success: false, error: { code: "PI_SDK_QUEUE_INVALID", message: "PI_SDK_QUEUE_INVALID" } })}\n`,
+            );
+            return;
+          }
+          const id = randomUUID();
+          controls.set(id, socket);
+          socket.once("close", () => controls.delete(id));
+          child.stdin.write(`${JSON.stringify({ ...job.control, id })}\n`);
+          return;
+        }
         if (active) {
           socket.end(
             `${JSON.stringify({ type: "toolplane_sdk_response", success: false, error: { code: "PI_SDK_BUSY", message: "PI_SDK_BUSY" } })}\n`,
@@ -109,6 +140,7 @@ async function serve() {
         }
         active = socket;
         sdkRequestId = randomUUID();
+        activeRunId = job.runId;
         clearTimeout(idle);
         if (
           job.kind !== "pi-sdk" ||
@@ -176,7 +208,8 @@ async function serve() {
           if (active) send(event);
           continue;
         }
-        if (!active || event.id !== sdkRequestId) continue;
+        const controlSocket = controls.get(event.id);
+        if (!controlSocket && (!active || event.id !== sdkRequestId)) continue;
         const result = event.result && {
           text: event.result.text,
           commands: event.result.commands,
@@ -194,6 +227,10 @@ async function serve() {
           ...(event.result.commandResult
             ? { commandResult: event.result.commandResult }
             : {}),
+          ...(event.result.disposition
+            ? { disposition: event.result.disposition }
+            : {}),
+          ...(event.result.queue ? { queue: event.result.queue } : {}),
         };
         const code = /^PI_[A-Z0-9_]{1,80}$/.test(event.error?.code)
           ? event.error.code
@@ -204,6 +241,20 @@ async function serve() {
           )
             ? event.error.reason
             : undefined;
+        if (controlSocket) {
+          controls.delete(event.id);
+          controlSocket.end(
+            `${JSON.stringify({
+              type: event.type,
+              id: event.id,
+              success: event.success === true,
+              ...(event.success === true
+                ? { result }
+                : { error: { code, message: code } }),
+            })}\n`,
+          );
+          continue;
+        }
         // Tool discovery runs before the model request. Reload the persisted
         // session with fresh definitions instead of failing this user's turn.
         if (!event.success && code === "PI_SDK_TOOLSET_CHANGED") {
@@ -242,6 +293,7 @@ async function serve() {
         const socket = active;
         active = undefined;
         sdkRequestId = undefined;
+        activeRunId = undefined;
         socket.end();
         idle = setTimeout(stop, 120000);
       }
@@ -276,6 +328,8 @@ async function serve() {
       } catch {}
     }
     active?.end();
+    for (const socket of controls.values()) socket.end();
+    controls.clear();
     active = undefined;
     server.close();
     await unlink(socketPath).catch(() => {});
