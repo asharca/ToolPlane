@@ -15,6 +15,7 @@ import type {
 import { z } from "zod";
 import { buildModel, type ProviderConfig } from "./model";
 import { parseJson } from "./public-api/body";
+import type { AgentSecretObfuscator } from "./secret-obfuscation";
 
 export const ANTHROPIC_GATEWAY_MAX_BODY_BYTES = 32 * 1024 * 1024;
 
@@ -445,6 +446,7 @@ function streamResponse(
   first: AssistantMessageEvent,
   iterator: AsyncIterator<AssistantMessageEvent>,
   abort: AbortController,
+  secrets?: AgentSecretObfuscator,
 ): Response {
   const encoder = new TextEncoder();
   const active = new Map<number, ActiveBlock>();
@@ -460,7 +462,10 @@ function streamResponse(
         if (closed) return;
         write("error", {
           type: "error",
-          error: { type: "api_error", message },
+          error: {
+            type: "api_error",
+            message: secrets ? "Model request failed." : message,
+          },
         });
         closed = true;
         controller.close();
@@ -657,6 +662,7 @@ async function parsedRequest<T>(req: Request, schema: z.ZodType<T>) {
 export async function handleAnthropicMessages(
   req: Request,
   provider: GatewayProvider,
+  secrets?: AgentSecretObfuscator,
 ): Promise<Response> {
   const parsed = await parsedRequest(req, MessagesRequestSchema);
   if (!parsed.ok) return parsed.response;
@@ -682,15 +688,24 @@ export async function handleAnthropicMessages(
       : {}),
     maxRetries: 0,
     signal,
-    onPayload: (payload) =>
-      applyToolChoice(payload, body.tool_choice, provider.format, names),
+    onPayload: (payload) => {
+      const chosen = applyToolChoice(
+        payload,
+        body.tool_choice,
+        provider.format,
+        names,
+      );
+      return secrets ? secrets.redactBody(chosen ?? payload) : chosen;
+    },
   });
 
   if (!body.stream) {
     const message = await modelStream.result();
     if (message.stopReason === "error" || message.stopReason === "aborted") {
       return errorResponse(
-        message.errorMessage ?? "Model request failed.",
+        secrets
+          ? "Model request failed."
+          : (message.errorMessage ?? "Model request failed."),
         502,
         "api_error",
       );
@@ -708,12 +723,14 @@ export async function handleAnthropicMessages(
     );
   if (first.value.type === "error") {
     return errorResponse(
-      first.value.error.errorMessage ?? "Model request failed.",
+      secrets
+        ? "Model request failed."
+        : (first.value.error.errorMessage ?? "Model request failed."),
       502,
       "api_error",
     );
   }
-  return streamResponse(body, names, first.value, iterator, abort);
+  return streamResponse(body, names, first.value, iterator, abort, secrets);
 }
 
 export async function handleAnthropicCountTokens(

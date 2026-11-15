@@ -27,6 +27,7 @@ export async function resolveAgentRuntimeGrant(
   mcpToolPolicy: PiPackageMcpToolPolicy;
   runtimeKind: "pi-sdk";
   model: string | null;
+  secretObfuscation: boolean;
   /** Attached sandbox ID → tools allowed by both the pinned revision and the live attachment. */
   externalSandboxTools: Record<string, SandboxMcpTool[]>;
 } | null> {
@@ -284,6 +285,7 @@ export async function resolveAgentRuntimeGrant(
         mcpToolPolicy,
         externalSandboxTools: externalTools,
         runtimeKind: revision.config.runtimeKind,
+        secretObfuscation: revision.config.secretObfuscation === true,
         model:
           modelTarget?.model ??
           token.modelOverride?.model ??

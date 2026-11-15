@@ -7,6 +7,7 @@ export type RevisionChangedField =
   | "reasoningEffort"
   | "streamRules"
   | "toolApproval"
+  | "secretObfuscation"
   | "maxSteps"
   | "packages"
   | "knowledge"

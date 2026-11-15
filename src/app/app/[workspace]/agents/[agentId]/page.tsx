@@ -169,6 +169,7 @@ export default async function AgentDetailPage({
           toolApproval: ToolApprovalPolicySchema.parse(
             agent.toolApproval ?? { mode: "off" },
           ),
+          secretObfuscation: agent.secretObfuscation,
           providers: providers.map((provider) => ({
             id: provider.id,
             name: provider.name,

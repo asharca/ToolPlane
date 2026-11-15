@@ -224,6 +224,11 @@ export function diffAgentRevisions(
       a.runtimeKind === "pi-sdk" ? (a.toolApproval ?? { mode: "off" }) : null,
       b.runtimeKind === "pi-sdk" ? (b.toolApproval ?? { mode: "off" }) : null,
     ],
+    [
+      "secretObfuscation",
+      a.secretObfuscation ?? false,
+      b.secretObfuscation ?? false,
+    ],
     ["packages", a.packages, b.packages],
     ["knowledge", a.knowledgeBaseIds, b.knowledgeBaseIds],
     [

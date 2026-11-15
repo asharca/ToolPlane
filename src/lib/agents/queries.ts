@@ -260,6 +260,7 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       maxSteps: true,
       reasoningEffort: true,
       toolApproval: true,
+      secretObfuscation: true,
       provider: { select: { name: true } },
       servers: {
         select: { deploymentId: true, allowedToolNames: true },

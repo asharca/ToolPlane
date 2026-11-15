@@ -275,6 +275,7 @@ export async function captureAgentRevisionConfig(
       : {}),
     ...(agent.streamRules != null ? { streamRules: agent.streamRules } : {}),
     toolApproval: agent.toolApproval ?? { mode: "off" },
+    secretObfuscation: agent.secretObfuscation,
     disabledBuiltinTools: agent.disabledBuiltinTools,
     optionalBuiltinTools: agent.optionalBuiltinTools,
     sandboxTemplateId: template?.id ?? null,
@@ -1072,6 +1073,7 @@ export async function resolvePinnedAgent<
       maxSteps: config.maxSteps,
       reasoningEffort: config.reasoningEffort ?? null,
       toolApproval: config.toolApproval ?? { mode: "off" },
+      secretObfuscation: config.secretObfuscation ?? false,
       disabledBuiltinTools: [
         ...new Set([
           ...config.disabledBuiltinTools,

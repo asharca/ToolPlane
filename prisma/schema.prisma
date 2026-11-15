@@ -624,6 +624,7 @@ model Agent {
   reasoningEffort         String?
   streamRules             Json?
   toolApproval            Json?
+  secretObfuscation       Boolean                  @default(true)
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
   servers                 AgentServer[]

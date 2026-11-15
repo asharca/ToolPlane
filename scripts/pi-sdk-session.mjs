@@ -125,6 +125,8 @@ const compact = (session, instructions) =>
 // sandbox cannot reach ToolPlane; upstream outages arrive as proxied HTTP statuses.
 function modelFailureReason(errorMessage) {
   const message = String(errorMessage ?? "");
+  if (/\bTOOLPLANE_MODEL_GATEWAY_FAILED\b/.test(message))
+    return "GATEWAY_ERROR";
   const status =
     /^([1-5]\d\d)\b/.exec(message)?.[1] ??
     /\(([1-5]\d\d)\):/.exec(message)?.[1];

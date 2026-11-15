@@ -182,6 +182,8 @@ const PiRevisionConfigSchema = z
     reasoningEffort: z.enum(REASONING_LEVELS).optional(),
     streamRules: StreamRulesSchema.optional(),
     toolApproval: ToolApprovalPolicySchema.optional(),
+    // No default: historical revision JSON and checksums remain unchanged.
+    secretObfuscation: z.boolean().optional(),
     maxSteps: z
       .number()
       .int()
