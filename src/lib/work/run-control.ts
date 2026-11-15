@@ -43,6 +43,9 @@ export type WorkOutputActivity = {
   durationMs?: number;
   input?: unknown;
   output?: unknown;
+  patch?: string;
+  truncated?: boolean;
+  firstChangedLine?: number;
   isError?: boolean;
   /** Length of the streamed reply text when this activity began. */
   textOffset?: number;

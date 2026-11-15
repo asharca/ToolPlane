@@ -80,6 +80,9 @@ type WorkToolPart = {
   durationMs?: number;
   input: unknown;
   output?: unknown;
+  patch?: string;
+  truncated?: boolean;
+  firstChangedLine?: number;
   isError: boolean;
   status: "running" | "completed" | "failed" | "cancelled";
   source?: SandboxRuntimeActivity["source"];
@@ -456,6 +459,13 @@ async function executeWork(workSessionId: string) {
           ? (previous?.input ?? null)
           : activity.input,
       ...(activity.output === undefined ? {} : { output: activity.output }),
+      ...(activity.patch === undefined
+        ? {}
+        : {
+            patch: activity.patch,
+            truncated: activity.truncated === true,
+            firstChangedLine: activity.firstChangedLine,
+          }),
       isError: activity.status === "failed" || activity.isError === true,
       status: activity.status,
       ...((activity.source ?? previous?.source)
@@ -481,6 +491,13 @@ async function executeWork(workSessionId: string) {
       ...(next.durationMs === undefined ? {} : { durationMs: next.durationMs }),
       input: next.input,
       ...(next.output === undefined ? {} : { output: next.output }),
+      ...(next.patch === undefined
+        ? {}
+        : {
+            patch: next.patch,
+            truncated: next.truncated,
+            firstChangedLine: next.firstChangedLine,
+          }),
       isError: next.isError,
     });
   };

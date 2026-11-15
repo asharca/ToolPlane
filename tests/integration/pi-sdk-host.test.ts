@@ -1090,6 +1090,49 @@ describe("official Pi SDK headless session host", () => {
     expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("1");
     await host.stop();
   }, 60000);
+  it("emits unified edit patches independently of the bounded tool output", async () => {
+    const f = await setup();
+    await writeFile(join(f.workspace, "edit.txt"), "before\n");
+    f.behavior.tool = "edit";
+    f.behavior.toolArgs = JSON.stringify({
+      path: "edit.txt",
+      edits: [{ oldText: "before", newText: "after" }],
+    });
+    const host = await f.launch({ defaultTools: ["edit"] });
+    expect((await host.request("prompt", "Edit the file")).success).toBe(true);
+    expect(await readFile(join(f.workspace, "edit.txt"), "utf8")).toBe(
+      "after\n",
+    );
+    expect(host.events).toContainEqual(
+      expect.objectContaining({
+        type: "tool_execution_end",
+        toolName: "edit",
+        truncated: false,
+        patch: expect.stringMatching(/@@[\s\S]*-before[\s\S]*\+after/),
+        firstChangedLine: 1,
+      }),
+    );
+    f.behavior.toolArgs = JSON.stringify({
+      path: "edit.txt",
+      edits: [
+        {
+          oldText: "after",
+          newText: `${f.context.runtimeToken}\n${"变".repeat(30_000)}`,
+        },
+      ],
+    });
+    expect((await host.request("prompt", "Make a large edit")).success).toBe(
+      true,
+    );
+    const last = host.events
+      .filter((event) => event.type === "tool_execution_end")
+      .at(-1);
+    expect(last).toMatchObject({ toolName: "edit", truncated: true });
+    expect(Buffer.byteLength(String(last?.patch))).toBeLessThanOrEqual(65_536);
+    expect(String(last?.patch)).toContain("[REDACTED]");
+    expect(String(last?.patch)).not.toContain(f.context.runtimeToken);
+    expect(String(last?.patch)).not.toContain("\uFFFD");
+  }, 60000);
   it("runs real tools, preserves custom branch state on restart and isolates stdout", async () => {
     const f = await setup(),
       host = await f.launch();

@@ -15,6 +15,7 @@ import {
   toolResultUnboundedHeight,
 } from "@/components/dashboard/ConversationMessage";
 import { CopyButton } from "@/components/dashboard/CopyButton";
+import { ConversationToolDiff } from "./ConversationToolDiff";
 import { SubagentActivity } from "./agents/SubagentActivity";
 import { HookActivity, HookActivitySchema } from "./agents/HookActivity";
 import {
@@ -143,12 +144,16 @@ function ConversationToolStep({ step }: { step: ToolStep }) {
       (step.status === "failed" && step.platformFailure === true),
   );
   const userToggle = useRef(false);
+  const hasPatch = typeof step.patch === "string" && step.patch.length > 0;
   // Collapsed steps skip payload formatting and code highlighting entirely.
   const input =
     !open || step.input === undefined ? undefined : formatPayload(step.input);
-  const plainOutput = open ? toolOutputText(step.output) : undefined;
+  const plainOutput =
+    open && (!hasPatch || step.status === "failed")
+      ? toolOutputText(step.output)
+      : undefined;
   const output =
-    !open || step.output === undefined
+    !open || (hasPatch && step.status !== "failed") || step.output === undefined
       ? undefined
       : (plainOutput ?? formatPayload(step.output));
   return (
@@ -200,6 +205,13 @@ function ConversationToolStep({ step }: { step: ToolStep }) {
               >
                 {input}
               </ToolPayload>
+            ) : null}
+            {step.patch ? (
+              <ConversationToolDiff
+                patch={step.patch}
+                truncated={step.truncated}
+                firstChangedLine={step.firstChangedLine}
+              />
             ) : null}
             {output !== undefined ? (
               <ToolPayload

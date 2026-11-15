@@ -216,6 +216,9 @@ type WorkPart = {
   durationMs?: number;
   input?: unknown;
   output?: unknown;
+  patch?: string;
+  truncated?: boolean;
+  firstChangedLine?: number;
   isError?: boolean;
   status?: "running" | "completed" | "failed" | "cancelled";
   runtimeKind?: string;
@@ -237,6 +240,9 @@ type WorkActivity = {
   durationMs?: number;
   input?: unknown;
   output?: unknown;
+  patch?: string;
+  truncated?: boolean;
+  firstChangedLine?: number;
   isError?: boolean;
   source?: SubagentSource;
   textOffset?: number;
@@ -663,6 +669,9 @@ function WorkTranscript({
                       durationMs: activity.durationMs,
                       input: activity.input,
                       output: activity.output,
+                      patch: activity.patch,
+                      truncated: activity.truncated,
+                      firstChangedLine: activity.firstChangedLine,
                       isError: activity.isError,
                       status: activity.status,
                     };
