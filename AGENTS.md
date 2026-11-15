@@ -134,7 +134,7 @@ ToolPlane is a self-hosted control plane for tools, MCP servers, skills, toolkit
 sandboxes, and agents. Route groups do not appear in URLs:
 
 - `src/app/(site)/`: static public product site; do not read real marketplace or
-  personal data here. Use `src/lib/marketing/content.ts`, not `src/lib/queries/`
+  personal data here. Use `src/lib/marketing/content.ts`, not database query modules
   or the database. The layout supplies Header/Footer.
 - `src/app/app/(auth)/`: `/app/login` and `/app/signup`.
 - `src/app/app/[workspace]/`: authenticated console with `DashboardChrome`;
@@ -150,8 +150,8 @@ sandboxes, and agents. Route groups do not appear in URLs:
 | Shared UI | Baseline: beUI registry [`llms.txt`](https://asharca.github.io/ui/llms.txt) (index, per-component detail/raw source, Markdown docs). Before building UI, look for a matching registry component and vendor its original source into `src/components/motion|agents|blocks/` and `src/lib/`; never restyle vendored source or start a second component library. See [UI library](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/UI_LIBRARY). Operation results use `notify()` from `src/components/dashboard/Toaster.tsx` (Animated Toast Stack). |
 | MCP runtime/gateway | `src/lib/process/supervisor.ts`, `mcp-client.ts`, `src/app/api/v1/mcp/[deploymentId]/rpc/route.ts` |
 | Auth | `src/lib/auth/request-user.ts`, `session.ts`, `tokens.ts` |
-| Toolkit retirement and client registration | `src/lib/toolkits/cutover.ts`; [runtime operations](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS); `src/lib/pi-packages/installations.ts`. Legacy execution/tokens are retired; conversion does not grant new authority. |
-| GitHub Plugin Center | `src/lib/market/github-registry*.ts`; [GitHub plugin center](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS#user-content-github-插件中心). Catalog contents only come from indexed fixed GitHub commits; preserve immutable pins and workspace-private authoring/uploads. No manual catalog publish/ZIP/npm intake paths. |
+| Toolkit retirement and client registration | `src/lib/toolkits/cutover.ts`; [runtime operations](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS); `src/lib/plugins/installs.ts`. Legacy execution/tokens are retired; conversion does not grant new authority. |
+| GitHub Plugin Center | `src/lib/plugins/github.ts`, `indexer.ts`, `sources.ts`; [GitHub plugin center](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS#user-content-github-插件中心). Catalog contents only come from indexed fixed GitHub commits; preserve immutable pins and workspace-private authoring/uploads. No manual catalog publish/ZIP/npm intake paths. |
 | Agent revisions and turns | `src/lib/agents/revisions.ts`, `sandbox-turn.ts`, `conversation-sandbox.ts`; Pi (`pi-sdk`) is the only executable kernel. OMP and other retired runtimes retain read-only history. Sessions pin applied revisions and own separate directories in one persistent sandbox per Agent; package pins remain conversation/context-scoped. OMP-to-Pi import: `omp-import.ts`, `scripts/export-omp-config.mjs`; incompatible native capabilities must not silently migrate. |
 | Assistant chat and tools | `src/lib/chat/service.ts`, `run-control.ts`, `tools.ts`; independent Assistant revisions and durable Runs, remote MCP only, no Agent/Skill/package/stdio/A2A execution. |
 | Agent chat and tools | `src/app/api/v1/agents/[agentId]/chat/route.ts`; `src/lib/agents/resolve.ts`, `tools.ts`, `mutations.ts` |
@@ -159,7 +159,7 @@ sandboxes, and agents. Route groups do not appear in URLs:
 | Messaging channels | [Messaging platforms](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/AGENT_MESSAGING_PLATFORMS); `src/lib/agents/channel-*.ts` |
 | Public agent API | [Agent public API](https://asharca.github.io/toolplane-docs/docs/zh/api/docs/AGENT_PUBLIC_API); `src/lib/agents/public-api/` |
 | Workspace control MCP | [Agent Control MCP](https://asharca.github.io/toolplane-docs/docs/zh/api/docs/AGENT_CONTROL_MCP); `src/lib/agents/control-mcp.ts`, `control-service.ts`; creation accepts `pi-sdk` and produces an unauthorized draft requiring explicit revision review/application. |
-| Agent market | `src/lib/agents/market*.ts`; immutable releases use allowlisted manifests without secrets |
+| Agents in plugin packages | `src/lib/plugins/agent-sync.ts`, `src/lib/pi-packages/manifest.ts`; immutable releases use allowlisted manifests without secrets. The former Agent market was removed. |
 
 MCP deployments run real processes/containers. Reconcile persisted deployment
 status with supervisor live state; observability comes from `LogEvent` (see

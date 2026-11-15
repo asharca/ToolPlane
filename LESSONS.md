@@ -95,7 +95,8 @@
 
 - **错误与原因**：2026-10-27 只读调查确认，原生工具审批在判断自动授权之前累计统计任务全部回执，导致第 33 个唯一调用被拒绝；已消费和旧租约回执也占用了所谓审批上限。
 - **下次怎么验证**：真实审批链路覆盖超过 32 次自动调用及逐次人工批准；验证当前未过期 pending/approved 人工队列仍有界，消费、拒绝、过期与换租约可释放容量，历史不能遮住待处理审批；继续验证重复消费、参数变化和旧租约拒绝。
-- **证据**：[审批实现](src/lib/a2a/tool-approvals.ts)、[核心集成回归](tests/integration/a2a-local.test.ts)中的 native tool approval decisions、[队列与回执语义](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/A2A_INGRESS_APPROVALS#user-content-执行前审批)。本条记录已确认根因，不代表回归检查已执行或生产已部署。
+- **证据**：审批实现 `src/lib/a2a/tool-approvals.ts`、`tests/integration/a2a-local.test.ts` 中的 native tool approval decisions、[队列与回执语义](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/A2A_INGRESS_APPROVALS#user-content-执行前审批)。本条记录已确认根因，不代表回归检查已执行或生产已部署。
+- **失效说明**：上述实现与回归已在 v0.33.0（`439f7610`）随原生工具审批一起移除，路径仅作历史证据；重新引入任何工具审批时，规则仍适用。
 - **确认日期**：2026-10-27。
 
 ### TP-L006：插件切换必须保留执行撤销与真实快照路径语义
