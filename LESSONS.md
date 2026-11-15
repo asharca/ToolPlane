@@ -87,7 +87,8 @@
 - **Node 版本复发（2026-11-15，Pi 1.5.2 升级）**：继承 PATH 的 `/usr/bin/node` 为 18.19.1，`pnpm install` 先报 `Unsupported engine` 并 `Recreating node_modules`，随后因 frozen lockfile 失败，留下空的 `node_modules`，`tsc` 随之找不到。改为前置 `~/.nvm/versions/node/v26.12.1/bin` 后重新安装和类型检查通过。下次在执行任何 pnpm 安装前先核对 `node -v` ≥ 26.12.1；看到 `Unsupported engine` 立即停止，不继续依赖该 shell 的安装结果。
 - **共享开发实例补充（2026-11-07）**：在用户正在使用的 :3000 上验收「我的插件」批量操作后，两个 OMP 插件安装变为已卸载；我先按自己的点击误判并用 SQL 恢复，随后拦截 server action 请求体重放同一点击序列，确认本次只发出 OcrPlane 的更新，才撤回恢复、还原用户的卸载结果。共享实例上出现意外变更时，先用请求载荷、操作时间或日志确认操作来源，再决定是否回滚；能隔离时改用独立实例或独立库，破坏性批量操作只选验收专用数据。
 - **分片 CI 验收补充（2026-11-12）**：CI 优化 PR [#224](https://github.com/asharca/ToolPlane/pull/224) 的完整运行 [43152634170](https://github.com/asharca/ToolPlane/actions/runs/43152634170) 在普通 validate 通过后仍发现会话反馈 GET 消耗旧测试的顺序 fetch mock、worker mock 缺少当前查询依赖，以及集成 fixture 超时。分片文件集合完整不代表行为通过；调整执行拓扑后必须跑真实完整 CI，HTTP fixture 按请求身份响应，禁止把只读请求误作越权写入或为求绿跳过失败用例。
-- **确认日期**：2026-10-26；2026-11-11（独立实例环境继承复发）。
+- **多 worktree 并行验收补充（2026-11-15）**：同时为多个 worktree 启动独立 dev 实例验收时出现三类假故障：① 在同一 worktree 交替执行 `pnpm typecheck`（`next typegen`）与 `pnpm dev` 后，dev 路由表多次缺失动态 API（`/api/v1/agent-runtime/tasks/{id}/tools`、feedback、A2A console 等返回 404，handler 未被调用，`app-paths-manifest.json` 中没有这些路由），Work 因此报“MCP server 不可用”或“无法确认操作是否成功”，一度被误判为功能回归；删除 `.next` 后重启即恢复（触发机制未完全确认）；② 所有实例都在 `localhost` 不同端口上，浏览器按主机名共享 cookie，累积到 HTTP 431 后页面与 server action 全部异常；③ 端口被其他项目占用时 readiness 返回的是别的服务。下次：类型检查后先删 `.next` 再启动 dev 实例；验收前清理 `localhost` cookie 或为每个实例使用独立浏览器上下文；启动前确认端口归属。判断回归前先看路由是否真的执行（`http.request` 日志）。
+- **确认日期**：2026-10-26；2026-11-11（独立实例环境继承复发）；2026-11-15（多实例并行验收）。
 
 ### TP-L005：人工待处理队列上限不能累计计算执行回执
 
@@ -95,7 +96,8 @@
 
 - **错误与原因**：2026-10-27 只读调查确认，原生工具审批在判断自动授权之前累计统计任务全部回执，导致第 33 个唯一调用被拒绝；已消费和旧租约回执也占用了所谓审批上限。
 - **下次怎么验证**：真实审批链路覆盖超过 32 次自动调用及逐次人工批准；验证当前未过期 pending/approved 人工队列仍有界，消费、拒绝、过期与换租约可释放容量，历史不能遮住待处理审批；继续验证重复消费、参数变化和旧租约拒绝。
-- **证据**：[审批实现](src/lib/a2a/tool-approvals.ts)、[核心集成回归](tests/integration/a2a-local.test.ts)中的 native tool approval decisions、[队列与回执语义](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/A2A_INGRESS_APPROVALS#user-content-执行前审批)。本条记录已确认根因，不代表回归检查已执行或生产已部署。
+- **证据**：审批实现 `src/lib/a2a/tool-approvals.ts`、`tests/integration/a2a-local.test.ts` 中的 native tool approval decisions、[队列与回执语义](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/A2A_INGRESS_APPROVALS#user-content-执行前审批)。本条记录已确认根因，不代表回归检查已执行或生产已部署。
+- **失效说明**：上述实现与回归已在 v0.33.0（`439f7610`）随原生工具审批一起移除，路径仅作历史证据；重新引入任何工具审批时，规则仍适用。
 - **确认日期**：2026-10-27。
 
 ### TP-L006：插件切换必须保留执行撤销与真实快照路径语义
