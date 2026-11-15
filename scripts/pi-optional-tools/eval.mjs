@@ -9,15 +9,23 @@ const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const INTERRUPT_GRACE_MS = 1000;
 const MESSAGES = {
   EVAL_INPUT_INVALID: "Invalid eval cell parameters.",
-  EVAL_PYTHON_UNAVAILABLE: "Python 3 is not available in this sandbox. Install python3 in the sandbox image to use Python eval.",
+  EVAL_PYTHON_UNAVAILABLE:
+    "Python 3 is not available in this sandbox. Install python3 in the sandbox image to use Python eval.",
   EVAL_KERNEL_UNAVAILABLE: "The eval kernel could not be started.",
-  EVAL_KERNEL_EXITED: "The eval kernel exited. Its state is unavailable and will be reset on the next cell.",
-  EVAL_KERNEL_PROTOCOL: "The eval kernel returned an invalid response. Its state has been reset.",
-  EVAL_KERNEL_RESET: "The previous eval kernel is unavailable (host restart, kernel exit, or idle collection). Its variables have been reset.",
-  EVAL_CODE_FAILED: "The cell raised an exception. Variables assigned before the exception may still exist.",
-  EVAL_TIMEOUT: "The cell exceeded its timeout and was interrupted. Variables assigned before interruption may still exist.",
-  EVAL_ABORTED: "The cell was aborted. Variables assigned before interruption may still exist.",
-  EVAL_INTERRUPT_RESET: "The kernel did not stop after interruption and was terminated. Its variables have been reset.",
+  EVAL_KERNEL_EXITED:
+    "The eval kernel exited. Its state is unavailable and will be reset on the next cell.",
+  EVAL_KERNEL_PROTOCOL:
+    "The eval kernel returned an invalid response. Its state has been reset.",
+  EVAL_KERNEL_RESET:
+    "The previous eval kernel is unavailable (host restart, kernel exit, or idle collection). Its variables have been reset.",
+  EVAL_CODE_FAILED:
+    "The cell raised an exception. Variables assigned before the exception may still exist.",
+  EVAL_TIMEOUT:
+    "The cell exceeded its timeout and was interrupted. Variables assigned before interruption may still exist.",
+  EVAL_ABORTED:
+    "The cell was aborted. Variables assigned before interruption may still exist.",
+  EVAL_INTERRUPT_RESET:
+    "The kernel did not stop after interruption and was terminated. Its variables have been reset.",
   EVAL_BUSY: "Another cell is already executing in this session and language.",
 };
 
@@ -118,10 +126,15 @@ function javascriptRunner() {
       truncated = true;
       return;
     }
-    const text = util.formatWithOptions(
-      { depth: 4, maxArrayLength: 100, maxStringLength: 10000, getters: false },
+    const text = `${util.formatWithOptions(
+      {
+        depth: 4,
+        maxArrayLength: 100,
+        maxStringLength: 10000,
+        getters: false,
+      },
       ...values,
-    ) + "\n";
+    )}\n`;
     const data = Buffer.from(text);
     const clipped = data.subarray(0, remaining);
     truncated ||= data.length > remaining;
@@ -129,7 +142,13 @@ function javascriptRunner() {
     send({ type: "output", text: clipped.toString("utf8") });
   };
   const context = vm.createContext({
-    console: { log: output, info: output, warn: output, error: output, dir: output },
+    console: {
+      log: output,
+      info: output,
+      warn: output,
+      error: output,
+      dir: output,
+    },
     print: output,
     Buffer,
     URL,
@@ -156,11 +175,12 @@ function javascriptRunner() {
       });
       if (value !== undefined) output(value);
     } catch (error) {
-      reason = error?.code === "ERR_SCRIPT_EXECUTION_TIMEOUT"
-        ? "EVAL_TIMEOUT"
-        : error?.code === "ERR_SCRIPT_EXECUTION_INTERRUPTED"
-          ? "EVAL_ABORTED"
-          : "EVAL_CODE_FAILED";
+      reason =
+        error?.code === "ERR_SCRIPT_EXECUTION_TIMEOUT"
+          ? "EVAL_TIMEOUT"
+          : error?.code === "ERR_SCRIPT_EXECUTION_INTERRUPTED"
+            ? "EVAL_ABORTED"
+            : "EVAL_CODE_FAILED";
     }
     send({ type: "done", reason, truncated });
   });
@@ -175,10 +195,15 @@ function toolResult(language, output = "", reason, extra = {}) {
     ...extra,
   };
   return {
-    content: [{ type: "text", text: JSON.stringify({
-      ...details,
-      ...(reason ? { message: MESSAGES[reason] } : {}),
-    }) }],
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          ...details,
+          ...(reason ? { message: MESSAGES[reason] } : {}),
+        }),
+      },
+    ],
     details,
     ...(reason ? { isError: true } : {}),
   };
@@ -189,7 +214,11 @@ function killGroup(child, signal) {
   try {
     process.kill(-child.pid, signal);
   } catch {
-    try { child.kill(signal); } catch { /* Process already exited. */ }
+    try {
+      child.kill(signal);
+    } catch {
+      /* Process already exited. */
+    }
   }
 }
 
@@ -207,14 +236,20 @@ function createKernel(language, cwd) {
   let pending;
   let dead = false;
   let readyResolve;
-  const ready = new Promise((resolve) => { readyResolve = resolve; });
+  const ready = new Promise((resolve) => {
+    readyResolve = resolve;
+  });
   let idle;
   let protocol = "";
   const kernel = {
     child,
     ready,
-    get dead() { return dead; },
-    get busy() { return Boolean(pending); },
+    get dead() {
+      return dead;
+    },
+    get busy() {
+      return Boolean(pending);
+    },
     stop(reason = "EVAL_KERNEL_EXITED") {
       if (dead) return;
       dead = true;
@@ -253,11 +288,20 @@ function createKernel(language, cwd) {
             idle = setTimeout(() => kernel.stop(), IDLE_TIMEOUT_MS);
             idle.unref();
           }
-          resolve(toolResult(language, new StringDecoder("utf8").write(Buffer.concat(chunks)), interrupted ?? reason, {
-            ...(interrupted && extra.stateReset ? { notice: MESSAGES.EVAL_INTERRUPT_RESET } : {}),
-            ...extra,
-            truncated: truncated || extra.truncated === true,
-          }));
+          resolve(
+            toolResult(
+              language,
+              new StringDecoder("utf8").write(Buffer.concat(chunks)),
+              interrupted ?? reason,
+              {
+                ...(interrupted && extra.stateReset
+                  ? { notice: MESSAGES.EVAL_INTERRUPT_RESET }
+                  : {}),
+                ...extra,
+                truncated: truncated || extra.truncated === true,
+              },
+            ),
+          );
         };
         const interrupt = (reason) => {
           if (interrupted || !pending) return;
@@ -270,11 +314,14 @@ function createKernel(language, cwd) {
         signal?.addEventListener("abort", abort, { once: true });
         timeout = setTimeout(() => interrupt("EVAL_TIMEOUT"), timeoutMs);
         if (signal?.aborted) abort();
-        if (!interrupted) child.stdin.write(`${JSON.stringify({ code, timeoutMs })}\n`);
+        if (!interrupted)
+          child.stdin.write(`${JSON.stringify({ code, timeoutMs })}\n`);
       });
     },
     complete(message) {
-      pending?.finish(message.reason, { truncated: message.truncated === true });
+      pending?.finish(message.reason, {
+        truncated: message.truncated === true,
+      });
     },
   };
   // Pipes are drained even after the retained output budget is exhausted.
@@ -286,17 +333,25 @@ function createKernel(language, cwd) {
   child.stdio[3].setEncoding("utf8");
   child.stdio[3].on("data", (chunk) => {
     protocol += chunk;
-    if (protocol.length > 512 * 1024) return kernel.stop("EVAL_KERNEL_PROTOCOL");
-    let newline;
-    while ((newline = protocol.indexOf("\n")) >= 0) {
+    if (protocol.length > 512 * 1024)
+      return kernel.stop("EVAL_KERNEL_PROTOCOL");
+    while (true) {
+      const newline = protocol.indexOf("\n");
+      if (newline < 0) break;
       const line = protocol.slice(0, newline);
       protocol = protocol.slice(newline + 1);
       try {
         const message = JSON.parse(line);
         if (message.type === "ready") readyResolve();
-        else if (message.type === "output" && typeof message.text === "string") pending?.collect(message.text);
+        else if (message.type === "output" && typeof message.text === "string")
+          pending?.collect(message.text);
         else if (message.type === "done") {
-          if (message.reason && !["EVAL_TIMEOUT", "EVAL_ABORTED", "EVAL_CODE_FAILED"].includes(message.reason))
+          if (
+            message.reason &&
+            !["EVAL_TIMEOUT", "EVAL_ABORTED", "EVAL_CODE_FAILED"].includes(
+              message.reason,
+            )
+          )
             return kernel.stop("EVAL_KERNEL_PROTOCOL");
           kernel.complete(message);
         } else return kernel.stop("EVAL_KERNEL_PROTOCOL");
@@ -305,11 +360,13 @@ function createKernel(language, cwd) {
       }
     }
   });
-  child.on("error", (error) => kernel.stop(
-    language === "python" && error.code === "ENOENT"
-      ? "EVAL_PYTHON_UNAVAILABLE"
-      : "EVAL_KERNEL_UNAVAILABLE",
-  ));
+  child.on("error", (error) =>
+    kernel.stop(
+      language === "python" && error.code === "ENOENT"
+        ? "EVAL_PYTHON_UNAVAILABLE"
+        : "EVAL_KERNEL_UNAVAILABLE",
+    ),
+  );
   child.on("exit", () => kernel.stop());
   return kernel;
 }
@@ -325,7 +382,8 @@ export default function evalExtension(pi) {
   pi.registerTool({
     name: "eval",
     label: "Eval",
-    description: "Execute one Python or JavaScript cell in a retained sandbox kernel. Variables persist between calls in the same session and language. reset recreates only that language. Default timeout 30 seconds; maximum 300 seconds. Idle kernels are collected after 15 minutes. Output is capped at 50 KiB. Python supports top-level await; JavaScript uses Node vm script syntax (use require for modules and return a Promise for asynchronous work). A reset or restart loses variables and cannot undo filesystem side effects. This has the same sandbox execution authority as bash; the VM is not a security boundary.",
+    description:
+      "Execute one Python or JavaScript cell in a retained sandbox kernel. Variables persist between calls in the same session and language. reset recreates only that language. Default timeout 30 seconds; maximum 300 seconds. Idle kernels are collected after 15 minutes. Output is capped at 50 KiB. Python supports top-level await; JavaScript uses Node vm script syntax (use require for modules and return a Promise for asynchronous work). A reset or restart loses variables and cannot undo filesystem side effects. This has the same sandbox execution authority as bash; the VM is not a security boundary.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -334,31 +392,54 @@ export default function evalExtension(pi) {
         language: { type: "string", enum: ["python", "javascript"] },
         code: { type: "string", maxLength: MAX_CODE_BYTES },
         reset: { type: "boolean" },
-        timeoutSeconds: { type: "number", minimum: 1, maximum: MAX_TIMEOUT_SECONDS },
+        timeoutSeconds: {
+          type: "number",
+          minimum: 1,
+          maximum: MAX_TIMEOUT_SECONDS,
+        },
       },
     },
     async execute(_id, args, signal, _update, ctx) {
       const language = args?.language;
       if (
         !["python", "javascript"].includes(language) ||
-        typeof args.code !== "string" || Buffer.byteLength(args.code) > MAX_CODE_BYTES ||
+        typeof args.code !== "string" ||
+        Buffer.byteLength(args.code) > MAX_CODE_BYTES ||
         (args.reset !== undefined && typeof args.reset !== "boolean") ||
-        (args.timeoutSeconds !== undefined && (!Number.isFinite(args.timeoutSeconds) || args.timeoutSeconds < 1 || args.timeoutSeconds > MAX_TIMEOUT_SECONDS))
-      ) return toolResult(language, "", "EVAL_INPUT_INVALID");
+        (args.timeoutSeconds !== undefined &&
+          (!Number.isFinite(args.timeoutSeconds) ||
+            args.timeoutSeconds < 1 ||
+            args.timeoutSeconds > MAX_TIMEOUT_SECONDS))
+      )
+        return toolResult(language, "", "EVAL_INPUT_INVALID");
       if (signal?.aborted) return toolResult(language, "", "EVAL_ABORTED");
       let cwd;
-      try { cwd = realpathSync(ctx.cwd); }
-      catch { return toolResult(language, "", "EVAL_KERNEL_UNAVAILABLE"); }
-      const key = JSON.stringify([cwd, ctx.sessionManager.getSessionId(), language]);
+      try {
+        cwd = realpathSync(ctx.cwd);
+      } catch {
+        return toolResult(language, "", "EVAL_KERNEL_UNAVAILABLE");
+      }
+      const key = JSON.stringify([
+        cwd,
+        ctx.sessionManager.getSessionId(),
+        language,
+      ]);
       let entry = kernels.get(key);
       if (entry?.kernel?.busy) return toolResult(language, "", "EVAL_BUSY");
       if (args.reset) entry?.kernel?.stop();
       let stateReset = false;
       if (!entry?.kernel || entry.kernel.dead) {
-        const priorCell = entry || ctx.sessionManager.getBranch().some((item) =>
-          item.type === "message" && item.message.role === "toolResult" &&
-          item.message.toolName === "eval" && item.message.details?.language === language,
-        );
+        const priorCell =
+          entry ||
+          ctx.sessionManager
+            .getBranch()
+            .some(
+              (item) =>
+                item.type === "message" &&
+                item.message.role === "toolResult" &&
+                item.message.toolName === "eval" &&
+                item.message.details?.language === language,
+            );
         stateReset = !args.reset && Boolean(priorCell);
         entry = {};
         kernels.set(key, entry);
@@ -381,14 +462,24 @@ export default function evalExtension(pi) {
       clearTimeout(startupTimer);
       signal?.removeEventListener("abort", abortStartup);
       if (startup) return toolResult(language, "", startup);
-      if (kernel.dead) return toolResult(language, "", "EVAL_KERNEL_EXITED", { stateReset: true });
-      const result = await kernel.run(args.code, Math.ceil((args.timeoutSeconds ?? 30) * 1000), signal);
+      if (kernel.dead)
+        return toolResult(language, "", "EVAL_KERNEL_EXITED", {
+          stateReset: true,
+        });
+      const result = await kernel.run(
+        args.code,
+        Math.ceil((args.timeoutSeconds ?? 30) * 1000),
+        signal,
+      );
       if (stateReset || args.reset) {
         result.details.stateReset = true;
-        if (stateReset && !result.details.notice) result.details.notice = MESSAGES.EVAL_KERNEL_RESET;
+        if (stateReset && !result.details.notice)
+          result.details.notice = MESSAGES.EVAL_KERNEL_RESET;
         result.content[0].text = JSON.stringify({
           ...result.details,
-          ...(result.details.reason ? { message: MESSAGES[result.details.reason] } : {}),
+          ...(result.details.reason
+            ? { message: MESSAGES[result.details.reason] }
+            : {}),
         });
       }
       return result;
