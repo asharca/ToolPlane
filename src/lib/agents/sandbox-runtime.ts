@@ -10,6 +10,7 @@ import {
   withSandboxSessionLease,
 } from "./sandbox-execution-gate";
 import { findAgentConversationSandbox } from "./conversation-sandbox";
+import type { AgentConversationSandbox } from "./conversation-sandbox";
 import { PiRuntimeInterruptedError } from "./pi-harness";
 import { hasNativeConversationHistory } from "./conversation-context";
 import { parseRuntimeFailure, runtimeFailureText } from "./runtime-failure";
@@ -153,6 +154,12 @@ export type AgentPromptInvocation = {
   finalInput: string;
 };
 
+export type PiSessionEntries = {
+  userEntryId: string;
+  userParentEntryId: string | null;
+  leafEntryId: string;
+};
+
 export type RunSandboxAgentTurnOptions = {
   runtimeKind: "pi-sdk";
   workspaceId: string;
@@ -190,6 +197,8 @@ export type RunSandboxAgentTurnOptions = {
   runtimeSessionId?: string;
   command?: string;
   historyRequired?: boolean;
+  navigateBeforeEntryId?: string;
+  onSessionEntries?: (entries: PiSessionEntries) => void | Promise<void>;
   reasoningEffort?: ReasoningEffort;
   streamRules?: readonly StreamRule[];
   onStreamRule?: (trigger: StreamRuleTrigger) => void | Promise<void>;
@@ -2023,6 +2032,124 @@ async function assertAssignedDockerSandbox(
   return { deploymentId: link.sandbox.deploymentId };
 }
 
+/** Source and target have already been authorized and provisioned by the Work service. */
+export async function forkWorkPiSession(input: {
+  workspaceId: string;
+  agentId: string;
+  source: AgentConversationSandbox;
+  target: AgentConversationSandbox;
+  sourceConversationId: string;
+  targetConversationId: string;
+  entryId: string;
+  workingDirectory?: string;
+  signal?: AbortSignal;
+}) {
+  assertRuntimeOwner();
+  const source = await findAgentConversationSandbox({
+    workspaceId: input.workspaceId,
+    agentId: input.agentId,
+    conversationId: input.sourceConversationId,
+  });
+  const target = await findAgentConversationSandbox({
+    workspaceId: input.workspaceId,
+    agentId: input.agentId,
+    conversationId: input.targetConversationId,
+  });
+  if (
+    !source ||
+    !target ||
+    source.sandboxId !== target.sandboxId ||
+    source.workspaceRoot !== input.source.workspaceRoot ||
+    target.workspaceRoot !== input.target.workspaceRoot
+  )
+    throw new Error("PI_SDK_SESSION_SCOPE");
+  return withSandboxSessionLease(
+    source.sandboxId,
+    input.sourceConversationId,
+    async () => {
+      const root = sandboxRuntimeStateRoot(
+        "pi-sdk",
+        input.agentId,
+        source.workspaceRoot,
+      );
+      const targetRoot = sandboxRuntimeStateRoot(
+        "pi-sdk",
+        input.agentId,
+        target.workspaceRoot,
+      );
+      const hostPath = `${root}/host/tree-${randomUUID()}.mjs`;
+      const container = sandboxContainerName(source.sandboxId);
+      const request = {
+        id: randomUUID(),
+        type: "fork",
+        entryId: input.entryId,
+        target: {
+          workspaceRoot: target.workspaceRoot,
+          cwd: agentSessionWorkingDirectory(
+            { conversationId: input.targetConversationId },
+            input.workingDirectory,
+          ),
+          sessionsDir: `${targetRoot}/sessions/${input.targetConversationId}`,
+          statePath: `${targetRoot}/sessions/${input.targetConversationId}.json`,
+        },
+      };
+      try {
+        await writeSandboxFile(
+          container,
+          hostPath,
+          await readFile(`${process.cwd()}/scripts/pi-sdk-session.mjs`, "utf8"),
+        );
+        const output = await runTrackedDockerExec({
+          container,
+          workdir: source.workspaceRoot,
+          executable: "node",
+          args: [
+            SANDBOX_NODE_FLAG,
+            "--input-type=module",
+            "-e",
+            `
+          import { spawn } from 'node:child_process';
+          const child = spawn(process.execPath, [${JSON.stringify(SANDBOX_NODE_FLAG)}, ${JSON.stringify(hostPath)}, ${JSON.stringify(`${root}/host/${input.sourceConversationId}.json`)}], { stdio: ['pipe', 'ignore', 'ignore', 'pipe'] });
+          let buffer = '', replied = false;
+          child.stdio[3].on('data', chunk => {
+            buffer += chunk;
+            for (;;) {
+              const end = buffer.indexOf('\\n');
+              if (end < 0) break;
+              const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
+              const event = JSON.parse(line);
+              if (event.type === 'toolplane_sdk_response' && event.id === ${JSON.stringify(request.id)}) {
+                replied = true; process.stdout.write(JSON.stringify(event)); child.stdin.end();
+              }
+            }
+          });
+          child.on('error', () => process.exitCode = 1);
+          child.on('exit', () => { if (!replied) process.exitCode = 1; });
+          child.stdin.write(${JSON.stringify(`${JSON.stringify(request)}\n`)});
+        `,
+          ],
+          env: {
+            ...sandboxAgentHomeEnvironment(),
+            PI_OFFLINE: "1",
+            PI_TELEMETRY: "0",
+          },
+          signal: input.signal,
+          timeoutMs: 30_000,
+        });
+        const response = JSON.parse(output);
+        if (response.success !== true || response.result?.fork?.forked !== true)
+          throw new Error(
+            /^PI_[A-Z_]+$/.test(response.error?.code ?? "")
+              ? response.error.code
+              : "PI_SDK_FORK_FAILED",
+          );
+      } finally {
+        await removeSandboxFiles(container, [hostPath]);
+      }
+    },
+  );
+}
+
 /** Caller holds the sandbox execution lease; no other conversation/container is stopped. */
 export async function stopAgentSessionRuntime(input: {
   workspaceId: string;
@@ -2310,6 +2437,7 @@ async function runNativeSessionExec(
             )
             .digest("hex"),
           command: options.command,
+          navigateBeforeEntryId: options.navigateBeforeEntryId,
           message: buildSandboxTranscript(
             options.messages.slice(-1),
             workspaceRoot !== "/workspace" &&
@@ -2695,6 +2823,15 @@ async function runPiSdk(
       terminal = true;
       const usage = parseRuntimeUsage(event.result?.usage);
       if (usage) await options.onUsage?.(usage);
+      const entries = event.result?.sessionEntries;
+      if (
+        entries &&
+        typeof entries.userEntryId === "string" &&
+        (entries.userParentEntryId === null ||
+          typeof entries.userParentEntryId === "string") &&
+        typeof entries.leafEntryId === "string"
+      )
+        await options.onSessionEntries?.(entries);
       if (!event.success) {
         const failure = parseRuntimeFailure(
           `${String(event.error?.code ?? "")}: ${String(event.error?.reason ?? "")}`,

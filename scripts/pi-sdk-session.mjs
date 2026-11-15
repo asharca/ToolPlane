@@ -87,6 +87,25 @@ const { theme } = await import(
 );
 const todoPath = officialTodoPath(sdkEntry);
 let promptInvocation;
+function sessionEntries() {
+  if (!runtime || !turnExistingEntries) return undefined;
+  const manager = runtime.session.sessionManager;
+  const entry = manager
+    .getBranch()
+    .find(
+      (entry) =>
+        entry.type === "message" &&
+        entry.message.role === "user" &&
+        !turnExistingEntries.has(entry.id),
+    );
+  if (!entry) return undefined;
+  return {
+    userEntryId: entry.id,
+    userParentEntryId: entry.parentId,
+    leafEntryId: manager.getLeafId(),
+  };
+}
+let turnExistingEntries;
 const fail = (code, reason) => {
   throw Object.assign(new Error(code), { code, ...(reason ? { reason } : {}) });
 };
@@ -392,6 +411,54 @@ function persist() {
   writeFileSync(temporary, JSON.stringify(value), { mode: 0o600 });
   renameSync(temporary, config.statePath);
   lastState = value;
+}
+// Fork through Pi's canonical tree, without changing the source session or copying files.
+function forkSession(request) {
+  const target = request.target;
+  const sourceState = lastState ?? saved;
+  if (!sourceState?.sessionPersisted) fail("PI_SDK_SESSION_MISSING");
+  if (
+    !target ||
+    typeof request.entryId !== "string" ||
+    typeof target.workspaceRoot !== "string" ||
+    typeof target.cwd !== "string" ||
+    typeof target.sessionsDir !== "string" ||
+    typeof target.statePath !== "string" ||
+    resolve(target.workspaceRoot) === resolve(config.workspaceRoot) ||
+    dirname(resolve(target.workspaceRoot)) !==
+      dirname(resolve(config.workspaceRoot)) ||
+    !within(resolve(target.workspaceRoot), resolve(target.cwd)) ||
+    !within(resolve(target.workspaceRoot), resolve(target.sessionsDir)) ||
+    !within(resolve(target.workspaceRoot), resolve(target.statePath))
+  )
+    fail("PI_SDK_SESSION_SCOPE");
+  mkdirSync(target.cwd, { recursive: true, mode: 0o700 });
+  mkdirSync(target.sessionsDir, { recursive: true, mode: 0o700 });
+  if (existsSync(target.statePath)) fail("PI_SDK_SESSION_EXISTS");
+  const manager = sdk.SessionManager.open(
+    sessionPath(sourceState.sessionFile),
+    target.sessionsDir,
+    target.cwd,
+  );
+  if (!manager.getEntry(request.entryId)) fail("PI_SDK_ENTRY_NOT_FOUND");
+  const file = manager.createBranchedSession(request.entryId);
+  if (!file || !existsSync(file)) fail("PI_SDK_SESSION_MISSING");
+  const value = {
+    ...sourceState,
+    sessionId: manager.getSessionId(),
+    sessionFile: file,
+    sessionPersisted: true,
+  };
+  const temporary = `${target.statePath}.${process.pid}.tmp`;
+  writeFileSync(temporary, JSON.stringify(value), { mode: 0o600, flag: "wx" });
+  renameSync(temporary, target.statePath);
+  return {
+    forked: true,
+    entryId: request.entryId,
+    contextOnly: true,
+    filesRewound: false,
+    externalEffectsRewound: false,
+  };
 }
 // Category split of the current request context. Pi only reports a total, so the
 // provider-anchored total stays authoritative and categories use Pi's chars/4 estimate;
@@ -919,6 +986,21 @@ async function handle(request) {
     respond(false, undefined, "PI_SDK_BUSY");
     return;
   }
+  if (request.type === "fork") {
+    try {
+      if (initialError) fail(initialError);
+      respond(true, { text: "", fork: forkSession(request) });
+    } catch (error) {
+      respond(
+        false,
+        undefined,
+        /^PI_[A-Z_]+$/.test(error.code ?? "")
+          ? error.code
+          : "PI_SDK_FORK_FAILED",
+      );
+    }
+    return;
+  }
   if (request.type === "get_state" || request.type === "get_commands") {
     if (initialError) respond(false, undefined, initialError);
     else if (request.type === "get_commands" && !runtime)
@@ -943,6 +1025,7 @@ async function handle(request) {
   ruleTriggers = [];
   remindedRules = new Set();
   ruleDeliveries = [];
+  turnExistingEntries = undefined;
   let terminal;
   try {
     if (initialError) fail(initialError);
@@ -973,6 +1056,22 @@ async function handle(request) {
     await nativeUi.projectTodos(runtime.session.sessionManager);
     let command;
     let compaction;
+    if (request.navigateBeforeEntryId !== undefined) {
+      const entry = runtime.session.sessionManager.getEntry(
+        request.navigateBeforeEntryId,
+      );
+      if (entry?.type !== "message" || entry.message.role !== "user")
+        fail("PI_SDK_ENTRY_NOT_FOUND");
+      // Pi treats a user target as its parent, including null/root. Never summarize.
+      const navigation = await runtime.session.navigateTree(entry.id, {
+        summarize: false,
+      });
+      if (navigation.cancelled || navigation.aborted)
+        fail("PI_SDK_NAVIGATION_CANCELLED");
+    }
+    turnExistingEntries = new Set(
+      runtime.session.sessionManager.getEntries().map((entry) => entry.id),
+    );
     if (request.type === "compact") {
       command = "compact";
       compaction = await compact(runtime.session, request.customInstructions);
@@ -1041,6 +1140,7 @@ async function handle(request) {
         text,
         commands: commands(),
         ...(usage ? { usage } : {}),
+        ...(sessionEntries() ? { sessionEntries: sessionEntries() } : {}),
         ...contextBreakdownResult(runtime.session),
         streamRuleTriggers: ruleTriggers,
         ...(command
@@ -1079,12 +1179,13 @@ async function handle(request) {
       reason: code === "PI_SDK_MODEL_FAILED" ? error.reason : undefined,
       // Tokens already spent on a failed turn still count toward the budget.
       result:
-        usage || ruleTriggers.length
+        usage || ruleTriggers.length || sessionEntries()
           ? {
               ...(usage ? { usage } : {}),
               ...(ruleTriggers.length
                 ? { streamRuleTriggers: ruleTriggers }
                 : {}),
+              ...(sessionEntries() ? { sessionEntries: sessionEntries() } : {}),
             }
           : undefined,
     };

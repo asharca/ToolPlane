@@ -439,6 +439,7 @@ export async function listConversations(
       agentRevision: { select: { agentId: true } },
       publicApiConversation: { select: { id: true } },
       messages: {
+        where: { supersededAt: null },
         orderBy: { createdAt: "desc" },
         take: 1,
         select: { createdAt: true },
@@ -463,7 +464,10 @@ export async function getConversation(
   const conversation = await db.conversation.findFirst({
     where: { id: conversationId, agent: { workspaceId } },
     include: {
-      messages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
+      messages: {
+        where: { supersededAt: null },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      },
       publicApiConversation: { select: { id: true } },
       workSession: {
         select: {

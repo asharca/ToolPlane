@@ -192,11 +192,17 @@ async function appendAssistantResult(
       : []),
   ];
   if (!parts.length) return;
+  const user = await db.message.findFirst({
+    where: { conversationId, role: "user", supersededAt: null },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { piTurnLeafId: true },
+  });
   await db.message.create({
     data: {
       conversationId,
       role: "assistant",
       parts,
+      piEntryId: user?.piTurnLeafId,
       textCharacters: trace.reduce(
         (total, part) => total + (part.type === "text" ? part.text.length : 0),
         text.length,
@@ -212,7 +218,10 @@ async function executeWork(workSessionId: string) {
       sandbox: { include: { deployment: true } },
       conversation: {
         include: {
-          messages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
+          messages: {
+            where: { supersededAt: null },
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          },
         },
       },
     },

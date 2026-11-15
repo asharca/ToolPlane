@@ -123,7 +123,15 @@ it("stops only one conversation's resident SDK host while preserving its sibling
     await expect
       .poll(() => existsSync(socketPath), { timeout: 10000 })
       .toBe(true);
-    const request = async () => {
+    const request = async (patch?: Record<string, unknown>) => {
+      if (patch)
+        await writeFile(
+          inputPath,
+          JSON.stringify({
+            ...JSON.parse(await readFile(inputPath, "utf8")),
+            ...patch,
+          }),
+        );
       const { stdout } = await promisify(execFile)(
         process.execPath,
         [driver, inputPath],
@@ -146,6 +154,49 @@ it("stops only one conversation's resident SDK host while preserving its sibling
       success: true,
       result: { text: expect.stringContaining("count=1") },
     });
+    // Even a real failed model turn establishes native user identity. Both the
+    // failure metadata and fork acknowledgement must survive broker allowlists.
+    const failed = await first.request({
+      command: null,
+      message: "BROKER_NATIVE_USER",
+    });
+    expect(failed).toMatchObject({
+      success: false,
+      result: {
+        sessionEntries: {
+          userEntryId: expect.any(String),
+          leafEntryId: expect.any(String),
+        },
+      },
+    });
+    const destination = join(root, "branched");
+    const forked = await first.request({
+      type: "fork",
+      entryId: failed.result.sessionEntries.userEntryId,
+      target: {
+        workspaceRoot: destination,
+        cwd: join(destination, "workspace"),
+        sessionsDir: join(destination, "sessions"),
+        statePath: join(destination, "sessions", "state.json"),
+      },
+    });
+    expect(forked).toMatchObject({
+      success: true,
+      result: {
+        fork: {
+          forked: true,
+          entryId: failed.result.sessionEntries.userEntryId,
+          contextOnly: true,
+          filesRewound: false,
+          externalEffectsRewound: false,
+        },
+      },
+    });
+    expect(
+      JSON.parse(
+        await readFile(join(destination, "sessions", "state.json"), "utf8"),
+      ),
+    ).toMatchObject({ sessionPersisted: true, agentRevisionId: "pinned" });
     const stopped = once(first.daemon, "exit");
     await stopNativeSessionHosts(first.stateRoot);
     await stopped;

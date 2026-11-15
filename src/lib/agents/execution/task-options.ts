@@ -157,7 +157,10 @@ export async function localTaskOptions(
           include: {
             conversation: {
               include: {
-                messages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
+                messages: {
+                  where: { supersededAt: null },
+                  orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                },
               },
             },
           },
@@ -322,6 +325,33 @@ export async function localTaskOptions(
       ),
   );
   return {
+    ...(work
+      ? {
+          navigateBeforeEntryId:
+            work.conversation.messages.findLast(
+              (message) => message.role === "user",
+            )?.piRewindEntryId ?? undefined,
+          onSessionEntries: async (entries) => {
+            const user = work.conversation.messages.findLast(
+              (message) => message.role === "user",
+            );
+            if (!user) throw new Error("Work user message unavailable.");
+            await db.message.updateMany({
+              where: {
+                id: user.id,
+                conversationId: work.conversationId,
+                supersededAt: null,
+              },
+              data: {
+                piEntryId: entries.userEntryId,
+                piParentEntryId: entries.userParentEntryId,
+                piTurnLeafId: entries.leafEntryId,
+                piRewindEntryId: null,
+              },
+            });
+          },
+        }
+      : {}),
     runtimeKind: "pi-sdk",
     workspaceId: grant.workspaceId,
     agentId: agent.id,

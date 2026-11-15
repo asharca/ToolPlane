@@ -82,6 +82,7 @@ const workSessionClientInclude = {
   conversation: {
     include: {
       messages: {
+        where: { supersededAt: null },
         orderBy: [{ createdAt: "asc" as const }, { id: "asc" as const }],
       },
     },
