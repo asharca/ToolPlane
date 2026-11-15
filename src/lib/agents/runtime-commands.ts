@@ -21,7 +21,7 @@ export type ParsedRuntimeCommand = { name: string; args: string };
 // Cherry's fallback catalogs. Live commands supplement these only for the same runtime/session.
 const BUILTINS: Record<string, readonly string[]> = {
   pi: ["compact"],
-  "pi-sdk": ["compact", "handoff"],
+  "pi-sdk": ["compact"],
   omp: ["compact"],
   "claude-code": ["clear", "compact", "context", "usage"],
   dsh: ["compact", "goal"],
