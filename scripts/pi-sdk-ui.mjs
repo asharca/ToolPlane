@@ -8,7 +8,7 @@ const transportError = () =>
 const MAX_PAYLOAD_BYTES = 256 * 1024;
 // Pi 1.5.2 RPC UI semantics, transported over the current task's authenticated HTTP
 // endpoint. This adapter does not make tool or permission decisions.
-export function createNativeUi({ getContext, theme, onError }) {
+export function createNativeUi({ getContext, theme, onError, source }) {
   const pending = new Map();
   let writes = Promise.resolve();
   let cancelled = false;
@@ -33,6 +33,8 @@ export function createNativeUi({ getContext, theme, onError }) {
     return { url, token: context.runtimeToken };
   };
   async function post(target, body, signal) {
+    if (source && body.action === "request") body = { ...body, request: { ...body.request, source } };
+    if (source && body.action === "todos") body = { ...body, source };
     const payload = JSON.stringify(body);
     if (Buffer.byteLength(payload) > MAX_PAYLOAD_BYTES) throw transportError();
     const response = await fetch(target.url, {

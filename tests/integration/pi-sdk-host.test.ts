@@ -21,6 +21,7 @@ import { join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { PI_SDK_VERSION, PI_SDK_VERSIONS } from "@/lib/agents/pi-version";
 import {
   AgentSecretObfuscator,
@@ -49,6 +50,7 @@ import {
 import { executionOutputResponse } from "@/lib/agents/execution/live-output-stream";
 
 const RESULT_FILE_BYTES = 10 * 1024 * 1024;
+const TaskSourceSchema = z.object({ subagentId: z.string(), subagentName: z.string(), parentToolCallId: z.string(), depth: z.number() });
 type SdkState = {
   sessionId: string;
   sessionFile: string;
@@ -82,6 +84,8 @@ type SdkResponse = {
     };
     actualModel?: { providerId: string; model: string };
     usage?: {
+      inputTokens?: number;
+      outputTokens?: number;
       actualModel?: { providerId: string; model: string };
       modelUsage?: Array<{
         providerId: string;
@@ -163,7 +167,7 @@ async function setup(workspaceSubdirectory = "") {
     path?: string;
     body: {
       model: string;
-      messages: Array<{ role: string }>;
+      messages: Array<{ role: string; content?: unknown }>;
       tools?: Array<{ function: { name: string } }>;
     };
   }> = [];
@@ -186,6 +190,7 @@ async function setup(workspaceSubdirectory = "") {
       | undefined,
     mcpSchema: { type: "object", properties: {} } as Record<string, unknown>,
     secretObfuscator: undefined as AgentSecretObfuscator | undefined,
+    modelResponse: undefined as undefined | ((body: (typeof requests)[number]["body"], response: ServerResponse) => void),
   };
   const mcpRequests: Array<{
     authorization?: string;
@@ -378,6 +383,7 @@ async function setup(workspaceSubdirectory = "") {
         body,
       });
       requestEvents.emit("request");
+      if (behavior.modelResponse) { behavior.modelResponse(body, response); return; }
       if (behavior.pause) return;
       if (behavior.streamCompletion) {
         await behavior.streamCompletion(response);
@@ -1122,6 +1128,103 @@ describe("official Pi SDK headless session host", () => {
       expect(JSON.stringify(request.body)).not.toContain(value);
       expect(JSON.stringify(request.body)).toContain(placeholder);
     }
+    await host.stop();
+  }, 60000);
+  it("runs two independent child SDK sessions concurrently with inherited authority and source-scoped results", async () => {
+    const f = await setup();
+    const waiting: ServerResponse[] = [];
+    f.behavior.modelResponse = (body, response) => {
+      const hasTask = body.tools?.some((tool) => tool.function.name === "task");
+      if (hasTask) {
+        if (body.messages.at(-1)?.role === "tool") completion(response, { content: "TASK_PARENT_COMPLETE" }, "stop");
+        else completion(response, { tool_calls: [{ index: 0, id: "task-batch", type: "function", function: {
+          name: "task", arguments: JSON.stringify({ context: "SHARED_BACKGROUND", tasks: [
+            { id: "alpha", description: "Alpha", prompt: "CHILD_ALPHA" },
+            { id: "beta", description: "Beta", prompt: "CHILD_BETA" },
+          ] }),
+        } }] }, "tool_calls");
+        return;
+      }
+      expect(body.tools?.map((tool) => tool.function.name)).toEqual(["increment"]);
+      expect(JSON.stringify(body.messages)).toContain("SHARED_BACKGROUND");
+      if (body.messages.at(-1)?.role === "tool") { completion(response, { content: "CHILD_RESULT_1" }, "stop"); return; }
+      waiting.push(response);
+      // A serial implementation never reaches this barrier and cannot complete.
+      if (waiting.length === 2) waiting.forEach((child) => completion(child, { tool_calls: [{ index: 0, id: "increment-child", type: "function", function: { name: "increment", arguments: "{}" } }] }, "tool_calls"));
+    };
+    const host = await f.launch({
+      optionalBuiltinExtensions: [resolve("scripts/pi-optional-tools/task.mjs")],
+      defaultTools: ["task", "increment"],
+      nativeSubagentPolicy: { maxConcurrency: 2, maxDepth: 1 },
+    });
+    const result = await host.request("prompt", "Dispatch the children");
+    expect(result).toMatchObject({ success: true, result: { text: "TASK_PARENT_COMPLETE", usage: { inputTokens: 120, outputTokens: 30 } } });
+    const taskEnd = host.events.find((event) => event.type === "tool_execution_end" && event.toolCallId === "task-batch");
+    expect(taskEnd).toMatchObject({ isError: false, result: { details: { status: "completed", results: [
+      { id: "alpha", status: "completed", text: expect.stringMatching(/^CHILD_RESULT_[01]$/) },
+      { id: "beta", status: "completed", text: expect.stringMatching(/^CHILD_RESULT_[01]$/) },
+    ] } } });
+    const childEvents = host.events.filter((event) => event.source);
+    const sources = childEvents.map((event) => TaskSourceSchema.parse(event.source));
+    expect(new Set(sources.map((source) => source.subagentId)).size).toBe(2);
+    const increments = childEvents.filter((event) => event.type === "tool_execution_end" && event.toolName === "increment");
+    expect(increments).toHaveLength(2);
+    for (const event of increments) expect(event.result).toMatchObject({ details: { count: 1 } });
+    const liveId = randomUUID();
+    startTaskOutput(liveId);
+    for (const event of childEvents) expect(event.source).toMatchObject({ parentToolCallId: "task-batch", depth: 1 });
+    for (const event of childEvents) {
+      const parsed = parsePiStreamLine(JSON.stringify(event));
+      expect(parsed?.delta).toBeUndefined();
+      for (const activity of parsed?.activities ?? []) expect(activity.source).toMatchObject(TaskSourceSchema.parse(event.source));
+      for (const activity of parsed?.activities ?? []) publishTaskActivity(liveId, activity);
+    }
+    const liveTools = assertDefined(taskOutput(liveId)).activities.filter((activity) => activity.toolName === "increment");
+    expect(liveTools).toHaveLength(2);
+    expect(liveTools.every((activity) => activity.status === "completed")).toBe(true);
+    finishTaskOutput(liveId, "completed");
+    const childDirs = await readdir(join(f.workspace, ".toolplane-subagents"));
+    expect(childDirs).toHaveLength(2);
+    for (const directory of childDirs) {
+      const files = await readdir(join(f.workspace, ".toolplane-subagents", directory));
+      const transcript = await readFile(join(f.workspace, ".toolplane-subagents", directory, assertDefined(files.find((file) => file.endsWith(".jsonl")))), "utf8");
+      expect(JSON.parse(transcript.split("\n")[0]).cwd).toBe(f.workspace);
+    }
+    expect(f.requests.every((request) => request.authorization === "Bearer test-runtime-first")).toBe(true);
+    await host.stop();
+  }, 60000);
+
+  it.each([false, true])("isolates a failed child and cascades parent abort (abort=%s)", async (abort) => {
+    const f = await setup();
+    const ready = Promise.withResolvers<void>();
+    let childRequests = 0;
+    f.behavior.modelResponse = (body, response) => {
+      if (body.tools?.some((tool) => tool.function.name === "task")) {
+        if (body.messages.at(-1)?.role === "tool") { completion(response, { content: "PARENT_RECOVERED" }, "stop"); return; }
+        completion(response, { tool_calls: [{ index: 0, id: "task-batch", type: "function", function: { name: "task", arguments: JSON.stringify({ tasks: [
+          { id: "one", description: "One", prompt: "One child" },
+          { id: "two", description: "Two", prompt: "Two child" },
+        ] }) } }] }, "tool_calls");
+      } else {
+        childRequests++;
+        if (childRequests === 2) ready.resolve();
+        if (abort) return;
+        if (childRequests === 1) { response.writeHead(503); response.end("private-provider-secret"); }
+        else completion(response, { content: "SURVIVING_CHILD" }, "stop");
+      }
+    };
+    const host = await f.launch({ optionalBuiltinExtensions: [resolve("scripts/pi-optional-tools/task.mjs")], defaultTools: ["task"], nativeSubagentPolicy: { maxConcurrency: 2, maxDepth: 1 } });
+    const pending = host.request("prompt", "Dispatch children");
+    await ready.promise;
+    if (abort) expect(await host.request("abort")).toMatchObject({ success: true });
+    const result = await pending;
+    expect(result).toMatchObject(abort ? { success: false, error: { code: "PI_SDK_ABORTED" } } : { success: true, result: { text: "PARENT_RECOVERED" } });
+    const ended = host.events.filter((event) => event.type === "tool_execution_end" && event.source);
+    expect(ended).toHaveLength(2);
+    const statuses = ended.map((event) => z.object({ status: z.string() }).parse(event.result).status);
+    expect(statuses.sort()).toEqual(abort ? ["cancelled", "cancelled"] : ["completed", "failed"]);
+    if (!abort) expect(host.events.find((event) => event.type === "tool_execution_end" && event.toolCallId === "task-batch")).toMatchObject({ isError: true, result: { details: { status: "partial_failure" } } });
+    expect(JSON.stringify(host.events)).not.toContain("private-provider-secret");
     await host.stop();
   }, 60000);
   it("keeps Python imports from changing skill files across continued native turns", async () => {

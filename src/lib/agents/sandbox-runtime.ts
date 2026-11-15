@@ -200,6 +200,7 @@ export type RunSandboxAgentTurnOptions = {
   piVersion?: string;
   disabledBuiltinTools?: readonly string[];
   optionalBuiltinTools?: readonly string[];
+  nativeSubagentPolicy?: { maxConcurrency: number; maxDepth: number };
   messages: readonly SandboxRuntimeMessage[];
   skills?: readonly SkillForPrompt[];
   mcpServers?: readonly SandboxRuntimeMcpServer[];
@@ -788,6 +789,7 @@ function resultToFileTool(fileTools, maxBytes) {
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(filename)) throw new Error('Invalid result filename.');
       writeSync(${options.eventFd ?? 1}, JSON.stringify({
         type: 'toolplane_mcp_origin',
+        source: globalThis[Symbol.for('toolplane.pi.host-context.v1')]?.getEventSource?.(),
         toolCallId,
         deploymentId: tool.server.deploymentId,
         originalToolName: tool.wireName,
@@ -870,6 +872,7 @@ export async function createPiMcpTools(config) {
         async execute(toolCallId, params, signal) {
           writeSync(${options.eventFd ?? 1}, JSON.stringify({
             type: 'toolplane_mcp_origin',
+            source: globalThis[Symbol.for('toolplane.pi.host-context.v1')]?.getEventSource?.(),
             toolCallId,
             deploymentId: server.deploymentId,
             originalToolName: wireName,
@@ -965,6 +968,14 @@ function piMessageResult(message: unknown): PiStreamLine | null {
   };
 }
 
+const PiEventSourceSchema = z.object({
+  subagentId: z.string().min(1).max(240),
+  subagentVersionId: z.string().min(1).max(240).optional(),
+  subagentName: z.string().max(240).optional(),
+  parentToolCallId: z.string().min(1).max(240).optional(),
+  depth: z.number().int().min(0).max(32).optional(),
+});
+
 export function parsePiStreamLine(line: string): PiStreamLine | null {
   let value: unknown;
   try {
@@ -974,6 +985,17 @@ export function parsePiStreamLine(line: string): PiStreamLine | null {
   }
   if (!value || typeof value !== "object") return null;
   const payload = value as Record<string, unknown>;
+  if (payload.source !== undefined) {
+    const source = PiEventSourceSchema.safeParse(payload.source);
+    if (!source.success) return null;
+    const parentEvent = { ...payload };
+    delete parentEvent.source;
+    const parsed = parsePiStreamLine(JSON.stringify(parentEvent));
+    if (!parsed) return null;
+    // A child's answer is activity, never an incremental part of the parent answer.
+    const activities = parsed.activities ?? (parsed.delta ? [{ type: "reasoning" as const, status: "running" as const, delta: parsed.delta }] : []);
+    return { activities: activities.map((activity) => ({ ...activity, source: source.data })) };
+  }
   if (
     payload.type === "toolplane_mcp_origin" &&
     typeof payload.toolCallId === "string" &&
@@ -2494,6 +2516,7 @@ async function runNativeSessionExec(
             packageSetChecksum: sdk.packageSetChecksum,
             agentRevisionId: options.agentRevisionId,
             optionalBuiltinTools: options.optionalBuiltinTools ?? [],
+            nativeSubagentPolicy: options.nativeSubagentPolicy,
             nativeUi: Boolean(options.nativeUiUrl),
             workdir: exec.workdir,
             system: options.systemPrompt,
@@ -3058,6 +3081,7 @@ async function runPiSdk(
         ),
       ],
       optionalBuiltinExtensions,
+      nativeSubagentPolicy: options.nativeSubagentPolicy,
       resources,
       packages: packages.map(({ manifest: _manifest, ...item }) => item),
       packageVerifierPath: verifierPath,

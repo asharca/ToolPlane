@@ -390,6 +390,10 @@ export async function localTaskOptions(
       .join("\n\n"),
     disabledBuiltinTools: agent.disabledBuiltinTools,
     optionalBuiltinTools: agent.optionalBuiltinTools,
+    nativeSubagentPolicy: {
+      maxConcurrency: agent.nativeSubagentMaxConcurrency ?? 1,
+      maxDepth: agent.nativeSubagentMaxDepth ?? 1,
+    },
     skills: resolved.skills,
     runtimeSessionId,
     ...(command ? { command: commandText } : {}),
