@@ -258,6 +258,26 @@
     "whatIsAnMcpServerToolplane": "What is an MCP Server? | ToolPlane"
   },
   "console": {
+    "messageQueue": {
+      "steer": "Steer",
+      "follow_up": "Follow up",
+      "steerHint": "Steer after the current tool finishes (Enter)",
+      "followUpHint": "Queue a follow-up after this reply (Alt+Enter)",
+      "pending": "{count, plural, one {# pending message} other {# pending messages}}",
+      "clear": "Clear pending messages",
+      "clearHint": "Clear all pending runtime messages. Consumed messages cannot be recalled; accepted channel messages remain scheduled for a later run.",
+      "cleared": "Pending messages cleared",
+      "handled": "Input handled by the runtime extension",
+      "textOnly": "Running turns accept text only. Remove attachments and references, or send them after the turn ends.",
+      "AGENT_QUEUE_INVALID": "This input or command cannot be queued.",
+      "Unauthorized": "Sign in again to send messages.",
+      "AGENT_QUEUE_FORBIDDEN": "Only the user who started this run can change its queue.",
+      "CONVERSATION_NOT_FOUND": "This conversation is no longer available.",
+      "AGENT_QUEUE_NOT_RUNNING": "This turn is not accepting queued input. Your draft is kept; send it normally when the run is ready or has ended.",
+      "CONVERSATION_READ_ONLY": "This historical conversation is read-only.",
+      "AGENT_QUEUE_FULL": "The pending queue is full. Your draft is kept; wait for space before sending again.",
+      "AGENT_QUEUE_FAILED": "Delivery could not be confirmed. Your draft is kept; check the queue and conversation before sending again."
+    },
     "liveOutput": {
       "truncated": "Live preview truncated. See the saved record for the full reply.",
       "connecting": "Connecting",

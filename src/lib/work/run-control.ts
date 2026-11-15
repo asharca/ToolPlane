@@ -6,6 +6,7 @@ import type {
 } from "@/lib/agents/sandbox-runtime";
 import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
 import type { BudgetWarning } from "@/lib/agents/budget-warning";
+import type { AgentMessageQueue } from "@/lib/agents/execution/message-queue";
 
 type Registry = Map<string, AbortController>;
 
@@ -19,6 +20,8 @@ export type WorkRuntimeObserver = Pick<
   | "onUsage"
   | "onCommandResult"
   | "onStreamRule"
+  | "onQueuedMessage"
+  | "onMessageQueue"
 >;
 
 export type WorkOutputSnapshot = {
@@ -32,6 +35,7 @@ export type WorkOutputSnapshot = {
   runtimeKind?: string;
   modelName?: string;
   budgetWarning?: BudgetWarning;
+  messageQueue?: AgentMessageQueue;
 };
 
 export type WorkOutputActivity = {
@@ -158,6 +162,7 @@ function outputSnapshot(channel: WorkOutputChannel): WorkOutputSnapshot {
       ? {}
       : { modelName: channel.modelName }),
     ...(channel.budgetWarning ? { budgetWarning: channel.budgetWarning } : {}),
+    ...(channel.messageQueue ? { messageQueue: channel.messageQueue } : {}),
   };
 }
 
@@ -185,6 +190,7 @@ export function startWorkOutput(
   channel.activities = [];
   channel.budgetWarning = undefined;
   channel.streamRuleTriggers = [];
+  channel.messageQueue = { messages: [], pendingMessageCount: 0 };
   channel.active = true;
   channel.done = false;
   channel.executionStage = "queued";
@@ -202,6 +208,21 @@ export function publishWorkExecutionStage(
   if (!channel.active || channel.done || channel.executionStage === stage)
     return;
   channel.executionStage = stage;
+  notifyOutput(channel, { type: "stage", snapshot: outputSnapshot(channel) });
+}
+export function publishWorkMessageQueue(
+  workSessionId: string,
+  queue: AgentMessageQueue,
+) {
+  const channel = outputChannel(workSessionId);
+  channel.messageQueue = queue;
+  notifyOutput(channel, { type: "stage", snapshot: outputSnapshot(channel) });
+}
+
+export function resetWorkMessageOutput(workSessionId: string) {
+  const channel = outputChannel(workSessionId);
+  channel.text = "";
+  channel.activities = [];
   notifyOutput(channel, { type: "stage", snapshot: outputSnapshot(channel) });
 }
 
@@ -279,6 +300,7 @@ export function finishWorkOutput(workSessionId: string) {
   channel.active = false;
   channel.done = true;
   channel.executionStage = undefined;
+  channel.messageQueue = { messages: [], pendingMessageCount: 0 };
   notifyOutput(channel, { type: "done", snapshot: outputSnapshot(channel) });
   // Keep a short replay window for clients that reconnect as the DB update settles.
   if (channel.cleanup) clearTimeout(channel.cleanup);

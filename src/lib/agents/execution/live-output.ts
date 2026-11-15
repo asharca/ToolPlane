@@ -3,6 +3,7 @@ import type { SandboxRuntimeActivity } from "@/lib/agents/sandbox-runtime";
 import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
 import type { LiveTaskActivity, LiveTaskOutput } from "./live-output-types";
 import { redactText, sanitizeLog } from "@/lib/observability/redaction";
+import type { AgentMessageQueue } from "./message-queue";
 
 // Replay is process-local, like the leased worker. Durable terminal projections
 // are stored once in the task ledger, never once per token.
@@ -150,6 +151,30 @@ export function publishTaskStage(taskId: string, stage: AgentExecutionStage) {
   capture.output.executionStage = stage;
   notify(taskId);
 }
+export function publishTaskMessageQueue(
+  taskId: string,
+  queue: AgentMessageQueue,
+) {
+  const capture = captureFor(taskId);
+  if (!capture) return;
+  capture.output.messageQueue = {
+    pendingMessageCount: queue.pendingMessageCount,
+    messages: queue.messages.map((message) => ({
+      ...message,
+      text: redactText(message.text, capture.secrets),
+    })),
+  };
+  notify(taskId);
+}
+
+export function resetTaskMessageOutput(taskId: string) {
+  const capture = captureFor(taskId);
+  if (!capture) return;
+  capture.output.text = "";
+  capture.output.activities = [];
+  capture.reasoningId = undefined;
+  notify(taskId);
+}
 function safeValue(value: unknown, secrets: readonly string[]) {
   if (value === undefined) return undefined;
   const data = sanitizeLog(value, secrets).data;
@@ -289,6 +314,7 @@ export function finishTaskOutput(
   capture.output.active = false;
   capture.output.done = true;
   capture.output.executionStage = undefined;
+  capture.output.messageQueue = { messages: [], pendingMessageCount: 0 };
   for (const activity of capture.output.activities)
     if (activity.status === "running") activity.status = status;
   const runtime: LiveTaskActivity = {

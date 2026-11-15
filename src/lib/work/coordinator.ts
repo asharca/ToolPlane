@@ -53,6 +53,8 @@ import {
   publishWorkExecutionStage,
   publishWorkStreamRule,
   publishWorkOutput,
+  publishWorkMessageQueue,
+  resetWorkMessageOutput,
   registerWorkRun,
   startWorkOutput,
   unregisterWorkRun,
@@ -197,10 +199,18 @@ async function appendAssistantResult(
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: { piTurnLeafId: true },
   });
+  const previous = await db.message.findFirst({
+    where: { conversationId },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { createdAt: true },
+  });
   await db.message.create({
     data: {
       conversationId,
       role: "assistant",
+      createdAt: new Date(
+        Math.max(Date.now(), (previous?.createdAt.getTime() ?? 0) + 1),
+      ),
       parts,
       piEntryId: user?.piTurnLeafId,
       textCharacters: trace.reduce(
@@ -677,6 +687,18 @@ async function executeWork(workSessionId: string) {
         onStreamRule: (trigger) => {
           streamRuleTriggers.set(trigger.id, trigger);
           publishWorkStreamRule(work.id, trigger);
+        },
+        onMessageQueue: (queue) => publishWorkMessageQueue(work.id, queue),
+        onQueuedMessage: async (_message, assistantText) => {
+          finishReasoning();
+          const parts = traceParts(assistantText).filter(
+            (part) => part.type !== "work-runtime",
+          );
+          await appendAssistantResult(work.conversationId, "", parts);
+          trace.length = 0;
+          toolTrace.clear();
+          toolStartedAt.clear();
+          resetWorkMessageOutput(work.id);
         },
         onExecutionStage: (stage) => publishWorkExecutionStage(work.id, stage),
         onContextUsage: (next) => {

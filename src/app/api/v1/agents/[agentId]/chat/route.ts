@@ -186,6 +186,7 @@ export const POST = withRequestLogging(
               text,
               signal: req.signal,
               modelOverride: body.modelOverride,
+              onMessageQueue: uiStream.onMessageQueue,
               onPromptInvocation: (invocation) =>
                 persistAgentPromptInvocation({
                   conversationId: conversation.id,
@@ -242,6 +243,11 @@ export const POST = withRequestLogging(
               responseError = error;
             }
             const runtimeParts = agentEntryRuntimeParts(result.task);
+            const previous = await db.message.findFirst({
+              where: { conversationId: conversation.id },
+              orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+              select: { createdAt: true },
+            });
             const parts = [
               ...runtimeParts,
               ...hookParts,
@@ -255,6 +261,12 @@ export const POST = withRequestLogging(
                 data: {
                   conversationId: conversation.id,
                   role: "assistant",
+                  createdAt: new Date(
+                    Math.max(
+                      Date.now(),
+                      (previous?.createdAt.getTime() ?? 0) + 1,
+                    ),
+                  ),
                   parts,
                 },
               });

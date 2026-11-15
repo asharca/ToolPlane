@@ -70,6 +70,11 @@ type SdkResponse = {
       externalEffectsRewound: boolean;
     };
     state: SdkState;
+    disposition?: "queued" | "handled" | "cleared";
+    queue?: {
+      messages: Array<{ id: string; mode: string; text: string }>;
+      pendingMessageCount: number;
+    };
   };
   error?: { code: string };
 };
@@ -492,9 +497,12 @@ export default function(pi) {
       extra: Record<string, unknown> = {},
     ) {
       const id = randomUUID();
-      const result = new Promise<SdkResponse>((done, reject) =>
-        pending.set(id, { resolve: done, reject }),
-      );
+      const {
+        promise: result,
+        resolve,
+        reject,
+      } = Promise.withResolvers<SdkResponse>();
+      pending.set(id, { resolve, reject });
       assertDefined(child.stdin).write(
         `${JSON.stringify({ id, type, message, context: current, ...extra })}\n`,
       );
@@ -842,6 +850,171 @@ describe("official Pi SDK headless session host", () => {
     );
   }, 60_000);
 
+  it("injects steering only after the running native tool and changes the next model request", async () => {
+    const f = await setup();
+    const toolStarted = Promise.withResolvers<void>();
+    f.behavior.streamCompletion = async (response) => {
+      if (f.requests.length === 1) {
+        completion(
+          response,
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: "steer-tool",
+                type: "function",
+                function: {
+                  name: "bash",
+                  arguments: JSON.stringify({
+                    command:
+                      "while [ ! -f release-tool ]; do sleep 0.01; done; printf TOOL_FINISHED",
+                  }),
+                },
+              },
+            ],
+          },
+          "tool_calls",
+        );
+      } else {
+        const steered = JSON.stringify(
+          f.requests.at(-1)?.body.messages,
+        ).includes("STEER_NEW_DIRECTION");
+        completion(
+          response,
+          { content: steered ? "STEER_APPLIED" : "OLD_DIRECTION" },
+          "stop",
+        );
+      }
+    };
+    const host = await f.launch({ defaultTools: ["bash"] }, (event) => {
+      if (event.type === "tool_execution_start") toolStarted.resolve();
+    });
+    const run = host.request("prompt", "Run the waiting tool, then answer");
+    await toolStarted.promise;
+    const queued = await host.request("steer", "STEER_NEW_DIRECTION");
+    expect(queued).toMatchObject({
+      success: true,
+      result: {
+        disposition: "queued",
+        queue: {
+          pendingMessageCount: 1,
+          messages: [{ mode: "steer", text: "STEER_NEW_DIRECTION" }],
+        },
+      },
+    });
+    expect(
+      host.events.some((event) => event.type === "queued_message_consumed"),
+    ).toBe(false);
+    await writeFile(join(f.workspace, "release-tool"), "release");
+    const result = await run;
+    expect(result).toMatchObject({
+      success: true,
+      result: { text: "STEER_APPLIED" },
+    });
+    const toolEnd = host.events.findIndex(
+      (event) => event.type === "tool_execution_end",
+    );
+    const consumed = host.events.findIndex(
+      (event) => event.type === "queued_message_consumed",
+    );
+    expect(consumed).toBeGreaterThan(toolEnd);
+    expect(host.events[consumed]).toMatchObject({
+      message: { mode: "steer", text: "STEER_NEW_DIRECTION" },
+    });
+    expect(f.requests).toHaveLength(2);
+    expect(host.events).toContainEqual({
+      type: "message_queue",
+      queue: { messages: [], pendingMessageCount: 0 },
+    });
+    await host.stop();
+  }, 60_000);
+
+  it("runs follow-up after the assistant finishes and records actual consumption, not acceptance", async () => {
+    const f = await setup();
+    const firstRequest = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    f.behavior.streamCompletion = async (response) => {
+      if (f.requests.length === 1) {
+        firstRequest.resolve();
+        await release.promise;
+        completion(response, { content: "FIRST_TURN_FINISHED" }, "stop");
+      } else {
+        const followed = JSON.stringify(
+          f.requests.at(-1)?.body.messages,
+        ).includes("FOLLOW_UP_NOW");
+        completion(
+          response,
+          { content: followed ? "FOLLOW_UP_EXECUTED" : "MISSING_FOLLOW_UP" },
+          "stop",
+        );
+      }
+    };
+    const host = await f.launch();
+    expect(await host.request("steer", "idle")).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_QUEUE_NOT_RUNNING" },
+    });
+    const run = host.request("prompt", "Answer the first turn");
+    await firstRequest.promise;
+    expect(
+      await host.request("steer", "DISCARD_BEFORE_DELIVERY"),
+    ).toMatchObject({ success: true });
+    expect(await host.request("clear_queue")).toMatchObject({
+      success: true,
+      result: {
+        disposition: "cleared",
+        queue: { pendingMessageCount: 0, messages: [] },
+      },
+    });
+    const identity = {
+      messageId: "durable-follow-up",
+      deduplicate: true as const,
+    };
+    expect(
+      await host.request("follow_up", "FOLLOW_UP_NOW", f.context, identity),
+    ).toMatchObject({
+      success: true,
+      result: { disposition: "queued", queue: { pendingMessageCount: 1 } },
+    });
+    expect(
+      await host.request("follow_up", "FOLLOW_UP_NOW", f.context, identity),
+    ).toMatchObject({
+      success: true,
+      result: { disposition: "queued", queue: { pendingMessageCount: 1 } },
+    });
+    expect(
+      host.events.some((event) => event.type === "queued_message_consumed"),
+    ).toBe(false);
+    release.resolve();
+    const result = await run;
+    expect(result).toMatchObject({
+      success: true,
+      result: { text: "FOLLOW_UP_EXECUTED" },
+    });
+    expect(f.requests).toHaveLength(2);
+    expect(
+      host.events.filter((event) => event.type === "queued_message_consumed"),
+    ).toEqual([
+      expect.objectContaining({
+        assistantText: "FIRST_TURN_FINISHED",
+        message: expect.objectContaining({
+          mode: "follow_up",
+          text: "FOLLOW_UP_NOW",
+        }),
+      }),
+    ]);
+    const transcript = await readFile(
+      assertDefined(result.result).state.sessionFile,
+      "utf8",
+    );
+    expect(transcript.indexOf("FIRST_TURN_FINISHED")).toBeLessThan(
+      transcript.indexOf("FOLLOW_UP_NOW"),
+    );
+    expect(transcript.indexOf("FOLLOW_UP_NOW")).toBeLessThan(
+      transcript.indexOf("FOLLOW_UP_EXECUTED"),
+    );
+    await host.stop();
+  }, 60_000);
   it("keeps Python imports from changing skill files across continued native turns", async () => {
     const f = await setup();
     const skill = join(f.workspace, "python-skill");

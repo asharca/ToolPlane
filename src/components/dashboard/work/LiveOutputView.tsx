@@ -6,6 +6,7 @@ import { StreamingResponse } from "@/components/agents/streaming-response";
 import { WorkContentBlocks } from "@/components/dashboard/ConversationContentBlocks";
 import { interleaveLiveText } from "@/lib/conversation/content-blocks";
 import type { LiveOutputConnection } from "./useLiveTaskOutput";
+import { AgentMessageQueueView } from "@/components/dashboard/AgentMessageQueue";
 
 const stageKeys = {
   queued: "executionQueued",
@@ -32,9 +33,11 @@ export function LiveOutputStatus({
 export function LiveOutputView({
   output,
   hideText = false,
+  showQueue = true,
 }: {
   output: LiveTaskOutput;
   hideText?: boolean;
+  showQueue?: boolean;
 }) {
   const t = useTranslations("console.work");
   const liveT = useTranslations("console.liveOutput");
@@ -68,6 +71,9 @@ export function LiveOutputView({
           activeLabel={stage}
         />
       </StreamingResponse>
+      {showQueue && active ? (
+        <AgentMessageQueueView queue={output.messageQueue} />
+      ) : null}
       {!hideText && output.truncated ? (
         <p className="text-xs text-muted-foreground">{liveT("truncated")}</p>
       ) : null}
