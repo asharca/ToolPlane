@@ -2457,6 +2457,35 @@ export async function readLegacyPiSdkPackageReferences(input: {
   const refs: unknown = JSON.parse(output);
   return recoverPiSdkPackageReferences(refs);
 }
+/** Read-only export runs beside an active turn, never through the model/broker queue. */
+export async function runSandboxSessionExport(input: {
+  sandboxId: string;
+  stateRoot: string;
+  runtimeSessionId: string;
+  jsonl?: string;
+  signal?: AbortSignal;
+}): Promise<string> {
+  assertRuntimeOwner();
+  const source = await readFile(
+    posix.join(process.cwd(), "scripts/pi-sdk-session-export.mjs"),
+    "utf8",
+  );
+  return runTrackedDockerExec({
+    container: sandboxContainerName(input.sandboxId),
+    workdir: "/tmp",
+    executable: "node",
+    args: [SANDBOX_NODE_FLAG, "--input-type=module", "-"],
+    stdin: `${source}\nawait exportSession(${JSON.stringify({
+      stateRoot: input.stateRoot,
+      runtimeSessionId: safeSegment(input.runtimeSessionId, "runtime session"),
+      packageRoot: PI_SDK_RUNTIME.directory,
+      ...(input.jsonl === undefined ? {} : { jsonl: input.jsonl }),
+    })});\n`,
+    signal: input.signal,
+    timeoutMs: 30_000,
+    maxStdoutBytes: 12 * 1024 * 1024,
+  });
+}
 
 async function runPiSdk(
   options: RunSandboxAgentTurnOptions,

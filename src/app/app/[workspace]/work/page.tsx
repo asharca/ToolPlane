@@ -295,6 +295,8 @@ export default async function WorkspaceWorkPage({
           agentId: conversation.agentId,
           title: conversation.title,
           triggerId: conversation.triggerId,
+          readOnly: conversation.readOnly,
+          exportable: !conversation.publicApiConversation,
           source: parseMessagingSessionTitle(conversation.title),
         }))}
         agents={agents.map((agent) => {
