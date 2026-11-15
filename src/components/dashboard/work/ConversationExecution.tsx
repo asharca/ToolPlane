@@ -12,6 +12,8 @@ import { ThinkingShimmer } from "@/components/agents/loading-states";
 import { Button } from "@/components/motion/button";
 import { notify } from "@/components/dashboard/Toaster";
 import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
+import type { ToolApprovalDataPart } from "@/lib/agents/execution/live-output-types";
+import type { ToolApprovalDecision } from "./ToolApprovalRequest";
 
 const ExecutionResponse = z.object({
   execution: NativeProjectionSchema.extend({
@@ -52,6 +54,8 @@ export function ConversationExecution({
   showActivities = true,
   onBusyChange,
   paused = false,
+  toolApprovalEndpoint,
+  toolApprovalParts = null,
 }: {
   /** Same-origin endpoint returning the native execution projection. */
   endpoint: string;
@@ -73,11 +77,15 @@ export function ConversationExecution({
   onBusyChange?: (busy: boolean) => void;
   /** Freeze observation and disable decisions until monitoring resumes. */
   paused?: boolean;
+  toolApprovalEndpoint?: string;
+  /** An authoritative pending set from SSE; null falls back to execution GET. */
+  toolApprovalParts?: ToolApprovalDataPart[] | null;
 }) {
   const t = useTranslations("console.work");
   const tAgents = useTranslations("console.agents");
   const describeRuntimeError = useRuntimeErrorText();
   const nativeT = useTranslations("console.work.nativeUi");
+  const approvalT = useTranslations("console.toolApproval");
   const url = endpoint;
   const [execution, setExecution] = useState<Execution | null>(null);
   const [failed, setFailed] = useState(false);
@@ -86,6 +94,9 @@ export function ConversationExecution({
   const [fresh, setFresh] = useState(false);
   const [busyRequestId, setBusyRequestId] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
+  const [dismissedApprovals, setDismissedApprovals] = useState<Set<string>>(
+    () => new Set(),
+  );
   const decisionFlight = useRef<AbortController | null>(null);
   const statusRef = useRef<string | null>(null);
   const activeRef = useRef(active);
@@ -105,6 +116,7 @@ export function ConversationExecution({
     setDecisionFailed(false);
     setFresh(false);
     setBusyRequestId(null);
+    setDismissedApprovals(new Set());
   }
   const executionStatus = execution?.status;
   useEffect(() => {
@@ -221,6 +233,102 @@ export function ConversationExecution({
   useEffect(() => {
     if (active) setReload((value) => value + 1);
   }, [active]);
+
+  const toolApprovals = (
+    toolApprovalParts?.map((part) => part.data) ??
+    execution?.toolApprovals ??
+    []
+  ).filter(
+    (card) => card.status === "pending" && !dismissedApprovals.has(card.id),
+  );
+
+  function dismissApproval(id: string) {
+    setDismissedApprovals((current) => new Set(current).add(id));
+    setReload((value) => value + 1);
+  }
+
+  async function decideToolApproval(decision: ToolApprovalDecision) {
+    const card = toolApprovals.find((item) => item.id === decision.id);
+    if (
+      !toolApprovalEndpoint ||
+      !card ||
+      card.entryKind === "channel" ||
+      decisionFlight.current ||
+      paused ||
+      failed ||
+      revoked ||
+      document.hidden ||
+      (!fresh && toolApprovalParts === null)
+    )
+      return;
+    if (Date.parse(card.expiresAt) <= Date.now()) {
+      dismissApproval(card.id);
+      notify(approvalT("expired"), { severity: "error" });
+      return;
+    }
+    const controller = new AbortController();
+    decisionFlight.current = controller;
+    const owned = () => decisionFlight.current === controller;
+    setBusyRequestId(card.id);
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(toolApprovalEndpoint, {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        signal: controller.signal,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(decision),
+      });
+      if (!owned()) return;
+      if (!response.ok) {
+        const payload: unknown = await response.json().catch(() => null);
+        const code =
+          payload && typeof payload === "object" && "error" in payload
+            ? payload.error
+            : null;
+        if (!owned()) return;
+        if (
+          response.status === 401 ||
+          response.status === 403 ||
+          code === "NOT_FOUND"
+        ) {
+          setExecution(null);
+          setRevoked(true);
+          notify(approvalT("forbidden"), { severity: "error" });
+        } else if (
+          code === "TOOL_APPROVAL_UNAVAILABLE" &&
+          [404, 409].includes(response.status)
+        ) {
+          dismissApproval(card.id);
+          notify(
+            approvalT(
+              Date.parse(card.expiresAt) <= Date.now()
+                ? "expired"
+                : "unavailable",
+            ),
+            { severity: "error" },
+          );
+        } else {
+          notify(approvalT("failed"), { severity: "error" });
+        }
+        return;
+      }
+      dismissApproval(card.id);
+      notify(approvalT("recorded"));
+      onChangeRef.current?.();
+    } catch {
+      if (owned()) notify(approvalT("failed"), { severity: "error" });
+    } finally {
+      clearTimeout(timeout);
+      if (owned()) {
+        decisionFlight.current = null;
+        setBusyRequestId(null);
+        setFresh(false);
+        setReload((value) => value + 1);
+      }
+    }
+  }
 
   async function respond(result: NativeResponse) {
     if (
@@ -395,29 +503,49 @@ export function ConversationExecution({
           ),
         }
       : execution;
+  const nativeProjection = {
+    activities: projection?.activities ?? [],
+    hooks: projection?.hooks ?? [],
+    uiRequests: projection?.uiRequests ?? [],
+    uiEvents: projection?.uiEvents ?? [],
+    todos: projection?.todos ?? [],
+    toolApprovals,
+  };
   const hasProjection =
-    projection &&
-    (projection.todos.length ||
-      projection.activities.length ||
-      projection.hooks.length ||
-      projection.uiRequests.length ||
-      projection.uiEvents.length);
+    nativeProjection.todos.length ||
+    nativeProjection.activities.length ||
+    nativeProjection.hooks.length ||
+    nativeProjection.uiRequests.length ||
+    nativeProjection.uiEvents.length ||
+    nativeProjection.toolApprovals.length;
   return content || hasProjection ? (
     <div className={className}>
       {content}
-      {!revoked && projection && hasProjection ? (
+      {!revoked && hasProjection ? (
         <NativeSessionUi
-          projection={projection}
-          scope={`${url}:${projection.id}`}
+          projection={nativeProjection}
+          scope={`${url}:${projection?.id ?? "pending"}`}
           disabled={
             failed ||
             paused ||
             revoked ||
             !fresh ||
-            !ACTIVE_STATUSES.has(projection.status)
+            !ACTIVE_STATUSES.has(projection?.status ?? "")
           }
           busyId={busyRequestId}
           onRespond={(result) => void respond(result)}
+          toolApprovalDisabled={
+            failed ||
+            paused ||
+            revoked ||
+            (!fresh && toolApprovalParts === null)
+          }
+          onToolApproval={
+            toolApprovalEndpoint
+              ? (decision) => void decideToolApproval(decision)
+              : undefined
+          }
+          onToolApprovalExpire={dismissApproval}
           onSetEditorText={onSetEditorText}
           belowEditorElement={belowEditorElement}
         />

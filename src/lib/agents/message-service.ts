@@ -1,4 +1,5 @@
 import "server-only";
+import { channelToolApprovalReply } from "./execution/tool-approvals";
 import { createHash, randomUUID } from "node:crypto";
 import type { UIMessage } from "ai";
 import { z } from "zod";
@@ -217,6 +218,30 @@ export async function runAgentChannelMessage(params: {
       },
     };
   }
+  const approvalReply = await channelToolApprovalReply({
+    connectionId: channel.id,
+    workspaceId: params.workspaceId,
+    agentId: params.agentId,
+    source: event.source,
+    text: body.message,
+    roleIds: body.metadata?.roleIds,
+  });
+  if (approvalReply !== null)
+    return {
+      status: 200,
+      body: {
+        agentId: params.agentId,
+        conversationId: "",
+        delivery: "message",
+        message: approvalReply,
+        rawMessage: approvalReply,
+        sessionKey: "",
+        source: event.source,
+        platform: channel.platform,
+        externalUserId: event.source.userId ?? null,
+        channelId: event.source.chatId ?? null,
+      },
+    };
   // A command's receipt commits with its mutation, before hosted reply delivery.
   if (params.inboundPersisted && params.inboundDedupeKey) {
     const inbound = await db.agentChannelInboundEvent.findFirst({
@@ -705,7 +730,11 @@ export async function runAgentChannelMessage(params: {
               actorId: channel.a2aActorId,
               line: `/${enteredName}${args ? ` ${args}` : ""}`,
               signal: params.signal,
-              entry: { kind: "channel", channelId: channel.id },
+              entry: {
+                kind: "channel",
+                channelId: channel.id,
+                channelSource: event.source,
+              },
               messageId: event.source.messageId,
             });
             message =
@@ -982,6 +1011,7 @@ async function runLoadedAgentMessage(params: {
           : "chat",
       sourceId: conversation.id,
       channelId: params.connectionId,
+      channelSource: params.connectionId ? event.source : undefined,
       workspaceId: agent.workspaceId,
       agentId: agent.id,
       actorId: params.actorId,

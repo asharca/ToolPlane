@@ -21,6 +21,7 @@ import {
   isExecutableAgentRuntimeKind,
   type AgentOptionalBuiltinTool,
 } from "@/lib/agents/runtime-kind";
+import type { ToolApprovalPolicy } from "@/lib/agents/tool-approval-policy";
 import type { ReasoningLevel } from "@/lib/agents/constants";
 import { AgentTriggersPanel } from "./AgentTriggersPanel";
 import { AgentUsagePanel } from "../AgentUsagePanel";
@@ -58,6 +59,7 @@ type SettingsData = {
   providerId: string | null;
   model: string | null;
   reasoningEffort: ReasoningLevel | null;
+  toolApproval?: ToolApprovalPolicy;
   maxSteps: number;
   providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
@@ -96,6 +98,7 @@ const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
   "instructions",
   "builtInTools",
   "streamRules",
+  "toolApproval",
   "mcp",
   "skills",
   "piPackages",
@@ -174,6 +177,7 @@ export function AgentSettings({
     [],
   );
 
+  const approvalT = useTranslations("console.toolApproval");
   const navigationItems: Array<{ id: SettingsTab; label: string }> = [
     { id: "general", label: t("basic") },
     { id: "instructions", label: t("instructions") },
@@ -183,6 +187,7 @@ export function AgentSettings({
     ...(supportsChannelSettings
       ? [{ id: "streamRules" as const, label: t("streamRules.title") }]
       : []),
+    { id: "toolApproval", label: approvalT("title") },
     { id: "mcp", label: t("mcp") },
     { id: "skills", label: t("skills") },
     { id: "piPackages", label: t("piPackages") },
@@ -248,6 +253,7 @@ export function AgentSettings({
                 providerId={settings.providerId}
                 model={settings.model}
                 reasoningEffort={settings.reasoningEffort}
+                toolApproval={settings.toolApproval}
                 maxSteps={settings.maxSteps}
                 providers={settings.providers}
                 deployments={settings.deployments}

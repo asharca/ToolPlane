@@ -36,6 +36,14 @@ export type LocalA2AGrant = {
     conversationId?: string;
     sourceAgentId: string;
     channelId?: string;
+    channelSource?: {
+      platform: string;
+      chatType: "dm" | "group" | "channel" | "thread";
+      chatId?: string;
+      userId?: string;
+      threadId?: string;
+      messageId?: string;
+    };
     binding: string;
     workingDirectory?: string;
   };

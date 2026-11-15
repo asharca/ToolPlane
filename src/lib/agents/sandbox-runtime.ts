@@ -2506,6 +2506,9 @@ async function runNativeSessionExec(
       context: {
         runtimeToken: options.runtimeAccessToken,
         uiUrl: options.nativeUiUrl,
+        toolApprovalBridge: Boolean(
+          options.nativeUiUrl?.includes("/agent-runtime/tasks/"),
+        ),
         mcpConfig: sdk.mcpConfig,
         model: sdk.model,
         fallbackModels,

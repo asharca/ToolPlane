@@ -90,6 +90,7 @@ type SdkResponse = {
 type RequestContext = {
   runtimeToken: string;
   uiUrl?: string;
+  toolApprovalBridge?: boolean;
   mcpConfig: { servers: unknown[] };
   model: Record<string, unknown>;
   reasoningEffort?: string;
@@ -169,6 +170,8 @@ async function setup(workspaceSubdirectory = "") {
     failUiPoll: false,
     failTodoProjection: false,
     todoQuota: false,
+    approvalStatus: "allowed",
+    approvalExpired: false,
     toolArgs: "{}",
     completionText: "SDK_COMPLETE",
     promptTokens: 20,
@@ -198,6 +201,25 @@ async function setup(workspaceSubdirectory = "") {
       let raw = "";
       for await (const chunk of request) raw += String(chunk);
       const body = JSON.parse(raw);
+      if (
+        /^\/api\/v1\/agent-runtime\/tasks\/[^/]+\/tool-approvals$/.test(
+          request.url ?? "",
+        )
+      ) {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            status: behavior.approvalStatus,
+            allowed:
+              body.action === "consume" &&
+              behavior.approvalStatus === "allowed",
+            expiresAt: new Date(
+              Date.now() + (behavior.approvalExpired ? -1 : 120_000),
+            ).toISOString(),
+          }),
+        );
+        return;
+      }
       if (
         /^\/api\/v1\/agent-runtime\/tasks\/[^/]+\/ui$/.test(request.url ?? "")
       ) {
@@ -2056,6 +2078,56 @@ describe("official Pi SDK headless session host", () => {
     );
     expect(f.requests).toHaveLength(2);
   }, 60000);
+  it.each(["denied", "expired"])(
+    "keeps a real native turn successful after %s tool approval",
+    async (status) => {
+      const f = await setup();
+      f.behavior.approvalStatus = status === "expired" ? "pending" : "denied";
+      f.behavior.approvalExpired = status === "expired";
+      const host = await f.launch();
+      const result = await host.request("prompt", "Use increment", {
+        ...f.context,
+        toolApprovalBridge: true,
+      });
+      expect(result).toMatchObject({
+        success: true,
+        result: { state: { sessionPersisted: true }, text: "SDK_COMPLETE" },
+      });
+      await expect(
+        readFile(join(f.workspace, "count.txt"), "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      expect(JSON.stringify(f.requests.at(-1)?.body.messages)).toContain(
+        "TOOL_APPROVAL_DENIED: Tool execution was not approved.",
+      );
+      expect(host.events).toContainEqual(
+        expect.objectContaining({
+          type: "tool_execution_end",
+          toolName: "increment",
+          isError: true,
+        }),
+      );
+    },
+    60000,
+  );
+  it("executes an approved native call once with the captured parameters", async () => {
+    const f = await setup();
+    const host = await f.launch();
+    expect(
+      await host.request("prompt", "Use increment", {
+        ...f.context,
+        toolApprovalBridge: true,
+      }),
+    ).toMatchObject({ success: true });
+    expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("1");
+    expect(host.events).toContainEqual(
+      expect.objectContaining({
+        type: "tool_execution_end",
+        toolName: "increment",
+        isError: false,
+      }),
+    );
+  }, 60000);
+
   it("keeps the turn alive after a failed tool call, retains reload failure, and rejects outside dynamic resource paths", async () => {
     const f = await setup();
     f.behavior.tool = "fail_tool";

@@ -5,7 +5,9 @@ import type {
   LiveTaskOutput,
   LiveTaskSnapshotEvent,
   LiveTaskSettledEvent,
+  ToolApprovalDataPart,
 } from "@/lib/agents/execution/live-output-types";
+import { ToolApprovalDataPartsSchema } from "./ToolApprovalRequest";
 
 export type LiveOutputConnection =
   | "connecting"
@@ -18,6 +20,7 @@ export type LiveOutputConnection =
 type StreamState = {
   scope: string | null;
   output: LiveTaskOutput | null;
+  dataParts: ToolApprovalDataPart[] | null;
   connection: LiveOutputConnection;
 };
 
@@ -42,6 +45,7 @@ export function useLiveTaskOutput({
   const [state, setState] = useState<StreamState>({
     scope: url,
     output: null,
+    dataParts: null,
     connection: "connecting",
   });
   const settled = useEffectEvent((taskId: string) => onSettled?.(taskId));
@@ -65,12 +69,13 @@ export function useLiveTaskOutput({
       setState((previous) => ({
         scope: url,
         output: previous.scope === url ? previous.output : null,
+        dataParts: previous.scope === url ? previous.dataParts : null,
         connection: "connecting",
         ...patch,
       }));
     };
     if (url && deniedScope.current === url) {
-      update({ output: null, connection: "revoked" });
+      update({ output: null, dataParts: null, connection: "revoked" });
       return () => {
         alive = false;
       };
@@ -85,7 +90,7 @@ export function useLiveTaskOutput({
     const deny = () => {
       denied = true;
       deniedScope.current = url;
-      update({ output: null, connection: "revoked" });
+      update({ output: null, dataParts: null, connection: "revoked" });
       controller?.abort();
       revoked();
     };
@@ -133,7 +138,10 @@ export function useLiveTaskOutput({
         previousOutput = next;
         snapshot(next);
         // Every event is authoritative, including a null snapshot after reconnect.
-        update({ output: value.output, connection: "live" });
+        const dataParts = ToolApprovalDataPartsSchema.parse(
+          value.dataParts ?? [],
+        );
+        update({ output: value.output, dataParts, connection: "live" });
       } else if (event === "settled") {
         const value = JSON.parse(data.join("\n")) as LiveTaskSettledEvent;
         if (typeof value.taskId === "string") settled(value.taskId);
@@ -231,5 +239,10 @@ export function useLiveTaskOutput({
             ? ("paused" as const)
             : state.connection,
       }
-    : { scope: url, output: null, connection: "connecting" as const };
+    : {
+        scope: url,
+        output: null,
+        dataParts: null,
+        connection: "connecting" as const,
+      };
 }

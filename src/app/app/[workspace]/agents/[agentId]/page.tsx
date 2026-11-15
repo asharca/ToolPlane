@@ -20,6 +20,7 @@ import { toAgentChannelConnectionClientView } from "@/lib/agents/channel-connect
 import { SettingsModal } from "@/components/dashboard/SettingsModal";
 import { db } from "@/lib/db";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
+import { ToolApprovalPolicySchema } from "@/lib/agents/tool-approval-policy";
 import { listPlugins } from "@/lib/plugins/catalog";
 import {
   buildAgentPluginCatalog,
@@ -118,6 +119,7 @@ export default async function AgentDetailPage({
     "general",
     "instructions",
     "builtInTools",
+    "toolApproval",
     "mcp",
     "skills",
     "piPackages",
@@ -164,6 +166,9 @@ export default async function AgentDetailPage({
           maxSteps: agent.maxSteps,
           reasoningEffort:
             normalizeReasoningLevel(agent.reasoningEffort) ?? null,
+          toolApproval: ToolApprovalPolicySchema.parse(
+            agent.toolApproval ?? { mode: "off" },
+          ),
           providers: providers.map((provider) => ({
             id: provider.id,
             name: provider.name,

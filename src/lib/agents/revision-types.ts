@@ -14,6 +14,7 @@ import {
 } from "@/lib/sandboxes/external";
 import { agentOptionalBuiltinTool } from "./runtime-kind";
 
+import { ToolApprovalPolicySchema } from "./tool-approval-policy";
 const reference = z.string().trim().min(1).max(240);
 const references = z.array(reference).max(1_000);
 export const OptionalBuiltinToolsSchema = references.refine(
@@ -180,6 +181,7 @@ const PiRevisionConfigSchema = z
       .optional(),
     reasoningEffort: z.enum(REASONING_LEVELS).optional(),
     streamRules: StreamRulesSchema.optional(),
+    toolApproval: ToolApprovalPolicySchema.optional(),
     maxSteps: z
       .number()
       .int()

@@ -1,5 +1,22 @@
 // @vitest-environment node
 import { assertDefined } from "../assert-defined";
+import {
+  runtimeToolApproval,
+  decideToolApproval,
+  pendingToolApprovals,
+  channelToolApprovalReply,
+  toolArgumentHash,
+} from "@/lib/agents/execution/tool-approvals";
+import {
+  toolApprovalDecision,
+  type ToolApprovalPolicy,
+} from "@/lib/agents/tool-approval-policy";
+import { handleConversationToolApprovals } from "@/lib/agents/execution/tool-approval-http";
+import * as channelRuntime from "@/lib/agents/channel-runtime";
+import { encryptSecretRecord } from "@/lib/security/secrets";
+vi.mock("next-intl/server", () => ({
+  getTranslations: async () => (key: string) => key,
+}));
 import { createHash, randomUUID } from "node:crypto";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
@@ -409,6 +426,7 @@ beforeEach(async () => {
     where: { workspaceId: ws },
     data: {
       a2aInternalEnabled: false,
+      toolApproval: { mode: "off" },
       subagentMode: "platform",
       nativeSubagentMaxConcurrency: 4,
       nativeSubagentMaxDepth: 3,
@@ -2832,6 +2850,346 @@ describe("unified native ingress mappings", () => {
       text: "New task only",
     };
   }
+  async function approvalPolicy(policy: ToolApprovalPolicy) {
+    await db.$transaction(async (tx) => {
+      const current = await requireAgentRevision(
+        tx,
+        agents[0],
+        grant.agentRevisionId,
+      );
+      const owner = await tx.agent.findUniqueOrThrow({
+        where: { id: agents[0] },
+      });
+      const revision = await tx.agentRevision.create({
+        data: {
+          agentId: agents[0],
+          version: owner.currentRevisionVersion + 1,
+          config: {
+            ...current.config,
+            toolApproval: policy,
+          } as Prisma.InputJsonValue,
+        },
+      });
+      await tx.agent.update({
+        where: { id: agents[0] },
+        data: { currentRevisionVersion: revision.version },
+      });
+    });
+    grant = await createLocalRootGrant(ws, agents[0], user);
+  }
+  it("classifies builtins conservatively and gives explicit tool overrides priority", () => {
+    for (const tool of ["read", "grep", "find", "ls"])
+      expect(toolApprovalDecision({ mode: "write" }, tool)).toBe("allow");
+    for (const tool of ["edit", "write", "bash", "mcp_custom", "todo"])
+      expect(toolApprovalDecision({ mode: "write" }, tool)).toBe("ask");
+    expect(toolApprovalDecision({ mode: "exec" }, "write")).toBe("allow");
+    expect(toolApprovalDecision({ mode: "exec" }, "bash")).toBe("ask");
+    expect(
+      toolApprovalDecision(
+        { mode: "off", overrides: { read: "deny" } },
+        "read",
+      ),
+    ).toBe("deny");
+    expect(
+      toolApprovalDecision(
+        { mode: "all", overrides: { bash: "allow" } },
+        "bash",
+      ),
+    ).toBe("allow");
+    expect(toolApprovalDecision(undefined, "toString")).toBe("allow");
+    expect(toolArgumentHash("bash", { a: 1, b: 2 })).toBe(
+      toolArgumentHash("bash", { b: 2, a: 1 }),
+    );
+  });
+  it("binds approvals to parameters, consumes them once, expires them and rejects old leases", async () => {
+    await approvalPolicy({ mode: "all" });
+    const input = await entry("chat");
+    const accepted = await submitAgentEntry(input, vi.fn());
+    const running = assertDefined(await claimTask(accepted.row.id));
+    const token = await runtimeToken(running);
+    const call = {
+      toolCallId: "approval-one",
+      toolName: "bash",
+      arguments: { command: "echo approved" },
+    };
+    expect(
+      await runtimeToolApproval(token, { action: "request", ...call }),
+    ).toMatchObject({ status: "pending" });
+    const [card] = await pendingToolApprovals(running.id, running.leaseToken);
+    const id = assertDefined(card).id;
+    await expect(
+      decideToolApproval({
+        id,
+        decision: "approve",
+        workspaceId: randomUUID(),
+        agentId: agents[0],
+        actorId: user,
+      }),
+    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    await decideToolApproval({
+      id,
+      decision: "approve",
+      workspaceId: ws,
+      agentId: agents[0],
+      actorId: user,
+    });
+    expect(
+      await runtimeToolApproval(token, { action: "consume", ...call }),
+    ).toMatchObject({ allowed: true });
+    expect(
+      await runtimeToolApproval(token, { action: "consume", ...call }),
+    ).toMatchObject({ allowed: false });
+    const changed = { ...call, toolCallId: "changed" };
+    await runtimeToolApproval(token, { action: "request", ...changed });
+    const changedRow = await db.agentToolApproval.findUniqueOrThrow({
+      where: {
+        taskId_lease_toolCallId: {
+          taskId: running.id,
+          lease: assertDefined(running.leaseToken),
+          toolCallId: changed.toolCallId,
+        },
+      },
+    });
+    await decideToolApproval({
+      id: changedRow.id,
+      decision: "approve",
+      workspaceId: ws,
+      agentId: agents[0],
+      actorId: user,
+    });
+    expect(
+      await runtimeToolApproval(token, {
+        action: "consume",
+        ...changed,
+        arguments: { command: "different" },
+      }),
+    ).toMatchObject({ allowed: false });
+    const expired = { ...call, toolCallId: "expired" };
+    await runtimeToolApproval(token, { action: "request", ...expired });
+    await db.agentToolApproval.updateMany({
+      where: { taskId: running.id, toolCallId: "expired" },
+      data: { expiresAt: new Date(0) },
+    });
+    expect(
+      await runtimeToolApproval(token, { action: "consume", ...expired }),
+    ).toMatchObject({ allowed: false });
+    await db.a2ATask.update({
+      where: { id: running.id },
+      data: { leaseToken: randomUUID() },
+    });
+    await expect(
+      runtimeToolApproval(token, {
+        action: "request",
+        ...call,
+        toolCallId: "old-lease",
+      }),
+    ).rejects.toBeInstanceOf(TaskNotFoundError);
+  });
+  it("lets A2A bypass even deny overrides and audits more than 32 automatic calls", async () => {
+    await approvalPolicy({ mode: "all", overrides: { bash: "deny" } });
+    const running = await root();
+    const token = await runtimeToken(running);
+    for (let index = 0; index < 40; index++) {
+      const call = {
+        toolCallId: `automatic-${index}`,
+        toolName: "bash",
+        arguments: { command: "true" },
+      };
+      expect(
+        await runtimeToolApproval(token, { action: "request", ...call }),
+      ).toMatchObject({ status: "allowed" });
+      expect(
+        await runtimeToolApproval(token, { action: "consume", ...call }),
+      ).toMatchObject({ allowed: true });
+    }
+    expect(
+      await db.logEvent.count({
+        where: {
+          taskId: running.id,
+          eventName: "agent.tool_approval",
+          attributes: {
+            path: ["data", "decision"],
+            equals: "unattended_allow",
+          },
+        },
+      }),
+    ).toBe(40);
+  });
+  it("counts only current unexpired unconsumed human approvals toward pending capacity", async () => {
+    await approvalPolicy({ mode: "all" });
+    const input = await entry("chat");
+    const running = assertDefined(
+      await claimTask((await submitAgentEntry(input, vi.fn())).row.id),
+    );
+    const token = await runtimeToken(running);
+    const call = {
+      toolCallId: "",
+      toolName: "bash",
+      arguments: { command: "true" },
+    };
+    for (let index = 0; index < 33; index++) {
+      call.toolCallId = `consumed-${index}`;
+      await runtimeToolApproval(token, { action: "request", ...call });
+      const card = assertDefined(
+        (await pendingToolApprovals(running.id, running.leaseToken))[0],
+      );
+      await decideToolApproval({
+        id: card.id,
+        decision: "approve",
+        workspaceId: ws,
+        agentId: agents[0],
+        actorId: user,
+      });
+      expect(
+        await runtimeToolApproval(token, { action: "consume", ...call }),
+      ).toMatchObject({ allowed: true });
+    }
+    for (let index = 0; index < 32; index++)
+      expect(
+        await runtimeToolApproval(token, {
+          action: "request",
+          ...call,
+          toolCallId: `pending-${index}`,
+        }),
+      ).toMatchObject({ status: "pending" });
+    expect(
+      await runtimeToolApproval(token, {
+        action: "request",
+        ...call,
+        toolCallId: "overflow",
+      }),
+    ).toMatchObject({ status: "denied" });
+    await db.agentToolApproval.updateMany({
+      where: { taskId: running.id, toolCallId: "pending-0" },
+      data: { expiresAt: new Date(0) },
+    });
+    expect(
+      await runtimeToolApproval(token, {
+        action: "request",
+        ...call,
+        toolCallId: "after-expiry",
+      }),
+    ).toMatchObject({ status: "pending" });
+  }, 30000);
+
+  it("authorizes console decisions by workspace membership and conversation ownership", async () => {
+    await approvalPolicy({ mode: "all" });
+    const input = await entry("chat");
+    const running = assertDefined(
+      await claimTask((await submitAgentEntry(input, vi.fn())).row.id),
+    );
+    const token = await runtimeToken(running);
+    await runtimeToolApproval(token, {
+      action: "request",
+      toolCallId: "console",
+      toolName: "bash",
+      arguments: {},
+    });
+    const card = assertDefined(
+      (await pendingToolApprovals(running.id, running.leaseToken))[0],
+    );
+    const req = () =>
+      new Request("http://localhost:3000/approve", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://localhost:3000",
+        },
+        body: JSON.stringify({ id: card.id, decision: "approve" }),
+      });
+    expect(
+      (await handleConversationToolApprovals(req(), agents[0], input.sourceId))
+        .status,
+    ).toBe(401);
+    await createSession(user, 0);
+    expect(
+      (await handleConversationToolApprovals(req(), agents[1], input.sourceId))
+        .status,
+    ).toBe(404);
+    expect(
+      (await handleConversationToolApprovals(req(), agents[0], randomUUID()))
+        .status,
+    ).toBe(404);
+    expect(
+      (await handleConversationToolApprovals(req(), agents[0], input.sourceId))
+        .status,
+    ).toBe(200);
+  });
+  it("rejects unauthorized channel senders and consumes only the original authorized sender's short code", async () => {
+    await approvalPolicy({ mode: "all" });
+    const input = await entry("channel");
+    const connectionId = assertDefined(input.channelId);
+    await db.agentChannelConnection.update({
+      where: { id: connectionId },
+      data: {
+        senderPolicyVersion: 2,
+        adminUserIds: ["authorized"],
+        credentials: encryptSecretRecord({}),
+      },
+    });
+    const source = {
+      platform: "weixin",
+      chatType: "dm" as const,
+      chatId: "chat",
+      userId: "authorized",
+    };
+    const running = assertDefined(
+      await claimTask(
+        (await submitAgentEntry({ ...input, channelSource: source }, vi.fn()))
+          .row.id,
+      ),
+    );
+    const token = await runtimeToken(running);
+    const delivery = vi
+      .spyOn(channelRuntime, "sendChannelApprovalNotice")
+      .mockResolvedValue(true);
+    try {
+      await runtimeToolApproval(token, {
+        action: "request",
+        toolCallId: "channel",
+        toolName: "bash",
+        arguments: { command: "true" },
+      });
+      const card = assertDefined(
+        (await pendingToolApprovals(running.id, running.leaseToken))[0],
+      );
+      const reply = {
+        connectionId,
+        workspaceId: ws,
+        agentId: agents[0],
+        source,
+        text: `/approve ${card.shortCode}`,
+      };
+      expect(
+        await channelToolApprovalReply({
+          ...reply,
+          source: { ...source, userId: "intruder" },
+        }),
+      ).toBe("channelInvalid");
+      expect(
+        await pendingToolApprovals(running.id, running.leaseToken),
+      ).toHaveLength(1);
+      expect(
+        await channelToolApprovalReply({
+          ...reply,
+          source: { ...source, threadId: "wrong-thread" },
+        }),
+      ).toBe("channelInvalid");
+      expect(await channelToolApprovalReply(reply)).toBe("channelRecorded");
+      expect(await channelToolApprovalReply(reply)).toBe("channelInvalid");
+      expect(
+        await runtimeToolApproval(token, {
+          action: "consume",
+          toolCallId: "channel",
+          toolName: "bash",
+          arguments: { command: "true" },
+        }),
+      ).toMatchObject({ allowed: true });
+    } finally {
+      delivery.mockRestore();
+    }
+  });
+
   it.each(["chat", "work"] as const)(
     "keeps existing and new %s entries on the published provider after an unapplied draft provider change",
     async (kind) => {

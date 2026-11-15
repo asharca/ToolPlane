@@ -1,3 +1,4 @@
+import { pendingToolApprovals } from "./tool-approvals";
 import "server-only";
 import { z } from "zod";
 import {
@@ -125,7 +126,12 @@ async function conversationObservation(
         },
       },
     }));
-  return { ...observation, output, settled: Boolean(persisted) };
+  return {
+    ...observation,
+    output,
+    settled: Boolean(persisted),
+    toolApprovals: await pendingToolApprovals(task.id, task.leaseToken),
+  };
 }
 export async function handleConversationOutputEvents(
   req: Request,
@@ -194,6 +200,7 @@ export async function handleConsoleOutputEvents(
           workspaceId: ctx.workspaceId,
           userId: ctx.actorId,
           output,
+          toolApprovals: await pendingToolApprovals(row.id, row.leaseToken),
           settled: output.done,
         };
       };

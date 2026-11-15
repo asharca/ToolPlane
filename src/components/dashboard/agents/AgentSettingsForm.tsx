@@ -47,6 +47,8 @@ import {
   AgentStreamRulesEditor,
   useStreamRulesDraft,
 } from "./AgentStreamRulesEditor";
+import { ToolApprovalSettings } from "./ToolApprovalSettings";
+import type { ToolApprovalPolicy } from "@/lib/agents/tool-approval-policy";
 import { SystemPromptEditor } from "../SystemPromptEditor";
 import type { AgentPluginCapabilityDiff } from "./AgentPluginSyncReview";
 import {
@@ -105,6 +107,7 @@ export type AgentSettingsSection =
   | "instructions"
   | "builtInTools"
   | "streamRules"
+  | "toolApproval"
   | "mcp"
   | "skills"
   | "piPackages"
@@ -167,6 +170,7 @@ type Props = {
   providerId: string | null;
   model: string | null;
   reasoningEffort: ReasoningLevel | null;
+  toolApproval?: ToolApprovalPolicy;
   maxSteps: number;
   providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
@@ -219,6 +223,7 @@ export function AgentSettingsForm(props: Props) {
     agentId,
     runtimeKind === "pi-sdk",
   );
+  const approvalT = useTranslations("console.toolApproval");
   const s = useTranslations("console.sandboxes");
   const diffT = useTranslations("console.revisionDiff");
   const router = useRouter();
@@ -254,6 +259,9 @@ export function AgentSettingsForm(props: Props) {
     }));
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
     props.reasoningEffort ?? DEFAULT_REASONING_LEVEL,
+  );
+  const [toolApproval, setToolApproval] = useState<ToolApprovalPolicy>(
+    props.toolApproval ?? { mode: "off" },
   );
   const [steps, setSteps] = useState(String(props.maxSteps));
   const [disabledTools, setDisabledTools] = useState(
@@ -363,6 +371,9 @@ export function AgentSettingsForm(props: Props) {
     builtInTools:
       !sameSet(disabledTools, new Set(props.disabledBuiltinTools ?? [])) ||
       !sameSet(enabledOptionalTools, new Set(props.optionalBuiltinTools)),
+    toolApproval:
+      JSON.stringify(toolApproval) !==
+      JSON.stringify(props.toolApproval ?? { mode: "off" }),
     mcp: !sameSet(deploymentIds, selected(deployments)),
     skills: !sameSet(skillIds, selected(skills)),
     sandboxes:
@@ -400,6 +411,7 @@ export function AgentSettingsForm(props: Props) {
         "instructions",
         "builtInTools",
         "streamRules",
+        "toolApproval",
         "mcp",
         "skills",
         "sandboxes",
@@ -684,6 +696,7 @@ export function AgentSettingsForm(props: Props) {
     ["instructions", t("instructions")],
     ["builtInTools", t("builtInTools")],
     ["streamRules", t("streamRules.title")],
+    ["toolApproval", approvalT("title")],
     ["mcp", t("mcp")],
     ["skills", t("skills")],
     ["piPackages", t("piPackages")],
@@ -772,6 +785,11 @@ export function AgentSettingsForm(props: Props) {
                 type="hidden"
                 name="contextFiles"
                 value={String(contextFiles)}
+              />
+              <input
+                type="hidden"
+                name="toolApproval"
+                value={JSON.stringify(toolApproval)}
               />
               <input
                 type="hidden"
@@ -1099,6 +1117,17 @@ export function AgentSettingsForm(props: Props) {
                       disabled={pending}
                     />
                   </DialogField>
+                </section>
+                <section hidden={active !== "toolApproval"}>
+                  <ToolApprovalSettings
+                    value={toolApproval}
+                    disabled={pending}
+                    dirty={fieldDirty.toolApproval}
+                    onChange={(value) => {
+                      setToolApproval(value);
+                      changed();
+                    }}
+                  />
                 </section>
                 <section hidden={active !== "mcp"}>
                   <DialogField label={t("mcp")} dirty={fieldDirty.mcp}>
