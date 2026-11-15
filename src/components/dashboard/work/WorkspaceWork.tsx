@@ -173,6 +173,164 @@ import {
   DialogCancel,
 } from "@/components/dashboard/dialog";
 
+type ConversationExportTarget = {
+  id: string;
+  agentId: string;
+  nativeAvailable: boolean;
+};
+type ConversationExportFormat = "jsonl" | "html" | "md";
+
+const exportErrorKeys = {
+  UNAUTHORIZED: "exportUnauthorized",
+  NOT_FOUND: "exportNotFound",
+  SESSION_EXPORT_FORMAT_INVALID: "exportFormatInvalid",
+  SESSION_EXPORT_NATIVE_UNAVAILABLE: "exportNativeUnavailable",
+  SESSION_EXPORT_SANDBOX_NOT_RUNNING: "exportSandboxNotRunning",
+  SESSION_EXPORT_SANDBOX_BUSY: "exportSandboxBusy",
+  SESSION_EXPORT_NATIVE_MISSING: "exportNativeMissing",
+  SESSION_EXPORT_NATIVE_INVALID: "exportNativeInvalid",
+  SESSION_EXPORT_TOO_LARGE: "exportTooLarge",
+  SESSION_EXPORT_FAILED: "exportFailed",
+} as const;
+
+function exportFilename(disposition: string, fallback: string) {
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  if (utf8) {
+    try {
+      return decodeURIComponent(utf8.trim()).replace(/[\\/]/g, "-") || fallback;
+    } catch {
+      // A malformed extended filename must not discard a valid download.
+    }
+  }
+  return /filename="([^"]+)"/i.exec(disposition)?.[1] ?? fallback;
+}
+
+function ConversationExportDialog({
+  target,
+  onClose,
+}: {
+  target: ConversationExportTarget | null;
+  onClose: () => void;
+}) {
+  const t = useTranslations("console.work");
+  const common = useTranslations("common");
+  const [pending, setPending] = useState<ConversationExportFormat | null>(null);
+  const [nativeUnavailable, setNativeUnavailable] = useState(false);
+  const inFlight = useRef(false);
+
+  async function download(format: ConversationExportFormat) {
+    if (!target || inFlight.current) return;
+    inFlight.current = true;
+    setPending(format);
+    try {
+      const response = await fetch(
+        `/api/v1/agents/${encodeURIComponent(target.agentId)}/conversations/${encodeURIComponent(target.id)}/export?format=${format}`,
+        { credentials: "same-origin", cache: "no-store" },
+      );
+      if (!response.ok) {
+        const body: unknown = await response.json().catch(() => null);
+        const code =
+          body && typeof body === "object" && "code" in body ? body.code : null;
+        const key =
+          typeof code === "string" && Object.hasOwn(exportErrorKeys, code)
+            ? exportErrorKeys[code as keyof typeof exportErrorKeys]
+            : response.status === 401
+              ? "exportUnauthorized"
+              : response.status === 404
+                ? "exportNotFound"
+                : response.status === 413
+                  ? "exportTooLarge"
+                  : "exportFailed";
+        if (code === "SESSION_EXPORT_NATIVE_UNAVAILABLE")
+          setNativeUnavailable(true);
+        notify(t(key), { severity: "error" });
+        return;
+      }
+      const contentType = response.headers
+        .get("content-type")
+        ?.split(";", 1)[0];
+      const expectedType = {
+        jsonl: "application/x-ndjson",
+        html: "text/html",
+        md: "text/markdown",
+      }[format];
+      const disposition = response.headers.get("content-disposition") ?? "";
+      if (contentType !== expectedType || !/^attachment\b/i.test(disposition)) {
+        notify(t("exportFailed"), { severity: "error" });
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      try {
+        anchor.href = url;
+        anchor.download = exportFilename(
+          disposition,
+          `conversation-${target.id}.${format}`,
+        );
+        document.body.append(anchor);
+        anchor.click();
+      } finally {
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+      onClose();
+    } catch {
+      notify(t("exportFailed"), { severity: "error" });
+    } finally {
+      inFlight.current = false;
+      setPending(null);
+    }
+  }
+
+  const formats: ConversationExportFormat[] =
+    target?.nativeAvailable && !nativeUnavailable
+      ? ["jsonl", "html", "md"]
+      : ["md"];
+  const labels = {
+    jsonl: "exportJsonl",
+    html: "exportHtml",
+    md: "exportMarkdown",
+  } as const;
+  return (
+    <CenterMorphModal
+      open={Boolean(target)}
+      onOpenChange={(open) => {
+        if (!open && !inFlight.current) onClose();
+      }}
+    >
+      <CenterMorphModalContent
+        ariaLabel={t("exportConversation")}
+        closeButtonLabel={common("cancel")}
+        className="max-w-md"
+      >
+        <DialogHeader title={t("exportConversation")} />
+        <DialogBody>
+          <div className="flex flex-wrap gap-2" aria-busy={Boolean(pending)}>
+            {formats.map((format) => (
+              <Button
+                key={format}
+                type="button"
+                variant="outline"
+                size="md"
+                disabled={Boolean(pending)}
+                onClick={() => void download(format)}
+              >
+                {pending === format
+                  ? t("exportDownloading")
+                  : t(labels[format])}
+              </Button>
+            ))}
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            {t("exportPersistedOnly")}
+          </p>
+        </DialogBody>
+      </CenterMorphModalContent>
+    </CenterMorphModal>
+  );
+}
+
 const executionStageKeys = {
   queued: "executionQueued",
   preparing: "executionPreparing",
@@ -280,6 +438,8 @@ type ConversationSummary = {
   title?: string | null;
   source: ParsedMessagingSession | null;
   triggerId?: string | null;
+  readOnly?: boolean;
+  exportable?: boolean;
 };
 type ConversationDetail = ConversationSummary & {
   sandbox?: WorkItem["sandbox"];
@@ -1185,6 +1345,8 @@ export function WorkspaceWork({
   const [deleteConversationError, setDeleteConversationError] = useState("");
   const [deleteConversationPending, setDeleteConversationPending] =
     useState(false);
+  const [exportConversationTarget, setExportConversationTarget] =
+    useState<ConversationExportTarget | null>(null);
   const [groupEditor, setGroupEditor] = useState<{
     id: string | null;
     name: string;
@@ -3306,34 +3468,66 @@ export function WorkspaceWork({
                           const item = items.find(
                             (session) => session.id === id,
                           );
-                          return item && DELETABLE_STATUSES.has(item.status)
-                            ? action(t("deleteConversation"), () => {
-                                setDeleteConversationError("");
-                                setDeleteConversationTarget({
-                                  id: item.conversationId,
-                                  agentId: item.agentId,
-                                  title: item.title,
-                                  source: null,
-                                  triggerId: null,
-                                  workSessionId: item.id,
-                                });
-                              })
-                            : null;
+                          if (!item) return null;
+                          return (
+                            <>
+                              {item.agentId && item.conversationId
+                                ? action(t("exportConversation"), () =>
+                                    setExportConversationTarget({
+                                      id: item.conversationId,
+                                      agentId: item.agentId,
+                                      nativeAvailable:
+                                        item.readOnly === false &&
+                                        item.runtimeKind === "pi-sdk" &&
+                                        Boolean(item.agentRevisionId) &&
+                                        !item.legacyRevisionUnresolved,
+                                    }),
+                                  )
+                                : null}
+                              {DELETABLE_STATUSES.has(item.status)
+                                ? action(t("deleteConversation"), () => {
+                                    setDeleteConversationError("");
+                                    setDeleteConversationTarget({
+                                      id: item.conversationId,
+                                      agentId: item.agentId,
+                                      title: item.title,
+                                      source: null,
+                                      triggerId: null,
+                                      workSessionId: item.id,
+                                    });
+                                  })
+                                : null}
+                            </>
+                          );
                         }
                         if (kind === "conversation") {
                           const target = conversations.find(
                             (item) => item.id === id,
                           );
-                          if (
-                            !target ||
-                            target.source ||
-                            target.title?.startsWith("msg:")
-                          )
-                            return null;
-                          return action(tAgents("deleteConversation"), () => {
-                            setDeleteConversationError("");
-                            setDeleteConversationTarget(target);
-                          });
+                          if (!target) return null;
+                          return (
+                            <>
+                              {target.agentId &&
+                              target.id &&
+                              target.exportable !== false
+                                ? action(t("exportConversation"), () =>
+                                    setExportConversationTarget({
+                                      id: target.id,
+                                      agentId: target.agentId,
+                                      nativeAvailable:
+                                        target.readOnly === false,
+                                    }),
+                                  )
+                                : null}
+                              {!target.source &&
+                              !target.title?.startsWith("msg:")
+                                ? action(tAgents("deleteConversation"), () => {
+                                    setDeleteConversationError("");
+                                    setDeleteConversationTarget(target);
+                                  })
+                                : null}
+                            </>
+                          );
                         }
                         return null;
                       }}
@@ -3990,6 +4184,12 @@ export function WorkspaceWork({
           submitLabel={groupEditor?.id ? common("save") : common("create")}
           onClose={() => setGroupEditor(null)}
           onSubmit={saveAgentGroup}
+        />
+
+        <ConversationExportDialog
+          key={exportConversationTarget?.id ?? "closed"}
+          target={exportConversationTarget}
+          onClose={() => setExportConversationTarget(null)}
         />
 
         <CenterMorphModal
