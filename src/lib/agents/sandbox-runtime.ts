@@ -30,6 +30,9 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { db } from "@/lib/db";
 import { modelReasoningSupported } from "./model";
+import { AgentRevisionConfigSchema } from "./revision-types";
+import { resolveAgentModelOverride } from "./turn-model";
+import { runtimeModelProxyBase } from "./runtime-access";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import {
   parseContextBreakdown,
@@ -2418,6 +2421,49 @@ async function runNativeSessionExec(
       where: { id: options.workspaceId },
       select: { modelRetryAttempts: true },
     });
+    const revision = options.agentRevisionId
+      ? await db.agentRevision.findFirst({
+          where: {
+            id: options.agentRevisionId,
+            agentId: options.agentId,
+            agent: { workspaceId: options.workspaceId },
+          },
+          select: { config: true },
+        })
+      : null;
+    const routing = revision
+      ? AgentRevisionConfigSchema.parse(revision.config)
+      : null;
+    const descriptor = async (target: {
+      providerId: string;
+      model: string;
+    }) => {
+      const selected = await resolveAgentModelOverride(
+        options.workspaceId,
+        target,
+        "pi-sdk",
+      );
+      const definition = JSON.parse(
+        buildPiModelsConfig({
+          provider: selected.provider,
+          modelId: selected.model,
+          modelProxyBase: runtimeModelProxyBase(selected.provider.id),
+        }),
+      ).providers.toolplane;
+      return {
+        ...definition.models[0],
+        provider: `toolplane-${selected.provider.id}`,
+        api: definition.api,
+        baseUrl: definition.baseUrl,
+        toolplaneProviderId: selected.provider.id,
+      };
+    };
+    const fallbackModels = await Promise.all(
+      (routing?.fallbackModels ?? []).map(descriptor),
+    );
+    const compactionModel = routing?.roleModels?.compaction
+      ? await descriptor(routing.roleModels.compaction)
+      : undefined;
     const job = {
       runId: id,
       kind: "pi-sdk",
@@ -2462,6 +2508,10 @@ async function runNativeSessionExec(
         uiUrl: options.nativeUiUrl,
         mcpConfig: sdk.mcpConfig,
         model: sdk.model,
+        fallbackModels,
+        roleModels: compactionModel
+          ? { compaction: compactionModel }
+          : undefined,
         reasoningEffort: options.reasoningEffort,
         modelRetries: retrySetting?.modelRetryAttempts ?? 0,
       },
@@ -2832,6 +2882,7 @@ async function runPiSdk(
       ? { reasoning: true }
       : {}),
     provider: "toolplane",
+    toolplaneProviderId: options.provider.id,
     api: models.api,
     baseUrl: models.baseUrl,
     contextWindow: options.contextWindow,

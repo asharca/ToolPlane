@@ -291,6 +291,7 @@ export default function(pi) {
         name: "Test",
         api: "openai-completions",
         provider: "toolplane",
+        toolplaneProviderId: "primary",
         baseUrl: "http://127.0.0.1:1/v1",
         reasoning: false,
         input: ["text"],
@@ -333,6 +334,7 @@ export default function(pi) {
       mcpConfig: { servers: [] },
       model: JSON.parse(await readFile(configPath, "utf8")).model,
       modelRetries: 0,
+      fallbackModels: [] as Array<Record<string, unknown>>,
     },
   };
   await writeFile(inputPath, JSON.stringify(job));
@@ -555,6 +557,10 @@ export default function(pi) {
     ).toMatchObject({
       success: false,
       error: { code: "PI_SDK_MODEL_FAILED", reason: "UNREACHABLE RETRIED_1" },
+      result: {
+        actualModel: { providerId: "primary", model: "test" },
+        usage: { actualModel: { providerId: "primary", model: "test" } },
+      },
     });
     const beforeRuleRestart = once(daemon, "exit");
     daemon.kill("SIGTERM");
@@ -681,6 +687,84 @@ export default function(pi) {
       gateway.closeAllConnections();
       gateway.close();
       await once(gateway, "close");
+    }
+    {
+      // Exercise real HTTP requests, Pi continuation and the broker whitelist together.
+      const attempts: string[] = [];
+      const gateway = createServer((request, response) => {
+        void (async () => {
+          let raw = "";
+          for await (const chunk of request) raw += String(chunk);
+          const input = JSON.parse(raw);
+          attempts.push(input.model);
+          if (input.model === "primary") {
+            response.writeHead(503, { "content-type": "application/json" });
+            response.end(
+              JSON.stringify({ error: { message: "private upstream outage" } }),
+            );
+            return;
+          }
+          response.writeHead(200, { "content-type": "text/event-stream" });
+          response.write(
+            `data: ${JSON.stringify({ id: "fallback", object: "chat.completion.chunk", created: 1, model: "backup", choices: [{ index: 0, delta: { role: "assistant", content: "BROKER_FALLBACK_OK" }, finish_reason: null }] })}\n\n`,
+          );
+          response.write(
+            `data: ${JSON.stringify({ id: "fallback", object: "chat.completion.chunk", created: 1, model: "backup", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })}\n\n`,
+          );
+          response.end("data: [DONE]\n\n");
+        })().catch(() => {
+          response.writeHead(500);
+          response.end();
+        });
+      });
+      await once(gateway.listen(0, "127.0.0.1"), "listening");
+      try {
+        const address = gateway.address();
+        if (!address || typeof address === "string")
+          throw new Error("Missing gateway address");
+        job.context.modelRetries = 1;
+        job.message = "Recover through the broker";
+        job.context.model = {
+          ...job.context.model,
+          id: "primary",
+          baseUrl: `http://127.0.0.1:${address.port}/primary/v1`,
+        };
+        job.context.fallbackModels = [
+          {
+            ...job.context.model,
+            provider: "toolplane-backup",
+            id: "backup",
+            toolplaneProviderId: "secondary",
+            baseUrl: `http://127.0.0.1:${address.port}/backup/v1`,
+          },
+        ];
+        const recovered = await run();
+        expect(attempts).toEqual(["primary", "primary", "backup"]);
+        expect(
+          recovered.find((event) => event.type === "toolplane_sdk_response"),
+        ).toMatchObject({
+          success: true,
+          result: {
+            text: "BROKER_FALLBACK_OK",
+            actualModel: { providerId: "secondary", model: "backup" },
+            usage: {
+              actualModel: { providerId: "secondary", model: "backup" },
+              modelUsage: expect.arrayContaining([
+                expect.objectContaining({
+                  providerId: "secondary",
+                  model: "backup",
+                  inputTokens: 10,
+                }),
+              ]),
+            },
+          },
+        });
+      } finally {
+        gateway.closeAllConnections();
+        const closed = Promise.withResolvers<void>();
+        gateway.close(() => closed.resolve());
+        await closed.promise;
+      }
     }
   } finally {
     // Ask the daemon to stop its detached host process group before removing files.

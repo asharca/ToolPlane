@@ -842,6 +842,28 @@
         "credentialOwner": "仅工作区所有者可管理凭据。",
         "noEnvironment": "请选择运行环境模板或提供环境配置。"
       },
+      "modelRouting": {
+        "fallbackModels": "兜底模型（最多 3 个）",
+        "fallbackPosition": "第 {position} 个兜底模型",
+        "addFallback": "添加兜底模型",
+        "removeFallback": "移除第 {position} 个兜底模型",
+        "moveUp": "上移第 {position} 个兜底模型",
+        "moveDown": "下移第 {position} 个兜底模型",
+        "compaction": "压缩模型",
+        "title": "标题模型",
+        "usePrimary": "沿用主模型",
+        "clearRole": "将{role}恢复为主模型",
+        "before": "当前修订",
+        "after": "待发布修订",
+        "errors": {
+          "AGENT_FALLBACK_MODELS_INVALID": "请从工作区可用模型中选择最多三个兜底模型后重新保存。",
+          "AGENT_ROLE_MODELS_INVALID": "请选择可用的压缩模型和标题模型，或恢复为主模型后重新保存。",
+          "AGENT_MODEL_UNAVAILABLE": "所选模型不可用，请检查提供商、凭据和模型目录，或选择其他模型。",
+          "AGENT_PROVIDER_REVOKED": "模型提供商授权已变更，请重新打开设置并选择模型。",
+          "AGENT_REVISION_CONFIG_INVALID": "修订配置无效，请重新打开设置并准备修订。",
+          "AGENT_REVISION_CONFLICT": "配置已在其他页面更新，请重新打开设置并准备新修订。"
+        }
+      },
       "piPackageMcpBindingRequired": "含 MCP 要求的包必须先明确绑定当前工作区部署及工具才能运行。请在包的工作区安装设置中配置；发布者绑定不能授予其他工作区访问权限。",
       "piPackageMcpBindings": "配置工作区 MCP 绑定",
       "piSdkRuntime": "Pi SDK",

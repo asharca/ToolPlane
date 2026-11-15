@@ -137,7 +137,11 @@ function modelFailureReason(errorMessage) {
   )
     return "UNREACHABLE";
   if (EMPTY_STREAM.test(message)) return "EMPTY_STREAM";
-  if (/stream ended|finish_reason: network_error|terminated/i.test(message))
+  if (
+    /stream ended|without finish_reason|finish_reason: network_error|terminated/i.test(
+      message,
+    )
+  )
     return "STREAM_INCOMPLETE";
   if (/content_filter/i.test(message)) return "CONTENT_FILTER";
   return "PROVIDER_ERROR";
@@ -302,6 +306,62 @@ function triggerRule(rule, toolCall) {
     return delivery;
   }
 }
+let toolStarted = false,
+  fallbackIndex = 0,
+  actualModel;
+const modelIdentity = (model) =>
+  model?.toolplaneProviderId
+    ? { providerId: model.toolplaneProviderId, model: model.id }
+    : undefined;
+function recordUsage(value, model, response = false) {
+  const identity = modelIdentity(model);
+  if (response && identity) actualModel = identity;
+  usage ??= {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: 0,
+  };
+  if (actualModel) usage.actualModel = actualModel;
+  const delta = {
+    inputTokens: value?.input ?? 0,
+    outputTokens: value?.output ?? 0,
+    cacheReadTokens: value?.cacheRead ?? 0,
+    cacheWriteTokens: value?.cacheWrite ?? 0,
+    costUsd: value?.cost?.total ?? 0,
+  };
+  for (const key of Object.keys(delta)) usage[key] += delta[key];
+  if (identity) {
+    usage.modelUsage ??= [];
+    let entry = usage.modelUsage.find(
+      (entry) =>
+        entry.providerId === identity.providerId &&
+        entry.model === identity.model,
+    );
+    if (!entry) {
+      entry = {
+        ...identity,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: 0,
+      };
+      usage.modelUsage.push(entry);
+    }
+    for (const key of Object.keys(delta)) entry[key] += delta[key];
+  }
+}
+const transientModelFailure = (message) =>
+  message?.stopReason === "error" &&
+  (/^(HTTP_(429|5\d\d)|TIMEOUT|EMPTY_STREAM|STREAM_INCOMPLETE)$/.test(
+    modelFailureReason(message.errorMessage),
+  ) ||
+    /rate.?limit|too many requests|overload|service unavailable/i.test(
+      String(message.errorMessage ?? ""),
+    ));
+let runtimeProviders = new Set(["toolplane"]);
 let lastState;
 let queuedInputs = [];
 let queueRequest;
@@ -706,13 +766,16 @@ function event(event) {
         assistantMessageEvent: { type: update.type, delta: update.delta },
       });
   }
-  if (event.type === "tool_execution_start")
+  if (event.type === "tool_execution_start") {
+    // Even a failed/unknown tool may already have changed external state.
+    toolStarted = true;
     emit({
       type: event.type,
       toolCallId: event.toolCallId,
       toolName: event.toolName,
       args: toolPayload(event.args),
     });
+  }
   // A failed tool call (for example a shell command exiting non-zero) is an
   // ordinary result the model reads and reacts to; it does not fail the turn.
   if (event.type === "tool_execution_end")
@@ -760,20 +823,7 @@ function event(event) {
           : undefined;
       const text = contentText(message.content);
       if (text) texts.push(text);
-      if (message.usage) {
-        usage ??= {
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-          costUsd: 0,
-        };
-        usage.inputTokens += message.usage.input ?? 0;
-        usage.outputTokens += message.usage.output ?? 0;
-        usage.cacheReadTokens += message.usage.cacheRead ?? 0;
-        usage.cacheWriteTokens += message.usage.cacheWrite ?? 0;
-        usage.costUsd += message.usage.cost?.total ?? 0;
-      }
+      recordUsage(message.usage, runtime.session.model, true);
     }
   }
 }
@@ -800,10 +850,47 @@ function allowTransientStreamRetry(session) {
   if (piRetryable.toolplane) return;
   const retryable = (message) =>
     piRetryable.call(session, message) ||
+    transientModelFailure(message) ||
     (message?.stopReason === "error" &&
       TRANSIENT_STREAM.test(String(message.errorMessage ?? "")));
   retryable.toolplane = true;
   session._isRetryableError = retryable;
+  const prepareRetry = session._prepareRetry;
+  const summarize = session._runDefaultCompaction;
+  if (
+    typeof prepareRetry !== "function" ||
+    typeof summarize !== "function" ||
+    typeof session._omitRecoveryAttempt !== "function"
+  )
+    fail("PI_SDK_VERSION_MISMATCH");
+  session._prepareRetry = async (message) => {
+    if (await prepareRetry.call(session, message)) return true;
+    // Stay inside Pi's continuation loop: do not replay the prompt or extensions.
+    if (!active || aborted || toolStarted || !transientModelFailure(message))
+      return false;
+    const next = config.fallbackModels?.[fallbackIndex++];
+    if (!next) return false;
+    await session.setModel(next, { persist: false });
+    session._retryAttempt = 0;
+    modelRetried = 0;
+    texts = [];
+    session._omitRecoveryAttempt(message);
+    return true;
+  };
+  // Pi 1.5.2 has no independent compaction-model setting. Both manual and
+  // automatic compaction share this model-parameterized summarization boundary;
+  // replacing its argument avoids mutating the in-flight conversational model.
+  session._runDefaultCompaction = async (preparation, model, ...args) => {
+    const selected = config.roleModels?.compaction ?? model;
+    const result = await summarize.call(
+      session,
+      preparation,
+      selected,
+      ...args,
+    );
+    if (result?.usage) recordUsage(result.usage, selected, !actualModel);
+    return result;
+  };
 }
 async function bindSession(session) {
   unsubscribe?.();
@@ -960,6 +1047,8 @@ async function refreshContext(next) {
   // Turn-scoped model/auth; neither the immutable revision nor packages change.
   config.model = next.model;
   config.reasoningEffort = next.reasoningEffort;
+  config.fallbackModels = next.fallbackModels ?? [];
+  config.roleModels = next.roleModels;
   // Workspace setting, live per turn: retries one failed model request in place.
   config.modelRetries =
     Number.isInteger(next.modelRetries) &&
@@ -967,16 +1056,38 @@ async function refreshContext(next) {
     next.modelRetries <= MAX_MODEL_RETRIES
       ? next.modelRetries
       : 0;
-  modelRuntime.registerProvider("toolplane", {
-    baseUrl: config.model.baseUrl,
-    api: config.model.api,
-    apiKey: "$TOOLPLANE_RUNTIME_TOKEN",
-    authHeader: true,
-    models: [config.model],
-  });
+  const models = [
+    config.model,
+    ...config.fallbackModels,
+    ...Object.values(config.roleModels ?? {}),
+  ];
+  for (const model of models) {
+    if (
+      !model ||
+      (model.provider !== "toolplane" &&
+        !/^toolplane-[A-Za-z0-9_-]+$/.test(model.provider))
+    )
+      fail("PI_SDK_MODEL_REQUIRED");
+    if (models.find((entry) => entry.provider === model.provider) !== model)
+      continue;
+    modelRuntime.registerProvider(model.provider, {
+      baseUrl: model.baseUrl,
+      api: model.api,
+      apiKey: "$TOOLPLANE_RUNTIME_TOKEN",
+      authHeader: true,
+      models: [
+        ...new Map(
+          models
+            .filter((entry) => entry.provider === model.provider)
+            .map((entry) => [entry.id, entry]),
+        ).values(),
+      ],
+    });
+    runtimeProviders.add(model.provider);
+    await modelRuntime.setRuntimeApiKey(model.provider, next.runtimeToken);
+  }
   context = next;
   process.env.TOOLPLANE_RUNTIME_TOKEN = next.runtimeToken;
-  await modelRuntime.setRuntimeApiKey("toolplane", next.runtimeToken);
   const definitions = await createPiMcpTools(next.mcpConfig);
   const signature = canonicalJson(
     definitions
@@ -1146,6 +1257,9 @@ async function handle(request) {
   turnExistingEntries = undefined;
   acceptingQueue = true;
   queueReceipts.clear();
+  toolStarted = false;
+  fallbackIndex = 0;
+  actualModel = undefined;
   let terminal;
   try {
     if (initialError) fail(initialError);
@@ -1264,6 +1378,7 @@ async function handle(request) {
         queue: queueState(),
         ...(usage ? { usage } : {}),
         ...(sessionEntries() ? { sessionEntries: sessionEntries() } : {}),
+        ...(actualModel ? { actualModel } : {}),
         ...contextBreakdownResult(runtime.session),
         streamRuleTriggers: ruleTriggers,
         ...(command
@@ -1305,6 +1420,7 @@ async function handle(request) {
         usage || ruleTriggers.length || sessionEntries()
           ? {
               ...(usage ? { usage } : {}),
+              ...(actualModel ? { actualModel } : {}),
               ...(ruleTriggers.length
                 ? { streamRuleTriggers: ruleTriggers }
                 : {}),
@@ -1326,7 +1442,9 @@ async function handle(request) {
     toolMap = new Map();
     promptInvocation = undefined;
     delete process.env.TOOLPLANE_RUNTIME_TOKEN;
-    await modelRuntime.removeRuntimeApiKey("toolplane").catch(() => {});
+    for (const provider of runtimeProviders)
+      await modelRuntime.removeRuntimeApiKey(provider).catch(() => {});
+    runtimeProviders = new Set(["toolplane"]);
     active = undefined;
     respond(terminal.success, terminal.result, terminal.code, terminal.reason);
   }
