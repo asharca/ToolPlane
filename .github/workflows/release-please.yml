@@ -126,6 +126,35 @@ jobs:
           cache-from: type=gha,scope=lsp-tools
           cache-to: type=gha,scope=lsp-tools,mode=min
 
+      - name: Set up Node.js for companion image metadata
+        if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26
+
+      - name: Resolve debug capture image
+        if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
+        id: debug_capture
+        run: |
+          node --input-type=module -e "import { PI_DEBUGPY_CAPTURE_IMAGE } from './src/lib/agents/pi-version.ts'; import { appendFileSync } from 'node:fs'; appendFileSync(process.env.GITHUB_OUTPUT, 'image=' + PI_DEBUGPY_CAPTURE_IMAGE + '\\n');"
+
+      # Publish before the app: first-time opt-in on an existing Docker daemon
+      # must be able to pull this independently versioned dependency image.
+      - name: Build and push debug capture companion image
+        if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: pi-package-capture
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.debug_capture.outputs.image }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=debugpy-capture
+          cache-to: type=gha,scope=debugpy-capture,mode=min
+
       - name: Export runtime release artifact
         if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
         uses: docker/build-push-action@v6

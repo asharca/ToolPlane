@@ -86,6 +86,7 @@ import {
 import {
   isSupportedPiVersion,
   PI_PACKAGE_CAPTURE_IMAGE,
+  PI_DEBUGPY_CAPTURE_IMAGE,
   PI_SDK_VERSION,
   PI_SDK_VERSIONS,
 } from "./pi-version";
@@ -1741,33 +1742,102 @@ function prepareDebugpyArtifact(): Promise<string> {
     assertRuntimeOwner(true);
     const name = `toolplane-debugpy-export-${randomUUID()}`;
     const signal = runtimeAbortSignal();
-    const command = (args: string[], stdin?: string) => {
+    const command = (args: string[], stdin?: string, timeoutMs = 60_000) => {
       assertRuntimeOwner(true);
       const { promise, resolve, reject } = Promise.withResolvers<string>();
-      const child = execFile("docker", args, {
-        env: dockerEnv(), signal, timeout: 60_000, maxBuffer: 16 * 1024 * 1024,
-      }, (error, stdout) => error
-        ? reject(new Error("DEBUG_DEPENDENCY_MISSING", { cause: error }))
-        : resolve(stdout));
+      const child = execFile(
+        "docker",
+        args,
+        {
+          env: dockerEnv(),
+          signal,
+          timeout: timeoutMs,
+          maxBuffer: 16 * 1024 * 1024,
+        },
+        (error, stdout) =>
+          error
+            ? reject(new Error("DEBUG_DEPENDENCY_MISSING", { cause: error }))
+            : resolve(stdout),
+      );
       child.stdin?.end(stdin);
       return promise;
     };
     let created = false;
     try {
-      const imageId = (await command(["image", "inspect", PI_PACKAGE_CAPTURE_IMAGE, "--format", "{{.Id}}"])).trim();
-      if (!/^sha256:[a-f0-9]{64}$/.test(imageId)) throw new Error("DEBUG_DEPENDENCY_MISSING");
-      const source = await readFile(`${process.cwd()}/scripts/pi-debugpy-export.mjs`, "utf8");
-      await command(["create", "--name", name, "-i", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "256m", "--pids-limit", "32", "--entrypoint", "node", imageId, "--input-type=module", "-"]);
+      // Provision the separately versioned companion image on old daemons too.
+      // Only the daemon pulls; the subsequent export container remains offline.
+      const present = await command([
+        "image",
+        "ls",
+        "--quiet",
+        "--no-trunc",
+        PI_DEBUGPY_CAPTURE_IMAGE,
+      ]);
+      if (!present.trim())
+        await command(["pull", PI_DEBUGPY_CAPTURE_IMAGE], undefined, 300_000);
+      const imageId = (
+        await command([
+          "image",
+          "inspect",
+          PI_DEBUGPY_CAPTURE_IMAGE,
+          "--format",
+          "{{.Id}}",
+        ])
+      ).trim();
+      if (!/^sha256:[a-f0-9]{64}$/.test(imageId))
+        throw new Error("DEBUG_DEPENDENCY_MISSING");
+      const source = await readFile(
+        `${process.cwd()}/scripts/pi-debugpy-export.mjs`,
+        "utf8",
+      );
+      await command([
+        "create",
+        "--name",
+        name,
+        "-i",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--memory",
+        "256m",
+        "--pids-limit",
+        "32",
+        "--entrypoint",
+        "node",
+        imageId,
+        "--input-type=module",
+        "-",
+      ]);
       created = true;
-      const raw = await command(["start", "-ai", name], `${source}\nprocess.stdout.write(JSON.stringify(await exportDebugpy()));`);
-      const artifact = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/), data: z.string().max(12 * 1024 * 1024) }).strict().parse(JSON.parse(raw));
+      const raw = await command(
+        ["start", "-ai", name],
+        `${source}\nprocess.stdout.write(JSON.stringify(await exportDebugpy()));`,
+      );
+      const artifact = z
+        .object({
+          sha256: z.string().regex(/^[a-f0-9]{64}$/),
+          data: z.string().max(12 * 1024 * 1024),
+        })
+        .strict()
+        .parse(JSON.parse(raw));
       const bytes = Buffer.from(artifact.data, "base64");
-      if (bytes.toString("base64") !== artifact.data || createHash("sha256").update(bytes).digest("hex") !== artifact.sha256) throw new Error("DEBUG_DEPENDENCY_MISSING");
+      if (
+        bytes.toString("base64") !== artifact.data ||
+        createHash("sha256").update(bytes).digest("hex") !== artifact.sha256
+      )
+        throw new Error("DEBUG_DEPENDENCY_MISSING");
       return JSON.stringify(artifact);
     } finally {
       if (created) await runDockerOnce(["rm", "-f", name]);
     }
-  }).catch((error: unknown) => { debugpyArtifact = undefined; throw error; });
+  }).catch((error: unknown) => {
+    debugpyArtifact = undefined;
+    throw error;
+  });
   return debugpyArtifact;
 }
 
@@ -1831,8 +1901,13 @@ export async function preflightPiSdkCapabilities(input: {
         const path = `${directory}/optional-${name}.mjs`;
         await writeFile(path, content, { mode: 0o444 });
         if (name === "debug") {
-          const artifact = await waitForSandboxRuntimeInstall(prepareDebugpyArtifact(), signal);
-          await writeFile(`${directory}/debugpy.artifact.json`, artifact, { mode: 0o444 });
+          const artifact = await waitForSandboxRuntimeInstall(
+            prepareDebugpyArtifact(),
+            signal,
+          );
+          await writeFile(`${directory}/debugpy.artifact.json`, artifact, {
+            mode: 0o444,
+          });
         }
         optionalBuiltinExtensions.push(
           `/opt/toolplane-preflight/optional-${name}.mjs`,
@@ -3000,9 +3075,15 @@ async function runPiSdk(
     hostFiles.push({ path, content });
     optionalBuiltinExtensions.push(path);
     if (name === "debug") {
-      const artifact = await waitForSandboxRuntimeInstall(prepareDebugpyArtifact(), options.signal);
+      const artifact = await waitForSandboxRuntimeInstall(
+        prepareDebugpyArtifact(),
+        options.signal,
+      );
       hostSources.update("debugpy-artifact").update(artifact);
-      hostFiles.push({ path: `${privateRoot}/debugpy.artifact.json`, content: artifact });
+      hostFiles.push({
+        path: `${privateRoot}/debugpy.artifact.json`,
+        content: artifact,
+      });
     }
   }
   const factorySource = piMcpExtensionSource({ eventFd: 3, workspaceRoot });

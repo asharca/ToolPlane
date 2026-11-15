@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { PI_DEBUGPY_CAPTURE_IMAGE } from "@/lib/agents/pi-version";
 
 // SANDBOX_DOCKER_SMOKE=1 pnpm vitest run tests/integration/pi-sdk-install.live.test.ts
 const run = process.env.SANDBOX_DOCKER_SMOKE === "1";
@@ -83,7 +84,10 @@ await (async () => {
   }, 190_000);
   it("distributes debugpy independently and hits a Python breakpoint, reads variables, resumes and cleans up", async () => {
     const exporter = await readFile("scripts/pi-debugpy-export.mjs", "utf8");
-    const extension = await readFile("scripts/pi-optional-tools/debug.mjs", "utf8");
+    const extension = await readFile(
+      "scripts/pi-optional-tools/debug.mjs",
+      "utf8",
+    );
     const scenario = String.raw`
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
@@ -150,12 +154,33 @@ try {
   await fs.rm(root, { recursive: true, force: true });
 }
 `;
-    const result = execute("docker", [
-      "run", "--rm", "--init", "--pull", "never", "--network", "none", "--read-only",
-      "--user", "1000:1000", "-i", "--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=512m",
-      "--entrypoint", "node", "toolplane-pi-package-capture:1.5.2", "--input-type=module", "-",
-    ], { timeout: 120_000, maxBuffer: 1024 * 1024 });
-    result.child.stdin?.end(`${exporter}\nconst EXTENSION = ${JSON.stringify(Buffer.from(extension).toString("base64"))};\n${scenario}`);
+    const result = execute(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--init",
+        "--pull",
+        "never",
+        "--network",
+        "none",
+        "--read-only",
+        "--user",
+        "1000:1000",
+        "-i",
+        "--tmpfs",
+        "/tmp:rw,exec,nosuid,nodev,size=512m",
+        "--entrypoint",
+        "node",
+        PI_DEBUGPY_CAPTURE_IMAGE,
+        "--input-type=module",
+        "-",
+      ],
+      { timeout: 120_000, maxBuffer: 1024 * 1024 },
+    );
+    result.child.stdin?.end(
+      `${exporter}\nconst EXTENSION = ${JSON.stringify(Buffer.from(extension).toString("base64"))};\n${scenario}`,
+    );
     expect((await result).stdout.trim()).toBe("DEBUG_OFFLINE_LIFECYCLE_OK");
   }, 130_000);
 });

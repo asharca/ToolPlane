@@ -23,11 +23,18 @@ export async function exportDebugpy() {
       const bytes = await readFile(absolute);
       total += bytes.length;
       if (total > 64 * 1024 * 1024) throw Error("DEBUG_ARTIFACT_LIMIT");
-      files.push({ path, content: bytes.toString("base64"), sha256: createHash("sha256").update(bytes).digest("hex") });
+      files.push({
+        path,
+        content: bytes.toString("base64"),
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      });
     } else throw Error("DEBUG_ARTIFACT_SCOPE");
   }
   await visit("debugpy");
   const data = gzipSync(JSON.stringify({ version: "1.8.17", files }));
   if (data.length > 8 * 1024 * 1024) throw Error("DEBUG_ARTIFACT_LIMIT");
-  return { sha256: createHash("sha256").update(data).digest("hex"), data: data.toString("base64") };
+  return {
+    sha256: createHash("sha256").update(data).digest("hex"),
+    data: data.toString("base64"),
+  };
 }

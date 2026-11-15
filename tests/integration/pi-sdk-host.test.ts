@@ -2328,7 +2328,10 @@ describe("official Pi SDK headless session host", () => {
   it("debugs a real Node program through the optional native SDK tool and releases it at agent end", async () => {
     const f = await setup();
     const program = join(f.workspace, "debug-fixture.cjs");
-    await writeFile(program, "const value = 40;\nconst answer = value + 2;\nconsole.log(answer);\n");
+    await writeFile(
+      program,
+      "const value = 40;\nconst answer = value + 2;\nconsole.log(answer);\n",
+    );
     const actions = [
       { action: "launch", program, language: "node" },
       { action: "set_breakpoints", file: program, lines: [3] },
@@ -2339,20 +2342,45 @@ describe("official Pi SDK headless session host", () => {
     let next = 0;
     f.behavior.streamCompletion = async (response) => {
       const action = actions[next++];
-      if (action) completion(response, { tool_calls: [{ index: 0, id: `debug-${next}`, type: "function", function: { name: "debug", arguments: JSON.stringify(action) } }] }, "tool_calls");
+      if (action)
+        completion(
+          response,
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: `debug-${next}`,
+                type: "function",
+                function: { name: "debug", arguments: JSON.stringify(action) },
+              },
+            ],
+          },
+          "tool_calls",
+        );
       else completion(response, { content: "DEBUG_COMPLETE" }, "stop");
     };
     const host = await f.launch({
       resources: { ...f.config.resources, extensions: [] },
-      optionalBuiltinExtensions: [resolve("scripts/pi-optional-tools/debug.mjs")],
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/debug.mjs"),
+      ],
       defaultTools: ["debug"],
     });
     const response = await host.request("prompt", "Debug the program");
-    expect(response).toMatchObject({ success: true, result: { text: "DEBUG_COMPLETE" } });
-    const results = host.events.filter((event) => event.type === "tool_execution_end" && event.toolName === "debug");
+    expect(response).toMatchObject({
+      success: true,
+      result: { text: "DEBUG_COMPLETE" },
+    });
+    const results = host.events.filter(
+      (event) =>
+        event.type === "tool_execution_end" && event.toolName === "debug",
+    );
     expect(results).toHaveLength(actions.length);
     expect(results.some((event) => event.isError)).toBe(false);
-    const history = await readFile(assertDefined(response.result).state.sessionFile, "utf8");
+    const history = await readFile(
+      assertDefined(response.result).state.sessionFile,
+      "utf8",
+    );
     expect(history).toContain('\\"value\\":\\"42\\"');
     expect(history).toContain('\\"state\\":\\"terminated\\"');
     await host.stop();
