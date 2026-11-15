@@ -178,6 +178,7 @@ globalThis[Symbol.for("toolplane.pi.host-context.v1")] = {
   lsp: {
     packageRoot: config.lspPackageRoot,
     sharedDir: config.sharedDir,
+    cwd: resolve(config.cwd),
   },
 };
 mkdirSync(config.cwd, { recursive: true });

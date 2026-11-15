@@ -116,6 +116,7 @@ jobs:
       NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
       NEXT_TELEMETRY_DISABLED: 1
       TOOLPLANE_VERSION: ${{ github.sha }}
+      TOOLPLANE_LSP_TOOLS_IMAGE: toolplane-lsp-tools:ci
     steps:
       - uses: actions/checkout@v4
 
@@ -146,6 +147,15 @@ jobs:
       - name: Build Pi package capture sandbox
         if: inputs.full
         run: docker build --target pi-package-capture -t toolplane-pi-package-capture:1.5.2 .
+
+      - name: Build optional LSP tools image
+        run: docker build --target lsp-tools -t "$TOOLPLANE_LSP_TOOLS_IMAGE" .
+
+      - name: Test offline LSP tools
+        if: matrix.shard == 1
+        env:
+          SANDBOX_DOCKER_SMOKE: 1
+        run: pnpm vitest run tests/integration/lsp-tools.live.test.ts
 
 
       - name: Test core functionality

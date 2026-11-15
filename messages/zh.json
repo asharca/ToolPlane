@@ -1908,7 +1908,7 @@
       "sdkExecutionFailedWithCode": "Pi SDK 执行失败（错误码 {code}），未自动重放任务。可在“可观测性”中查看本次运行的日志。",
       "ompExecutionFailedWithCode": "OMP 执行失败（错误码 {code}），未自动重放任务。可在“可观测性”中查看本次运行的日志。",
       "PI_SDK_REQUEST_FAILED": "Pi 会话启动或执行时出错，未自动重放任务。常见原因：模型服务不可用，或扩展、MCP 初始化失败。可在“可观测性”中查看本次运行的日志。",
-      "PI_LSP_ARTIFACT_UNAVAILABLE": "LSP 依赖不可用。请管理员构建或安装 toolplane-lsp-tools:1 镜像后重试。",
+      "PI_LSP_ARTIFACT_UNAVAILABLE": "LSP 依赖不可用。请管理员在应用连接的 Docker daemon 上拉取或构建已配置的 LSP 工具镜像后重试。",
       "PI_LSP_ARTIFACT_INVALID": "LSP 依赖的离线完整性校验或安装失败。请管理员检查沙箱并恢复可信 LSP 制品。",
       "PI_MCP_TOOLS_UNAVAILABLE": "MCP 服务“{name}”不可用：{reason}。本轮未执行，请在智能体设置的 MCP 中检查后重试。",
       "mcpUnavailableReasons": {

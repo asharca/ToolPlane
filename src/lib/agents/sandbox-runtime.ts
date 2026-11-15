@@ -2891,20 +2891,38 @@ async function runPiSdk(
     await waitForSandboxRuntimeInstall(
       serializeSandboxStep(`lsp:${container}`, async () => {
         const ready = await runTrackedDockerExec({
-          container, workdir: "/workspace", executable: "node",
-          args: ["--input-type=module", "-e", `${lspRuntime.installer}\nprocess.stdout.write(await verifyLspArtifact(process.argv[1]) ? 'ready' : 'missing');`, lspRuntime.sha256],
-          signal: options.signal, timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
+          container,
+          workdir: "/workspace",
+          executable: "node",
+          args: [
+            "--input-type=module",
+            "-e",
+            `${lspRuntime.installer}\nprocess.stdout.write(await verifyLspArtifact(process.argv[1]) ? 'ready' : 'missing');`,
+            lspRuntime.sha256,
+          ],
+          signal: options.signal,
+          timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
         });
         if (ready === "ready") return;
         await runTrackedDockerExec({
-          container, workdir: "/workspace", executable: "node",
-          args: ["--input-type=module", "-e", `${lspRuntime.installer}\nawait installLspArtifact(process.argv[1]);`, lspRuntime.sha256],
-          stdinFile: lspRuntime.path, signal: options.signal,
+          container,
+          workdir: "/workspace",
+          executable: "node",
+          args: [
+            "--input-type=module",
+            "-e",
+            `${lspRuntime.installer}\nawait installLspArtifact(process.argv[1]);`,
+            lspRuntime.sha256,
+          ],
+          stdinFile: lspRuntime.path,
+          signal: options.signal,
           timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
         });
       }),
       options.signal,
-    ).catch(() => { throw new Error("PI_LSP_ARTIFACT_INVALID"); });
+    ).catch(() => {
+      throw new Error("PI_LSP_ARTIFACT_INVALID");
+    });
   }
   for (const [path, source] of [
     [hostPath, "pi-sdk-session.mjs"],

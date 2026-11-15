@@ -49,11 +49,13 @@ test -f .env || cp .env.example .env
 需要 Docker Compose。将 `NEXT_PUBLIC_APP_URL` 设为实际访问地址；本机体验可使用默认的 `http://localhost:10030`。
 
 ```bash
-docker compose pull app
+docker compose pull app lsp-tools-image
 docker compose up -d
 ```
 
 应用默认端口为 `10030`。公网部署前，请配置 HTTPS、端口访问控制及备份，详见[运行与维护](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS)。
+
+Compose 同时准备独立的 LSP 依赖镜像 `ghcr.io/asharca/toolplane-lsp-tools:1`；该准备容器立即退出，语言服务器仅在获授权的 Agent 沙箱中运行。可通过 `TOOLPLANE_LSP_TOOLS_IMAGE` 固定到已发布的应用版本标签或私有镜像；不使用 Compose 时，须提前在应用连接的 Docker daemon 上拉取该镜像。沙箱内不联网安装依赖，也不因准备镜像而自动启用工具。
 
 ### 本地开发
 
