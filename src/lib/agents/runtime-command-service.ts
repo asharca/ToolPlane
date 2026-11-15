@@ -33,6 +33,7 @@ import {
   conversationModelOverride,
 } from "./turn-model";
 import { notifyTaskOutput } from "./execution/live-output";
+import { appendBudgetWarningText } from "./budget-warning";
 
 export class RuntimeCommandError extends Error {
   constructor(
@@ -243,7 +244,15 @@ export async function executeRuntimeCommand(input: {
             invocation,
           }),
       });
-      const text = agentEntryResult(result.task, result.path);
+      const reply = agentEntryResult(result.task, result.path);
+      const text =
+        sdkEntry.kind === "channel"
+          ? await appendBudgetWarningText(reply, {
+              workspaceId: input.workspaceId,
+              agentId: input.agentId,
+              taskId: result.task.id,
+            })
+          : reply;
       input.signal?.throwIfAborted();
       await db.message.create({
         data: {

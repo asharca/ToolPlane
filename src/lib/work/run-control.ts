@@ -4,6 +4,7 @@ import type {
   SandboxRuntimeActivity,
 } from "@/lib/agents/sandbox-runtime";
 import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
+import type { BudgetWarning } from "@/lib/agents/budget-warning";
 
 type Registry = Map<string, AbortController>;
 
@@ -27,6 +28,7 @@ export type WorkOutputSnapshot = {
   startedAt?: number;
   runtimeKind?: string;
   modelName?: string;
+  budgetWarning?: BudgetWarning;
 };
 
 export type WorkOutputActivity = {
@@ -55,6 +57,11 @@ export type WorkOutputEvent =
   | { type: "start"; snapshot: WorkOutputSnapshot }
   | { type: "stage"; snapshot: WorkOutputSnapshot }
   | { type: "delta"; delta: string; snapshot: WorkOutputSnapshot }
+  | {
+      type: "data-budget-warning";
+      data: BudgetWarning;
+      snapshot: WorkOutputSnapshot;
+    }
   | {
       type: "activity";
       activity: WorkOutputActivity;
@@ -135,6 +142,7 @@ function outputSnapshot(channel: WorkOutputChannel): WorkOutputSnapshot {
     ...(channel.modelName === undefined
       ? {}
       : { modelName: channel.modelName }),
+    ...(channel.budgetWarning ? { budgetWarning: channel.budgetWarning } : {}),
   };
 }
 
@@ -160,6 +168,7 @@ export function startWorkOutput(
   channel.cleanup = undefined;
   channel.text = "";
   channel.activities = [];
+  channel.budgetWarning = undefined;
   channel.active = true;
   channel.done = false;
   channel.executionStage = "queued";
@@ -178,6 +187,20 @@ export function publishWorkExecutionStage(
     return;
   channel.executionStage = stage;
   notifyOutput(channel, { type: "stage", snapshot: outputSnapshot(channel) });
+}
+
+export function publishWorkBudgetWarning(
+  workSessionId: string,
+  warning: BudgetWarning,
+) {
+  const channel = outputChannel(workSessionId);
+  if (!channel.active || channel.done || channel.budgetWarning) return;
+  channel.budgetWarning = warning;
+  notifyOutput(channel, {
+    type: "data-budget-warning",
+    data: warning,
+    snapshot: outputSnapshot(channel),
+  });
 }
 
 export function publishWorkActivity(

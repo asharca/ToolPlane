@@ -58,6 +58,7 @@ import {
 } from "@/components/dashboard/RevisionUpgradeNotice";
 import type { RevisionMcpToolChange } from "@/lib/revisions/upgrade-diff";
 import type { AgentUIMessage } from "@/lib/agents/message-segments";
+import type { BudgetWarning } from "@/lib/agents/budget-warning";
 import { AgentPromptProvenance } from "@/components/dashboard/agents/AgentPromptProvenance";
 import {
   ConversationContextUsage,
@@ -88,6 +89,8 @@ import { sidebarHoverActionsClassName } from "@/components/dashboard/sidebarHove
 import {
   AssistantMarkdown,
   ConversationMessageShell,
+  ConversationBudgetWarnings,
+  parseConversationBudgetWarning,
   conversationUserBubbleClassName,
 } from "@/components/dashboard/ConversationMessage";
 import { WorkContentBlocks } from "@/components/dashboard/ConversationContentBlocks";
@@ -602,6 +605,7 @@ function CompactionNote({ message }: { message: WorkMessage }) {
 }
 
 function WorkTranscript({
+  workspaceSlug,
   agentName,
   agentId,
   conversationId,
@@ -609,6 +613,7 @@ function WorkTranscript({
   messages,
   streamText,
   streamActivities,
+  streamBudgetWarning,
   streamStartedAt,
   streamRuntimeKind,
   streamModelName,
@@ -617,6 +622,7 @@ function WorkTranscript({
   sessionCompletedAt,
   streaming,
 }: {
+  workspaceSlug: string;
   agentName: string;
   agentId?: string;
   conversationId?: string;
@@ -624,6 +630,7 @@ function WorkTranscript({
   messages: WorkMessage[];
   streamText: string;
   streamActivities: WorkActivity[];
+  streamBudgetWarning?: BudgetWarning;
   streamStartedAt?: number;
   streamRuntimeKind?: string;
   streamModelName?: string;
@@ -692,6 +699,9 @@ function WorkTranscript({
                   };
                 },
               ),
+              ...(streamBudgetWarning
+                ? [{ type: "data-budget-warning", data: streamBudgetWarning }]
+                : []),
               ...(streamStartedAt
                 ? [
                     {
@@ -949,6 +959,13 @@ function WorkTranscript({
                 {messageBody}
               </StreamingResponse>
             )}
+            {message.role === "assistant" ? (
+              <ConversationBudgetWarnings
+                parts={message.parts}
+                workspaceSlug={workspaceSlug}
+                live={isStreamingMessage}
+              />
+            ) : null}
             {message.role === "assistant" && !isStreamingMessage ? (
               <MessageFooter className={`gap-0.5 ${actionVisibility}`}>
                 {text ? (
@@ -1172,6 +1189,7 @@ export function WorkspaceWork({
     workSessionId: string;
     text: string;
     activities: WorkActivity[];
+    budgetWarning?: BudgetWarning;
     startedAt?: number;
     runtimeKind?: string;
     modelName?: string;
@@ -1364,6 +1382,10 @@ export function WorkspaceWork({
     streamOutput.workSessionId === selectedWorkSessionId
       ? streamOutput.activities
       : EMPTY_WORK_ACTIVITIES;
+  const streamBudgetWarning =
+    streamOutput.workSessionId === selectedWorkSessionId
+      ? streamOutput.budgetWarning
+      : undefined;
   const streamStartedAt =
     streamOutput.workSessionId === selectedWorkSessionId
       ? streamOutput.startedAt
@@ -1984,6 +2006,7 @@ export function WorkspaceWork({
       const next = payload<{
         text?: string;
         activities?: WorkActivity[];
+        budgetWarning?: unknown;
         active?: boolean;
         done?: boolean;
         startedAt?: number;
@@ -1998,6 +2021,7 @@ export function WorkspaceWork({
         text: next.text ?? "",
         activities: Array.isArray(next.activities) ? next.activities : [],
         executionStage: next.executionStage,
+        budgetWarning: parseConversationBudgetWarning(next.budgetWarning),
         ...(typeof next.startedAt === "number"
           ? { startedAt: next.startedAt }
           : {}),
@@ -2041,6 +2065,7 @@ export function WorkspaceWork({
       void refreshSelected();
     });
     source.addEventListener("stage", (event) => {
+      receiveBudgetWarning(event);
       const next = payload<{ executionStage?: AgentExecutionStage }>(event);
       if (!next) return;
       setStreamOutput((current) => ({
@@ -2051,6 +2076,7 @@ export function WorkspaceWork({
       }));
     });
     source.addEventListener("delta", (event) => {
+      receiveBudgetWarning(event);
       const next = payload<{ delta?: string }>(event);
       if (!next?.delta) return;
       setStreamOutput((current) => ({
@@ -2063,6 +2089,10 @@ export function WorkspaceWork({
           current.workSessionId === selectedWorkSessionId
             ? current.activities
             : [],
+        budgetWarning:
+          current.workSessionId === selectedWorkSessionId
+            ? current.budgetWarning
+            : undefined,
         executionStage:
           current.workSessionId === selectedWorkSessionId
             ? current.executionStage
@@ -2081,6 +2111,7 @@ export function WorkspaceWork({
       }));
     });
     source.addEventListener("activity", (event) => {
+      receiveBudgetWarning(event);
       const next = payload<{ activities?: WorkActivity[] }>(event);
       if (!Array.isArray(next?.activities)) return;
       setStreamOutput((current) => ({
@@ -2088,6 +2119,10 @@ export function WorkspaceWork({
         text:
           current.workSessionId === selectedWorkSessionId ? current.text : "",
         activities: next.activities ?? [],
+        budgetWarning:
+          current.workSessionId === selectedWorkSessionId
+            ? current.budgetWarning
+            : undefined,
         executionStage:
           current.workSessionId === selectedWorkSessionId
             ? current.executionStage
@@ -2105,9 +2140,34 @@ export function WorkspaceWork({
           : {}),
       }));
     });
+    const receiveBudgetWarning = (event: Event) => {
+      const next = payload<{ budgetWarning?: unknown; data?: unknown }>(event);
+      const warning = parseConversationBudgetWarning(
+        next?.budgetWarning ??
+          (event.type === "data-budget-warning" ? next?.data : undefined),
+      );
+      if (!warning) return;
+      setStreamOutput((current) => {
+        const sameSession = current.workSessionId === selectedWorkSessionId;
+        if (sameSession && current.budgetWarning?.taskId === warning.taskId)
+          return current;
+        return {
+          ...(sameSession
+            ? current
+            : {
+                workSessionId: selectedWorkSessionId,
+                text: "",
+                activities: [],
+              }),
+          budgetWarning: warning,
+        };
+      });
+    };
+    source.addEventListener("data-budget-warning", receiveBudgetWarning);
     source.addEventListener("error", () => completion.disconnect());
     source.addEventListener("done", (event) => {
       if (disposed) return;
+      receiveBudgetWarning(event);
       const next = payload<{
         active?: boolean;
         done?: boolean;
@@ -3463,6 +3523,7 @@ export function WorkspaceWork({
                       {selected || conversation ? (
                         <>
                           <WorkTranscript
+                            workspaceSlug={slug}
                             agentName={controlAgent?.name ?? t("agent")}
                             agentId={conversation?.agentId ?? selected?.agentId}
                             conversationId={
@@ -3483,6 +3544,7 @@ export function WorkspaceWork({
                             }
                             streamText={streamText}
                             streamActivities={streamActivities}
+                            streamBudgetWarning={streamBudgetWarning}
                             streamStartedAt={streamStartedAt}
                             streamRuntimeKind={streamRuntimeKind}
                             streamModelName={streamModelName}

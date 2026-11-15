@@ -28,6 +28,7 @@ import {
   agentEntryRuntimeParts,
 } from "./execution/entries";
 import type { NormalizedMessagingSource } from "./messaging";
+import { appendBudgetWarningText } from "./budget-warning";
 import type { AgentForRun } from "./queries";
 import { getAgent, getAgentForRequest } from "./queries";
 import { createConversation } from "./mutations";
@@ -999,7 +1000,14 @@ async function runLoadedAgentMessage(params: {
       onUiRequired: (path) =>
         params.onUiRequired?.(`Pi 扩展需要你的输入，请打开会话：${path}`),
     });
-    const replyText = agentEntryResult(result.task, result.path);
+    const replyText = await appendBudgetWarningText(
+      agentEntryResult(result.task, result.path),
+      {
+        workspaceId: agent.workspaceId,
+        agentId: agent.id,
+        taskId: result.task.id,
+      },
+    );
     const runtimeParts = agentEntryRuntimeParts(result.task);
     params.signal?.throwIfAborted();
     await db.message.create({

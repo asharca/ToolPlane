@@ -66,7 +66,10 @@ vi.mock("@/lib/db", () => ({
     $transaction: vi.fn(async (operation) =>
       operation({
         $queryRaw: vi.fn(async () => []),
-        agentUsage: { createMany: vi.fn(async () => ({ count: 1 })) },
+        agentUsage: {
+          findUnique: vi.fn(async () => null),
+          upsert: vi.fn(async ({ create }) => create),
+        },
         agent: {
           findUniqueOrThrow: vi.fn(async () => ({ monthlyBudgetMicros: null })),
         },

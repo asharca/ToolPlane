@@ -340,6 +340,10 @@
       "unlimited": "Unlimited",
       "budgetHint": "Leave empty for unlimited. Monthly UTC budget: notify at 80%, reject new tasks at 100%.",
       "budgetStatus": "Budget usage",
+      "turnBudgetWarning": "Monthly budget reached. This turn was allowed to finish; new turns are blocked until the budget is increased or the next UTC month begins.",
+      "turnBudgetWarningTitle": "Monthly budget reached",
+      "turnBudgetWarningUsage": "Used {spent} of {budget} this month (UTC).",
+      "viewBudgetSettings": "View usage & budget settings",
       "status": {
         "none": "Unlimited",
         "ok": "Within budget",

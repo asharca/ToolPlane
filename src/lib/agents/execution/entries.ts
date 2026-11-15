@@ -57,7 +57,11 @@ import {
 import { settled, terminal, A2A_LIMITS } from "@/lib/a2a/model";
 import { refreshTaskStorage } from "@/lib/a2a/quotas";
 import { wakeAgentWorker } from "@/lib/agents/execution/worker";
-import { assertAgentBudget } from "@/lib/agents/usage";
+import { assertAgentBudget, recordAgentTaskUsage } from "@/lib/agents/usage";
+import {
+  taskBudgetWarning,
+  type BudgetWarning,
+} from "@/lib/agents/budget-warning";
 import { taskOutput } from "./live-output";
 
 export type EntryMessage = { id?: string; role: string; parts: unknown };
@@ -335,6 +339,7 @@ export async function runAgentEntry(
       invocation: AgentPromptInvocation,
     ) => void | Promise<void>;
     onActivity?: (activity: SandboxRuntimeActivity) => void | Promise<void>;
+    onBudgetWarning?: (warning: BudgetWarning) => void | Promise<void>;
   },
 ) {
   const accepted = await submitAgentEntry(input);
@@ -355,6 +360,19 @@ export async function runAgentEntry(
   const observedPrompts = new Set<string>();
   const notifiedUiRequests = new Set<string>();
   const observedActivities = new Map<string, string>();
+  let budgetWarningObserved = false;
+  const observeBudgetWarning = async () => {
+    if (!input.onBudgetWarning || budgetWarningObserved) return;
+    const warning = await taskBudgetWarning({
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+      taskId: accepted.row.id,
+    });
+    if (warning) {
+      budgetWarningObserved = true;
+      await input.onBudgetWarning(warning);
+    }
+  };
   const observeActivities = async (projection: unknown) => {
     if (!input.onActivity) return;
     for (const activity of nativeUiView(projection).activities) {
@@ -383,6 +401,23 @@ export async function runAgentEntry(
       await assertLocalGrant(accepted.grant);
       const row = await getTaskRow(accepted.grant, accepted.row.id);
       const task = Task.fromJSON(row.snapshot);
+      // Close the terminal-observation/accounting race for successful entry replies.
+      if (row.state === TaskState.TASK_STATE_COMPLETED) {
+        try {
+          await recordAgentTaskUsage(row);
+        } catch (error) {
+          await recordEvent({
+            domain: "agent",
+            eventName: "agent.usage.reconcile_failed",
+            level: "warn",
+            workspaceId: input.workspaceId,
+            agentId: input.agentId,
+            taskId: row.id,
+            error,
+          });
+        }
+      }
+      await observeBudgetWarning();
       await observeActivities(row.uiProjection);
       await observePrompts(task);
       if (settled(row.state)) return { task, path };
@@ -410,6 +445,7 @@ export async function runAgentEntry(
     if (recorded) {
       await observeActivities(recorded.uiProjection);
       await observePrompts(Task.fromJSON(recorded.snapshot));
+      await observeBudgetWarning();
     }
     // Work's explicit cancel flag is authoritative. A socket close/shutdown is not.
     if (input.kind === "work") {

@@ -44,6 +44,7 @@ vi.mock("@/lib/observability/log", () => ({ logRequest: mocks.logRequest }));
 import { createAgentRuntimeToken } from "@/lib/agents/runtime-access";
 import { POST as proxyModel } from "@/app/api/v1/agent-runtime/model/[providerId]/[[...path]]/route";
 import { POST as proxyMcp } from "@/app/api/v1/agent-runtime/mcp/[deploymentId]/rpc/route";
+import * as agentUsage from "@/lib/agents/usage";
 
 const pin = {
   id: "revision-1",
@@ -168,6 +169,38 @@ describe("pinned Agent runtime proxy authorization", () => {
     expect(headers.get("cookie")).toBeNull();
     expect(response.headers.get("set-cookie")).toBeNull();
     await expect(response.text()).resolves.toBe("data: chunk\n\n");
+  });
+  it("preserves successful model bytes when budget accounting fails", async () => {
+    const sse =
+      'data: {"choices":[{"delta":{"content":"Completed"}}]}\n\ndata: {"usage":{"prompt_tokens":10,"completion_tokens":1}}\n\ndata: [DONE]\n\n';
+    mocks.fetch.mockResolvedValue(
+      new Response(sse, {
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+    const accounting = vi
+      .spyOn(agentUsage, "recordAgentModelUsage")
+      .mockRejectedValue(new Error("Accounting unavailable"));
+    try {
+      const response = await proxyModel(
+        await request("model/provider-1/chat/completions", {
+          model: "selected-model",
+          stream: true,
+          messages: [],
+        }),
+        {
+          params: Promise.resolve({
+            providerId: "provider-1",
+            path: ["chat", "completions"],
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+      await expect(response.text()).resolves.toBe(sse);
+      expect(accounting).toHaveBeenCalledOnce();
+    } finally {
+      accounting.mockRestore();
+    }
   });
   it("negotiates its own encoding and preserves real SSE bytes for a zstd-capable client", async () => {
     const sse =

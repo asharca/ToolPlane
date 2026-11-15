@@ -589,7 +589,7 @@ function streamResponse(
               stop_reason: stopReason(event.message.stopReason),
               stop_sequence: null,
             },
-            usage: { output_tokens: event.message.usage.output },
+            usage: usage(event.message),
           });
           write("message_stop", { type: "message_stop" });
           closed = true;

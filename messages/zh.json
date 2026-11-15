@@ -340,6 +340,10 @@
       "unlimited": "不限额",
       "budgetHint": "留空表示不限额。按 UTC 自然月统计，达到 80% 时通知，达到 100% 时拒绝新任务。",
       "budgetStatus": "预算使用情况",
+      "turnBudgetWarning": "月度预算已用尽，本轮允许完成；提高预算或进入下个 UTC 自然月后才能开始新回合。",
+      "turnBudgetWarningTitle": "月度预算已用尽",
+      "turnBudgetWarningUsage": "本月已用 {spent}，预算 {budget}（UTC）。",
+      "viewBudgetSettings": "查看用量与预算设置",
       "status": {
         "none": "不限额",
         "ok": "预算内",

@@ -13,6 +13,11 @@ import {
 } from "@/lib/work/run-control";
 import { getWorkSessionForUser } from "@/lib/work/sessions";
 import { workspaceAccessStream } from "@/lib/workspace/access-stream";
+import {
+  BUDGET_WARNING_PART,
+  BudgetWarningSchema,
+  type BudgetWarning,
+} from "@/lib/agents/budget-warning";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,6 +41,7 @@ function completedOutput(
   const toolIndexes = new Map<string, number>();
   let reasoningSequence = 0;
   let runtimeSequence = 0;
+  let budgetWarning: BudgetWarning | undefined;
   let timing: Pick<
     WorkOutputSnapshot,
     "startedAt" | "runtimeKind" | "modelName"
@@ -45,6 +51,10 @@ function completedOutput(
     for (const [index, part] of message.parts.entries()) {
       if (!part || typeof part !== "object" || !("type" in part)) continue;
       const value = part as Record<string, unknown>;
+      if (value.type === BUDGET_WARNING_PART) {
+        const parsed = BudgetWarningSchema.safeParse(value.data);
+        if (parsed.success) budgetWarning = parsed.data;
+      }
       if (value.type === "text" && typeof value.text === "string") {
         textLength += (text.length ? 2 : 0) + value.text.length;
         text.push(value.text);
@@ -148,6 +158,7 @@ function completedOutput(
     active: false,
     done: true,
     ...timing,
+    ...(budgetWarning ? { budgetWarning } : {}),
   };
 }
 
@@ -155,11 +166,15 @@ function outputData(
   snapshot: WorkOutputSnapshot,
   delta?: string,
   activity?: WorkOutputActivity,
+  budgetWarning?: BudgetWarning,
 ) {
   return {
     ...snapshot,
     ...(delta === undefined ? {} : { delta }),
     ...(activity === undefined ? {} : { activity }),
+    ...(budgetWarning
+      ? { type: BUDGET_WARNING_PART, data: budgetWarning }
+      : {}),
   };
 }
 
@@ -232,6 +247,7 @@ export const GET = withRequestLogging(
                 event.snapshot,
                 event.type === "delta" ? event.delta : undefined,
                 event.type === "activity" ? event.activity : undefined,
+                event.type === BUDGET_WARNING_PART ? event.data : undefined,
               ),
             ),
           );

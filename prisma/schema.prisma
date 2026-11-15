@@ -662,6 +662,9 @@ model AgentUsage {
   cacheWriteTokens Int
   costMicros BigInt
   succeeded Boolean
+  // Gateway observations are provisional until terminal SDK usage reconciles them.
+  meteringCompleted Boolean @default(true)
+  budgetWarning Json?
   createdAt DateTime @default(now())
   @@index([agentId, createdAt])
   @@index([workspaceId, createdAt])
