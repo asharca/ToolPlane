@@ -14,7 +14,10 @@ import type { AgentConversationSandbox } from "./conversation-sandbox";
 import { PiRuntimeInterruptedError } from "./pi-harness";
 import { hasNativeConversationHistory } from "./conversation-context";
 import { parseRuntimeFailure, runtimeFailureText } from "./runtime-failure";
-import { ContextMaintenanceSchema, type ContextMaintenance } from "./context-maintenance";
+import {
+  ContextMaintenanceSchema,
+  type ContextMaintenance,
+} from "./context-maintenance";
 import {
   assertRuntimeOwner,
   trackRuntimeOperation,
@@ -3179,9 +3182,20 @@ async function runPiSdk(
     if (event.type === "context_maintenance") {
       const marker = ContextMaintenanceSchema.safeParse(event.marker);
       if (marker.success) {
-        const safe = marker.data.kind === "rewind"
-          ? { ...marker.data, report: redact(marker.data.report, [options.runtimeAccessToken]) }
-          : { ...marker.data, summary: redact(marker.data.summary, [options.runtimeAccessToken]) };
+        const safe =
+          marker.data.kind === "rewind"
+            ? {
+                ...marker.data,
+                report: redact(marker.data.report, [
+                  options.runtimeAccessToken,
+                ]),
+              }
+            : {
+                ...marker.data,
+                summary: redact(marker.data.summary, [
+                  options.runtimeAccessToken,
+                ]),
+              };
         await options.onContextMaintenance?.(safe);
       }
       return;

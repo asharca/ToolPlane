@@ -21,7 +21,11 @@ import {
   RuntimeCommandsSchema,
   RuntimeUsageSchema,
 } from "@/lib/agents/runtime-commands";
-import { CONTEXT_MAINTENANCE_PART, ContextMaintenanceSchema, type ContextMaintenance } from "@/lib/agents/context-maintenance";
+import {
+  CONTEXT_MAINTENANCE_PART,
+  ContextMaintenanceSchema,
+  type ContextMaintenance,
+} from "@/lib/agents/context-maintenance";
 import type {
   RuntimeCommand,
   RuntimeCommandResult,
@@ -619,7 +623,8 @@ export function agentEntryRuntimeParts(task: Task): AgentEntryRuntimePart[] {
         : artifact.metadata?.toolplanePiSdk,
     );
     if (!parsed.success) continue;
-    const { commands, usage, commandResult, model, contextMaintenance } = parsed.data;
+    const { commands, usage, commandResult, model, contextMaintenance } =
+      parsed.data;
     const parts: AgentEntryRuntimePart[] = [
       identity,
       {

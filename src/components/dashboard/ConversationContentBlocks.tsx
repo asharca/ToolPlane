@@ -1,8 +1,16 @@
 "use client";
 
 import { useId, useRef, useState, type ReactNode } from "react";
-import { Bot, Brain, ChevronDown, Wrench, Zap } from "lucide-react";
-import { useTranslations } from "next-intl";
+import {
+  Bot,
+  Brain,
+  ChevronDown,
+  FileText,
+  Undo2,
+  Wrench,
+  Zap,
+} from "lucide-react";
+import { useFormatter, useTranslations } from "next-intl";
 import { AgentDisclosure } from "@/components/agents/agent-disclosure";
 import { ThinkingShimmer } from "@/components/agents/loading-states/thinking-shimmer";
 import { MessageTyping } from "@/components/agents/message";
@@ -386,6 +394,76 @@ function ConversationProcessBlock({
   );
 }
 
+function ContextMaintenanceBlock({
+  block,
+}: {
+  block: Extract<ContentBlock, { kind: "context-maintenance" }>;
+}) {
+  const t = useTranslations("console.conversationOperations");
+  const format = useFormatter();
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const [visited, setVisited] = useState(false);
+  const rewind = block.data.kind === "rewind";
+  const Icon = rewind ? Undo2 : FileText;
+  return (
+    <div
+      data-ui="conversation.context-maintenance"
+      data-kind={block.data.kind}
+      className="min-w-0 border-y border-border py-2 text-xs text-muted-foreground"
+    >
+      <button
+        id={`${id}-trigger`}
+        type="button"
+        aria-expanded={open}
+        aria-controls={`${id}-content`}
+        onClick={() => {
+          setOpen((value) => !value);
+          setVisited(true);
+        }}
+        className="flex w-full min-w-0 flex-wrap items-center gap-2 rounded-md text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <Icon aria-hidden="true" className="size-3.5 shrink-0" />
+        <span>{t(rewind ? "contextRewound" : "contextHandedOff")}</span>
+        <time dateTime={block.data.at}>
+          {format.dateTime(new Date(block.data.at), {
+            dateStyle: "medium",
+            timeStyle: "short",
+          })}
+        </time>
+        <ChevronDown
+          aria-hidden="true"
+          className={cn(
+            "ml-auto size-3.5 shrink-0 transition-transform motion-reduce:transition-none",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+      <AgentDisclosure
+        id={`${id}-content`}
+        role="region"
+        aria-labelledby={`${id}-trigger ${id}-label`}
+        open={open}
+      >
+        <span id={`${id}-label`} className="sr-only">
+          {t(rewind ? "contextMaintenanceReport" : "contextMaintenanceSummary")}
+        </span>
+        {visited ? (
+          <div className="min-w-0 break-words pt-3 text-foreground">
+            <AssistantMarkdown
+              text={
+                block.data.kind === "rewind"
+                  ? block.data.report
+                  : block.data.summary
+              }
+            />
+          </div>
+        ) : null}
+      </AgentDisclosure>
+    </div>
+  );
+}
+
 /** One ordered display path for Assistant and Agent UI-message parts. */
 export function ConversationContentBlocks({
   messageId,
@@ -461,6 +539,8 @@ export function ConversationContentBlocks({
               streaming={block.streaming}
             />
           ) : null;
+        if (block.kind === "context-maintenance")
+          return <ContextMaintenanceBlock key={block.id} block={block} />;
         if (block.kind === "file")
           return (
             <ConversationFilePreview

@@ -3404,47 +3404,87 @@ describe("official Pi SDK headless session host", () => {
   it("rewinds real native tool results out of the next model request while retaining the report and abandoned tree across resume", async () => {
     const f = await setup();
     const options = {
-      optionalBuiltinExtensions: ["checkpoint", "rewind", "context_notes"].map((name) => resolve(`scripts/pi-optional-tools/${name}.mjs`)),
+      optionalBuiltinExtensions: ["checkpoint", "rewind", "context_notes"].map(
+        (name) => resolve(`scripts/pi-optional-tools/${name}.mjs`),
+      ),
       defaultTools: ["checkpoint", "rewind", "context_notes", "bash"],
     };
     let host = await f.launch(options);
     const invoke = async (name: string, args: Record<string, unknown>) => {
       let sent = false;
       f.behavior.streamCompletion = async (response) => {
-        if (sent) return completion(response, { content: "CONTINUE_FROM_REPORT" }, "stop");
+        if (sent)
+          return completion(
+            response,
+            { content: "CONTINUE_FROM_REPORT" },
+            "stop",
+          );
         sent = true;
-        completion(response, { tool_calls: [{ index: 0, id: randomUUID(), type: "function", function: { name, arguments: JSON.stringify(args) } }] }, "tool_calls");
+        completion(
+          response,
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: randomUUID(),
+                type: "function",
+                function: { name, arguments: JSON.stringify(args) },
+              },
+            ],
+          },
+          "tool_calls",
+        );
       };
       const result = await host.request("prompt", `Use ${name}`);
-      expect(result, JSON.stringify({ result, output: host.output() })).toMatchObject({ success: true });
+      expect(
+        result,
+        JSON.stringify({ result, output: host.output() }),
+      ).toMatchObject({ success: true });
       return result;
     };
-    await invoke("context_notes", { action: "add", text: "CHECKPOINT_BRANCH_NOTE" });
+    await invoke("context_notes", {
+      action: "add",
+      text: "CHECKPOINT_BRANCH_NOTE",
+    });
     await invoke("checkpoint", { goal: "Explore and report" });
     await invoke("bash", { command: "printf 'ABANDONED_NATIVE_RESULT_ONE'" });
     await invoke("bash", { command: "printf 'ABANDONED_NATIVE_RESULT_TWO'" });
-    await invoke("context_notes", { action: "add", text: "ABANDONED_BRANCH_NOTE" });
+    await invoke("context_notes", {
+      action: "add",
+      text: "ABANDONED_BRANCH_NOTE",
+    });
     await host.stop();
     host = await f.launch({ ...options, historyRequired: true });
     const report = "RETAINED_FINDINGS: exploration established the safe path.";
     const rewound = await invoke("rewind", { report });
-    const nextProviderContext = JSON.stringify(f.requests.at(-1)?.body.messages);
+    const nextProviderContext = JSON.stringify(
+      f.requests.at(-1)?.body.messages,
+    );
     expect(nextProviderContext).toContain(report);
     expect(nextProviderContext).not.toContain("ABANDONED_NATIVE_RESULT_ONE");
     expect(nextProviderContext).not.toContain("ABANDONED_NATIVE_RESULT_TWO");
     expect(nextProviderContext).toContain("CHECKPOINT_BRANCH_NOTE");
     expect(nextProviderContext).not.toContain("ABANDONED_BRANCH_NOTE");
-    expect(host.events).toContainEqual(expect.objectContaining({
-      type: "context_maintenance", marker: expect.objectContaining({ kind: "rewind", report }),
-    }));
-    const journal = await readFile(assertDefined(rewound.result).state.sessionFile, "utf8");
+    expect(host.events).toContainEqual(
+      expect.objectContaining({
+        type: "context_maintenance",
+        marker: expect.objectContaining({ kind: "rewind", report }),
+      }),
+    );
+    const journal = await readFile(
+      assertDefined(rewound.result).state.sessionFile,
+      "utf8",
+    );
     expect(journal).toContain("ABANDONED_NATIVE_RESULT_ONE");
     expect(journal).toContain("ABANDONED_NATIVE_RESULT_TWO");
     expect(journal).toContain('"type":"branch_summary"');
     await host.stop();
     host = await f.launch({ ...options, historyRequired: true });
-    f.behavior.streamCompletion = async (response) => completion(response, { content: "RESUMED_REPORT" }, "stop");
-    expect(await host.request("prompt", "Continue after rewind")).toMatchObject({ success: true });
+    f.behavior.streamCompletion = async (response) =>
+      completion(response, { content: "RESUMED_REPORT" }, "stop");
+    expect(await host.request("prompt", "Continue after rewind")).toMatchObject(
+      { success: true },
+    );
     const resumedContext = JSON.stringify(f.requests.at(-1)?.body.messages);
     expect(resumedContext).toContain(report);
     expect(resumedContext).not.toContain("ABANDONED_NATIVE_RESULT_ONE");
@@ -3457,7 +3497,9 @@ describe("official Pi SDK headless session host", () => {
   it("generates a handoff with the admitted model, commits compaction, and preserves branch notes through compaction and resume", async () => {
     const f = await setup();
     const options = {
-      optionalBuiltinExtensions: [resolve("scripts/pi-optional-tools/context_notes.mjs")],
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/context_notes.mjs"),
+      ],
       defaultTools: ["context_notes"],
     };
     let host = await f.launch(options);
@@ -3465,49 +3507,127 @@ describe("official Pi SDK headless session host", () => {
     const invoke = async (args: Record<string, unknown>) => {
       let sent = false;
       f.behavior.streamCompletion = async (response) => {
-        if (sent) return completion(response, { content: "NOTES_DONE" }, "stop");
+        if (sent)
+          return completion(response, { content: "NOTES_DONE" }, "stop");
         sent = true;
-        completion(response, { tool_calls: [{ index: 0, id: randomUUID(), type: "function", function: { name: "context_notes", arguments: JSON.stringify(args) } }] }, "tool_calls");
+        completion(
+          response,
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: randomUUID(),
+                type: "function",
+                function: {
+                  name: "context_notes",
+                  arguments: JSON.stringify(args),
+                },
+              },
+            ],
+          },
+          "tool_calls",
+        );
       };
       const result = await host.request("prompt", "Maintain branch notebook");
-      expect(result, JSON.stringify({ result, output: host.output() })).toMatchObject({ success: true });
+      expect(
+        result,
+        JSON.stringify({ result, output: host.output() }),
+      ).toMatchObject({ success: true });
       return result;
     };
     const added = await invoke({ action: "add", text: note });
     const sessionFile = assertDefined(added.result).state.sessionFile;
-    const entries = (await readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-    const noteId = entries.find((entry) => entry.customType === "toolplane.context-notes").data.notes[0].id;
+    const entries = (await readFile(sessionFile, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const noteId = entries.find(
+      (entry) => entry.customType === "toolplane.context-notes",
+    ).data.notes[0].id;
     for (let turn = 1; turn <= 4; turn++) {
-      f.behavior.streamCompletion = async (response) => completion(response, { content: `ROUND_${turn}` }, "stop");
-      expect(await host.request("prompt", `Recent round ${turn}`)).toMatchObject({ success: true });
+      f.behavior.streamCompletion = async (response) =>
+        completion(response, { content: `ROUND_${turn}` }, "stop");
+      expect(
+        await host.request("prompt", `Recent round ${turn}`),
+      ).toMatchObject({ success: true });
     }
-    const document = "## Goal\nContinue safely\n## Completed\nExploration\n## In progress\nImplementation\n## Key files\nworker.ts\n## Next steps\nFinish the change";
-    f.behavior.streamCompletion = async (response) => completion(response, { content: document }, "stop");
+    const document =
+      "## Goal\nContinue safely\n## Completed\nExploration\n## In progress\nImplementation\n## Key files\nworker.ts\n## Next steps\nFinish the change";
+    f.behavior.streamCompletion = async (response) =>
+      completion(response, { content: document }, "stop");
     const requestsBefore = f.requests.length;
-    const handedOff = await host.request("prompt", "/handoff focus on remaining work");
-    expect(handedOff, JSON.stringify({ handedOff, output: host.output() })).toMatchObject({
-      success: true, result: { text: document, commandResult: { command: "handoff", status: "completed" } },
+    const handedOff = await host.request(
+      "prompt",
+      "/handoff focus on remaining work",
+    );
+    expect(
+      handedOff,
+      JSON.stringify({ handedOff, output: host.output() }),
+    ).toMatchObject({
+      success: true,
+      result: {
+        text: document,
+        commandResult: { command: "handoff", status: "completed" },
+      },
     });
     expect(f.requests).toHaveLength(requestsBefore + 1);
     expect(f.requests.at(-1)?.body.model).toBe(f.config.model.id);
-    expect(JSON.stringify(f.requests.at(-1)?.body.messages)).toContain("focus on remaining work");
-    expect(host.events).toContainEqual(expect.objectContaining({ type: "context_maintenance", marker: expect.objectContaining({ kind: "handoff", summary: document }) }));
-    const compacted = (await readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-    const compaction = compacted.findLast((entry) => entry.type === "compaction");
-    expect(compaction).toMatchObject({ summary: document, details: { method: "handoff" } });
-    expect(compacted.find((entry) => entry.id === compaction.firstKeptEntryId).message.content).toEqual(expect.arrayContaining([expect.objectContaining({ text: "Recent round 2" })]));
+    expect(JSON.stringify(f.requests.at(-1)?.body.messages)).toContain(
+      "focus on remaining work",
+    );
+    expect(host.events).toContainEqual(
+      expect.objectContaining({
+        type: "context_maintenance",
+        marker: expect.objectContaining({ kind: "handoff", summary: document }),
+      }),
+    );
+    const compacted = (await readFile(sessionFile, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const compaction = compacted.findLast(
+      (entry) => entry.type === "compaction",
+    );
+    expect(compaction).toMatchObject({
+      summary: document,
+      details: { method: "handoff" },
+    });
+    expect(
+      compacted.find((entry) => entry.id === compaction.firstKeptEntryId)
+        .message.content,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ text: "Recent round 2" }),
+      ]),
+    );
     await host.stop();
     host = await f.launch({ ...options, historyRequired: true });
     await invoke({ action: "list" });
     expect(JSON.stringify(f.requests.at(-1)?.body.messages)).toContain(note);
-    expect(JSON.stringify(f.requests.at(-1)?.body.messages)).toContain("Recent round 4");
+    expect(JSON.stringify(f.requests.at(-1)?.body.messages)).toContain(
+      "Recent round 4",
+    );
     await invoke({ action: "remove", id: noteId });
-    const removed = host.events.filter((event) => event.type === "tool_execution_end").at(-1);
-    expect(removed).toMatchObject({ isError: false, result: { details: { notes: [] } } });
+    const removed = host.events
+      .filter((event) => event.type === "tool_execution_end")
+      .at(-1);
+    expect(removed).toMatchObject({
+      isError: false,
+      result: { details: { notes: [] } },
+    });
     await invoke({ action: "add", text: "x".repeat(17000) });
-    expect(host.events.filter((event) => event.type === "tool_execution_end").at(-1)).toMatchObject({ isError: true });
-    const afterLimit = (await readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-    expect(afterLimit.findLast((entry) => entry.customType === "toolplane.context-notes").data.notes).toEqual([]);
+    expect(
+      host.events.filter((event) => event.type === "tool_execution_end").at(-1),
+    ).toMatchObject({ isError: true });
+    const afterLimit = (await readFile(sessionFile, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(
+      afterLimit.findLast(
+        (entry) => entry.customType === "toolplane.context-notes",
+      ).data.notes,
+    ).toEqual([]);
     await host.stop();
   }, 60000);
 });

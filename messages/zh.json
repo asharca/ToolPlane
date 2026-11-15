@@ -1884,6 +1884,10 @@
       "compact": "压缩上下文",
       "newChannel": "新建频道对话",
       "compacted": "上下文已压缩",
+      "contextRewound": "上下文已回退",
+      "contextHandedOff": "上下文已交接",
+      "contextMaintenanceReport": "回退报告",
+      "contextMaintenanceSummary": "交接文档",
       "tokens": "估算 Token：{before} 至 {after}",
       "alreadySmall": "当前上下文已足够短，聊天记录未改变。",
       "busy": "此对话正在处理，请等待当前操作完成。",
@@ -1968,6 +1972,7 @@
       "descriptions": {
         "clear": "清空模型上下文，保留对话历史",
         "compact": "压缩当前对话上下文",
+        "handoff": "生成交接文档并压缩上下文，保留最近几轮对话",
         "context": "查看当前对话的上下文占用",
         "usage": "查看 Claude Code 会话费用、用量限制和活动统计",
         "goal": "管理 DSH 目标：目标内容、edit、pause、resume、clear"

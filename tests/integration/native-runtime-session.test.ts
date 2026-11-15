@@ -845,10 +845,16 @@ export default function(pi) {
       },
     });
     expect(JSON.stringify(first)).not.toContain("untrusted stdout");
-    expect(first).toContainEqual({ type: "context_maintenance", marker: {
-      kind: "rewind", at: "2026-11-15T00:00:00.000Z", checkpointId: "checkpoint-node",
-      entryId: "report-node", report: "Retained investigation report",
-    } });
+    expect(first).toContainEqual({
+      type: "context_maintenance",
+      marker: {
+        kind: "rewind",
+        at: "2026-11-15T00:00:00.000Z",
+        checkpointId: "checkpoint-node",
+        entryId: "report-node",
+        report: "Retained investigation report",
+      },
+    });
     expect(first.some((event) => event.type === "agent_end")).toBe(false);
     const sdkState = JSON.parse(await readFile(statePath, "utf8"));
     expect(sdkState).toMatchObject({

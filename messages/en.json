@@ -1884,6 +1884,10 @@
       "compact": "Compact context",
       "newChannel": "New channel conversation",
       "compacted": "Context compacted",
+      "contextRewound": "Context rewound",
+      "contextHandedOff": "Context handed off",
+      "contextMaintenanceReport": "Rewind report",
+      "contextMaintenanceSummary": "Handoff document",
       "tokens": "Estimated tokens: {before} to {after}",
       "alreadySmall": "The current context is already short enough. History is unchanged.",
       "busy": "This conversation is busy. Wait for the current operation to finish.",
@@ -1968,6 +1972,7 @@
       "descriptions": {
         "clear": "Clear model context without deleting conversation history",
         "compact": "Compact the current conversation context",
+        "handoff": "Generate a handoff document and compact context, retaining recent turns",
         "context": "Show the current conversation context usage",
         "usage": "Show Claude Code session cost, usage limits, and activity",
         "goal": "Manage the DSH goal: objective, edit, pause, resume, clear"

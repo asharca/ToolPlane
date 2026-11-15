@@ -30,7 +30,10 @@ import type {
   RuntimeCommandResult,
   RuntimeUsage,
 } from "@/lib/agents/runtime-commands";
-import { CONTEXT_MAINTENANCE_PART, type ContextMaintenance } from "@/lib/agents/context-maintenance";
+import {
+  CONTEXT_MAINTENANCE_PART,
+  type ContextMaintenance,
+} from "@/lib/agents/context-maintenance";
 import {
   runAgentEntry,
   agentEntryResult,
@@ -375,7 +378,10 @@ async function executeWork(workSessionId: string) {
           } as Prisma.InputJsonValue,
         ]
       : []),
-    ...contextMaintenance.map((marker) => ({ type: CONTEXT_MAINTENANCE_PART, data: marker })),
+    ...contextMaintenance.map((marker) => ({
+      type: CONTEXT_MAINTENANCE_PART,
+      data: marker,
+    })),
   ];
   let deploymentNames = new Map<string, string>();
   let resolvedDeploymentIds: string[] = [];
@@ -757,8 +763,13 @@ async function executeWork(workSessionId: string) {
           else if (part.type === COMMAND_RESULT_PART) commandResult = part.data;
           else if (part.type === STREAM_RULE_TRIGGER_PART)
             streamRuleTriggers.set(part.data.id, part.data);
-          else if (part.type === CONTEXT_MAINTENANCE_PART &&
-            !contextMaintenance.some((marker) => marker.kind === part.data.kind && marker.at === part.data.at))
+          else if (
+            part.type === CONTEXT_MAINTENANCE_PART &&
+            !contextMaintenance.some(
+              (marker) =>
+                marker.kind === part.data.kind && marker.at === part.data.at,
+            )
+          )
             contextMaintenance.push(part.data);
         }
       } finally {

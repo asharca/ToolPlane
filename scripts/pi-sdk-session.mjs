@@ -549,7 +549,13 @@ const contextMaintenance = createContextMaintenance({
   getSession: () => runtime.session,
   emit,
   onUsage: (value) => {
-    usage ??= { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
+    usage ??= {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: 0,
+    };
     usage.inputTokens += value.input ?? 0;
     usage.outputTokens += value.output ?? 0;
     usage.cacheReadTokens += value.cacheRead ?? 0;
