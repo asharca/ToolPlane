@@ -206,8 +206,8 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
     if (usage)
       throw new MeteredExecutionError(error, {
         usage,
-        model: options.modelId,
-        providerId: options.provider.id,
+        model: usage.actualModel?.model ?? options.modelId,
+        providerId: usage.actualModel?.providerId ?? options.provider.id,
       });
     throw error;
   }
@@ -216,8 +216,11 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
     artifact.metadata = {
       toolplanePiSdk: {
         commands,
-        model: { providerId: options.provider.id, model: options.modelId },
         streamRuleTriggers,
+        model: usage?.actualModel ?? {
+          providerId: options.provider.id,
+          model: options.modelId,
+        },
         ...(usage ? { usage } : {}),
         ...(commandResult ? { commandResult } : {}),
       },

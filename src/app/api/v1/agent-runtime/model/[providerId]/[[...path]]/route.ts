@@ -93,28 +93,7 @@ async function proxyProviderRequest(
       { status: 403 },
     );
   }
-  if (providerId !== token.providerId)
-    return NextResponse.json(
-      { error: "provider is outside the runtime grant" },
-      { status: 403 },
-    );
 
-  const provider = await db.modelProvider.findFirst({
-    where: { id: providerId, workspaceId: token.workspaceId },
-    select: {
-      name: true,
-      format: true,
-      baseUrl: true,
-      apiKey: true,
-      models: true,
-    },
-  });
-  if (!provider)
-    return NextResponse.json({ error: "provider not found" }, { status: 404 });
-  bindRuntimeLogContext(token);
-  enrichLogContext({ secrets: [provider.apiKey] });
-
-  enrichLogContext({ providerId });
   const hasBody = req.method !== "GET" && req.method !== "HEAD";
   let model: string | undefined;
   let stream = false;
@@ -132,9 +111,36 @@ async function proxyProviderRequest(
         stream = metadata.stream === true;
       }
     } catch {
-      // Invalid/non-JSON input still belongs to the existing upstream validation path.
+      // Malformed model requests are denied below without reaching the upstream.
     }
   }
+  // Extra providers are accessible only for the exact model pairs on this pin.
+  // Never authorize arbitrary endpoints or catalog models with the session token.
+  if (
+    (hasBody && !model && routePath !== "v1/messages/count_tokens") ||
+    (providerId !== token.providerId && !model) ||
+    (model && !(await resolveAgentRuntimeGrant(token, { providerId, model })))
+  )
+    return NextResponse.json(
+      { error: "model is outside the runtime grant" },
+      { status: 403 },
+    );
+  const provider = await db.modelProvider.findFirst({
+    where: { id: providerId, workspaceId: token.workspaceId },
+    select: {
+      name: true,
+      format: true,
+      baseUrl: true,
+      apiKey: true,
+      models: true,
+    },
+  });
+  if (!provider)
+    return NextResponse.json({ error: "provider not found" }, { status: 404 });
+  bindRuntimeLogContext(token);
+  enrichLogContext({ secrets: [provider.apiKey] });
+
+  enrichLogContext({ providerId });
   const started = performance.now();
   const context = { ...getLogContext() };
   let firstByteMs: number | undefined;

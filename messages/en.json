@@ -842,6 +842,28 @@
         "credentialOwner": "Only the workspace owner can manage credentials.",
         "noEnvironment": "Select an environment template or provide environment settings."
       },
+      "modelRouting": {
+        "fallbackModels": "Fallback models (up to 3)",
+        "fallbackPosition": "Fallback model {position}",
+        "addFallback": "Add fallback model",
+        "removeFallback": "Remove fallback model {position}",
+        "moveUp": "Move fallback model {position} up",
+        "moveDown": "Move fallback model {position} down",
+        "compaction": "Compaction model",
+        "title": "Title model",
+        "usePrimary": "Use primary model",
+        "clearRole": "Reset {role} to primary model",
+        "before": "Current revision",
+        "after": "Proposed revision",
+        "errors": {
+          "AGENT_FALLBACK_MODELS_INVALID": "Select up to three fallback models from the available workspace models, then save again.",
+          "AGENT_ROLE_MODELS_INVALID": "Select available compaction and title models, or reset them to the primary model, then save again.",
+          "AGENT_MODEL_UNAVAILABLE": "A selected model is unavailable. Check its provider, credentials and model catalog, or select another model.",
+          "AGENT_PROVIDER_REVOKED": "Model provider access has changed. Reopen settings and select the models again.",
+          "AGENT_REVISION_CONFIG_INVALID": "The revision configuration is invalid. Reopen settings and prepare it again.",
+          "AGENT_REVISION_CONFLICT": "Settings changed elsewhere. Reopen settings and prepare a new revision."
+        }
+      },
       "piPackageMcpBindingRequired": "Packages with MCP requirements need explicit current-workspace deployment and tool bindings before they can run. Configure these in the package's workspace installation; a publisher's binding cannot grant another workspace access.",
       "piPackageMcpBindings": "Configure workspace MCP bindings",
       "piSdkRuntime": "Pi SDK",

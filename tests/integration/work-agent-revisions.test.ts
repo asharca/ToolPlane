@@ -45,6 +45,8 @@ import {
   handleWorkUi,
 } from "@/lib/agents/execution/work-ui";
 import { createAgentRuntimeToken } from "@/lib/agents/runtime-access";
+import { resolveAgentRuntimeGrant } from "@/lib/agents/runtime-grant";
+import { captureAgentRevisionConfig } from "@/lib/agents/revisions";
 import { updateTaskUi } from "@/lib/agents/execution/task-ui";
 import { mapTaskSandbox } from "./task-sandbox-fixture";
 import { withAgentMaintenanceLease } from "@/lib/agents/agent-execution-gate";
@@ -656,6 +658,138 @@ describe.sequential("Work and local A2A owner revisions", () => {
     ).toBe(0);
   });
 
+  it("pins fallback and role models, rejects invalid routing, and grants only exact live model pairs", async () => {
+    const { agent, config, revision } = await fixture();
+    expect(config).not.toHaveProperty("fallbackModels");
+    expect(config).not.toHaveProperty("roleModels");
+    const secondary = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: "Fallback provider",
+        format: "openai",
+        baseUrl: "https://fallback.test.invalid",
+        apiKey: "fixture",
+        models: ["backup", "summary", "title", "unlisted"],
+      },
+    });
+    const fallback = { providerId: secondary.id, model: "backup" };
+    const apply = (next: unknown) =>
+      publishAgentRevision(workspaceId, agent.id, {
+        expectedRevisionId: revision.id,
+        config: next,
+      });
+    await expect(
+      apply({ ...config, fallbackModels: [fallback] }),
+    ).rejects.toMatchObject({ code: "AGENT_FALLBACK_MODELS_INVALID" });
+    await expect(
+      apply({
+        ...config,
+        modelProviderIds: [secondary.id],
+        fallbackModels: Array(4).fill(fallback),
+      }),
+    ).rejects.toMatchObject({ code: "AGENT_FALLBACK_MODELS_INVALID" });
+    await expect(
+      apply({ ...config, roleModels: { title: fallback } }),
+    ).rejects.toMatchObject({ code: "AGENT_ROLE_MODELS_INVALID" });
+    await expect(
+      apply({
+        ...config,
+        modelProviderIds: [secondary.id],
+        fallbackModels: [{ ...fallback, model: "missing" }],
+      }),
+    ).rejects.toMatchObject({ code: "AGENT_MODEL_UNAVAILABLE" });
+    const foreignWorkspace = await db.workspace.create({
+      data: {
+        ownerId: userId,
+        slug: `foreign-model-${randomUUID()}`,
+        name: "Foreign model boundary",
+      },
+    });
+    try {
+      const foreign = await db.modelProvider.create({
+        data: {
+          workspaceId: foreignWorkspace.id,
+          name: "Foreign",
+          format: "openai",
+          baseUrl: "https://foreign.test.invalid",
+          apiKey: "fixture",
+          models: ["backup"],
+        },
+      });
+      await expect(
+        apply({
+          ...config,
+          modelProviderIds: [foreign.id],
+          fallbackModels: [{ providerId: foreign.id, model: "backup" }],
+        }),
+      ).rejects.toMatchObject({ code: "AGENT_MODEL_UNAVAILABLE" });
+    } finally {
+      await db.workspace.delete({ where: { id: foreignWorkspace.id } });
+    }
+    const next = {
+      ...config,
+      modelProviderIds: [secondary.id],
+      fallbackModels: [fallback],
+      roleModels: {
+        compaction: { ...fallback, model: "summary" },
+        title: { ...fallback, model: "title" },
+      },
+    };
+    const published = await apply(next);
+    const recaptured = await db.$transaction((tx) =>
+      captureAgentRevisionConfig(tx, agent.id),
+    );
+    expect(recaptured).toMatchObject({
+      fallbackModels: next.fallbackModels,
+      roleModels: next.roleModels,
+      modelProviderIds: [secondary.id],
+    });
+    const work = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      a2aActorId: userId,
+      task: "Fallback authorization",
+    });
+    if (!work?.sandboxId) throw new Error("Missing Work sandbox");
+    await db.conversation.update({
+      where: { id: work.conversationId },
+      data: { sandboxId: work.sandboxId },
+    });
+    const token = {
+      workspaceId,
+      agentId: agent.id,
+      agentRevisionId: published.id,
+      providerId,
+      sandboxId: work.sandboxId,
+      conversationId: work.conversationId,
+      deploymentIds: [],
+      exp: Math.floor(Date.now() / 1000) + 300,
+    };
+    for (const model of ["backup", "summary", "title"])
+      expect(
+        await resolveAgentRuntimeGrant(token, {
+          providerId: secondary.id,
+          model,
+        }),
+      ).toMatchObject({ runtimeKind: "pi-sdk", model });
+    expect(
+      await resolveAgentRuntimeGrant(token, {
+        providerId: secondary.id,
+        model: "unlisted",
+      }),
+    ).toBeNull();
+    expect(
+      await resolveAgentRuntimeGrant(token, { providerId, model: "backup" }),
+    ).toBeNull();
+    await db.modelProvider.update({
+      where: { id: secondary.id },
+      data: { apiKey: "" },
+    });
+    expect(await resolveAgentRuntimeGrant(token, fallback)).toBeNull();
+    expect(
+      await resolveAgentRuntimeGrant(token, { providerId, model: "fixture" }),
+    ).toMatchObject({ runtimeKind: "pi-sdk" });
+  });
   it("rejects retry and new input while conversation deletion holds maintenance", async () => {
     const { agent } = await fixture();
     const work = await createWorkSession({

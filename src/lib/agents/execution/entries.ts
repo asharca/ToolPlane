@@ -19,6 +19,7 @@ import {
   RUNTIME_COMMANDS_PART,
   RUNTIME_USAGE_PART,
   RuntimeCommandsSchema,
+  RuntimeUsageSchema,
 } from "@/lib/agents/runtime-commands";
 import type {
   RuntimeCommand,
@@ -574,16 +575,7 @@ const piSdkMetadataSchema = z
     model: z
       .object({ providerId: z.string().min(1), model: z.string().min(1) })
       .optional(),
-    usage: z
-      .object({
-        inputTokens: z.number().finite().nonnegative(),
-        outputTokens: z.number().finite().nonnegative(),
-        cacheReadTokens: z.number().finite().nonnegative(),
-        cacheWriteTokens: z.number().finite().nonnegative(),
-        costUsd: z.number().finite().nonnegative().optional(),
-      })
-      .strict()
-      .optional(),
+    usage: RuntimeUsageSchema.optional(),
     commandResult: z
       .object({
         command: z.string().min(1).max(A2A_LIMITS.inputCharacters),

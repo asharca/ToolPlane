@@ -1119,6 +1119,17 @@ export async function publishAgentRevisionAction(formData: FormData) {
       config: JSON.parse(String(formData.get("config") ?? "")),
     });
   } catch (error) {
+    if (error instanceof AgentRevisionError) {
+      switch (error.code) {
+        case "AGENT_FALLBACK_MODELS_INVALID":
+        case "AGENT_ROLE_MODELS_INVALID":
+        case "AGENT_MODEL_UNAVAILABLE":
+        case "AGENT_PROVIDER_REVOKED":
+        case "AGENT_REVISION_CONFIG_INVALID":
+        case "AGENT_REVISION_CONFLICT":
+          return { error: error.code, conflict: null };
+      }
+    }
     if (error instanceof Error && error.message === "PI_CAPABILITY_CONFLICT") {
       const detail = error.cause instanceof Error ? error.cause.message : "";
       const conflict = /^(skill|tool|command):(.{1,200})$/.exec(detail);

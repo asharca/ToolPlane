@@ -202,14 +202,36 @@ export async function resolveAgentRuntimeGrant(
         token.agentId,
         revision.config.environment.credentialReferences,
       );
-      if (modelTarget && modelTarget.providerId !== token.providerId)
-        return null;
-      if (
-        token.modelOverride &&
-        modelTarget &&
-        token.modelOverride.model !== modelTarget.model
-      )
-        return null;
+      if (modelTarget) {
+        const primary = token.modelOverride ?? {
+          providerId: token.providerId,
+          model: revision.config.model,
+        };
+        const targets = [
+          ...(revision.config.fallbackModels ?? []),
+          ...Object.values(revision.config.roleModels ?? {}).filter(
+            (target) => target !== undefined,
+          ),
+        ];
+        const isPrimary =
+          modelTarget.providerId === primary.providerId &&
+          modelTarget.model === primary.model;
+        const isSelected =
+          revision.config.modelProviderIds.includes(modelTarget.providerId) &&
+          targets.some(
+            (target) =>
+              target.providerId === modelTarget.providerId &&
+              target.model === modelTarget.model,
+          );
+        if (!isPrimary && !isSelected) return null;
+        if (!isPrimary)
+          await resolveAgentModelOverride(
+            token.workspaceId,
+            modelTarget,
+            revision.config.runtimeKind,
+            tx,
+          );
+      }
       if (conversationId && token.modelOverride) {
         const session = await tx.conversation.findFirst({
           where: {

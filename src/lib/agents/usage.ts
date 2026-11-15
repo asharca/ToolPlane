@@ -49,6 +49,18 @@ export async function usageCostUsd(
   metering?: TaskUsage,
 ): Promise<number> {
   if (usage.costUsd) return usage.costUsd;
+  if (usage.modelUsage?.length) {
+    const costs = await Promise.all(
+      usage.modelUsage.map((entry) =>
+        usageCostUsd(entry, {
+          usage: entry,
+          providerId: entry.providerId,
+          model: entry.model,
+        }),
+      ),
+    );
+    return costs.reduce((sum, cost) => sum + cost, 0);
+  }
   if (!metering?.providerId || !metering.model) return 0;
   const model = await db.providerModel.findFirst({
     where: { providerId: metering.providerId, modelId: metering.model },
@@ -285,8 +297,8 @@ export async function recordAgentTaskUsage(row: A2ATask, metering?: TaskUsage) {
         taskId: row.id,
         conversationId,
         entryKind: grant.entryPolicy?.kind ?? "delegation",
-        model: metering?.model,
-        providerId: metering?.providerId,
+        model: usage?.actualModel?.model ?? metering?.model,
+        providerId: usage?.actualModel?.providerId ?? metering?.providerId,
         ...values,
         succeeded,
         meteringCompleted: true,
@@ -295,8 +307,8 @@ export async function recordAgentTaskUsage(row: A2ATask, metering?: TaskUsage) {
         ...values,
         succeeded,
         meteringCompleted: true,
-        model: metering?.model,
-        providerId: metering?.providerId,
+        model: usage?.actualModel?.model ?? metering?.model,
+        providerId: usage?.actualModel?.providerId ?? metering?.providerId,
       },
     });
     const crossed = await recordBudgetCrossing(

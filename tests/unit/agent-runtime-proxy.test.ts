@@ -52,6 +52,7 @@ const pin = {
     runtimeKind: "pi-sdk",
     model: "selected-model",
     providerId: "provider-1",
+    modelProviderIds: [],
     mcpGrants: [{ deploymentId: "deployment-1", allowedToolNames: ["read"] }],
     externalSandboxes: [],
     environment: { credentialReferences: [] },
@@ -135,9 +136,14 @@ describe("pinned Agent runtime proxy authorization", () => {
     });
   }
   async function model(providerId = "provider-1") {
-    return proxyModel(await request(`model/${providerId}/chat/completions`), {
-      params: Promise.resolve({ providerId, path: ["chat", "completions"] }),
-    });
+    return proxyModel(
+      await request(`model/${providerId}/chat/completions`, {
+        model: "selected-model",
+      }),
+      {
+        params: Promise.resolve({ providerId, path: ["chat", "completions"] }),
+      },
+    );
   }
   async function mcp(
     method: string,
@@ -201,6 +207,26 @@ describe("pinned Agent runtime proxy authorization", () => {
     } finally {
       accounting.mockRestore();
     }
+  });
+  it("rejects unlisted models and missing routing metadata before upstream access", async () => {
+    for (const body of [
+      { model: "child-model" },
+      { model: "../unlisted" },
+      {},
+    ]) {
+      const response = await proxyModel(
+        await request("model/provider-1/chat/completions", body),
+        {
+          params: Promise.resolve({
+            providerId: "provider-1",
+            path: ["chat", "completions"],
+          }),
+        },
+      );
+      expect(response.status).toBe(403);
+    }
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.provider).not.toHaveBeenCalled();
   });
   it("negotiates its own encoding and preserves real SSE bytes for a zstd-capable client", async () => {
     const sse =

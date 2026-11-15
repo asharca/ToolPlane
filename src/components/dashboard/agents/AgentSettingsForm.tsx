@@ -4,6 +4,8 @@ import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
+  ArrowDown,
+  ArrowUp,
   Box,
   Cable,
   LoaderCircle,
@@ -34,6 +36,7 @@ import {
   ModelPicker,
   ModelPickerTrigger,
   type ModelProviderOption,
+  type ModelSelection,
 } from "@/components/dashboard/models/ModelPicker";
 import {
   AgentResourceSelect,
@@ -230,6 +233,25 @@ export function AgentSettingsForm(props: Props) {
   const [contextFiles, setContextFiles] = useState(props.contextFiles);
   const [provider, setProvider] = useState(props.providerId ?? "");
   const [model, setModel] = useState(props.model ?? "");
+  const [fallbackModels, setFallbackModels] = useState(() =>
+    (publishedRevision?.config.fallbackModels ?? []).map((selection) => ({
+      id: crypto.randomUUID(),
+      selection,
+    })),
+  );
+  const [roleModels, setRoleModels] = useState<
+    NonNullable<AgentRevisionConfig["roleModels"]>
+  >(publishedRevision?.config.roleModels ?? {});
+  const modelProviders = providers
+    .filter((item) =>
+      agentRuntimeSupportsProviderFormat(runtimeKind, item.format),
+    )
+    .map((item) => ({
+      ...item,
+      models: item.models.filter((id) =>
+        /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(id),
+      ),
+    }));
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
     props.reasoningEffort ?? DEFAULT_REASONING_LEVEL,
   );
@@ -295,6 +317,7 @@ export function AgentSettingsForm(props: Props) {
     config: AgentRevisionConfig;
     additions: AgentPermissionAddition[];
     diff: AgentRevisionDiff;
+    fallbackRows: Record<"before" | "after", typeof fallbackModels>;
   } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [pending, setPending] = useState(false);
@@ -304,10 +327,21 @@ export function AgentSettingsForm(props: Props) {
   const [appliedConfig, setAppliedConfig] = useState(
     publishedRevision?.config ?? null,
   );
+  const fallbackSelections = fallbackModels.map((item) => item.selection);
+  const fallbackModelsDirty =
+    JSON.stringify(fallbackSelections) !==
+    JSON.stringify(appliedConfig?.fallbackModels ?? []);
+  const roleModelDirty = (role: "compaction" | "title") =>
+    roleModels[role]?.providerId !==
+      appliedConfig?.roleModels?.[role]?.providerId ||
+    roleModels[role]?.model !== appliedConfig?.roleModels?.[role]?.model;
   const hasUnsavedChanges =
     dirty ||
     subagentsDirty ||
     streamRules.dirty ||
+    fallbackModelsDirty ||
+    roleModelDirty("compaction") ||
+    roleModelDirty("title") ||
     environment !==
       (appliedConfig ? JSON.stringify(appliedConfig.environment, null, 2) : "");
   const sameSet = (left: Set<string>, right: Set<string>) =>
@@ -316,7 +350,11 @@ export function AgentSettingsForm(props: Props) {
     name: name !== props.name,
     description: description !== (props.description ?? ""),
     model:
-      provider !== (props.providerId ?? "") || model !== (props.model ?? ""),
+      provider !== (props.providerId ?? "") ||
+      model !== (props.model ?? "") ||
+      fallbackModelsDirty ||
+      roleModelDirty("compaction") ||
+      roleModelDirty("title"),
     reasoningEffort:
       reasoningEffort !== (props.reasoningEffort ?? DEFAULT_REASONING_LEVEL),
     instructions:
@@ -389,6 +427,54 @@ export function AgentSettingsForm(props: Props) {
     setReview(null);
     setMessage("");
   }
+  function modelLabel(selection: ModelSelection | null | undefined) {
+    if (!selection) return t("modelRouting.usePrimary");
+    const providerName = providers.find(
+      (item) => item.id === selection.providerId,
+    )?.name;
+    return `${providerName ?? selection.providerId} / ${selection.model}`;
+  }
+  function modelPicker(
+    selection: ModelSelection | null,
+    label: string,
+    onSelect: (selection: ModelSelection) => void,
+    placeholder = label,
+  ) {
+    const available =
+      selection &&
+      modelProviders.some(
+        (item) =>
+          item.id === selection.providerId &&
+          item.models.includes(selection.model),
+      );
+    return (
+      <ModelPicker
+        className="flex min-w-0 flex-1"
+        providers={modelProviders}
+        value={available ? selection : null}
+        pending={pending}
+        onSelect={(next) => {
+          if (pending) return;
+          onSelect(next);
+          changed();
+        }}
+        trigger={
+          <ModelPickerTrigger
+            label={selection?.model ?? placeholder}
+            provider={
+              selection
+                ? (providers.find((item) => item.id === selection.providerId)
+                    ?.name ?? selection.providerId)
+                : undefined
+            }
+            placeholder={!selection}
+            disabled={pending}
+            aria-label={label}
+          />
+        }
+      />
+    );
+  }
   function selectPlugin(
     listingId: string,
     options: AgentPiPackageOption[],
@@ -451,10 +537,13 @@ export function AgentSettingsForm(props: Props) {
     try {
       await operation();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
-      notify(failure instanceof Error ? failure.message : String(failure), {
-        severity: "error",
-      });
+      const code = failure instanceof Error ? failure.message : String(failure);
+      const text = t.has(`modelRouting.errors.${code}`)
+        ? t(`modelRouting.errors.${code}`)
+        : code;
+      if (code === "AGENT_REVISION_CONFLICT") setReview(null);
+      setError(text);
+      notify(text, { severity: "error" });
     } finally {
       setPending(false);
     }
@@ -467,15 +556,18 @@ export function AgentSettingsForm(props: Props) {
     data.set("expectedRevisionId", prepared.expectedRevisionId ?? "");
     data.set("config", JSON.stringify(prepared.config));
     const result = await publishAgentRevisionAction(data);
-    if ("error" in result)
+    if ("error" in result) {
+      if (result.error !== "PI_CAPABILITY_CONFLICT")
+        throw new Error(result.error);
       throw new Error(
-        result.conflict
+        "conflict" in result && result.conflict
           ? r("capabilityConflict", {
               kind: r(`capabilityKinds.${result.conflict.kind}`),
               name: result.conflict.name,
             })
           : r("capabilityConflictUnknown"),
       );
+    }
     setRevision(result.revisionId);
     setAppliedConfig(prepared.config);
     setReview(null);
@@ -527,6 +619,31 @@ export function AgentSettingsForm(props: Props) {
       // Never classify against a different tab's newly applied configuration.
       if ((prepared.expectedRevisionId ?? "") !== revision)
         throw new Error(r("stale"));
+      // Routing belongs to the reviewed revision, not the mutable Agent row.
+      if (fallbackModelsDirty)
+        prepared.config.fallbackModels = fallbackSelections;
+      if (roleModelDirty("compaction") || roleModelDirty("title"))
+        prepared.config.roleModels = roleModels;
+      const routingProviderIds = [
+        ...(prepared.config.fallbackModels ?? []).map(
+          (target) => target.providerId,
+        ),
+        ...Object.values(prepared.config.roleModels ?? {}).flatMap((target) =>
+          target ? [target.providerId] : [],
+        ),
+      ];
+      const selectedProviderIds = new Set([
+        prepared.config.providerId,
+        ...routingProviderIds,
+      ]);
+      prepared.config.modelProviderIds = [
+        ...new Set([
+          ...prepared.config.modelProviderIds.filter((id) =>
+            selectedProviderIds.has(id),
+          ),
+          ...routingProviderIds,
+        ]),
+      ];
       const additions = agentPermissionAdditions(
         appliedConfig,
         prepared.config,
@@ -538,7 +655,18 @@ export function AgentSettingsForm(props: Props) {
         router.refresh();
         return;
       }
-      setReview({ ...prepared, additions, diff });
+      setReview({
+        ...prepared,
+        additions,
+        diff,
+        fallbackRows: {
+          before: (appliedConfig?.fallbackModels ?? []).map((selection) => ({
+            id: crypto.randomUUID(),
+            selection,
+          })),
+          after: fallbackModels,
+        },
+      });
       setMessage("");
     });
   }
@@ -731,6 +859,156 @@ export function AgentSettingsForm(props: Props) {
                       }
                     />
                   </DialogField>
+                  <DialogField
+                    label={t("modelRouting.fallbackModels")}
+                    dirty={fallbackModelsDirty}
+                  >
+                    <ol className="space-y-2">
+                      {fallbackModels.map((item, index) => (
+                        <li
+                          key={item.id}
+                          className="flex min-w-0 flex-wrap items-center gap-2"
+                        >
+                          <span
+                            className="w-4 text-xs tabular-nums text-muted-foreground"
+                            aria-hidden="true"
+                          >
+                            {index + 1}
+                          </span>
+                          {modelPicker(
+                            item.selection,
+                            t("modelRouting.fallbackPosition", {
+                              position: index + 1,
+                            }),
+                            (next) =>
+                              setFallbackModels((current) =>
+                                current.map((entry) =>
+                                  entry.id === item.id
+                                    ? { ...entry, selection: next }
+                                    : entry,
+                                ),
+                              ),
+                          )}
+                          <div className="flex shrink-0 items-center">
+                            {([-1, 1] as const).map((direction) => (
+                              <Button
+                                key={direction}
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                disabled={
+                                  pending ||
+                                  index + direction < 0 ||
+                                  index + direction >= fallbackModels.length
+                                }
+                                aria-label={t(
+                                  direction < 0
+                                    ? "modelRouting.moveUp"
+                                    : "modelRouting.moveDown",
+                                  { position: index + 1 },
+                                )}
+                                onClick={() => {
+                                  setFallbackModels((current) => {
+                                    const next = [...current];
+                                    [next[index], next[index + direction]] = [
+                                      next[index + direction],
+                                      next[index],
+                                    ];
+                                    return next;
+                                  });
+                                  changed();
+                                }}
+                              >
+                                {direction < 0 ? (
+                                  <ArrowUp
+                                    className="size-4"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <ArrowDown
+                                    className="size-4"
+                                    aria-hidden="true"
+                                  />
+                                )}
+                              </Button>
+                            ))}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              disabled={pending}
+                              aria-label={t("modelRouting.removeFallback", {
+                                position: index + 1,
+                              })}
+                              onClick={() => {
+                                setFallbackModels((current) =>
+                                  current.filter(
+                                    (_, position) => position !== index,
+                                  ),
+                                );
+                                changed();
+                              }}
+                            >
+                              <Trash2 className="size-4" aria-hidden="true" />
+                            </Button>
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                    {fallbackModels.length < 3
+                      ? modelPicker(
+                          null,
+                          t("modelRouting.addFallback"),
+                          (selection) => {
+                            const item = { id: crypto.randomUUID(), selection };
+                            setFallbackModels((current) =>
+                              current.length < 3 ? [...current, item] : current,
+                            );
+                          },
+                        )
+                      : null}
+                  </DialogField>
+                  {(["compaction", "title"] as const).map((role) => (
+                    <DialogField
+                      key={role}
+                      label={t(`modelRouting.${role}`)}
+                      dirty={roleModelDirty(role)}
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        {modelPicker(
+                          roleModels[role] ?? null,
+                          t(`modelRouting.${role}`),
+                          (next) =>
+                            setRoleModels((current) => ({
+                              ...current,
+                              [role]: next,
+                            })),
+                          t("modelRouting.usePrimary"),
+                        )}
+                        {roleModels[role] ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            disabled={pending}
+                            aria-label={t("modelRouting.clearRole", {
+                              role: t(`modelRouting.${role}`),
+                            })}
+                            onClick={() => {
+                              setRoleModels((current) => {
+                                const next = { ...current };
+                                delete next[role];
+                                return next;
+                              });
+                              changed();
+                            }}
+                          >
+                            <Trash2 className="size-4" aria-hidden="true" />
+                          </Button>
+                        ) : null}
+                      </div>
+                    </DialogField>
+                  ))}
                   {selectionSupportsReasoning(providers, {
                     providerId: provider,
                     model,
@@ -1291,6 +1569,81 @@ export function AgentSettingsForm(props: Props) {
               <p className="text-sm text-muted-foreground">
                 {diffT("reviewHelp")}
               </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th scope="col" className="p-2">
+                        {t("model")}
+                      </th>
+                      <th scope="col" className="p-2">
+                        {t("modelRouting.before")}
+                      </th>
+                      <th scope="col" className="p-2">
+                        {t("modelRouting.after")}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <th scope="row" className="p-2 font-medium">
+                        {t("model")}
+                      </th>
+                      {[appliedConfig, review.config].map((config, index) => (
+                        <td
+                          key={index === 0 ? "before" : "after"}
+                          className="break-words p-2"
+                        >
+                          {config?.providerId && config.model
+                            ? modelLabel({
+                                providerId: config.providerId,
+                                model: config.model,
+                              })
+                            : t("none")}
+                        </td>
+                      ))}
+                    </tr>
+                    <tr>
+                      <th scope="row" className="p-2 align-top font-medium">
+                        {t("modelRouting.fallbackModels")}
+                      </th>
+                      {[appliedConfig, review.config].map((config, index) => (
+                        <td
+                          key={index === 0 ? "before" : "after"}
+                          className="break-words p-2 align-top"
+                        >
+                          {config?.fallbackModels?.length ? (
+                            <ol className="list-inside list-decimal space-y-1">
+                              {review.fallbackRows[
+                                index === 0 ? "before" : "after"
+                              ].map((item) => (
+                                <li key={item.id}>
+                                  {modelLabel(item.selection)}
+                                </li>
+                              ))}
+                            </ol>
+                          ) : (
+                            t("none")
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                    {(["compaction", "title"] as const).map((role) => (
+                      <tr key={role}>
+                        <th scope="row" className="p-2 font-medium">
+                          {t(`modelRouting.${role}`)}
+                        </th>
+                        <td className="break-words p-2">
+                          {modelLabel(appliedConfig?.roleModels?.[role])}
+                        </td>
+                        <td className="break-words p-2">
+                          {modelLabel(review.config.roleModels?.[role])}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               <RevisionFileDiff diff={review.diff} />
               {review.additions.length ? (
                 <p className="text-sm text-muted-foreground">

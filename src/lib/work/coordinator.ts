@@ -346,7 +346,7 @@ async function executeWork(workSessionId: string) {
       ? [
           {
             type: AGENT_TURN_MODEL_PART,
-            data: {
+            data: usage?.actualModel ?? {
               providerId:
                 turnOverride?.providerId ?? initialSnapshot.providerId,
               model: initialModelName,
@@ -378,7 +378,8 @@ async function executeWork(workSessionId: string) {
   let resolvedDeploymentIds: string[] = [];
 
   const turnTiming = (completedAt = Date.now()): WorkTurnTiming => {
-    const modelName = contextUsage?.modelName ?? initialModelName;
+    const modelName =
+      usage?.actualModel?.model ?? contextUsage?.modelName ?? initialModelName;
     return {
       startedAt: runStartedAt,
       completedAt,

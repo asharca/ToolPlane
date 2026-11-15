@@ -20,6 +20,9 @@ export const OptionalBuiltinToolsSchema = references.refine(
   (names) => names.every((name) => Boolean(agentOptionalBuiltinTool(name))),
   { message: "OPTIONAL_BUILTIN_TOOLS_INVALID" },
 );
+const revisionModel = z
+  .object({ providerId: reference, model: reference })
+  .strict();
 const checksum = z.string().regex(/^[a-f0-9]{64}$/);
 
 // Reuse the serializable Sandbox model subset, never its arbitrary config JSON
@@ -167,6 +170,14 @@ const PiRevisionConfigSchema = z
     providerId: reference.nullable(),
     model: reference.nullable(),
     modelProviderIds: references,
+    fallbackModels: z.array(revisionModel).max(3).optional(),
+    roleModels: z
+      .object({
+        compaction: revisionModel.optional(),
+        title: revisionModel.optional(),
+      })
+      .strict()
+      .optional(),
     reasoningEffort: z.enum(REASONING_LEVELS).optional(),
     streamRules: StreamRulesSchema.optional(),
     maxSteps: z
@@ -257,6 +268,22 @@ export const AgentRevisionConfigSchema = z
     }).strict(),
   ])
   .superRefine((config, ctx) => {
+    for (const [index, target] of (config.fallbackModels ?? []).entries()) {
+      if (!config.modelProviderIds.includes(target.providerId))
+        ctx.addIssue({
+          code: "custom",
+          message: "AGENT_FALLBACK_MODELS_INVALID",
+          path: ["fallbackModels", index, "providerId"],
+        });
+    }
+    for (const [role, target] of Object.entries(config.roleModels ?? {})) {
+      if (target && !config.modelProviderIds.includes(target.providerId))
+        ctx.addIssue({
+          code: "custom",
+          message: "AGENT_ROLE_MODELS_INVALID",
+          path: ["roleModels", role, "providerId"],
+        });
+    }
     // "native" enables OMP's in-sandbox task tool alongside any platform delegation.
     if (config.subagentMode !== "native") return;
     if (!config.nativeSubagentPolicy || config.subagents?.length) {

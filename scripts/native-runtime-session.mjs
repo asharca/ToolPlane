@@ -218,6 +218,9 @@ async function serve() {
             ? { sessionEntries: event.result.sessionEntries }
             : {}),
           ...(event.result.fork ? { fork: event.result.fork } : {}),
+          ...(event.result.actualModel
+            ? { actualModel: event.result.actualModel }
+            : {}),
           ...(event.result.contextBreakdown
             ? { contextBreakdown: event.result.contextBreakdown }
             : {}),
@@ -275,6 +278,9 @@ async function serve() {
                       result: {
                         ...(event.result?.usage
                           ? { usage: event.result.usage }
+                          : {}),
+                        ...(event.result?.actualModel
+                          ? { actualModel: event.result.actualModel }
                           : {}),
                         ...(event.result?.streamRuleTriggers
                           ? {

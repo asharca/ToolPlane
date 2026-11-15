@@ -52,12 +52,27 @@ import {
 import { isExecutableAgentRuntimeKind } from "./runtime-kind";
 import { preparePiRuntime } from "./pi-runtime";
 import { resolveCapabilitySubagents } from "./subagents";
+import { resolveAgentModelOverride } from "./turn-model";
 
 export class AgentRevisionError extends Error {
   constructor(public readonly code: string) {
     super(code);
     this.name = "AgentRevisionError";
   }
+}
+function parsePublicationConfig(value: unknown): AgentRevisionConfig {
+  const parsed = AgentRevisionConfigSchema.safeParse(value);
+  if (!parsed.success) {
+    const field = parsed.error.issues[0]?.path[0];
+    throw new AgentRevisionError(
+      field === "fallbackModels"
+        ? "AGENT_FALLBACK_MODELS_INVALID"
+        : field === "roleModels"
+          ? "AGENT_ROLE_MODELS_INVALID"
+          : "AGENT_REVISION_CONFIG_INVALID",
+    );
+  }
+  return parsed.data;
 }
 
 /** Omission selects the published default. An explicit null is unresolved history. */
@@ -247,7 +262,13 @@ export async function captureAgentRevisionConfig(
     contextFiles: agent.contextFiles,
     providerId: agent.providerId,
     model: agent.model,
-    modelProviderIds: [],
+    modelProviderIds: prior?.modelProviderIds ?? [],
+    ...(prior?.fallbackModels !== undefined
+      ? { fallbackModels: prior.fallbackModels }
+      : {}),
+    ...(prior?.roleModels !== undefined
+      ? { roleModels: prior.roleModels }
+      : {}),
     maxSteps: agent.maxSteps,
     ...(agent.reasoningEffort != null
       ? { reasoningEffort: agent.reasoningEffort }
@@ -350,12 +371,43 @@ async function validateRevisionAuthorization(
       config.nativeSubagentPolicy.maxDepth > agent.nativeSubagentMaxDepth)
   )
     throw new AgentRevisionError("SUBAGENT_POLICY_REVOKED");
-  const providers = new Set([agent.providerId]);
-  if (
-    (config.providerId && !providers.has(config.providerId)) ||
-    config.modelProviderIds.some((id) => !providers.has(id))
-  )
+  if (config.providerId && config.providerId !== agent.providerId)
     throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
+  const targets = [
+    ...(config.fallbackModels ?? []),
+    ...Object.values(config.roleModels ?? {}).filter(
+      (target) => target !== undefined,
+    ),
+  ];
+  const selectedProviders = new Set([
+    agent.providerId,
+    ...targets.map((target) => target.providerId),
+  ]);
+  if (config.modelProviderIds.some((id) => !selectedProviders.has(id)))
+    throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
+  for (const target of targets) {
+    if (!config.modelProviderIds.includes(target.providerId))
+      throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
+    try {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(target.model))
+        throw new Error("invalid model gateway target");
+      const { provider } = await resolveAgentModelOverride(
+        workspaceId,
+        target,
+        config.runtimeKind,
+        tx,
+      );
+      const url = new URL(provider.baseUrl);
+      if (
+        !["http:", "https:"].includes(url.protocol) ||
+        url.username ||
+        url.password
+      )
+        throw new Error("invalid gateway");
+    } catch {
+      throw new AgentRevisionError("AGENT_MODEL_UNAVAILABLE");
+    }
+  }
   const skills = new Set(agent.skills.map((entry) => entry.installedSkillId));
   const knowledge = new Set(
     agent.knowledgeBases.map((entry) => entry.knowledgeBaseId),
@@ -554,7 +606,7 @@ export async function publishAgentRevisionInTransaction(
     : null;
   if ((current?.id ?? null) !== input.expectedRevisionId)
     throw new AgentRevisionError("AGENT_REVISION_CONFLICT");
-  const config = AgentRevisionConfigSchema.parse(input.config);
+  const config = parsePublicationConfig(input.config);
   if (config.subagents?.length)
     throw new AgentRevisionError("SUBAGENT_AUTHORING_RETIRED");
   if (!isExecutableAgentRuntimeKind(config.runtimeKind))
@@ -872,7 +924,7 @@ export async function publishAgentRevision(
     input.config === undefined
       ? await captureAgentRevisionConfig(db, agentId, input.environment)
       : input.config;
-  const preparedConfig = AgentRevisionConfigSchema.parse(config);
+  const preparedConfig = parsePublicationConfig(config);
   if (!isExecutableAgentRuntimeKind(preparedConfig.runtimeKind))
     throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
   if (preparedConfig.runtimeKind === "pi-sdk") await preparePiRuntime();

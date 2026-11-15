@@ -75,6 +75,15 @@ type SdkResponse = {
       messages: Array<{ id: string; mode: string; text: string }>;
       pendingMessageCount: number;
     };
+    actualModel?: { providerId: string; model: string };
+    usage?: {
+      actualModel?: { providerId: string; model: string };
+      modelUsage?: Array<{
+        providerId: string;
+        model: string;
+        inputTokens: number;
+      }>;
+    };
   };
   error?: { code: string };
 };
@@ -85,6 +94,8 @@ type RequestContext = {
   model: Record<string, unknown>;
   reasoningEffort?: string;
   modelRetries?: number;
+  fallbackModels?: Array<Record<string, unknown>>;
+  roleModels?: { compaction?: Record<string, unknown> };
 };
 const children = new Set<ChildProcess>();
 const cleanups: Array<() => Promise<void>> = [];
@@ -1409,10 +1420,30 @@ describe("official Pi SDK headless session host", () => {
     const compacted = await host.request(
       "prompt",
       "/compact retain the native compaction marker",
+      {
+        ...f.context,
+        roleModels: {
+          compaction: {
+            ...f.config.model,
+            provider: "toolplane-summary",
+            id: "summary",
+            toolplaneProviderId: "summary",
+            baseUrl: f.config.model.baseUrl.replace("/v1", "/summary/v1"),
+          },
+        },
+      },
     );
     expect(compacted.success).toBe(true);
     const result = assertDefined(compacted.result);
     expect(result.text).toContain("NATIVE_SUMMARY_FROM_PROVIDER");
+    expect(result.actualModel).toEqual({
+      providerId: "summary",
+      model: "summary",
+    });
+    expect(f.requests.at(-1)).toMatchObject({
+      path: "/summary/v1/chat/completions",
+      body: { model: "summary" },
+    });
     expect(result.commandResult).toEqual({
       command: "compact",
       text: result.text,
@@ -1437,6 +1468,7 @@ describe("official Pi SDK headless session host", () => {
       "Continue the compacted session",
     );
     expect(continued.success).toBe(true);
+    expect(f.requests.at(-1)?.body.model).toBe("controlled");
     expect(assertDefined(continued.result).state).toMatchObject({
       sessionId: original.sessionId,
       sessionFile: original.sessionFile,
@@ -2525,5 +2557,118 @@ describe("official Pi SDK headless session host", () => {
       error: { code: "PI_SDK_MODEL_FAILED", reason: "EMPTY_STREAM" },
     });
     expect(f.requests).toHaveLength(5);
+  }, 60000);
+  it("exhausts same-model retries before switching gateways without duplicating the prompt, then resets next turn", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    f.behavior.streamCompletion = async (response) => {
+      if (f.requests.at(-1)?.body.model === "controlled") {
+        response.writeHead(503, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({ error: { message: "private upstream outage" } }),
+        );
+      } else completion(response, { content: "FALLBACK_RECOVERED" }, "stop");
+    };
+    const host = await f.launch();
+    const result = await host.request("prompt", "Use the fallback", {
+      ...f.context,
+      model: { ...f.config.model, toolplaneProviderId: "primary" },
+      modelRetries: 1,
+      fallbackModels: [
+        {
+          ...f.config.model,
+          provider: "toolplane-secondary",
+          id: "backup",
+          toolplaneProviderId: "secondary",
+          baseUrl: f.config.model.baseUrl.replace("/v1", "/secondary/v1"),
+        },
+      ],
+    });
+    expect(result).toMatchObject({
+      success: true,
+      result: {
+        text: "FALLBACK_RECOVERED",
+        actualModel: { providerId: "secondary", model: "backup" },
+        usage: {
+          actualModel: { providerId: "secondary", model: "backup" },
+          modelUsage: expect.arrayContaining([
+            expect.objectContaining({
+              providerId: "secondary",
+              model: "backup",
+              inputTokens: 20,
+            }),
+          ]),
+        },
+      },
+    });
+    expect(f.requests.map((request) => request.body.model)).toEqual([
+      "controlled",
+      "controlled",
+      "backup",
+    ]);
+    expect(f.requests.at(-1)?.path).toBe("/secondary/v1/chat/completions");
+    for (const request of f.requests)
+      expect(
+        request.body.messages.filter((message) => message.role === "user"),
+      ).toHaveLength(1);
+    f.behavior.streamCompletion = undefined;
+    expect(await host.request("prompt", "Next turn")).toMatchObject({
+      success: true,
+    });
+    expect(f.requests.at(-1)?.body.model).toBe("controlled");
+  }, 60000);
+  it("never switches models or replays a native tool after its execution starts", async () => {
+    const f = await setup();
+    f.behavior.streamCompletion = async (response) => {
+      if (f.requests.at(-1)?.body.messages.at(-1)?.role === "tool") {
+        response.writeHead(503, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "unavailable" } }));
+      } else
+        completion(
+          response,
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: "once",
+                type: "function",
+                function: { name: "increment", arguments: "{}" },
+              },
+            ],
+          },
+          "tool_calls",
+        );
+    };
+    const result = await (await f.launch()).request(
+      "prompt",
+      "Increment once",
+      { ...f.context, fallbackModels: [{ ...f.config.model, id: "backup" }] },
+    );
+    expect(result).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "HTTP_503" },
+    });
+    expect(f.requests.map((request) => request.body.model)).toEqual([
+      "controlled",
+      "controlled",
+    ]);
+    expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("1");
+  }, 60000);
+  it("does not use fallback for a non-retryable provider rejection", async () => {
+    const f = await setup();
+    f.behavior.streamCompletion = async (response) => {
+      response.writeHead(401);
+      response.end(JSON.stringify({ error: { message: "private rejection" } }));
+    };
+    const result = await (await f.launch()).request("prompt", "Rejected", {
+      ...f.context,
+      fallbackModels: [{ ...f.config.model, id: "backup" }],
+    });
+    expect(result).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "HTTP_401" },
+    });
+    expect(f.requests).toHaveLength(1);
+    expect(JSON.stringify(result)).not.toContain("private rejection");
   }, 60000);
 });
