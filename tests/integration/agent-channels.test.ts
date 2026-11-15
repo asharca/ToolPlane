@@ -425,15 +425,28 @@ async function piCommandChannel() {
 }
 
 it("keeps channel follow-ups durable on an ended-round race and rechecks sender authorization before queueing", async () => {
-  const { agent, channel, run } = await piCommandChannel();
-  const first = await run("Start the channel conversation");
-  if (!("conversationId" in first.body))
-    throw new Error("Conversation missing");
-  const conversationId = first.body.conversationId;
-  const conversation = await db.conversation.findUniqueOrThrow({
-    where: { id: conversationId },
+  // Exercise durable ingress and sender policy, not revision publication or task
+  // admission: piCommandChannel() also prepares the SDK on its cold first use.
+  const channel = await db.agentChannelConnection.create({
+    data: {
+      workspaceId: workspace.id,
+      agentId,
+      platform: "weixin",
+      name: "Follow-up queue",
+      credentials: {},
+      inboundTokenHash: randomUUID(),
+      inboundTokenSecret: encryptSecretText("queue-fixture-token"),
+      inboundTokenPrefix: "queue-fixture",
+      status: "running",
+      openToAll: true,
+      a2aActorId: assertDefined(identity.user).id,
+    },
   });
-  const sessionKey = assertDefined(conversation.runtimeSessionKey);
+  const sessionKey = `channel:${channel.id}:pi-commands-user`;
+  const conversation = await db.conversation.create({
+    data: { agentId, title: "Queue fixture", runtimeSessionKey: sessionKey },
+  });
+  const conversationId = conversation.id;
   const input = {
     connectionId: channel.id,
     workspaceId: workspace.id,
@@ -442,7 +455,7 @@ it("keeps channel follow-ups durable on an ended-round race and rechecks sender 
     kind: "callback" as const,
     payload: {
       workspaceId: workspace.id,
-      agentId: agent.id,
+      agentId,
       sandboxId: channel.sandboxId,
       body: {
         message: "The next message",
@@ -463,7 +476,7 @@ it("keeps channel follow-ups durable on an ended-round race and rechecks sender 
   const delivered: QueuedAgentMessage[] = [];
   const dispose = registerAgentMessageQueue({
     workspaceId: workspace.id,
-    agentId: agent.id,
+    agentId,
     conversationId,
     actorId: assertDefined(identity.user).id,
     taskId: "channel-queue-transport-fixture",
