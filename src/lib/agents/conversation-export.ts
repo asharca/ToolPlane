@@ -144,6 +144,12 @@ function markdownMessage(message: {
       content.push(
         `### Stream rule: ${block.trigger.name} — ${block.trigger.action}\n\n${block.trigger.message}`,
       );
+    else if (block.kind === "context-maintenance")
+      content.push(
+        block.data.kind === "rewind"
+          ? `### Rewind\n\n${block.data.report}`
+          : `### Handoff\n\n${block.data.summary}`,
+      );
     else
       for (const step of block.steps) {
         if (step.kind === "thinking")

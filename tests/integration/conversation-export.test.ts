@@ -93,6 +93,25 @@ beforeAll(async () => {
                   output: `Bearer ${jwt}\n${secret}`,
                 },
                 { type: "text", text: `Retained answer ${secret} ${jwt}` },
+                {
+                  type: "data-context-maintenance",
+                  data: {
+                    kind: "rewind",
+                    at: "2026-11-15T00:00:00.000Z",
+                    checkpointId: "checkpoint",
+                    entryId: "report",
+                    report: `Retained rewind ${secret} ${jwt}`,
+                  },
+                },
+                {
+                  type: "data-context-maintenance",
+                  data: {
+                    kind: "handoff",
+                    at: "2026-11-15T00:01:00.000Z",
+                    firstKeptEntryId: "kept",
+                    summary: `Retained handoff ${secret} ${jwt}`,
+                  },
+                },
               ],
             },
           ],
@@ -185,6 +204,8 @@ describe("conversation export authorization and retained history", () => {
           expect(text).toContain("Retained answer");
           expect(text).toContain("Tool: bash — failed");
           expect(text).toContain("read configuration");
+          expect(text).toContain("### Rewind\n\nRetained rewind");
+          expect(text).toContain("### Handoff\n\nRetained handoff");
           expect(text).toContain("[REDACTED]");
           expect(text).not.toContain(secret);
           expect(text).not.toContain(jwt);
