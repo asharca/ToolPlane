@@ -255,6 +255,13 @@ export function publishTaskActivity(
       ...(activity.output === undefined
         ? {}
         : { output: safeValue(activity.output, capture.secrets) }),
+      ...(activity.patch === undefined
+        ? {}
+        : {
+            patch: redactText(activity.patch, capture.secrets),
+            truncated: activity.truncated === true,
+            firstChangedLine: activity.firstChangedLine,
+          }),
       isError: activity.isError === true || activity.status === "failed",
     };
   }

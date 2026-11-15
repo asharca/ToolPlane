@@ -15,6 +15,9 @@ export type ContentStep =
       status: ToolBlockStatus;
       input?: unknown;
       output?: unknown;
+      patch?: string;
+      truncated?: boolean;
+      firstChangedLine?: number;
       errorText?: string;
       durationMs?: number;
       /** Failed outside the model's view (e.g. a confirmed execution receipt). */
@@ -181,6 +184,15 @@ export function toContentBlocks(
               : toolStatus(part.state, options.streaming),
           input: part.input,
           output: part.output,
+          patch: typeof part.patch === "string" ? part.patch : undefined,
+          truncated:
+            typeof part.truncated === "boolean" ? part.truncated : undefined,
+          firstChangedLine:
+            typeof part.firstChangedLine === "number" &&
+            Number.isInteger(part.firstChangedLine) &&
+            part.firstChangedLine > 0
+              ? part.firstChangedLine
+              : undefined,
           durationMs:
             typeof part.durationMs === "number" ? part.durationMs : undefined,
           errorText:

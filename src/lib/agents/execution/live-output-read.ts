@@ -41,6 +41,9 @@ const replaySchema = z.object({
         durationMs: z.number().optional(),
         input: z.unknown().optional(),
         output: z.unknown().optional(),
+        patch: z.string().optional(),
+        truncated: z.boolean().optional(),
+        firstChangedLine: z.number().int().positive().optional(),
         isError: z.boolean().optional(),
       }),
     )

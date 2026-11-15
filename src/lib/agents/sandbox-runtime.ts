@@ -210,6 +210,9 @@ export type SandboxRuntimeActivity = {
   originalToolName?: string;
   input?: unknown;
   output?: unknown;
+  patch?: string;
+  truncated?: boolean;
+  firstChangedLine?: number;
   isError?: boolean;
   source?: {
     subagentId: string;
@@ -1001,6 +1004,16 @@ export function parsePiStreamLine(line: string): PiStreamLine | null {
             ? { toolName: payload.toolName }
             : {}),
           output: payload.result,
+          ...(typeof payload.patch === "string"
+            ? {
+                patch: payload.patch,
+                truncated: payload.truncated === true,
+                ...(Number.isInteger(payload.firstChangedLine) &&
+                Number(payload.firstChangedLine) > 0
+                  ? { firstChangedLine: Number(payload.firstChangedLine) }
+                  : {}),
+              }
+            : {}),
           isError: payload.isError === true,
         },
       ],
@@ -2126,6 +2139,21 @@ async function reportActivities(
             ]),
           }
         : {}),
+      ...(enriched.patch === undefined
+        ? {}
+        : (() => {
+            const patch = redact(enriched.patch, [options.runtimeAccessToken]);
+            const bytes = Buffer.from(patch);
+            return {
+              patch:
+                bytes.length > 65_536
+                  ? new TextDecoder().decode(bytes.subarray(0, 65_536), {
+                      stream: true,
+                    })
+                  : patch,
+              truncated: enriched.truncated === true || bytes.length > 65_536,
+            };
+          })()),
       ...(enriched.input === undefined
         ? {}
         : {

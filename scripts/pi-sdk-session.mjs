@@ -447,6 +447,32 @@ function toolPayload(value) {
     ? `${text.slice(0, TOOL_PAYLOAD_CHARS)}…[truncated]`
     : value;
 }
+function toolPatch(event) {
+  const details = event.result?.details;
+  if (
+    !["edit", "write"].includes(event.toolName) ||
+    typeof details?.patch !== "string"
+  )
+    return {};
+  const patch = context?.runtimeToken
+    ? details.patch.split(context.runtimeToken).join("[REDACTED]")
+    : details.patch;
+  const bytes = Buffer.from(patch);
+  const truncated = bytes.length > 65_536;
+  return {
+    patch: truncated
+      ? new TextDecoder("utf-8", { fatal: false }).decode(
+          bytes.subarray(0, 65_536),
+          { stream: true },
+        )
+      : patch,
+    truncated,
+    ...(Number.isInteger(details.firstChangedLine) &&
+    details.firstChangedLine > 0
+      ? { firstChangedLine: details.firstChangedLine }
+      : {}),
+  };
+}
 function event(event) {
   if (!active) return;
   if (event.type === "auto_retry_start") modelRetried = event.attempt;
@@ -484,6 +510,7 @@ function event(event) {
       toolName: event.toolName,
       isError: event.isError,
       result: toolPayload(event.result),
+      ...toolPatch(event),
     });
   if (event.type === "message_end") {
     if (

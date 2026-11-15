@@ -201,7 +201,7 @@ it("settles real SDK commands without agent_end, rotates context, and kills disc
   await writeFile(
     extension,
     `
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, writeSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 export default function(pi) {
   let count = 0;
@@ -210,6 +210,8 @@ export default function(pi) {
     pi.sendMessage({ customType: 'daemon-test', content: 'count=' + count, display: true });
     console.log('untrusted stdout must not become protocol');
     writeFileSync(${JSON.stringify(join(dir, "context"))}, process.env.TOOLPLANE_RUNTIME_TOKEN);
+    // Exercise the broker's raw tool-event path, distinct from response results.
+    writeSync(3, JSON.stringify({ type: 'tool_execution_end', toolCallId: 'edit-patch', toolName: 'edit', patch: '--- a/file\\n+++ b/file\\n@@ -1 +1 @@\\n-old\\n+new\\n', truncated: true, firstChangedLine: 1 }) + '\\n');
   }});
   pi.registerCommand('Wait', { handler: async () => {
     const child = spawn(process.execPath, ['-e', 'process.stdin.resume()'], { stdio: ['pipe', 'ignore', 'ignore'] });
@@ -339,6 +341,16 @@ export default function(pi) {
       },
     });
     expect(response[0].result).not.toHaveProperty("state");
+    expect(first).toContainEqual(
+      expect.objectContaining({
+        type: "tool_execution_end",
+        toolCallId: "edit-patch",
+        toolName: "edit",
+        patch: "--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new\n",
+        truncated: true,
+        firstChangedLine: 1,
+      }),
+    );
     expect(JSON.stringify(first)).not.toContain("untrusted stdout");
     expect(first.some((event) => event.type === "agent_end")).toBe(false);
     const sdkState = JSON.parse(await readFile(statePath, "utf8"));

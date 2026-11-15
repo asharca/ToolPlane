@@ -171,6 +171,8 @@ async function serve() {
           return;
         }
         if (event.type !== "toolplane_sdk_response") {
+          // Tool events, including patch/truncated/firstChangedLine, are forwarded
+          // intact; only SDK response results use the whitelist below.
           if (active) send(event);
           continue;
         }
