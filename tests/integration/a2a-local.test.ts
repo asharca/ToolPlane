@@ -4217,10 +4217,23 @@ describe("unified native ingress mappings", () => {
         true,
       );
       for (const tool of ["web_search", "web_fetch"]) {
-        const denied = await client.callTool({ name: tool, arguments: tool === "web_search" ? { query: "current news" } : { url: "https://example.com" } });
+        const denied = await client.callTool({
+          name: tool,
+          arguments:
+            tool === "web_search"
+              ? { query: "current news" }
+              : { url: "https://example.com" },
+        });
         expect(denied).toMatchObject({
           isError: true,
-          content: [{ type: "text", text: expect.stringContaining('"reason":"OPTIONAL_BUILTIN_TOOL_FORBIDDEN"') }],
+          content: [
+            {
+              type: "text",
+              text: expect.stringContaining(
+                '"reason":"OPTIONAL_BUILTIN_TOOL_FORBIDDEN"',
+              ),
+            },
+          ],
         });
       }
       await db.agent.update({
@@ -4275,13 +4288,37 @@ describe("unified native ingress mappings", () => {
           await enabledClient.callTool({ name, arguments: {} }),
         ).toMatchObject({ isError: false });
         expect(executions).toBe(1);
-        expect(await enabledClient.callTool({ name: "web_fetch", arguments: { url: "http://127.0.0.1/admin" } })).toMatchObject({
+        expect(
+          await enabledClient.callTool({
+            name: "web_fetch",
+            arguments: { url: "http://127.0.0.1/admin" },
+          }),
+        ).toMatchObject({
           isError: true,
-          content: [{ type: "text", text: expect.stringContaining('"reason":"WEB_FETCH_NETWORK_BLOCKED"') }],
+          content: [
+            {
+              type: "text",
+              text: expect.stringContaining(
+                '"reason":"WEB_FETCH_NETWORK_BLOCKED"',
+              ),
+            },
+          ],
         });
-        expect(await enabledClient.callTool({ name: "web_search", arguments: { query: "test", limit: 11 } })).toMatchObject({
+        expect(
+          await enabledClient.callTool({
+            name: "web_search",
+            arguments: { query: "test", limit: 11 },
+          }),
+        ).toMatchObject({
           isError: true,
-          content: [{ type: "text", text: expect.stringContaining('"reason":"WEB_TOOL_INVALID_ARGUMENTS"') }],
+          content: [
+            {
+              type: "text",
+              text: expect.stringContaining(
+                '"reason":"WEB_TOOL_INVALID_ARGUMENTS"',
+              ),
+            },
+          ],
         });
         await db.agent.update({
           where: { id: agents[0] },
@@ -4291,9 +4328,21 @@ describe("unified native ingress mappings", () => {
           (await enabledClient.callTool({ name, arguments: {} })).isError,
         ).toBe(true);
         expect(executions).toBe(1);
-        expect(await enabledClient.callTool({ name: "web_fetch", arguments: { url: "https://example.com" } })).toMatchObject({
+        expect(
+          await enabledClient.callTool({
+            name: "web_fetch",
+            arguments: { url: "https://example.com" },
+          }),
+        ).toMatchObject({
           isError: true,
-          content: [{ type: "text", text: expect.stringContaining('"reason":"OPTIONAL_BUILTIN_TOOL_FORBIDDEN"') }],
+          content: [
+            {
+              type: "text",
+              text: expect.stringContaining(
+                '"reason":"OPTIONAL_BUILTIN_TOOL_FORBIDDEN"',
+              ),
+            },
+          ],
         });
       } finally {
         await enabledClient.close();

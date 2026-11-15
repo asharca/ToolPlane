@@ -320,8 +320,12 @@ export async function runDedicatedSandboxTurn(
                     attributes: { toolCallId: activity.toolCallId },
                     // Platform web content must never enter LogEvent bodies, even during captures.
                     ...(merged.deploymentId === "toolplane-runtime" &&
-                      (merged.originalToolName === "web_search" || merged.originalToolName === "web_fetch")
-                      ? { payloadPolicy: "forbidden" as const, suppressPayload: true }
+                    (merged.originalToolName === "web_search" ||
+                      merged.originalToolName === "web_fetch")
+                      ? {
+                          payloadPolicy: "forbidden" as const,
+                          suppressPayload: true,
+                        }
                       : {}),
                     detail: {
                       request: merged.input ?? null,

@@ -63,7 +63,11 @@ function responseText(raw: string): string {
   throw new Error("Exa MCP returned no readable search results.");
 }
 
-export async function searchKeylessWeb(query: unknown, requestSignal?: AbortSignal, limit = 5) {
+export async function searchKeylessWeb(
+  query: unknown,
+  requestSignal?: AbortSignal,
+  limit = 5,
+) {
   const normalized = typeof query === "string" ? query.trim() : "";
   if (!normalized) throw new Error("Search query is required.");
   if (normalized.length > MAX_QUERY_LENGTH)

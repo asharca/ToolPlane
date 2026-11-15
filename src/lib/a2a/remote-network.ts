@@ -177,7 +177,11 @@ async function addresses(
           ),
       )
     )
-      throw new RemoteA2AError("Remote DNS resolved to a prohibited address.", undefined, "NETWORK_BLOCKED");
+      throw new RemoteA2AError(
+        "Remote DNS resolved to a prohibited address.",
+        undefined,
+        "NETWORK_BLOCKED",
+      );
     return result[0];
   } finally {
     signal.removeEventListener("abort", abort);
@@ -203,11 +207,17 @@ export class PublicWebFetchError extends Error {
 
 function publicWebUrl(raw: string): URL {
   try {
-    if (raw.length > 4096 || /[\x00-\x20\x7f\\]/.test(raw)) throw new Error();
-    const url = new URL(raw);
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.port === '0')
+    if (raw.length > 4096 || /(?=\p{ASCII})[\p{Cc} \\]/u.test(raw))
       throw new Error();
-    url.hash = '';
+    const url = new URL(raw);
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.port === "0"
+    )
+      throw new Error();
+    url.hash = "";
     return url;
   } catch {
     throw new PublicWebFetchError("WEB_FETCH_INVALID_URL");
@@ -226,14 +236,20 @@ export async function fetchPublicWebText(
   let url = publicWebUrl(raw);
   try {
     for (let hop = 0; hop <= 5; hop++) {
-      const pinned = await addresses(url.hostname.replace(/^\[|\]$/g, ''), abortSignal);
+      const pinned = await addresses(
+        url.hostname.replace(/^\[|\]$/g, ""),
+        abortSignal,
+      );
       await beforeRequest?.();
       abortSignal.throwIfAborted();
       const { promise, resolve, reject } = Promise.withResolvers<
-        { location: string } | { contentType: string; text: string; bytes: number }
+        | { location: string }
+        | { contentType: string; text: string; bytes: number }
       >();
-      const req = (url.protocol === 'http:' ? httpRequest : request)(url, {
-          method: 'GET',
+      const req = (url.protocol === "http:" ? httpRequest : request)(
+        url,
+        {
+          method: "GET",
           agent: false,
           signal: abortSignal,
           maxHeaderSize: 16_384,
@@ -243,69 +259,96 @@ export async function fetchPublicWebText(
             else callback(null, pinned.address, pinned.family);
           },
           headers: {
-            accept: 'text/html, text/plain, text/markdown, application/json;q=0.8',
-            'accept-encoding': 'identity',
+            accept:
+              "text/html, text/plain, text/markdown, application/json;q=0.8",
+            "accept-encoding": "identity",
           },
-        }, (res) => {
+        },
+        (res) => {
           const fail = (reason: PublicWebFetchReason) => {
             reject(new PublicWebFetchError(reason));
             res.destroy();
             req.destroy();
           };
           const status = res.statusCode ?? 0;
-          if ([301, 302, 303, 307, 308].includes(status) && res.headers.location) {
+          if (
+            [301, 302, 303, 307, 308].includes(status) &&
+            res.headers.location
+          ) {
             resolve({ location: res.headers.location });
             res.destroy();
             req.destroy();
             return;
           }
-          if (status < 200 || status >= 300) return fail('WEB_FETCH_HTTP_ERROR');
-          const contentType = String(res.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
-          if (!/^(?:text\/(?:html|plain|markdown|csv|xml)|application\/(?:json|ld\+json|xml|xhtml\+xml))$/.test(contentType) ||
-              (res.headers['content-encoding'] && res.headers['content-encoding'] !== 'identity'))
-            return fail('WEB_FETCH_UNSUPPORTED_CONTENT');
+          if (status < 200 || status >= 300)
+            return fail("WEB_FETCH_HTTP_ERROR");
+          const contentType = String(res.headers["content-type"] ?? "")
+            .split(";")[0]
+            .trim()
+            .toLowerCase();
+          if (
+            !/^(?:text\/(?:html|plain|markdown|csv|xml)|application\/(?:json|ld\+json|xml|xhtml\+xml))$/.test(
+              contentType,
+            ) ||
+            (res.headers["content-encoding"] &&
+              res.headers["content-encoding"] !== "identity")
+          )
+            return fail("WEB_FETCH_UNSUPPORTED_CONTENT");
           const maxBytes = 1024 * 1024;
-          if (Number(res.headers['content-length']) > maxBytes) return fail('WEB_FETCH_RESPONSE_TOO_LARGE');
+          if (Number(res.headers["content-length"]) > maxBytes)
+            return fail("WEB_FETCH_RESPONSE_TOO_LARGE");
           const chunks: Buffer[] = [];
           let bytes = 0;
-          res.on('data', (chunk: Buffer) => {
+          res.on("data", (chunk: Buffer) => {
             bytes += chunk.length;
-            if (bytes > maxBytes) fail('WEB_FETCH_RESPONSE_TOO_LARGE');
+            if (bytes > maxBytes) fail("WEB_FETCH_RESPONSE_TOO_LARGE");
             else chunks.push(chunk);
           });
-          res.once('error', reject);
-          res.once('aborted', () => reject(new PublicWebFetchError('WEB_FETCH_FAILED')));
-          res.once('end', () => {
-            if (!res.complete) return fail('WEB_FETCH_FAILED');
-            const charset = /charset\s*=\s*["']?([^\s;"']+)/i.exec(String(res.headers['content-type'] ?? ''))?.[1] ?? 'utf-8';
+          res.once("error", reject);
+          res.once("aborted", () =>
+            reject(new PublicWebFetchError("WEB_FETCH_FAILED")),
+          );
+          res.once("end", () => {
+            if (!res.complete) return fail("WEB_FETCH_FAILED");
+            const charset =
+              /charset\s*=\s*["']?([^\s;"']+)/i.exec(
+                String(res.headers["content-type"] ?? ""),
+              )?.[1] ?? "utf-8";
             try {
-              const text = new TextDecoder(charset).decode(Buffer.concat(chunks, bytes));
+              const text = new TextDecoder(charset).decode(
+                Buffer.concat(chunks, bytes),
+              );
               resolve({ contentType, text, bytes });
             } catch {
-              fail('WEB_FETCH_UNSUPPORTED_CONTENT');
+              fail("WEB_FETCH_UNSUPPORTED_CONTENT");
             }
           });
-        });
-      req.once('error', reject);
+        },
+      );
+      req.once("error", reject);
       req.end();
       const result = await promise;
-      if ('location' in result) {
-        if (hop === 5) throw new PublicWebFetchError('WEB_FETCH_REDIRECT_LIMIT');
+      if ("location" in result) {
+        if (hop === 5)
+          throw new PublicWebFetchError("WEB_FETCH_REDIRECT_LIMIT");
         let next: string;
-        try { next = new URL(result.location, url).href; }
-        catch { throw new PublicWebFetchError('WEB_FETCH_INVALID_URL'); }
+        try {
+          next = new URL(result.location, url).href;
+        } catch {
+          throw new PublicWebFetchError("WEB_FETCH_INVALID_URL");
+        }
         url = publicWebUrl(next);
         continue;
       }
       return { url: url.href, ...result };
     }
-    throw new PublicWebFetchError('WEB_FETCH_REDIRECT_LIMIT');
+    throw new PublicWebFetchError("WEB_FETCH_REDIRECT_LIMIT");
   } catch (error) {
-    if (signal?.aborted) throw new PublicWebFetchError('WEB_TOOL_CANCELLED');
-    if (timeout.aborted) throw new PublicWebFetchError('WEB_TOOL_TIMEOUT');
+    if (signal?.aborted) throw new PublicWebFetchError("WEB_TOOL_CANCELLED");
+    if (timeout.aborted) throw new PublicWebFetchError("WEB_TOOL_TIMEOUT");
     if (error instanceof PublicWebFetchError) throw error;
-    if (error instanceof RemoteA2AError && error.reason === 'NETWORK_BLOCKED')
-      throw new PublicWebFetchError('WEB_FETCH_NETWORK_BLOCKED');
+    if (error instanceof RemoteA2AError && error.reason === "NETWORK_BLOCKED")
+      throw new PublicWebFetchError("WEB_FETCH_NETWORK_BLOCKED");
     // Preserve the caller's reauthorization failure; the web tool boundary
     // converts other transport exceptions to its fixed safe failure code.
     throw error;

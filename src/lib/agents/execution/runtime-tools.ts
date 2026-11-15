@@ -216,7 +216,9 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
           toolName,
           outcome: a2aTaskOutcome(state),
           durationMs: performance.now() - started,
-          ...(!isWebTool(request.params.name) ? { request: args, response } : {}),
+          ...(!isWebTool(request.params.name)
+            ? { request: args, response }
+            : {}),
           responseKind: "json",
           responseComplete: true,
           secrets: credential ? [credential] : undefined,
@@ -235,14 +237,18 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
               type: "text" as const,
               text: JSON.stringify({
                 code: rpc.code,
-                message: webFailure ? webFailure.message : optionalDenied
-                  ? optionalBuiltinDeniedMessage
-                  : rpc.code === -32603
-                    ? "Agent runtime tool operation failed."
-                    : rpc.message,
-                ...(webFailure ? { reason: webFailure.reason } : optionalDenied
-                  ? { reason: "OPTIONAL_BUILTIN_TOOL_FORBIDDEN" }
-                  : {}),
+                message: webFailure
+                  ? webFailure.message
+                  : optionalDenied
+                    ? optionalBuiltinDeniedMessage
+                    : rpc.code === -32603
+                      ? "Agent runtime tool operation failed."
+                      : rpc.message,
+                ...(webFailure
+                  ? { reason: webFailure.reason }
+                  : optionalDenied
+                    ? { reason: "OPTIONAL_BUILTIN_TOOL_FORBIDDEN" }
+                    : {}),
               }),
             },
           ],
@@ -263,7 +269,9 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
           toolName,
           outcome: denied ? "denied" : "error",
           durationMs: performance.now() - started,
-          ...(!denied && known && !isWebTool(request.params.name) ? { request: args, response } : {}),
+          ...(!denied && known && !isWebTool(request.params.name)
+            ? { request: args, response }
+            : {}),
           responseKind: "json",
           responseComplete: true,
           secrets: credential ? [credential] : undefined,
