@@ -230,6 +230,7 @@ export async function createAgentRecords(
       runtimeKind: runtime,
       optionalBuiltinTools: [],
       contextFiles: true,
+      secretObfuscation: true,
     },
   });
   const templateSlug =
@@ -516,6 +517,7 @@ export type AgentConfig = {
   maxSteps: number;
   reasoningEffort?: ReasoningLevel | null;
   toolApproval?: ToolApprovalPolicy;
+  secretObfuscation?: boolean;
   piPackages?: Array<{ marketInstallId: string; releaseId?: string }>;
 };
 
@@ -1011,6 +1013,7 @@ export async function createConfiguredAgent(
           maxSteps: cfg.maxSteps,
           reasoningEffort: cfg.reasoningEffort ?? null,
           toolApproval: cfg.toolApproval ?? { mode: "off" },
+          secretObfuscation: cfg.secretObfuscation ?? true,
         },
       });
       await tx.agentServer.createMany({
@@ -1123,6 +1126,9 @@ export async function updateAgent(
           ...(cfg.toolApproval !== undefined
             ? { toolApproval: cfg.toolApproval }
             : {}),
+          ...(cfg.secretObfuscation === undefined
+            ? {}
+            : { secretObfuscation: cfg.secretObfuscation }),
         },
       });
       await validateAndWritePiPackages(

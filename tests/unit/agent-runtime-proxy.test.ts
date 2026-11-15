@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
+import { NextRequest } from "next/server";
+import { Request as EdgeRequest } from "next/dist/compiled/@edge-runtime/primitives/fetch";
+import { AgentSecretObfuscator } from "@/lib/agents/secret-obfuscation";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
@@ -10,8 +13,10 @@ const mocks = vi.hoisted(() => ({
   sandbox: vi.fn(),
   provider: vi.fn(),
   grantProvider: vi.fn(),
+  lockProvider: vi.fn(),
   revision: vi.fn(),
   credentials: vi.fn(),
+  credentialValues: vi.fn(),
   localToken: vi.fn(),
   listTools: vi.fn(),
   callTool: vi.fn(),
@@ -32,6 +37,7 @@ vi.mock("@/lib/agents/revisions", () => ({
 }));
 vi.mock("@/lib/agents/environment-credentials", () => ({
   assertAgentEnvironmentCredentialReferences: mocks.credentials,
+  resolveAgentEnvironmentCredentials: mocks.credentialValues,
 }));
 vi.mock("@/lib/a2a/local-runtime", () => ({
   assertLocalRuntimeToken: mocks.localToken,
@@ -82,6 +88,7 @@ describe("pinned Agent runtime proxy authorization", () => {
         a2AContext: { findFirst: mocks.context },
         sandbox: { findFirst: mocks.sandbox },
         modelProvider: { findFirst: mocks.grantProvider },
+        $queryRaw: mocks.lockProvider,
       }),
     );
     mocks.revision.mockResolvedValue(pin);
@@ -119,21 +126,31 @@ describe("pinned Agent runtime proxy authorization", () => {
     process.env.AUTH_SECRET = originalSecret;
     vi.unstubAllGlobals();
   });
-  async function request(path: string, body: unknown = {}) {
+  async function request(
+    path: string,
+    body: unknown = {},
+    RequestType: new (
+      url: string,
+      init: { method: string; headers: Record<string, string>; body: string },
+    ) => Request = Request,
+  ) {
     const token = await createAgentRuntimeToken({
       ...identity,
       exp: Math.floor(Date.now() / 1000) + 300,
     });
-    return new Request(`http://toolplane.test/api/v1/agent-runtime/${path}`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${token}`,
-        "content-type": "application/json",
-        cookie: "runtime=session",
-        "x-api-key": "untrusted-key",
+    return new RequestType(
+      `http://toolplane.test/api/v1/agent-runtime/${path}`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          cookie: "runtime=session",
+          "x-api-key": "untrusted-key",
+        },
+        body: JSON.stringify(body),
       },
-      body: JSON.stringify(body),
-    });
+    );
   }
   async function model(providerId = "provider-1") {
     return proxyModel(
@@ -227,6 +244,196 @@ describe("pinned Agent runtime proxy authorization", () => {
     }
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(mocks.provider).not.toHaveBeenCalled();
+  });
+  it("does not decrypt environment credentials for historical revisions without the opt-in", async () => {
+    await (await model()).text();
+    expect(mocks.credentialValues).not.toHaveBeenCalled();
+  });
+  it.each([
+    { kind: "native", providerId: "provider-1", model: "selected-model" },
+    { kind: "next", providerId: "provider-1", model: "selected-model" },
+    { kind: "native", providerId: "provider-backup", model: "backup-model" },
+    { kind: "next", providerId: "provider-backup", model: "backup-model" },
+  ])(
+    "scrubs a real upstream request and restores only response tool arguments ($kind, $providerId)",
+    async ({ kind, providerId, model }) => {
+      const value = "fixture-private-service-token";
+      const placeholder = new AgentSecretObfuscator({
+        SERVICE_TOKEN: value,
+      }).redact(value);
+      const received: string[] = [];
+      const upstream = createServer((req, res) => {
+        void (async () => {
+          let raw = "";
+          for await (const chunk of req) raw += String(chunk);
+          received.push(raw);
+          res.setHeader("content-type", "application/json");
+          res.end(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: placeholder,
+                    tool_calls: [
+                      {
+                        id: "call",
+                        type: "function",
+                        function: {
+                          name: "bash",
+                          arguments: JSON.stringify({ command: placeholder }),
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+          );
+        })();
+      });
+      const listening = Promise.withResolvers<void>();
+      upstream.listen(0, "127.0.0.1", listening.resolve);
+      await listening.promise;
+      try {
+        const address = upstream.address();
+        if (!address || typeof address === "string")
+          throw new Error("No fixture address");
+        mocks.provider.mockResolvedValue({
+          format: "openai",
+          baseUrl: `http://127.0.0.1:${address.port}/v1`,
+          apiKey: "real-provider-key",
+        });
+        mocks.revision.mockResolvedValue({
+          ...pin,
+          config: {
+            ...pin.config,
+            secretObfuscation: true,
+            modelProviderIds: ["provider-backup"],
+            fallbackModels: [
+              { providerId: "provider-backup", model: "backup-model" },
+            ],
+          },
+        });
+        mocks.grantProvider.mockResolvedValue({
+          id: providerId,
+          apiKey: "real-provider-key",
+          format: "openai",
+          models: [model],
+        });
+        mocks.lockProvider.mockResolvedValue([
+          { id: providerId, format: "openai", models: [model] },
+        ]);
+        mocks.credentialValues.mockResolvedValue({
+          SERVICE_TOKEN: value,
+          SHORT_TOKEN: "short",
+        });
+        const incoming = await request(
+          `model/${providerId}/chat/completions`,
+          {
+            model,
+            messages: [
+              { role: "user", content: value },
+              { role: "tool", content: value },
+              {
+                role: "assistant",
+                tool_calls: [
+                  { function: { arguments: JSON.stringify({ token: value }) } },
+                ],
+              },
+            ],
+          },
+          kind === "next" ? NextRequest : Request,
+        );
+        vi.stubGlobal("fetch", nativeFetch);
+        // Reproduce Next's cross-implementation Request branding: the incoming
+        // NextRequest and the constructor inside the route are not interchangeable.
+        if (kind === "next") vi.stubGlobal("Request", EdgeRequest);
+        const response = await proxyModel(incoming, {
+          params: Promise.resolve({
+            providerId,
+            path: ["chat", "completions"],
+          }),
+        });
+        expect(response.status).toBe(200);
+        const result = await response.json();
+        expect(result.choices[0].message.content).toBe(placeholder);
+        expect(
+          JSON.parse(
+            result.choices[0].message.tool_calls[0].function.arguments,
+          ),
+        ).toEqual({ command: value });
+        expect(received).toHaveLength(1);
+        expect(received[0]).not.toContain(value);
+        expect(received[0]).toContain(placeholder);
+        expect(mocks.credentialValues).toHaveBeenCalledWith({
+          workspaceId: identity.workspaceId,
+          agentId: identity.agentId,
+          agentRevisionId: identity.agentRevisionId,
+          conversationId: identity.conversationId,
+          contextId: undefined,
+        });
+      } finally {
+        upstream.closeAllConnections();
+        const closed = Promise.withResolvers<void>();
+        upstream.close(() => closed.resolve());
+        await closed.promise;
+      }
+    },
+  );
+  it("accepts a real NextRequest on the shared Anthropic compatibility path", async () => {
+    mocks.revision.mockResolvedValue({
+      ...pin,
+      config: { ...pin.config, secretObfuscation: true },
+    });
+    mocks.credentialValues.mockResolvedValue({
+      SERVICE_TOKEN: "fixture-private-service-token",
+    });
+    const incoming = await request(
+      "model/provider-1/v1/messages/count_tokens",
+      {
+        model: "selected-model",
+        messages: [{ role: "user", content: "fixture-private-service-token" }],
+      },
+      NextRequest,
+    );
+    vi.stubGlobal("Request", EdgeRequest);
+    const response = await proxyModel(incoming, {
+      params: Promise.resolve({
+        providerId: "provider-1",
+        path: ["v1", "messages", "count_tokens"],
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      input_tokens: expect.any(Number),
+    });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+  it("returns an allowlisted gateway failure without forwarding unexpected internal error content", async () => {
+    mocks.provider.mockRejectedValueOnce(
+      new Error("private-credential-in-internal-error"),
+    );
+    const response = await model();
+    expect(response.status).toBe(500);
+    const text = await response.text();
+    expect(text).toContain("TOOLPLANE_MODEL_GATEWAY_FAILED");
+    expect(text).not.toContain("private-credential-in-internal-error");
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+  it("fails closed with a fixed error if pinned credentials cannot be decrypted", async () => {
+    mocks.revision.mockResolvedValue({
+      ...pin,
+      config: { ...pin.config, secretObfuscation: true },
+    });
+    mocks.credentialValues.mockRejectedValue(
+      new Error("private-credential-error-material"),
+    );
+    const response = await model();
+    expect(response.status).toBe(403);
+    expect(await response.text()).not.toContain(
+      "private-credential-error-material",
+    );
+    expect(mocks.fetch).not.toHaveBeenCalled();
   });
   it("negotiates its own encoding and preserves real SSE bytes for a zstd-capable client", async () => {
     const sse =

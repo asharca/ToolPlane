@@ -68,6 +68,22 @@ function config(): AgentRevisionConfig {
 }
 
 describe("settings permission additions", () => {
+  it("keeps omitted secret obfuscation checksum-stable and accepts explicit revision opt-in or opt-out", () => {
+    const historical = config();
+    const parsed = AgentRevisionConfigSchema.parse(historical);
+    expect(Object.hasOwn(parsed, "secretObfuscation")).toBe(false);
+    expect(marketReleaseChecksum(parsed)).toBe(
+      marketReleaseChecksum(historical),
+    );
+    for (const enabled of [false, true]) {
+      expect(
+        AgentRevisionConfigSchema.parse({
+          ...historical,
+          secretObfuscation: enabled,
+        }).secretObfuscation,
+      ).toBe(enabled);
+    }
+  });
   it("applies ordinary configuration changes without reconfirming existing authority", () => {
     const before = config();
     const after = config();

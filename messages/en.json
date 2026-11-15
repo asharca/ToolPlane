@@ -1595,6 +1595,8 @@
       "enableWebSearch": "Enable web search",
       "disableWebSearch": "Disable web search",
       "reasoningEffort": "Thinking effort",
+      "secretObfuscation": "Secret obfuscation",
+      "secretObfuscationDescription": "Only covers registered environment credentials.",
       "reasoningEffortDefault": "Default",
       "defaultReasoningEffort": "Default thinking effort",
       "reasoningEffortMinimal": "Minimal",
@@ -1920,6 +1922,7 @@
         "streamIncomplete": "The model response was cut off before it finished. Send it again later or switch models.",
         "contentFilter": "The provider's content filter blocked this output. Adjust the task or switch models.",
         "providerError": "The model service returned an error. Check the provider's status or switch to another model.",
+        "gatewayError": "The ToolPlane model gateway failed to process the request. Try again later or contact an administrator.",
         "retried": "Still failed after {count, plural, one {# automatic retry} other {# automatic retries}}."
       },
       "descriptions": {
@@ -3474,6 +3477,7 @@
         "contextFiles": "Project instruction file loading changed",
         "streamRules": "Stream rules changed",
         "toolApproval": "Tool approval policy changed",
+        "secretObfuscation": "Secret obfuscation changed",
         "maxSteps": "Maximum steps changed",
         "packages": "Pi packages changed",
         "knowledge": "Knowledge bases changed",

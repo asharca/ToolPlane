@@ -171,6 +171,7 @@ type Props = {
   model: string | null;
   reasoningEffort: ReasoningLevel | null;
   toolApproval?: ToolApprovalPolicy;
+  secretObfuscation: boolean;
   maxSteps: number;
   providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
@@ -262,6 +263,9 @@ export function AgentSettingsForm(props: Props) {
   );
   const [toolApproval, setToolApproval] = useState<ToolApprovalPolicy>(
     props.toolApproval ?? { mode: "off" },
+  );
+  const [secretObfuscation, setSecretObfuscation] = useState(
+    props.secretObfuscation,
   );
   const [steps, setSteps] = useState(String(props.maxSteps));
   const [disabledTools, setDisabledTools] = useState(
@@ -374,6 +378,7 @@ export function AgentSettingsForm(props: Props) {
     toolApproval:
       JSON.stringify(toolApproval) !==
       JSON.stringify(props.toolApproval ?? { mode: "off" }),
+    secretObfuscation: secretObfuscation !== props.secretObfuscation,
     mcp: !sameSet(deploymentIds, selected(deployments)),
     skills: !sameSet(skillIds, selected(skills)),
     sandboxes:
@@ -403,7 +408,8 @@ export function AgentSettingsForm(props: Props) {
     ...(fieldDirty.name ||
     fieldDirty.description ||
     fieldDirty.model ||
-    fieldDirty.reasoningEffort
+    fieldDirty.reasoningEffort ||
+    fieldDirty.secretObfuscation
       ? ["general" as const]
       : []),
     ...(
@@ -798,6 +804,11 @@ export function AgentSettingsForm(props: Props) {
               />
               <input
                 type="hidden"
+                name="secretObfuscation"
+                value={String(secretObfuscation)}
+              />
+              <input
+                type="hidden"
                 name="piPackages"
                 value={JSON.stringify(packages)}
               />
@@ -1054,6 +1065,23 @@ export function AgentSettingsForm(props: Props) {
                       />
                     </DialogField>
                   )}
+                  <DialogField
+                    label={t("secretObfuscation")}
+                    dirty={fieldDirty.secretObfuscation}
+                  >
+                    <Switch
+                      checked={secretObfuscation}
+                      ariaLabel={t("secretObfuscation")}
+                      disabled={pending}
+                      onCheckedChange={(checked) => {
+                        setSecretObfuscation(checked);
+                        changed();
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t("secretObfuscationDescription")}
+                    </p>
+                  </DialogField>
                 </section>
                 <section
                   hidden={active !== "instructions"}

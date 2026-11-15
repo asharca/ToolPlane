@@ -453,6 +453,10 @@ describe("A2A worker admission and recovery boundaries", () => {
       new Error("PI_SDK_MODEL_FAILED: HTTP_503"),
       "PI_SDK_MODEL_FAILED: HTTP_503",
     ],
+    [
+      new Error("PI_SDK_MODEL_FAILED: GATEWAY_ERROR"),
+      "PI_SDK_MODEL_FAILED: GATEWAY_ERROR",
+    ],
   ])("preserves bounded native failure code %s", async (error, code) => {
     const row = task("local", "pi-harness", true);
     await executeAgentTask(row.id, async () => {

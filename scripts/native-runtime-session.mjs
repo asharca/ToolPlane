@@ -239,7 +239,7 @@ async function serve() {
           ? event.error.code
           : "PI_SDK_RUNTIME_FAILED";
         const reason =
-          /^(HTTP_[1-5]\d\d|UNREACHABLE|TIMEOUT|EMPTY_STREAM|STREAM_INCOMPLETE|CONTENT_FILTER|PROVIDER_ERROR)( RETRIED_\d{1,2})?$/.test(
+          /^(HTTP_[1-5]\d\d|UNREACHABLE|TIMEOUT|EMPTY_STREAM|STREAM_INCOMPLETE|CONTENT_FILTER|PROVIDER_ERROR|GATEWAY_ERROR)( RETRIED_\d{1,2})?$/.test(
             event.error?.reason,
           )
             ? event.error.reason

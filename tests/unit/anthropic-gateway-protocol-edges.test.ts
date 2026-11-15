@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ buildModel: vi.fn(), stream: vi.fn() }));
 vi.mock("@/lib/agents/model", () => ({ buildModel: mocks.buildModel }));
 import { handleAnthropicMessages } from "@/lib/agents/anthropic-gateway";
+import { AgentSecretObfuscator } from "@/lib/agents/secret-obfuscation";
 
 const provider = {
   id: "p",
@@ -81,6 +82,34 @@ describe("Anthropic gateway protocol edge cases", () => {
     });
     mocks.stream.mockReturnValue(stream([]));
   });
+  it.each([{}, { tool_choice: { type: "any" } }])(
+    "scrubs the final converted provider payload and does not expose provider error material (%j)",
+    async (extra) => {
+      const value = "fixture-registered-environment-token";
+      const secrets = new AgentSecretObfuscator({ SERVICE_TOKEN: value });
+      mocks.stream.mockReturnValue(
+        stream([], {
+          ...message(),
+          stopReason: "error",
+          errorMessage: `Rejected ${value}`,
+        }),
+      );
+      const response = await handleAnthropicMessages(
+        request(extra),
+        provider,
+        secrets,
+      );
+      expect(response.status).toBe(502);
+      expect(await response.text()).not.toContain(value);
+      const options = mocks.stream.mock.calls[0][2];
+      const payload = options.onPayload({
+        messages: [{ role: "user", content: value }],
+        tools: [{ description: value }],
+      });
+      expect(JSON.stringify(payload)).not.toContain(value);
+      expect(JSON.stringify(payload)).toContain(secrets.redact(value));
+    },
+  );
 
   it("normalizes mixed history without losing tool result ordering or image boundaries", async () => {
     await handleAnthropicMessages(

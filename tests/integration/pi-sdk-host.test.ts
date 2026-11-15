@@ -22,6 +22,10 @@ import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { PI_SDK_VERSION, PI_SDK_VERSIONS } from "@/lib/agents/pi-version";
 import {
+  AgentSecretObfuscator,
+  restoreModelResponse,
+} from "@/lib/agents/secret-obfuscation";
+import {
   buildPiMcpConfig,
   nativePiMcpToolName,
   parsePiStreamLine,
@@ -180,6 +184,7 @@ async function setup(workspaceSubdirectory = "") {
       | ((response: ServerResponse) => Promise<void>)
       | undefined,
     mcpSchema: { type: "object", properties: {} } as Record<string, unknown>,
+    secretObfuscator: undefined as AgentSecretObfuscator | undefined,
   };
   const mcpRequests: Array<{
     authorization?: string;
@@ -329,6 +334,41 @@ async function setup(workspaceSubdirectory = "") {
         } finally {
           await mcp.close();
         }
+        return;
+      }
+      if (
+        request.url === "/secret-gateway/v1/chat/completions" &&
+        behavior.secretObfuscator
+      ) {
+        const upstream = await fetch(
+          `http://${request.headers.host}/v1/chat/completions`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(
+              behavior.secretObfuscator.redactRequest(body, "openai"),
+            ),
+          },
+        );
+        const restored = restoreModelResponse(
+          upstream,
+          behavior.secretObfuscator,
+        );
+        response.writeHead(
+          restored.status,
+          Object.fromEntries(restored.headers),
+        );
+        const reader = assertDefined(restored.body).getReader();
+        try {
+          while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            response.write(next.value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        response.end();
         return;
       }
       requests.push({
@@ -1048,6 +1088,41 @@ describe("official Pi SDK headless session host", () => {
     );
     await host.stop();
   }, 60_000);
+  it("hides registered credentials from the provider while native bash receives real restored arguments", async () => {
+    const f = await setup();
+    const value = "fixture-registered-environment-secret";
+    f.behavior.secretObfuscator = new AgentSecretObfuscator({
+      SERVICE_TOKEN: value,
+    });
+    const placeholder = f.behavior.secretObfuscator.redact(value);
+    f.behavior.tool = "bash";
+    f.behavior.toolArgs = JSON.stringify({
+      command: `printf '%s' '${placeholder}' | tee secret-result.txt`,
+    });
+    f.behavior.completionText = `Used ${placeholder}`;
+    const model = {
+      ...f.config.model,
+      baseUrl: f.config.model.baseUrl.replace("/v1", "/secret-gateway/v1"),
+    };
+    const host = await f.launch({ defaultTools: ["bash"], model });
+    const result = await host.request(
+      "prompt",
+      `Use the requested tool with ${value}`,
+      { ...f.context, model },
+    );
+    expect(result.success).toBe(true);
+    expect(await readFile(join(f.workspace, "secret-result.txt"), "utf8")).toBe(
+      value,
+    );
+    expect(f.requests.length).toBeGreaterThanOrEqual(2);
+    // Includes the user's first prompt, restored assistant tool replay, and bash
+    // stdout in the second request. None may expose plaintext to the provider.
+    for (const request of f.requests) {
+      expect(JSON.stringify(request.body)).not.toContain(value);
+      expect(JSON.stringify(request.body)).toContain(placeholder);
+    }
+    await host.stop();
+  }, 60000);
   it("keeps Python imports from changing skill files across continued native turns", async () => {
     const f = await setup();
     const skill = join(f.workspace, "python-skill");
@@ -2574,6 +2649,24 @@ describe("official Pi SDK headless session host", () => {
       error: { code: "PI_SDK_MODEL_FAILED", reason: "HTTP_503" },
     });
     expect(JSON.stringify(unavailable)).not.toContain("upstream-secret");
+    f.behavior.streamCompletion = async (response) => {
+      response.writeHead(500, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          error: {
+            type: "api_error",
+            code: "TOOLPLANE_MODEL_GATEWAY_FAILED",
+            message: "TOOLPLANE_MODEL_GATEWAY_FAILED",
+          },
+        }),
+      );
+    };
+    expect(
+      await host.request("prompt", "Gateway internal failure"),
+    ).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "GATEWAY_ERROR" },
+    });
     const closed = createServer();
     await once(closed.listen(0, "127.0.0.1"), "listening");
     const { port } = closed.address() as { port: number };

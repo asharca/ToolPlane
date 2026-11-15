@@ -281,6 +281,47 @@ describe("agents mutations", () => {
     },
   );
 
+  it("captures the saved obfuscation draft without rewriting an existing revision", async () => {
+    const agent = await createAgent(workspaceId, "Secret obfuscation draft");
+    expect(agent.secretObfuscation).toBe(true);
+    const revision = await seedPublishedRevision(agent.id);
+    expect(
+      AgentRevisionConfigSchema.parse(revision.config).secretObfuscation,
+    ).toBe(true);
+    await updateAgent(workspaceId, agent.id, {
+      name: agent.name,
+      providerId: null,
+      model: null,
+      systemPrompt: null,
+      maxSteps: agent.maxSteps,
+      secretObfuscation: false,
+    });
+    expect(
+      (await db.agent.findUniqueOrThrow({ where: { id: agent.id } }))
+        .secretObfuscation,
+    ).toBe(false);
+    expect(
+      (await captureAgentRevisionConfig(db, agent.id)).secretObfuscation,
+    ).toBe(false);
+    const unchanged = await db.agentRevision.findUniqueOrThrow({
+      where: { id: revision.id },
+    });
+    expect(
+      AgentRevisionConfigSchema.parse(unchanged.config).secretObfuscation,
+    ).toBe(true);
+    // An older client that does not send the setting must not reset the draft.
+    await updateAgent(workspaceId, agent.id, {
+      name: agent.name,
+      providerId: null,
+      model: null,
+      systemPrompt: null,
+      maxSteps: agent.maxSteps,
+    });
+    expect(
+      (await captureAgentRevisionConfig(db, agent.id)).secretObfuscation,
+    ).toBe(false);
+  });
+
   it("preserves the draft and creates no revision when Pi artifact publication preparation fails", async () => {
     const agent = await createAgent(
       workspaceId,
@@ -340,6 +381,7 @@ describe("agents mutations", () => {
       resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
       credentialReferences: [],
     });
+    expect(config.secretObfuscation).toBe(true);
     if (config.runtimeKind !== "pi-sdk") throw new Error("Expected Pi fixture");
     config.environment.piVersion = "0.87.1";
     const revision = await publishAgentRevision(workspaceId, agent.id, {
@@ -354,6 +396,10 @@ describe("agents mutations", () => {
     ).toMatchObject({
       piVersion: PI_SDK_VERSION,
     });
+    // Later draft captures preserve the explicit setting from the published pin.
+    expect(
+      (await captureAgentRevisionConfig(db, agent.id)).secretObfuscation,
+    ).toBe(true);
 
     config.environment.piVersion = "0.86.0";
     await expect(

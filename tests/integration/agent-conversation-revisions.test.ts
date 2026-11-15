@@ -19,6 +19,7 @@ import {
   PUT as putStreamRules,
 } from "@/app/api/v1/agents/[agentId]/stream-rules/route";
 import { captureAgentRevisionConfig } from "@/lib/agents/revisions";
+import { diffAgentRevisions } from "@/lib/agents/conversation-revisions";
 const auth = vi.hoisted(() => ({ userId: null as string | null }));
 vi.mock("@/lib/auth/request-user", () => ({
   resolveRequestUser: async () => (auth.userId ? { id: auth.userId } : null),
@@ -61,6 +62,24 @@ const config: AgentRevisionConfig = {
     policy: { schemaVersion: 1, targets: [] },
   },
 };
+
+it("reports obfuscation changes while treating historical omission as disabled", () => {
+  const before = { version: 1, config };
+  const disabled = {
+    version: 2,
+    config: { ...config, secretObfuscation: false },
+  };
+  const enabled = {
+    version: 2,
+    config: { ...config, secretObfuscation: true },
+  };
+  expect(diffAgentRevisions(before, disabled).changedFields).not.toContain(
+    "secretObfuscation",
+  );
+  expect(diffAgentRevisions(before, enabled).changedFields).toContain(
+    "secretObfuscation",
+  );
+});
 beforeAll(async () => {
   const user = await db.user.create({
     data: {

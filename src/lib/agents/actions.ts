@@ -212,6 +212,16 @@ function agentContextFiles(formData: FormData): boolean | undefined {
   throw new AgentConfigurationError("Invalid context files setting.");
 }
 
+function agentSecretObfuscation(formData: FormData): boolean | undefined {
+  if (!formData.has("secretObfuscation")) return undefined;
+  const value = z
+    .enum(["true", "false"])
+    .safeParse(formData.get("secretObfuscation"));
+  if (!value.success)
+    throw new AgentConfigurationError("Invalid secret obfuscation setting.");
+  return value.data === "true";
+}
+
 const piPackagesFormSchema = z
   .array(
     z
@@ -762,6 +772,7 @@ export async function createAgentAction(
               JSON.parse(String(formData.get("toolApproval"))),
             )
           : undefined,
+        secretObfuscation: agentSecretObfuscation(formData),
         piPackages: piPackagesFromForm(formData),
       },
       {
@@ -1011,6 +1022,7 @@ export async function updateAgentAction(
               JSON.parse(String(formData.get("toolApproval"))),
             )
           : undefined,
+        secretObfuscation: agentSecretObfuscation(formData),
         piPackages: piPackagesFromForm(formData),
       });
       await setAgentTools(ctx.ws.id, agentId, {
