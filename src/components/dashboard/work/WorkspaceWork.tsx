@@ -2065,6 +2065,7 @@ export function WorkspaceWork({
       void refreshSelected();
     });
     source.addEventListener("stage", (event) => {
+      receiveBudgetWarning(event);
       const next = payload<{ executionStage?: AgentExecutionStage }>(event);
       if (!next) return;
       setStreamOutput((current) => ({
@@ -2075,6 +2076,7 @@ export function WorkspaceWork({
       }));
     });
     source.addEventListener("delta", (event) => {
+      receiveBudgetWarning(event);
       const next = payload<{ delta?: string }>(event);
       if (!next?.delta) return;
       setStreamOutput((current) => ({
@@ -2109,6 +2111,7 @@ export function WorkspaceWork({
       }));
     });
     source.addEventListener("activity", (event) => {
+      receiveBudgetWarning(event);
       const next = payload<{ activities?: WorkActivity[] }>(event);
       if (!Array.isArray(next?.activities)) return;
       setStreamOutput((current) => ({
@@ -2160,18 +2163,11 @@ export function WorkspaceWork({
         };
       });
     };
-    for (const event of [
-      "data-budget-warning",
-      "stage",
-      "delta",
-      "activity",
-      "done",
-    ]) {
-      source.addEventListener(event, receiveBudgetWarning);
-    }
+    source.addEventListener("data-budget-warning", receiveBudgetWarning);
     source.addEventListener("error", () => completion.disconnect());
     source.addEventListener("done", (event) => {
       if (disposed) return;
+      receiveBudgetWarning(event);
       const next = payload<{
         active?: boolean;
         done?: boolean;

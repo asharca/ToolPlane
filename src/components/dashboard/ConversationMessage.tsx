@@ -214,8 +214,6 @@ export function ConversationBudgetWarnings({
   workspaceSlug: string;
   live?: boolean;
 }) {
-  const t = useTranslations("console.agentUsage");
-  const format = useFormatter();
   const warnings = new Map<string, BudgetWarning>();
   for (const part of parts) {
     if (part.type !== "data-budget-warning") continue;
@@ -223,13 +221,34 @@ export function ConversationBudgetWarnings({
     if (warning && !warnings.has(warning.taskId))
       warnings.set(warning.taskId, warning);
   }
+  if (!warnings.size) return null;
+  return (
+    <ConversationBudgetWarningList
+      warnings={Array.from(warnings.values())}
+      workspaceSlug={workspaceSlug}
+      live={live}
+    />
+  );
+}
+
+function ConversationBudgetWarningList({
+  warnings,
+  workspaceSlug,
+  live,
+}: {
+  warnings: readonly BudgetWarning[];
+  workspaceSlug: string;
+  live: boolean;
+}) {
+  const t = useTranslations("console.agentUsage");
+  const format = useFormatter();
   const currency = (micros: string) =>
     format.number(Number(micros) / 1_000_000, {
       style: "currency",
       currency: "USD",
       maximumFractionDigits: 6,
     });
-  return Array.from(warnings.values(), (warning) => (
+  return warnings.map((warning) => (
     <Alert
       key={warning.taskId}
       variant="warning"
