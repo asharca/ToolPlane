@@ -175,6 +175,10 @@ globalThis[Symbol.for("toolplane.pi.host-context.v1")] = {
   platformMcp: true,
   runTasks,
   getEventSource: () => toolSources.getStore(),
+  lsp: {
+    packageRoot: config.lspPackageRoot,
+    sharedDir: config.sharedDir,
+  },
 };
 mkdirSync(config.cwd, { recursive: true });
 mkdirSync(config.sessionsDir, { recursive: true });
