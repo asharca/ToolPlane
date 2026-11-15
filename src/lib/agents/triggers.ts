@@ -20,6 +20,7 @@ import {
   agentEntryRuntimeParts,
 } from "./execution/entries";
 import { parseRuntimeFailure } from "./runtime-failure";
+import { appendBudgetWarningText } from "./budget-warning";
 import {
   runtimeCanOperate,
   assertRuntimeOwner,
@@ -387,7 +388,11 @@ export async function settleAgentTriggerTask(row: A2ATask) {
   let text: string;
   let error: string | null = null;
   try {
-    text = agentEntryResult(task, "");
+    text = await appendBudgetWarningText(agentEntryResult(task, ""), {
+      workspaceId: grant.workspaceId,
+      agentId: grant.agentId,
+      taskId: row.id,
+    });
   } catch (cause) {
     error = triggerError(cause);
     text = error;
@@ -426,15 +431,7 @@ export async function settleAgentTriggerTask(row: A2ATask) {
       },
     });
     if (created.count) {
-      const deliveryText = succeeded
-        ? task.artifacts
-            .flatMap((artifact) =>
-              artifact.parts.flatMap((part) =>
-                part.content?.$case === "text" ? [part.content.value] : [],
-              ),
-            )
-            .join("\n\n")
-        : "";
+      const deliveryText = succeeded ? text : "";
       await queueTriggerDelivery(
         tx,
         {

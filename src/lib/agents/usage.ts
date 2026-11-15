@@ -9,6 +9,9 @@ import {
   type LocalA2AGrant,
 } from "@/lib/a2a/principal";
 import { parseRuntimeUsage, type RuntimeUsage } from "./runtime-commands";
+import { recordEvent } from "@/lib/observability/events";
+import type { AgentRuntimeTokenPayload } from "./runtime-access";
+import type { BudgetWarning } from "./budget-warning";
 
 export function utcMonth(now = new Date()) {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -41,7 +44,10 @@ export class MeteredExecutionError extends Error {
 }
 // The sandbox model definition carries zero rates (pricing stays server-side), so Pi's own
 // cost.total is always 0. Price tokens with the workspace model catalog (USD per 1M tokens).
-export async function usageCostUsd(usage: RuntimeUsage, metering?: TaskUsage) {
+export async function usageCostUsd(
+  usage: RuntimeUsage,
+  metering?: TaskUsage,
+): Promise<number> {
   if (usage.costUsd) return usage.costUsd;
   if (!metering?.providerId || !metering.model) return 0;
   const model = await db.providerModel.findFirst({
@@ -93,6 +99,128 @@ export async function agentTaskConversationId(grant: LocalA2AGrant) {
   return conversation?.id ?? null;
 }
 
+async function recordBudgetCrossing(
+  tx: Prisma.TransactionClient,
+  grant: LocalA2AGrant,
+  taskId: string,
+  addedCost: bigint,
+): Promise<BudgetWarning | undefined> {
+  const agent = await tx.agent.findUniqueOrThrow({
+    where: { id: grant.agentId },
+  });
+  if (agent.monthlyBudgetMicros === null || addedCost <= BigInt(0)) return;
+  const sum = await tx.agentUsage.aggregate({
+    where: { agentId: grant.agentId, createdAt: { gte: utcMonth() } },
+    _sum: { costMicros: true },
+  });
+  const spent = sum._sum.costMicros ?? BigInt(0);
+  const before = spent - addedCost;
+  if (before >= agent.monthlyBudgetMicros || spent < agent.monthlyBudgetMicros)
+    return;
+  const usage = await tx.agentUsage.findUniqueOrThrow({ where: { taskId } });
+  if (usage.budgetWarning || usage.createdAt < utcMonth()) return;
+  const warning: BudgetWarning = {
+    taskId,
+    agentId: grant.agentId,
+    month: utcMonth().toISOString().slice(0, 7),
+    spentMicros: spent.toString(),
+    monthlyBudgetMicros: agent.monthlyBudgetMicros.toString(),
+    currency: "USD",
+    unit: "micros",
+  };
+  await tx.agentUsage.update({
+    where: { taskId },
+    data: { budgetWarning: warning },
+  });
+  return warning;
+}
+
+async function logBudgetWarning(grant: LocalA2AGrant, warning?: BudgetWarning) {
+  if (!warning) return;
+  await recordEvent({
+    domain: "agent",
+    eventName: "agent.budget.exceeded",
+    level: "warn",
+    outcome: "success",
+    workspaceId: grant.workspaceId,
+    agentId: grant.agentId,
+    taskId: warning.taskId,
+    errorCode: "AGENT_BUDGET_EXCEEDED",
+  });
+}
+
+/** Called once per gateway response, never used to reject or cancel an active turn. */
+export async function recordAgentModelUsage(
+  token: Pick<
+    AgentRuntimeTokenPayload,
+    "workspaceId" | "agentId" | "a2aTaskId" | "a2aLeaseToken" | "providerId"
+  >,
+  metering: TaskUsage,
+) {
+  if (!token.a2aTaskId || !token.a2aLeaseToken) return;
+  const row = await db.a2ATask.findFirst({
+    where: {
+      id: token.a2aTaskId,
+      context: { workspaceId: token.workspaceId, agentId: token.agentId },
+    },
+  });
+  if (!row || row.leaseToken !== token.a2aLeaseToken) return;
+  const grant = row.grant as unknown as TaskGrant;
+  if (
+    !isLocalGrant(grant) ||
+    grant.agentId !== token.agentId ||
+    grant.workspaceId !== token.workspaceId
+  )
+    return;
+  const conversationId = await agentTaskConversationId(grant);
+  const costMicros = BigInt(
+    Math.round((await usageCostUsd(metering.usage, metering)) * 1_000_000),
+  );
+  const warning = await db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${grant.workspaceId} FOR UPDATE`;
+    const previous = await tx.agentUsage.findUnique({
+      where: { taskId: row.id },
+    });
+    if (previous?.meteringCompleted) return;
+    const values = {
+      inputTokens: Math.round(metering.usage.inputTokens),
+      outputTokens: Math.round(metering.usage.outputTokens),
+      cacheReadTokens: Math.round(metering.usage.cacheReadTokens),
+      cacheWriteTokens: Math.round(metering.usage.cacheWriteTokens),
+      costMicros,
+    };
+    if (previous) {
+      await tx.agentUsage.update({
+        where: { taskId: row.id },
+        data: {
+          inputTokens: { increment: values.inputTokens },
+          outputTokens: { increment: values.outputTokens },
+          cacheReadTokens: { increment: values.cacheReadTokens },
+          cacheWriteTokens: { increment: values.cacheWriteTokens },
+          costMicros: { increment: costMicros },
+        },
+      });
+    } else {
+      await tx.agentUsage.create({
+        data: {
+          workspaceId: grant.workspaceId,
+          agentId: grant.agentId,
+          taskId: row.id,
+          conversationId,
+          entryKind: grant.entryPolicy?.kind ?? "delegation",
+          model: metering.model,
+          providerId: metering.providerId,
+          ...values,
+          succeeded: false,
+          meteringCompleted: false,
+        },
+      });
+    }
+    return recordBudgetCrossing(tx, grant, row.id, costMicros);
+  });
+  await logBudgetWarning(grant, warning);
+}
+
 export async function recordAgentTaskUsage(row: A2ATask, metering?: TaskUsage) {
   const grant = row.grant as unknown as TaskGrant;
   if (!isLocalGrant(grant)) return;
@@ -121,44 +249,66 @@ export async function recordAgentTaskUsage(row: A2ATask, metering?: TaskUsage) {
       }
     }
   }
-  // A successful zero-token task still has an accounting row. Failed preparation has no model usage.
-  if (!metering && current.state !== TaskState.TASK_STATE_COMPLETED) return;
-  const usage = metering?.usage ?? {
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-  };
-  const entry = grant.entryPolicy;
+  const succeeded = current.state === TaskState.TASK_STATE_COMPLETED;
   const conversationId = await agentTaskConversationId(grant);
-  const costUsd = await usageCostUsd(usage, metering);
-  await db.$transaction(async (tx) => {
+  const costUsd = metering ? await usageCostUsd(metering.usage, metering) : 0;
+  const warning = await db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${grant.workspaceId} FOR UPDATE`;
-    const created = await tx.agentUsage.createMany({
-      skipDuplicates: true,
-      data: [
-        {
-          workspaceId: grant.workspaceId,
-          agentId: grant.agentId,
-          taskId: row.id,
-          conversationId,
-          entryKind: entry?.kind ?? "delegation",
-          model: metering?.model,
-          providerId: metering?.providerId,
+    const previous = await tx.agentUsage.findUnique({
+      where: { taskId: row.id },
+    });
+    if (previous?.meteringCompleted) return;
+    if (!metering && !succeeded && !previous) return;
+    const usage = metering?.usage;
+    // Terminal SDK totals are authoritative. Replace provisional observations with
+    // exactly those totals (including downward corrections), never bill both.
+    const values = usage
+      ? {
           inputTokens: Math.round(usage.inputTokens),
           outputTokens: Math.round(usage.outputTokens),
           cacheReadTokens: Math.round(usage.cacheReadTokens),
           cacheWriteTokens: Math.round(usage.cacheWriteTokens),
           costMicros: BigInt(Math.round(costUsd * 1_000_000)),
-          succeeded: current.state === TaskState.TASK_STATE_COMPLETED,
-        },
-      ],
+        }
+      : {
+          inputTokens: previous?.inputTokens ?? 0,
+          outputTokens: previous?.outputTokens ?? 0,
+          cacheReadTokens: previous?.cacheReadTokens ?? 0,
+          cacheWriteTokens: previous?.cacheWriteTokens ?? 0,
+          costMicros: previous?.costMicros ?? BigInt(0),
+        };
+    await tx.agentUsage.upsert({
+      where: { taskId: row.id },
+      create: {
+        workspaceId: grant.workspaceId,
+        agentId: grant.agentId,
+        taskId: row.id,
+        conversationId,
+        entryKind: grant.entryPolicy?.kind ?? "delegation",
+        model: metering?.model,
+        providerId: metering?.providerId,
+        ...values,
+        succeeded,
+        meteringCompleted: true,
+      },
+      update: {
+        ...values,
+        succeeded,
+        meteringCompleted: true,
+        model: metering?.model,
+        providerId: metering?.providerId,
+      },
     });
-    if (!created.count) return;
+    const crossed = await recordBudgetCrossing(
+      tx,
+      grant,
+      row.id,
+      values.costMicros - (previous?.costMicros ?? BigInt(0)),
+    );
     const agent = await tx.agent.findUniqueOrThrow({
       where: { id: grant.agentId },
     });
-    if (agent.monthlyBudgetMicros === null) return;
+    if (agent.monthlyBudgetMicros === null) return crossed;
     const month = utcMonth().toISOString().slice(0, 7);
     const sum = await tx.agentUsage.aggregate({
       where: { agentId: grant.agentId, createdAt: { gte: utcMonth() } },
@@ -169,7 +319,7 @@ export async function recordAgentTaskUsage(row: A2ATask, metering?: TaskUsage) {
         agent.monthlyBudgetMicros * BigInt(4) ||
       agent.budgetAlertedMonth === month
     )
-      return;
+      return crossed;
     await tx.agent.update({
       where: { id: agent.id },
       data: { budgetAlertedMonth: month },
@@ -194,7 +344,9 @@ export async function recordAgentTaskUsage(row: A2ATask, metering?: TaskUsage) {
         recipients: { create: recipients.map((userId) => ({ userId })) },
       },
     });
+    return crossed;
   });
+  await logBudgetWarning(grant, warning);
 }
 export function usageTotals(rows: AgentUsage[]) {
   return rows.reduce(
@@ -204,8 +356,8 @@ export function usageTotals(rows: AgentUsage[]) {
       outputTokens: a.outputTokens + r.outputTokens,
       cacheReadTokens: a.cacheReadTokens + r.cacheReadTokens,
       cacheWriteTokens: a.cacheWriteTokens + r.cacheWriteTokens,
-      turns: a.turns + 1,
-      failedTurns: a.failedTurns + Number(!r.succeeded),
+      turns: a.turns + Number(r.meteringCompleted),
+      failedTurns: a.failedTurns + Number(r.meteringCompleted && !r.succeeded),
     }),
     {
       costUsd: 0,

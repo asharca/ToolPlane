@@ -17,6 +17,8 @@ import {
   handleAnthropicMessages,
 } from "@/lib/agents/anthropic-gateway";
 import { db } from "@/lib/db";
+import { recordAgentModelUsage } from "@/lib/agents/usage";
+import { ModelResponseUsage } from "@/lib/agents/model-response-usage";
 
 export const runtime = "nodejs";
 
@@ -178,6 +180,43 @@ async function proxyProviderRequest(
         headers,
       });
     }
+    const usageObserver = new ModelResponseUsage(
+      upstream.headers.get("content-type")?.includes("text/event-stream") ??
+        false,
+    );
+    let usageRecorded = false;
+    const meterUsage = async () => {
+      if (usageRecorded) return;
+      usageRecorded = true;
+      const usage = usageObserver.finish();
+      if (
+        !usage ||
+        !upstream.ok ||
+        !model ||
+        req.method !== "POST" ||
+        ![
+          "v1/messages",
+          "v1/chat/completions",
+          "v1/responses",
+          "chat/completions",
+          "responses",
+        ].includes(routePath)
+      )
+        return;
+      try {
+        await recordAgentModelUsage(token, { usage, model, providerId });
+      } catch (error) {
+        // Accounting is best-effort here; terminal SDK accounting reconciles it.
+        // A billing/notification failure must never break the provider stream.
+        await recordEvent({
+          ...context,
+          domain: "agent",
+          eventName: "agent.usage.observe_failed",
+          level: "warn",
+          error,
+        });
+      }
+    };
     const reader = upstream.body.getReader();
     const body = new ReadableStream<Uint8Array>({
       async pull(controller) {
@@ -185,15 +224,18 @@ async function proxyProviderRequest(
           const chunk = await reader.read();
           if (recorded) return;
           if (chunk.done) {
+            await meterUsage();
             finish(upstream.status);
             controller.close();
             reader.releaseLock();
           } else {
             firstByteMs ??= performance.now() - started;
+            usageObserver.push(chunk.value);
             controller.enqueue(chunk.value);
           }
         } catch (error) {
           if (recorded) return;
+          await meterUsage();
           finish(
             upstream.status,
             error,
@@ -214,6 +256,7 @@ async function proxyProviderRequest(
         try {
           await reader.cancel(reason);
         } finally {
+          await meterUsage();
           reader.releaseLock();
         }
       },

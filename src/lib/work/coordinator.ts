@@ -33,6 +33,10 @@ import {
 } from "@/lib/agents/execution/entries";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import {
+  BUDGET_WARNING_PART,
+  type BudgetWarning,
+} from "@/lib/agents/budget-warning";
+import {
   agentMessageModelOverride,
   AGENT_TURN_MODEL_PART,
 } from "@/lib/agents/turn-model";
@@ -41,6 +45,7 @@ import {
   finishWorkOutput,
   observeWorkRuntime,
   publishWorkActivity,
+  publishWorkBudgetWarning,
   publishWorkExecutionStage,
   publishWorkOutput,
   registerWorkRun,
@@ -271,6 +276,7 @@ async function executeWork(workSessionId: string) {
   let runtimeStatus: "completed" | "failed" | "cancelled" = "completed";
   let tracePersisted = false;
   let contextUsage: ContextUsageSnapshot | undefined;
+  let budgetWarning: BudgetWarning | undefined;
   let commands: RuntimeCommand[] | undefined;
   let usage: RuntimeUsage | undefined;
   let executedCommand: ParsedRuntimeCommand | null = null;
@@ -297,6 +303,14 @@ async function executeWork(workSessionId: string) {
       .map((hook) => ({ type: "hook-activity", data: hook }));
   };
   const runtimeMetadata = (): Prisma.InputJsonValue[] => [
+    ...(budgetWarning
+      ? [
+          {
+            type: BUDGET_WARNING_PART,
+            data: budgetWarning,
+          } as Prisma.InputJsonValue,
+        ]
+      : []),
     ...(initialModelName &&
     (turnOverride?.providerId ?? initialSnapshot.providerId)
       ? [
@@ -665,6 +679,10 @@ async function executeWork(workSessionId: string) {
           text: commandText,
           modelOverride: turnOverride,
           signal: controller.signal,
+          onBudgetWarning: (warning) => {
+            budgetWarning = warning;
+            publishWorkBudgetWarning(work.id, warning);
+          },
           onActivity: (activity) => {
             // Native activities already stream from the leased executor above.
             if (activity.toolCallId?.startsWith("platform-child:"))
