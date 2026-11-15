@@ -168,19 +168,19 @@ function javascriptRunner() {
     truncated = false;
     let reason;
     try {
+      // The parent owns the deadline for both synchronous and async work.
+      // A second VM deadline can finish the cell before its SIGINT arrives,
+      // allowing that stale signal to interrupt the next cell instead.
       const script = new vm.Script(cell.code, { filename: "<eval>" });
       const value = await script.runInContext(context, {
-        timeout: cell.timeoutMs,
         breakOnSigint: true,
       });
       if (value !== undefined) output(value);
     } catch (error) {
       reason =
-        error?.code === "ERR_SCRIPT_EXECUTION_TIMEOUT"
-          ? "EVAL_TIMEOUT"
-          : error?.code === "ERR_SCRIPT_EXECUTION_INTERRUPTED"
-            ? "EVAL_ABORTED"
-            : "EVAL_CODE_FAILED";
+        error?.code === "ERR_SCRIPT_EXECUTION_INTERRUPTED"
+          ? "EVAL_ABORTED"
+          : "EVAL_CODE_FAILED";
     }
     send({ type: "done", reason, truncated });
   });
@@ -314,8 +314,7 @@ function createKernel(language, cwd) {
         signal?.addEventListener("abort", abort, { once: true });
         timeout = setTimeout(() => interrupt("EVAL_TIMEOUT"), timeoutMs);
         if (signal?.aborted) abort();
-        if (!interrupted)
-          child.stdin.write(`${JSON.stringify({ code, timeoutMs })}\n`);
+        if (!interrupted) child.stdin.write(`${JSON.stringify({ code })}\n`);
       });
     },
     complete(message) {

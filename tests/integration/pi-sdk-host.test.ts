@@ -1813,7 +1813,8 @@ describe("official Pi SDK headless session host", () => {
         isError: true,
         result: { details: { reason: "EVAL_TIMEOUT" } },
       });
-      expect(await cell("counter")).toMatchObject({
+      const recovered = await cell("counter");
+      expect(recovered, JSON.stringify(recovered)).toMatchObject({
         isError: false,
         result: { details: { output: "42\n" } },
       });
