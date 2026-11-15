@@ -55,9 +55,12 @@ export const optionalBuiltinPlatformHandlers: Readonly<
     const { executeWebTool } = await import("./web-tools");
     return executeWebTool(token, "web_fetch", raw, signal);
   },
-  memory_retain: (token, raw, signal) => executeAgentMemoryTool(token, "memory_retain", raw, signal),
-  memory_recall: (token, raw, signal) => executeAgentMemoryTool(token, "memory_recall", raw, signal),
-  memory_forget: (token, raw, signal) => executeAgentMemoryTool(token, "memory_forget", raw, signal),
+  memory_retain: (token, raw, signal) =>
+    executeAgentMemoryTool(token, "memory_retain", raw, signal),
+  memory_recall: (token, raw, signal) =>
+    executeAgentMemoryTool(token, "memory_recall", raw, signal),
+  memory_forget: (token, raw, signal) =>
+    executeAgentMemoryTool(token, "memory_forget", raw, signal),
 };
 
 const optionalBuiltinDeniedMessage = "Optional built-in tool is not enabled.";
@@ -254,11 +257,11 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
                   ? webFailure.message
                   : memoryError
                     ? memoryError.message
-                  : optionalDenied
-                    ? optionalBuiltinDeniedMessage
-                    : rpc.code === -32603
-                      ? "Agent runtime tool operation failed."
-                      : rpc.message,
+                    : optionalDenied
+                      ? optionalBuiltinDeniedMessage
+                      : rpc.code === -32603
+                        ? "Agent runtime tool operation failed."
+                        : rpc.message,
                 ...(webFailure
                   ? { reason: webFailure.reason }
                   : memoryError
