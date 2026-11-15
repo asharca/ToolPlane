@@ -769,38 +769,42 @@ export default function(pi) {
     }
     {
       job.context.fallbackModels = [];
-    const gateway = createHttpServer((request, response) => {
-      request.resume();
-      response.writeHead(500, { "content-type": "application/json" });
-      response.end(
-        JSON.stringify({
-          error: {
-            type: "api_error",
-            code: "TOOLPLANE_MODEL_GATEWAY_FAILED",
-            message: "TOOLPLANE_MODEL_GATEWAY_FAILED",
-          },
-        }),
-      );
-    });
-    await once(gateway.listen(0, "127.0.0.1"), "listening");
-    try {
-      const address = gateway.address();
-      if (!address || typeof address === "string")
-        throw new Error("Missing gateway fixture address");
-      job.context.model = { ...job.context.model, baseUrl: `http://127.0.0.1:${address.port}/v1` };
-      job.context.modelRetries = 0;
-      const failed = await run();
-      expect(
-        failed.find((event) => event.type === "toolplane_sdk_response"),
-      ).toMatchObject({
-        success: false,
-        error: { code: "PI_SDK_MODEL_FAILED", reason: "GATEWAY_ERROR" },
+      const gateway = createHttpServer((request, response) => {
+        request.resume();
+        response.writeHead(500, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            error: {
+              type: "api_error",
+              code: "TOOLPLANE_MODEL_GATEWAY_FAILED",
+              message: "TOOLPLANE_MODEL_GATEWAY_FAILED",
+            },
+          }),
+        );
       });
-    } finally {
-      gateway.closeAllConnections();
-      const closed = Promise.withResolvers<void>();
-      gateway.close(() => closed.resolve());
-      await closed.promise;
+      await once(gateway.listen(0, "127.0.0.1"), "listening");
+      try {
+        const address = gateway.address();
+        if (!address || typeof address === "string")
+          throw new Error("Missing gateway fixture address");
+        job.context.model = {
+          ...job.context.model,
+          baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        };
+        job.context.modelRetries = 0;
+        const failed = await run();
+        expect(
+          failed.find((event) => event.type === "toolplane_sdk_response"),
+        ).toMatchObject({
+          success: false,
+          error: { code: "PI_SDK_MODEL_FAILED", reason: "GATEWAY_ERROR" },
+        });
+      } finally {
+        gateway.closeAllConnections();
+        const closed = Promise.withResolvers<void>();
+        gateway.close(() => closed.resolve());
+        await closed.promise;
+      }
     }
   } finally {
     // Ask the daemon to stop its detached host process group before removing files.

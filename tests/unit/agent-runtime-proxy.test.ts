@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   sandbox: vi.fn(),
   provider: vi.fn(),
   grantProvider: vi.fn(),
+  lockProvider: vi.fn(),
   revision: vi.fn(),
   credentials: vi.fn(),
   credentialValues: vi.fn(),
@@ -87,6 +88,7 @@ describe("pinned Agent runtime proxy authorization", () => {
         a2AContext: { findFirst: mocks.context },
         sandbox: { findFirst: mocks.sandbox },
         modelProvider: { findFirst: mocks.grantProvider },
+        $queryRaw: mocks.lockProvider,
       }),
     );
     mocks.revision.mockResolvedValue(pin);
@@ -247,9 +249,14 @@ describe("pinned Agent runtime proxy authorization", () => {
     await (await model()).text();
     expect(mocks.credentialValues).not.toHaveBeenCalled();
   });
-  it.each(["native", "next"])(
-    "scrubs a real upstream request and restores only response tool arguments under the pinned grant (%s)",
-    async (kind) => {
+  it.each([
+    { kind: "native", providerId: "provider-1", model: "selected-model" },
+    { kind: "next", providerId: "provider-1", model: "selected-model" },
+    { kind: "native", providerId: "provider-backup", model: "backup-model" },
+    { kind: "next", providerId: "provider-backup", model: "backup-model" },
+  ])(
+    "scrubs a real upstream request and restores only response tool arguments ($kind, $providerId)",
+    async ({ kind, providerId, model }) => {
       const value = "fixture-private-service-token";
       const placeholder = new AgentSecretObfuscator({
         SERVICE_TOKEN: value,
@@ -298,16 +305,32 @@ describe("pinned Agent runtime proxy authorization", () => {
         });
         mocks.revision.mockResolvedValue({
           ...pin,
-          config: { ...pin.config, secretObfuscation: true },
+          config: {
+            ...pin.config,
+            secretObfuscation: true,
+            modelProviderIds: ["provider-backup"],
+            fallbackModels: [
+              { providerId: "provider-backup", model: "backup-model" },
+            ],
+          },
         });
+        mocks.grantProvider.mockResolvedValue({
+          id: providerId,
+          apiKey: "real-provider-key",
+          format: "openai",
+          models: [model],
+        });
+        mocks.lockProvider.mockResolvedValue([
+          { id: providerId, format: "openai", models: [model] },
+        ]);
         mocks.credentialValues.mockResolvedValue({
           SERVICE_TOKEN: value,
           SHORT_TOKEN: "short",
         });
         const incoming = await request(
-          "model/provider-1/chat/completions",
+          `model/${providerId}/chat/completions`,
           {
-            model: "selected-model",
+            model,
             messages: [
               { role: "user", content: value },
               { role: "tool", content: value },
@@ -327,7 +350,7 @@ describe("pinned Agent runtime proxy authorization", () => {
         if (kind === "next") vi.stubGlobal("Request", EdgeRequest);
         const response = await proxyModel(incoming, {
           params: Promise.resolve({
-            providerId: "provider-1",
+            providerId,
             path: ["chat", "completions"],
           }),
         });

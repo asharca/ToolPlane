@@ -168,10 +168,19 @@ async function proxyProviderRequest(
       );
     }
     if (hasBody && req.body) {
-      const parsed = await parseJson(req, z.unknown(), ANTHROPIC_GATEWAY_MAX_BODY_BYTES);
+      const parsed = await parseJson(
+        req,
+        z.unknown(),
+        ANTHROPIC_GATEWAY_MAX_BODY_BYTES,
+      );
       if (!parsed.ok) {
         return NextResponse.json(
-          { error: parsed.reason === "too_large" ? "request body is too large" : "invalid JSON request body" },
+          {
+            error:
+              parsed.reason === "too_large"
+                ? "request body is too large"
+                : "invalid JSON request body",
+          },
           { status: parsed.reason === "too_large" ? 413 : 400 },
         );
       }
@@ -180,14 +189,18 @@ async function proxyProviderRequest(
       req = new Request(req.url, {
         method: req.method,
         headers,
-        body: JSON.stringify(secrets.redactRequest(
-          parsed.value,
-          provider.format === "anthropic" || /^v1\/messages(?:\/count_tokens)?$/.test(routePath)
-            ? "anthropic"
-            : provider.format === "openai-responses" || /(?:^|\/)responses$/.test(routePath)
-              ? "openai-responses"
-              : "openai",
-        )),
+        body: JSON.stringify(
+          secrets.redactRequest(
+            parsed.value,
+            provider.format === "anthropic" ||
+              /^v1\/messages(?:\/count_tokens)?$/.test(routePath)
+              ? "anthropic"
+              : provider.format === "openai-responses" ||
+                  /(?:^|\/)responses$/.test(routePath)
+                ? "openai-responses"
+                : "openai",
+          ),
+        ),
         signal: req.signal,
       });
     }
