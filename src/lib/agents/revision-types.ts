@@ -162,6 +162,7 @@ const PiRevisionConfigSchema = z
     schemaVersion: z.literal(1),
     runtimeKind: z.literal("pi-sdk"),
     systemPrompt: z.string().max(50_000).nullable(),
+    contextFiles: z.boolean().optional(),
     providerId: reference.nullable(),
     model: reference.nullable(),
     modelProviderIds: references,

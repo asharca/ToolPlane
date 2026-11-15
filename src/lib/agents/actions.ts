@@ -203,6 +203,14 @@ function agentReasoningEffort(formData: FormData) {
   return parsed.data;
 }
 
+function agentContextFiles(formData: FormData): boolean | undefined {
+  const value = formData.get("contextFiles");
+  if (value === null) return undefined;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new AgentConfigurationError("Invalid context files setting.");
+}
+
 const piPackagesFormSchema = z
   .array(
     z
@@ -747,6 +755,7 @@ export async function createAgentAction(
         optionalBuiltinTools: optionalBuiltinToolsFromForm(formData) ?? [],
         maxSteps: agentMaxSteps(formData),
         reasoningEffort: agentReasoningEffort(formData),
+        contextFiles: agentContextFiles(formData) ?? true,
         piPackages: piPackagesFromForm(formData),
       },
       {
@@ -990,6 +999,7 @@ export async function updateAgentAction(
         optionalBuiltinTools: optionalBuiltinToolsFromForm(formData),
         maxSteps,
         reasoningEffort: agentReasoningEffort(formData),
+        contextFiles: agentContextFiles(formData),
         piPackages: piPackagesFromForm(formData),
       });
       await setAgentTools(ctx.ws.id, agentId, {

@@ -167,6 +167,7 @@ export type RunSandboxAgentTurnOptions = {
   runtimeAccessToken: string;
   nativeUiUrl?: string;
   systemPrompt?: string | null;
+  contextFiles?: boolean;
   piVersion?: string;
   disabledBuiltinTools?: readonly string[];
   optionalBuiltinTools?: readonly string[];
@@ -2596,6 +2597,7 @@ async function runPiSdk(
       reasoningEffort: options.reasoningEffort,
       model: sessionModel,
       systemPrompt: options.systemPrompt?.trim() ?? "",
+      contextFiles: options.contextFiles === true,
       excludeTools,
       defaultTools: [
         ...agentRuntimeBuiltinToolGroups("pi-sdk")

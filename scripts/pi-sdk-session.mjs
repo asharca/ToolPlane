@@ -148,6 +148,46 @@ mkdirSync(config.cwd, { recursive: true });
 mkdirSync(config.sessionsDir, { recursive: true });
 const cwd = realpathSync(config.cwd),
   sessionsDir = realpathSync(config.sessionsDir);
+// Pi's default discovery walks to filesystem root before applying overrides.
+// Discover only approved directories so even reading cannot cross a session boundary.
+function projectContextFiles() {
+  if (config.contextFiles !== true) return { agentsFiles: [] };
+  const workspaceRoot = realpathSync(config.workspaceRoot);
+  if (!within(workspaceRoot, cwd)) fail("PI_SDK_SESSION_SCOPE");
+  const directories = [];
+  for (let dir = cwd; ; dir = dirname(dir)) {
+    directories.unshift(dir);
+    if (dir === workspaceRoot) break;
+  }
+  directories.unshift(realpathSync(config.agentDir));
+  const allowedDirectories = new Set(directories);
+  const seen = new Set();
+  const agentsFiles = [];
+  for (const dir of allowedDirectories) {
+    for (const name of [
+      "AGENTS.override.md",
+      "AGENTS.md",
+      "AGENTS.MD",
+      "CLAUDE.md",
+      "CLAUDE.MD",
+    ]) {
+      const path = join(dir, name);
+      if (!existsSync(path)) continue;
+      const actual = realpathSync(path);
+      if (!allowedDirectories.has(dirname(actual))) continue;
+      if (!lstatSync(actual).isFile()) continue;
+      if (!seen.has(actual)) {
+        agentsFiles.push({
+          path,
+          content: readFileSync(actual, "utf8").replace(/^\uFEFF/, ""),
+        });
+        seen.add(actual);
+      }
+      break;
+    }
+  }
+  return { agentsFiles };
+}
 const packageRoots = (config.packages ?? []).map((p) => resolve(p.root));
 function allowedResource(path, base = cwd) {
   if (typeof path !== "string" || /^(npm:|git:|https?:)/.test(path))
@@ -650,6 +690,7 @@ async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }) {
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
+      agentsFilesOverride: projectContextFiles,
       additionalExtensionPaths: extensions,
       extensionFactories: [
         {

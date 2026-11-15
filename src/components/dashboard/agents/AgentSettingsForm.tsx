@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Button, ButtonLink } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
+import { Switch } from "@/components/motion/switch";
 import { FormSelect } from "@/components/ui/FormSelect";
 import { StatusBadge } from "../StatusBadge";
 import {
@@ -151,6 +152,7 @@ type Props = {
   name: string;
   description?: string;
   systemPrompt: string;
+  contextFiles: boolean;
   disabledBuiltinTools?: string[];
   optionalBuiltinTools: string[];
   optionalBuiltinToolOptions: readonly AgentOptionalBuiltinTool[];
@@ -215,6 +217,7 @@ export function AgentSettingsForm(props: Props) {
   const [name, setName] = useState(props.name);
   const [description, setDescription] = useState(props.description ?? "");
   const [prompt, setPrompt] = useState(props.systemPrompt);
+  const [contextFiles, setContextFiles] = useState(props.contextFiles);
   const [provider, setProvider] = useState(props.providerId ?? "");
   const [model, setModel] = useState(props.model ?? "");
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
@@ -305,7 +308,8 @@ export function AgentSettingsForm(props: Props) {
       provider !== (props.providerId ?? "") || model !== (props.model ?? ""),
     reasoningEffort:
       reasoningEffort !== (props.reasoningEffort ?? DEFAULT_REASONING_LEVEL),
-    instructions: prompt !== props.systemPrompt,
+    instructions:
+      prompt !== props.systemPrompt || contextFiles !== props.contextFiles,
     builtInTools:
       !sameSet(disabledTools, new Set(props.disabledBuiltinTools ?? [])) ||
       !sameSet(enabledOptionalTools, new Set(props.optionalBuiltinTools)),
@@ -623,6 +627,11 @@ export function AgentSettingsForm(props: Props) {
               <input type="hidden" name="model" value={model} />
               <input
                 type="hidden"
+                name="contextFiles"
+                value={String(contextFiles)}
+              />
+              <input
+                type="hidden"
                 name="reasoningEffort"
                 value={reasoningEffort}
               />
@@ -739,6 +748,20 @@ export function AgentSettingsForm(props: Props) {
                   hidden={active !== "instructions"}
                   className="flex flex-1 flex-col gap-6"
                 >
+                  <DialogField
+                    label={t("contextFiles")}
+                    dirty={contextFiles !== props.contextFiles}
+                  >
+                    <Switch
+                      checked={contextFiles}
+                      disabled={pending}
+                      ariaLabel={t("contextFiles")}
+                      onCheckedChange={(checked) => {
+                        setContextFiles(checked);
+                        changed();
+                      }}
+                    />
+                  </DialogField>
                   <SystemPromptEditor
                     workspaceId={workspaceId}
                     name={name}

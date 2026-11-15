@@ -56,6 +56,7 @@ export type RunDedicatedSandboxTurnInput = {
   a2aContextId?: string;
   wait?: boolean;
   systemPrompt?: string | null;
+  contextFiles?: boolean;
   messages: readonly SandboxRuntimeMessage[];
   skills?: readonly SkillForPrompt[];
   piPackages?: readonly ResolvedAgentPiPackage[];
@@ -151,6 +152,7 @@ export async function runDedicatedSandboxTurn(
       normalizeReasoningLevel(agent.reasoningEffort) ??
       DEFAULT_REASONING_LEVEL,
     systemPrompt: agent.systemPrompt,
+    contextFiles: agent.contextFiles,
     skills: resolved.skills,
     piPackages: resolveAgentPiPackages(agent),
     deploymentIds: resolved.deploymentIds,
@@ -267,6 +269,7 @@ export async function runDedicatedSandboxTurn(
             runtimeAccessToken,
             nativeUiUrl: `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/sessions/ui`,
             systemPrompt: input.systemPrompt,
+            contextFiles: input.contextFiles,
             disabledBuiltinTools: input.agent.disabledBuiltinTools,
             optionalBuiltinTools: input.agent.optionalBuiltinTools,
             messages: input.messages,
