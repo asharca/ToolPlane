@@ -140,6 +140,10 @@ function markdownMessage(message: {
       content.push(
         `Attachment: ${block.filename ?? "attachment"} (${block.mediaType})`,
       );
+    else if (block.kind === "stream-rule")
+      content.push(
+        `### Stream rule: ${block.trigger.name} — ${block.trigger.action}\n\n${block.trigger.message}`,
+      );
     else
       for (const step of block.steps) {
         if (step.kind === "thinking")
