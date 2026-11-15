@@ -10,6 +10,11 @@ import {
 } from "@/app/api/v1/agents/[agentId]/conversations/[conversationId]/revision/route";
 import { GET as getContentDiff } from "@/app/api/v1/agents/[agentId]/revisions/diff/route";
 
+import {
+  GET as getStreamRules,
+  PUT as putStreamRules,
+} from "@/app/api/v1/agents/[agentId]/stream-rules/route";
+import { captureAgentRevisionConfig } from "@/lib/agents/revisions";
 const auth = vi.hoisted(() => ({ userId: null as string | null }));
 vi.mock("@/lib/auth/request-user", () => ({
   resolveRequestUser: async () => (auth.userId ? { id: auth.userId } : null),
@@ -426,4 +431,65 @@ it("compares a candidate with its recorded parent rather than a newer unrelated 
   expect(prompt.lines.map((line: { content: string }) => line.content)).toEqual(
     ["Original prompt", "Candidate prompt"],
   );
+});
+
+it("isolates stream rule drafts, rejects invalid regexes without writes, and preserves immutable revisions", async () => {
+  const workspace = `agent-upgrade-${stamp}`;
+  const url = `http://localhost/api/v1/agents/${agentId}/stream-rules`;
+  const params = { params: Promise.resolve({ agentId }) };
+  const rule = {
+    id: "shell",
+    name: "Shell",
+    target: "tool_call",
+    toolName: "bash",
+    pattern: "forbidden",
+    action: "block",
+    message: "Blocked by rule.",
+  };
+  const request = (streamRules: unknown) =>
+    new Request(url, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://localhost",
+      },
+      body: JSON.stringify({ workspace, streamRules }),
+    });
+  auth.userId = null;
+  expect(
+    (await getStreamRules(new Request(`${url}?workspace=${workspace}`), params))
+      .status,
+  ).toBe(401);
+  auth.userId = outsiderId;
+  expect((await putStreamRules(request([rule]), params)).status).toBe(404);
+  auth.userId = userId;
+  const saved = await putStreamRules(request([rule]), params);
+  expect(
+    (await captureAgentRevisionConfig(db, agentId, config.environment))
+      .streamRules,
+  ).toEqual([rule]);
+  expect(saved.status).toBe(200);
+  expect(await saved.json()).toEqual({ streamRules: [rule] });
+  const invalid = await putStreamRules(
+    request([{ ...rule, pattern: "(" }]),
+    params,
+  );
+  expect(invalid.status).toBe(400);
+  expect(await invalid.json()).toEqual({
+    error: "STREAM_RULE_PATTERN_INVALID",
+  });
+  const unsafe = await putStreamRules(
+    request([{ ...rule, pattern: "(a+)+$" }]),
+    params,
+  );
+  expect(await unsafe.json()).toEqual({ error: "STREAM_RULE_PATTERN_UNSAFE" });
+  expect(
+    await (
+      await getStreamRules(new Request(`${url}?workspace=${workspace}`), params)
+    ).json(),
+  ).toEqual({ streamRules: [rule] });
+  const old = await db.agentRevision.findUniqueOrThrow({
+    where: { id: oldRevisionId },
+  });
+  expect(old.config).not.toHaveProperty("streamRules");
 });

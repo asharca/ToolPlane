@@ -13,6 +13,10 @@ import { generateWorkSessionTitle } from "@/lib/agents/conversation-naming";
 import { activeConversationMessages } from "@/lib/agents/conversation-context";
 import { persistAgentPromptInvocation } from "@/lib/agents/prompt-invocation";
 import type { SandboxRuntimeActivity } from "@/lib/agents/sandbox-runtime";
+import {
+  STREAM_RULE_TRIGGER_PART,
+  type StreamRuleTrigger,
+} from "@/lib/agents/stream-rules";
 import { nativeUiProjection } from "@/lib/agents/execution/native-ui";
 import {
   COMMAND_RESULT_PART,
@@ -47,6 +51,7 @@ import {
   publishWorkActivity,
   publishWorkBudgetWarning,
   publishWorkExecutionStage,
+  publishWorkStreamRule,
   publishWorkOutput,
   registerWorkRun,
   startWorkOutput,
@@ -281,6 +286,7 @@ async function executeWork(workSessionId: string) {
   let usage: RuntimeUsage | undefined;
   let executedCommand: ParsedRuntimeCommand | null = null;
   let commandResult: RuntimeCommandResult | undefined;
+  const streamRuleTriggers = new Map<string, StreamRuleTrigger>();
   const previousHookIds =
     work.runtimeKind === "omp"
       ? new Set(
@@ -311,6 +317,11 @@ async function executeWork(workSessionId: string) {
           } as Prisma.InputJsonValue,
         ]
       : []),
+    ...Array.from(
+      streamRuleTriggers.values(),
+      (data) =>
+        ({ type: STREAM_RULE_TRIGGER_PART, data }) as Prisma.InputJsonValue,
+    ),
     ...(initialModelName &&
     (turnOverride?.providerId ?? initialSnapshot.providerId)
       ? [
@@ -654,6 +665,10 @@ async function executeWork(workSessionId: string) {
           publishWorkOutput(work.id, delta);
         },
         onActivity,
+        onStreamRule: (trigger) => {
+          streamRuleTriggers.set(trigger.id, trigger);
+          publishWorkStreamRule(work.id, trigger);
+        },
         onExecutionStage: (stage) => publishWorkExecutionStage(work.id, stage),
         onContextUsage: (next) => {
           contextUsage = next;
@@ -702,6 +717,8 @@ async function executeWork(workSessionId: string) {
             commands = part.data.commands;
           else if (part.type === RUNTIME_USAGE_PART) usage = part.data;
           else if (part.type === COMMAND_RESULT_PART) commandResult = part.data;
+          else if (part.type === STREAM_RULE_TRIGGER_PART)
+            streamRuleTriggers.set(part.data.id, part.data);
         }
       } finally {
         stopObserving();

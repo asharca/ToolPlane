@@ -1,5 +1,10 @@
 import { nativeUiView } from "./native-ui";
 import "server-only";
+import {
+  STREAM_RULE_TRIGGER_PART,
+  StreamRuleTriggerSchema,
+  type StreamRuleTriggerPart,
+} from "@/lib/agents/stream-rules";
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { SendMessageRequest, Task, TaskState, Role } from "@a2a-js/sdk";
@@ -532,10 +537,12 @@ export type AgentEntryRuntimePart =
     }
   | { type: typeof RUNTIME_USAGE_PART; data: RuntimeUsage }
   | { type: typeof AGENT_TURN_MODEL_PART; data: AgentModelOverride }
-  | { type: typeof COMMAND_RESULT_PART; data: RuntimeCommandResult };
+  | { type: typeof COMMAND_RESULT_PART; data: RuntimeCommandResult }
+  | StreamRuleTriggerPart;
 const piSdkMetadataSchema = z
   .object({
     commands: RuntimeCommandsSchema,
+    streamRuleTriggers: z.array(StreamRuleTriggerSchema).optional(),
     model: z
       .object({ providerId: z.string().min(1), model: z.string().min(1) })
       .optional(),
@@ -598,6 +605,8 @@ export function agentEntryRuntimeParts(task: Task): AgentEntryRuntimePart[] {
     if (model) parts.push({ type: AGENT_TURN_MODEL_PART, data: model });
     if (commandResult)
       parts.push({ type: COMMAND_RESULT_PART, data: commandResult });
+    for (const trigger of parsed.data.streamRuleTriggers ?? [])
+      parts.push({ type: STREAM_RULE_TRIGGER_PART, data: trigger });
     return parts;
   }
   return [identity];

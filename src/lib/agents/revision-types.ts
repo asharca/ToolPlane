@@ -1,6 +1,7 @@
 import type { Sandbox } from "@prisma/client";
 import type { SkillBundleFile } from "@/lib/skills/bundle";
 import { z } from "zod";
+import { StreamRulesSchema } from "./stream-rules";
 import { AGENT_STEP_BOUNDS, REASONING_LEVELS } from "./constants";
 import { OMP_VERSION, OmpConfigSnapshotSchema } from "./omp-config";
 import {
@@ -167,6 +168,7 @@ const PiRevisionConfigSchema = z
     model: reference.nullable(),
     modelProviderIds: references,
     reasoningEffort: z.enum(REASONING_LEVELS).optional(),
+    streamRules: StreamRulesSchema.optional(),
     maxSteps: z
       .number()
       .int()

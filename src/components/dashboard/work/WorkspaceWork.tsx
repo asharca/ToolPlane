@@ -95,6 +95,11 @@ import {
 } from "@/components/dashboard/ConversationMessage";
 import { WorkContentBlocks } from "@/components/dashboard/ConversationContentBlocks";
 import { formatContentDuration as formatWorkDuration } from "@/lib/conversation/content-blocks";
+import {
+  StreamRuleTriggerSchema,
+  STREAM_RULE_TRIGGER_PART,
+  type StreamRuleTrigger,
+} from "@/lib/agents/stream-rules";
 import { HookActivitySchema } from "../agents/HookActivity";
 import {
   MessageBubble,
@@ -250,6 +255,18 @@ type WorkActivity = {
   source?: SubagentSource;
   textOffset?: number;
 };
+
+function mergeStreamRuleTriggers(
+  current: StreamRuleTrigger[],
+  incoming: unknown[],
+) {
+  const triggers = new Map(current.map((trigger) => [trigger.id, trigger]));
+  for (const value of incoming) {
+    const parsed = StreamRuleTriggerSchema.safeParse(value);
+    if (parsed.success) triggers.set(parsed.data.id, parsed.data);
+  }
+  return [...triggers.values()];
+}
 
 type WorkMessage = {
   id: string;
@@ -614,6 +631,7 @@ function WorkTranscript({
   streamText,
   streamActivities,
   streamBudgetWarning,
+  streamRuleTriggers,
   streamStartedAt,
   streamRuntimeKind,
   streamModelName,
@@ -631,6 +649,7 @@ function WorkTranscript({
   streamText: string;
   streamActivities: WorkActivity[];
   streamBudgetWarning?: BudgetWarning;
+  streamRuleTriggers: StreamRuleTrigger[];
   streamStartedAt?: number;
   streamRuntimeKind?: string;
   streamModelName?: string;
@@ -651,7 +670,7 @@ function WorkTranscript({
         (message.role === "assistant" || isConversationControl(message)) &&
         messageWorkTiming(message)?.startedAt === streamStartedAt,
     );
-  const transcript =
+  const transcript: WorkMessage[] =
     streaming && !streamPersisted
       ? [
           ...messages,
@@ -702,6 +721,12 @@ function WorkTranscript({
               ...(streamBudgetWarning
                 ? [{ type: "data-budget-warning", data: streamBudgetWarning }]
                 : []),
+              ...streamRuleTriggers.map(
+                (data): WorkPart => ({
+                  type: STREAM_RULE_TRIGGER_PART,
+                  data,
+                }),
+              ),
               ...(streamStartedAt
                 ? [
                     {
@@ -1190,6 +1215,7 @@ export function WorkspaceWork({
     text: string;
     activities: WorkActivity[];
     budgetWarning?: BudgetWarning;
+    streamRuleTriggers?: StreamRuleTrigger[];
     startedAt?: number;
     runtimeKind?: string;
     modelName?: string;
@@ -1386,6 +1412,10 @@ export function WorkspaceWork({
     streamOutput.workSessionId === selectedWorkSessionId
       ? streamOutput.budgetWarning
       : undefined;
+  const streamRuleTriggers =
+    streamOutput.workSessionId === selectedWorkSessionId
+      ? (streamOutput.streamRuleTriggers ?? [])
+      : [];
   const streamStartedAt =
     streamOutput.workSessionId === selectedWorkSessionId
       ? streamOutput.startedAt
@@ -2007,6 +2037,7 @@ export function WorkspaceWork({
         text?: string;
         activities?: WorkActivity[];
         budgetWarning?: unknown;
+        streamRuleTriggers?: unknown[];
         active?: boolean;
         done?: boolean;
         startedAt?: number;
@@ -2020,6 +2051,10 @@ export function WorkspaceWork({
         workSessionId: selectedWorkSessionId,
         text: next.text ?? "",
         activities: Array.isArray(next.activities) ? next.activities : [],
+        streamRuleTriggers: mergeStreamRuleTriggers(
+          [],
+          Array.isArray(next.streamRuleTriggers) ? next.streamRuleTriggers : [],
+        ),
         executionStage: next.executionStage,
         budgetWarning: parseConversationBudgetWarning(next.budgetWarning),
         ...(typeof next.startedAt === "number"
@@ -2064,6 +2099,39 @@ export function WorkspaceWork({
       });
       void refreshSelected();
     });
+    source.addEventListener("stream_rule_triggered", (event) => {
+      const next = payload<{
+        trigger?: unknown;
+        streamRuleTriggers?: unknown[];
+        startedAt?: number;
+      }>(event);
+      if (!next) return;
+      setStreamOutput((current) => {
+        const sameTurn =
+          current.workSessionId === selectedWorkSessionId &&
+          (next.startedAt === undefined ||
+            current.startedAt === next.startedAt);
+        return {
+          ...(sameTurn
+            ? current
+            : {
+                workSessionId: selectedWorkSessionId,
+                text: "",
+                activities: [],
+                startedAt: next.startedAt,
+              }),
+          streamRuleTriggers: mergeStreamRuleTriggers(
+            sameTurn ? (current.streamRuleTriggers ?? []) : [],
+            [
+              ...(Array.isArray(next.streamRuleTriggers)
+                ? next.streamRuleTriggers
+                : []),
+              next.trigger,
+            ],
+          ),
+        };
+      });
+    });
     source.addEventListener("stage", (event) => {
       receiveBudgetWarning(event);
       const next = payload<{ executionStage?: AgentExecutionStage }>(event);
@@ -2093,6 +2161,10 @@ export function WorkspaceWork({
           current.workSessionId === selectedWorkSessionId
             ? current.budgetWarning
             : undefined,
+        streamRuleTriggers:
+          current.workSessionId === selectedWorkSessionId
+            ? current.streamRuleTriggers
+            : [],
         executionStage:
           current.workSessionId === selectedWorkSessionId
             ? current.executionStage
@@ -2123,6 +2195,10 @@ export function WorkspaceWork({
           current.workSessionId === selectedWorkSessionId
             ? current.budgetWarning
             : undefined,
+        streamRuleTriggers:
+          current.workSessionId === selectedWorkSessionId
+            ? current.streamRuleTriggers
+            : [],
         executionStage:
           current.workSessionId === selectedWorkSessionId
             ? current.executionStage
@@ -3545,6 +3621,7 @@ export function WorkspaceWork({
                             streamText={streamText}
                             streamActivities={streamActivities}
                             streamBudgetWarning={streamBudgetWarning}
+                            streamRuleTriggers={streamRuleTriggers}
                             streamStartedAt={streamStartedAt}
                             streamRuntimeKind={streamRuntimeKind}
                             streamModelName={streamModelName}

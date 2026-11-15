@@ -1,4 +1,5 @@
 import "server-only";
+import type { StreamRuleTrigger } from "@/lib/agents/stream-rules";
 import type {
   RunSandboxAgentTurnOptions,
   SandboxRuntimeActivity,
@@ -17,11 +18,13 @@ export type WorkRuntimeObserver = Pick<
   | "onCommands"
   | "onUsage"
   | "onCommandResult"
+  | "onStreamRule"
 >;
 
 export type WorkOutputSnapshot = {
   text: string;
   activities: WorkOutputActivity[];
+  streamRuleTriggers?: StreamRuleTrigger[];
   active: boolean;
   done: boolean;
   executionStage?: AgentExecutionStage;
@@ -60,6 +63,11 @@ export type WorkOutputEvent =
   | {
       type: "data-budget-warning";
       data: BudgetWarning;
+      snapshot: WorkOutputSnapshot;
+    }
+  | {
+      type: "stream_rule_triggered";
+      trigger: StreamRuleTrigger;
       snapshot: WorkOutputSnapshot;
     }
   | {
@@ -128,6 +136,13 @@ function outputSnapshot(channel: WorkOutputChannel): WorkOutputSnapshot {
   return {
     text: channel.text,
     activities: channel.activities.map((activity) => ({ ...activity })),
+    ...(channel.streamRuleTriggers?.length
+      ? {
+          streamRuleTriggers: channel.streamRuleTriggers.map((trigger) => ({
+            ...trigger,
+          })),
+        }
+      : {}),
     active: channel.active,
     done: channel.done,
     ...(channel.executionStage
@@ -169,6 +184,7 @@ export function startWorkOutput(
   channel.text = "";
   channel.activities = [];
   channel.budgetWarning = undefined;
+  channel.streamRuleTriggers = [];
   channel.active = true;
   channel.done = false;
   channel.executionStage = "queued";
@@ -222,6 +238,22 @@ export function publishWorkActivity(
   notifyOutput(channel, {
     type: "activity",
     activity: { ...next },
+    snapshot: outputSnapshot(channel),
+  });
+}
+
+export function publishWorkStreamRule(
+  workSessionId: string,
+  trigger: StreamRuleTrigger,
+) {
+  const channel = outputChannel(workSessionId);
+  if (!channel.active || channel.done) return;
+  channel.streamRuleTriggers ??= [];
+  if (channel.streamRuleTriggers.some((item) => item.id === trigger.id)) return;
+  channel.streamRuleTriggers.push(trigger);
+  notifyOutput(channel, {
+    type: "stream_rule_triggered",
+    trigger,
     snapshot: outputSnapshot(channel),
   });
 }

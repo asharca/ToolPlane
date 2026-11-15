@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Trusted headless SDK host. Extension stdout is deliberately not a protocol channel.
+import { randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -243,6 +244,45 @@ let texts = [],
   modelReason,
   modelRetried = 0,
   aborted = false;
+const streamRules = (config.streamRules ?? []).map((rule) => ({
+  ...rule,
+  regex: new RegExp(rule.pattern),
+}));
+let ruleText = "",
+  ruleTriggers = [],
+  remindedRules = new Set(),
+  ruleDeliveries = [];
+function triggerRule(rule, toolCall) {
+  const trigger = {
+    id: randomUUID(),
+    ruleId: rule.id,
+    name: rule.name,
+    target: rule.target,
+    action: rule.action,
+    message: rule.message,
+    ...(toolCall
+      ? { toolName: toolCall.toolName, toolCallId: toolCall.toolCallId }
+      : {}),
+    timestamp: Date.now(),
+  };
+  ruleTriggers.push(trigger);
+  runtime.session.sessionManager.appendCustomEntry(
+    "toolplane.stream-rule",
+    trigger,
+  );
+  emit({ type: "stream_rule_triggered", trigger });
+  if (rule.action === "remind") {
+    remindedRules.add(rule.id);
+    // The envelope keeps a reminder beginning with '/' from becoming a command.
+    const delivery = runtime.session
+      .steer(`<system-reminder>\n${rule.message}\n</system-reminder>`)
+      .catch(() => {
+        turnError = "PI_STREAM_RULE_DELIVERY_FAILED";
+      });
+    ruleDeliveries.push(delivery);
+    return delivery;
+  }
+}
 let lastState;
 const nativeUi = createNativeUi({
   getContext: () => context,
@@ -516,8 +556,27 @@ function toolPatch(event) {
 function event(event) {
   if (!active) return;
   if (event.type === "auto_retry_start") modelRetried = event.attempt;
+  if (event.type === "message_start" && event.message?.role === "assistant")
+    ruleText = "";
   if (event.type === "message_update") {
     const update = event.assistantMessageEvent;
+    if (
+      update?.type === "text_delta" &&
+      typeof update.delta === "string" &&
+      streamRules.some(
+        (rule) =>
+          rule.target === "assistant_text" && !remindedRules.has(rule.id),
+      )
+    ) {
+      ruleText += update.delta;
+      for (const rule of streamRules)
+        if (
+          rule.target === "assistant_text" &&
+          !remindedRules.has(rule.id) &&
+          rule.regex.test(ruleText)
+        )
+          triggerRule(rule);
+    }
     if (
       [
         "text_start",
@@ -694,6 +753,32 @@ async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }) {
       additionalExtensionPaths: extensions,
       extensionFactories: [
         {
+          name: "toolplane-stream-rules",
+          hidden: true,
+          factory: (pi) => {
+            pi.on("tool_call", async (call) => {
+              if (!active) return;
+              const input = JSON.stringify(call.input);
+              const blocked = [];
+              for (const rule of streamRules) {
+                if (
+                  rule.target !== "tool_call" ||
+                  (rule.toolName && rule.toolName !== call.toolName) ||
+                  (rule.action === "remind" && remindedRules.has(rule.id)) ||
+                  !rule.regex.test(input)
+                )
+                  continue;
+                await triggerRule(rule, call);
+                if (rule.action === "block") blocked.push(rule.message);
+              }
+              // Pi turns a blocked call into an isError tool result and continues.
+              // Never use terminate: a rejected tool is not a failed Agent turn.
+              if (blocked.length)
+                return { block: true, reason: blocked.join("\n\n") };
+            });
+          },
+        },
+        {
           name: "toolplane-web-projection",
           hidden: true,
           factory: (pi) => {
@@ -854,6 +939,10 @@ async function handle(request) {
   modelFailed = false;
   modelReason = undefined;
   modelRetried = 0;
+  ruleText = "";
+  ruleTriggers = [];
+  remindedRules = new Set();
+  ruleDeliveries = [];
   let terminal;
   try {
     if (initialError) fail(initialError);
@@ -927,6 +1016,7 @@ async function handle(request) {
       current = runtime.session;
       await current.waitForIdle();
     } while (current !== runtime.session);
+    await Promise.all(ruleDeliveries);
     if (aborted) fail("PI_SDK_ABORTED");
     if (turnError) fail(turnError);
     if (modelFailed)
@@ -952,6 +1042,7 @@ async function handle(request) {
         commands: commands(),
         ...(usage ? { usage } : {}),
         ...contextBreakdownResult(runtime.session),
+        streamRuleTriggers: ruleTriggers,
         ...(command
           ? { commandResult: { command, text, status: "completed" } }
           : {}),
@@ -974,7 +1065,8 @@ async function handle(request) {
       runtime &&
       (code === "PI_SDK_MODEL_FAILED" ||
         code === "PI_SDK_ABORTED" ||
-        code === "PI_SDK_UI_FAILED")
+        code === "PI_SDK_UI_FAILED" ||
+        code === "PI_STREAM_RULE_DELIVERY_FAILED")
     )
       try {
         persist();
@@ -986,7 +1078,15 @@ async function handle(request) {
       code,
       reason: code === "PI_SDK_MODEL_FAILED" ? error.reason : undefined,
       // Tokens already spent on a failed turn still count toward the budget.
-      result: usage ? { usage } : undefined,
+      result:
+        usage || ruleTriggers.length
+          ? {
+              ...(usage ? { usage } : {}),
+              ...(ruleTriggers.length
+                ? { streamRuleTriggers: ruleTriggers }
+                : {}),
+            }
+          : undefined,
     };
   } finally {
     nativeUi.cancel();

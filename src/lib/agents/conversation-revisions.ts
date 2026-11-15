@@ -204,6 +204,7 @@ export function diffAgentRevisions(
     ],
     ["maxSteps", a.maxSteps, b.maxSteps],
     ["reasoningEffort", a.reasoningEffort ?? null, b.reasoningEffort ?? null],
+    ["streamRules", a.streamRules ?? [], b.streamRules ?? []],
     ["packages", a.packages, b.packages],
     ["knowledge", a.knowledgeBaseIds, b.knowledgeBaseIds],
     [

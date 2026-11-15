@@ -705,6 +705,51 @@
       }
     },
     "agents": {
+      "streamRules": {
+        "title": "Streaming rules",
+        "count": "{count} / 50 rules",
+        "add": "Add rule",
+        "remove": "Remove rule",
+        "moveUp": "Move up",
+        "moveDown": "Move down",
+        "rule": "Rule {number}",
+        "name": "Name",
+        "target": "Target",
+        "targets": {
+          "assistant_text": "Assistant text",
+          "tool_call": "Tool call"
+        },
+        "action": "Action",
+        "actions": {
+          "remind": "Remind",
+          "block": "Block"
+        },
+        "toolName": "Tool name (optional)",
+        "anyTool": "Any tool",
+        "pattern": "Regex source (max. 500 characters)",
+        "message": "Prompt (max. 2,000 characters)",
+        "loading": "Loading rules…",
+        "retry": "Retry",
+        "triggered": "Streaming rule triggered",
+        "triggerActions": {
+          "remind": "Reminder",
+          "block": "Blocked"
+        },
+        "errors": {
+          "loadFailed": "Could not load streaming rules. Try again.",
+          "Unauthorized": "Sign in to manage streaming rules.",
+          "Forbidden": "This request is not allowed. Reload the page and try again.",
+          "notFound": "The agent or workspace is unavailable.",
+          "AGENT_EXECUTION_RETIRED": "This runtime is read-only and cannot use streaming rules.",
+          "agentBusy": "The agent is busy. Wait for the current operation to finish and try again.",
+          "STREAM_RULES_INVALID": "Check the rule fields: at most 50 rules, names up to 240 characters, regex sources up to 500, and prompts up to 2,000. Names, regex sources and prompts cannot be empty.",
+          "STREAM_RULE_PATTERN_INVALID": "The regular expression is invalid. Enter a regex source without enclosing slashes or flags.",
+          "STREAM_RULE_PATTERN_UNSAFE": "This regular expression was rejected for potentially unsafe repetition or backreferences. Use a simpler expression.",
+          "STREAM_RULE_INVALID_TARGET": "Assistant text rules can only remind and cannot specify a tool name.",
+          "STREAM_RULE_DUPLICATE_ID": "Rule IDs must be unique. Remove the duplicate rule and add it again.",
+          "STREAM_RULES_SAVE_FAILED": "Could not save streaming rules. Your edits are preserved; try again."
+        }
+      },
       "ownSandbox": "Environment template",
       "ownSandboxFixed": "Created automatically with this agent and fixed to it. Conversations share the agent's execution sandbox, with separate working directories.",
       "ownSandboxMissing": "The environment template is currently unavailable.",
@@ -1775,6 +1820,7 @@
       "PI_SDK_SESSION_SCOPE": "The extension tried to leave this Agent's private session directory. Execution was blocked.",
       "PI_SDK_TOOL_FAILED": "A Pi SDK tool failed. Check the tool result before continuing; no automatic replay was attempted.",
       "PI_SDK_MODEL_FAILED": "The Pi SDK model request failed or was interrupted. Check the provider and start a new request.",
+      "PI_STREAM_RULE_DELIVERY_FAILED": "The streaming rule reminder could not be queued. Start a new request.",
       "MODEL_OVERRIDE_UNAVAILABLE": "This session's model override is no longer available. Send /model reset in the channel or choose another model.",
       "OMP_MODEL_FAILED": "The OMP model request failed or was interrupted. Check the provider and start a new request.",
       "PI_TASK_QUEUE_TIMEOUT": "The task expired while waiting for admission; execution had not started. This is not a model response timeout. Try again later; if it recurs, ask an administrator to check the queue and execution capacity.",
@@ -3347,6 +3393,7 @@
         "modelParameters": "Model parameters changed",
         "reasoningEffort": "Thinking effort changed",
         "contextFiles": "Project instruction file loading changed",
+        "streamRules": "Stream rules changed",
         "maxSteps": "Maximum steps changed",
         "packages": "Pi packages changed",
         "knowledge": "Knowledge bases changed",

@@ -573,6 +573,148 @@ describe("official Pi SDK headless session host", () => {
     },
     60000,
   );
+  it("blocks native bash side effects while succeeding and persisting the rule event", async () => {
+    const f = await setup();
+    f.behavior.tool = "bash";
+    f.behavior.toolArgs = JSON.stringify({
+      command: "printf forbidden > blocked.txt",
+    });
+    const host = await f.launch({
+      defaultTools: ["bash"],
+      streamRules: [
+        {
+          id: "no-write",
+          name: "No shell writes",
+          target: "tool_call",
+          toolName: "bash",
+          pattern: "blocked\\.txt",
+          action: "block",
+          message: "Do not write blocked.txt.",
+        },
+      ],
+    });
+    for (let turn = 0; turn < 2; turn++) {
+      const result = await host.request("prompt", "Run the shell command");
+      expect(result.success, JSON.stringify(result)).toBe(true);
+      expect(result.result?.text).toContain("SDK_COMPLETE");
+      await expect(
+        readFile(join(f.workspace, "blocked.txt")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }
+    const triggers = host.events.filter(
+      (event) => event.type === "stream_rule_triggered",
+    );
+    expect(triggers).toHaveLength(2);
+    expect(triggers[0]).toMatchObject({
+      trigger: {
+        ruleId: "no-write",
+        target: "tool_call",
+        action: "block",
+        toolName: "bash",
+        toolCallId: "count-call",
+      },
+    });
+    const failedTools = host.events.filter(
+      (event) => event.type === "tool_execution_end" && event.isError,
+    );
+    expect(failedTools).toHaveLength(2);
+    expect(JSON.stringify(failedTools)).toContain("Do not write blocked.txt.");
+    const saved = JSON.parse(await readFile(f.config.statePath, "utf8"));
+    expect(saved.sessionPersisted).toBe(true);
+    expect(await readFile(saved.sessionFile, "utf8")).toContain(
+      "toolplane.stream-rule",
+    );
+  }, 60000);
+
+  it("matches text across stream chunks and injects one reminder per rule per prompt", async () => {
+    const f = await setup();
+    let requests = 0;
+    f.behavior.tool = "";
+    const textEvents = new EventEmitter();
+    f.behavior.streamCompletion = async (response) => {
+      if (requests++ > 0) {
+        completion(response, { content: "Corrected response" }, "stop");
+        return;
+      }
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      for (const [index, content] of [
+        "CROSS_",
+        "CHUNK",
+        " CROSS_CHUNK",
+      ].entries()) {
+        const received = once(textEvents, "delta");
+        response.write(
+          `data: ${JSON.stringify({ id: "rules", object: "chat.completion.chunk", created: 1, model: "controlled", choices: [{ index: 0, delta: { ...(index === 0 ? { role: "assistant" } : {}), content }, finish_reason: null }] })}\n\n`,
+        );
+        await received;
+      }
+      response.end(
+        `data: ${JSON.stringify({ id: "rules", object: "chat.completion.chunk", created: 1, model: "controlled", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
+      );
+    };
+    const host = await f.launch(
+      {
+        streamRules: [
+          {
+            id: "text-reminder",
+            name: "Text reminder",
+            target: "assistant_text",
+            pattern: "CROSS_CHUNK",
+            action: "remind",
+            message: "Replace the flagged phrase.",
+          },
+        ],
+      },
+      (event) => {
+        const update = event.assistantMessageEvent;
+        if (
+          event.type === "message_update" &&
+          update &&
+          typeof update === "object" &&
+          "type" in update &&
+          update.type === "text_delta"
+        )
+          textEvents.emit("delta");
+      },
+    );
+    const result = await host.request("prompt", "Answer now");
+    expect(result.success, JSON.stringify(result)).toBe(true);
+    expect(
+      host.events.filter((event) => event.type === "stream_rule_triggered"),
+    ).toHaveLength(1);
+    expect(f.requests.length).toBeGreaterThan(1);
+    expect(JSON.stringify(f.requests.at(-1)?.body.messages)).toContain(
+      "Replace the flagged phrase.",
+    );
+  }, 60000);
+
+  it("allows a matching tool reminder and delivers its message to the model", async () => {
+    const f = await setup();
+    const host = await f.launch({
+      streamRules: [
+        {
+          id: "counter-reminder",
+          name: "Counter reminder",
+          target: "tool_call",
+          toolName: "increment",
+          pattern: "^\\{",
+          action: "remind",
+          message: "Report the actual counter value.",
+        },
+      ],
+    });
+    const result = await host.request("prompt", "Increment the counter");
+    expect(result.success, JSON.stringify(result)).toBe(true);
+    expect(
+      Number(await readFile(join(f.workspace, "count.txt"), "utf8")),
+    ).toBeGreaterThan(0);
+    expect(
+      host.events.filter((event) => event.type === "stream_rule_triggered"),
+    ).toHaveLength(1);
+    expect(JSON.stringify(f.requests.at(-1)?.body.messages)).toContain(
+      "Report the actual counter value.",
+    );
+  }, 60000);
 
   it("keeps Python imports from changing skill files across continued native turns", async () => {
     const f = await setup();

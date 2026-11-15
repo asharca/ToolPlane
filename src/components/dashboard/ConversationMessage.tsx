@@ -40,6 +40,37 @@ import {
   AlertTitle,
 } from "@/components/motion/alert";
 import { ButtonLink } from "@/components/motion/button/base";
+import { AnimatedBadge } from "@/components/motion/animated-badge";
+import type { StreamRuleTrigger } from "@/lib/agents/stream-rules";
+
+export function StreamRuleNotice({ trigger }: { trigger: StreamRuleTrigger }) {
+  const t = useTranslations("console.agents.streamRules");
+  return (
+    <section
+      aria-label={t("triggered")}
+      className="space-y-2 rounded-lg border border-border px-3 py-2 text-sm"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="break-words font-medium">{trigger.name}</span>
+        <AnimatedBadge
+          status={trigger.action === "block" ? "warning" : "neutral"}
+          size="sm"
+        >
+          {t(`triggerActions.${trigger.action}`)}
+        </AnimatedBadge>
+        {trigger.toolName ? (
+          <span
+            className="break-all font-mono text-xs text-muted-foreground"
+            title={trigger.toolCallId}
+          >
+            {trigger.toolName}
+          </span>
+        ) : null}
+      </div>
+      <p className="whitespace-pre-wrap break-words">{trigger.message}</p>
+    </section>
+  );
+}
 
 export const conversationUserBubbleClassName =
   "w-auto max-w-[85%] sm:max-w-[80%] [&>div]:max-w-none [&>div]:rounded-3xl [&>div]:px-4 [&>div]:py-2.5";

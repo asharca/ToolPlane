@@ -255,6 +255,7 @@ export async function runDedicatedSandboxTurn(
           const options: RunSandboxAgentTurnOptions = {
             runtimeKind,
             piVersion: agent.revisionConfig.environment.piVersion,
+            streamRules: agent.revisionConfig.streamRules,
             workspaceId: input.agent.workspaceId,
             agentId: input.agent.id,
             sandboxId: link.sandboxId,

@@ -184,6 +184,9 @@ async function serve() {
           ...(event.result.contextBreakdown
             ? { contextBreakdown: event.result.contextBreakdown }
             : {}),
+          ...(event.result.streamRuleTriggers
+            ? { streamRuleTriggers: event.result.streamRuleTriggers }
+            : {}),
           ...(event.result.commandResult
             ? { commandResult: event.result.commandResult }
             : {}),
@@ -212,8 +215,20 @@ async function serve() {
             ? { result }
             : {
                 error: { code, message: code, ...(reason ? { reason } : {}) },
-                ...(event.result?.usage
-                  ? { result: { usage: event.result.usage } }
+                ...(result
+                  ? {
+                      result: {
+                        ...(event.result?.usage
+                          ? { usage: event.result.usage }
+                          : {}),
+                        ...(event.result?.streamRuleTriggers
+                          ? {
+                              streamRuleTriggers:
+                                event.result.streamRuleTriggers,
+                            }
+                          : {}),
+                      },
+                    }
                   : {}),
               }),
         });

@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:http";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { stopNativeSessionHosts } from "../../scripts/native-runtime-stop.mjs";
@@ -329,6 +330,7 @@ export default function(pi) {
           text: expect.stringContaining("count=1"),
           status: "completed",
         },
+        streamRuleTriggers: [],
         // Without a model response the total is Pi's estimate; the broker must keep it.
         contextBreakdown: {
           usedTokens: expect.any(Number),
@@ -469,6 +471,132 @@ export default function(pi) {
       success: false,
       error: { code: "PI_SDK_MODEL_FAILED", reason: "UNREACHABLE RETRIED_1" },
     });
+    const beforeRuleRestart = once(daemon, "exit");
+    daemon.kill("SIGTERM");
+    await beforeRuleRestart;
+    await rm(statePath);
+    const gateway = createServer((request, response) => {
+      void (async () => {
+        let raw = "";
+        for await (const chunk of request) raw += String(chunk);
+        const body = JSON.parse(raw);
+        const afterTool = body.messages.at(-1)?.role === "tool";
+        const delta = afterTool
+          ? { content: "BLOCKED_BUT_SUCCEEDED" }
+          : {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "broker-block",
+                  type: "function",
+                  function: {
+                    name: "bash",
+                    arguments: JSON.stringify({
+                      command: `printf forbidden > ${JSON.stringify(join(dir, "blocked-by-rule"))}`,
+                    }),
+                  },
+                },
+              ],
+            };
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        for (const chunk of [
+          {
+            choices: [
+              {
+                index: 0,
+                delta: { role: "assistant", ...delta },
+                finish_reason: null,
+              },
+            ],
+          },
+          {
+            choices: [
+              {
+                index: 0,
+                delta: {},
+                finish_reason: afterTool ? "stop" : "tool_calls",
+              },
+            ],
+            usage: {
+              prompt_tokens: 20,
+              completion_tokens: 5,
+              total_tokens: 25,
+            },
+          },
+        ])
+          response.write(
+            `data: ${JSON.stringify({ id: "broker-rules", object: "chat.completion.chunk", created: 1, model: "test", ...chunk })}\n\n`,
+          );
+        response.end("data: [DONE]\n\n");
+      })().catch(() => {
+        response.writeHead(500);
+        response.end();
+      });
+    });
+    gateway.listen(0, "127.0.0.1");
+    await once(gateway, "listening");
+    try {
+      const address = gateway.address();
+      if (!address || typeof address === "string")
+        throw new Error("Missing gateway address");
+      const rule = {
+        id: "broker-shell",
+        name: "Broker shell rule",
+        target: "tool_call",
+        toolName: "bash",
+        pattern: "blocked-by-rule",
+        action: "block",
+        message: "Shell write blocked by stream rule.",
+      };
+      const hostConfig = JSON.parse(await readFile(configPath, "utf8"));
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          ...hostConfig,
+          defaultTools: ["bash"],
+          streamRules: [rule],
+        }),
+      );
+      job.context.model = {
+        ...job.context.model,
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      };
+      job.context.modelRetries = 0;
+      job.message = "Call bash";
+      daemon = spawn(process.execPath, [driver, inputPath, "serve"], {
+        stdio: "ignore",
+        env: environment,
+      });
+      await until(() => existsSync(socketPath));
+      const events = await run();
+      expect(
+        events.find((event) => event.type === "stream_rule_triggered"),
+      ).toMatchObject({
+        trigger: {
+          ruleId: rule.id,
+          action: "block",
+          toolName: "bash",
+          toolCallId: "broker-block",
+          message: rule.message,
+        },
+      });
+      expect(
+        events.find((event) => event.type === "toolplane_sdk_response"),
+      ).toMatchObject({
+        success: true,
+        result: {
+          text: "BLOCKED_BUT_SUCCEEDED",
+          streamRuleTriggers: [
+            expect.objectContaining({ ruleId: rule.id, action: "block" }),
+          ],
+        },
+      });
+      expect(existsSync(join(dir, "blocked-by-rule"))).toBe(false);
+    } finally {
+      gateway.closeAllConnections();
+      gateway.close();
+      await once(gateway, "close");
+    }
   } finally {
     // Ask the daemon to stop its detached host process group before removing files.
     if (daemon.exitCode === null && daemon.signalCode === null) {

@@ -622,6 +622,7 @@ model Agent {
   optionalBuiltinTools    String[]                 @default([])
   maxSteps                Int                      @default(100)
   reasoningEffort         String?
+  streamRules             Json?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
   servers                 AgentServer[]
