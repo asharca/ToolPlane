@@ -179,6 +179,7 @@ model DailySnapshot {
 }
 
 model Workspace {
+  agentMemories AgentMemory[]
   agentEnvironmentCredentials AgentEnvironmentCredential[]
   subagentDefinitions WorkspaceSubagent[]
   remoteA2AAgents RemoteA2AAgent[]
@@ -583,6 +584,7 @@ model ProviderModel {
 }
 
 model Agent {
+  memories AgentMemory[]
   evolutionRecords AgentEvolutionRecord[]
   evolutionSettings AgentEvolutionSettings?
   monthlyBudgetMicros BigInt?
@@ -646,6 +648,22 @@ model Agent {
 
   @@unique([workspaceId, slug])
   @@unique([id, workspaceId])
+}
+
+model AgentMemory {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId String
+  agent Agent @relation(fields: [agentId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  content String @db.VarChar(2000)
+  // Provenance snapshots survive deletion of the original conversation/task.
+  conversationId String?
+  taskId String?
+  creatorType String
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId, agentId, createdAt, id])
 }
 
 model AgentUsage {
