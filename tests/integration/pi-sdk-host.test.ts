@@ -195,7 +195,12 @@ async function setup(workspaceSubdirectory = "") {
       | undefined,
     mcpSchema: { type: "object", properties: {} } as Record<string, unknown>,
     secretObfuscator: undefined as AgentSecretObfuscator | undefined,
-    modelResponse: undefined as undefined | ((body: (typeof requests)[number]["body"], response: ServerResponse) => void),
+    modelResponse: undefined as
+      | undefined
+      | ((
+          body: (typeof requests)[number]["body"],
+          response: ServerResponse,
+        ) => void),
   };
   const mcpRequests: Array<{
     authorization?: string;

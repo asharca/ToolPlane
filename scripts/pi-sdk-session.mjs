@@ -14,7 +14,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { findPackageJSON } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -464,9 +463,16 @@ async function runChild(
     session = child.session;
     unsubscribeChild = session.subscribe((entry) => {
       event(entry, source, session.model);
-      if (entry.type === "message_end" && entry.message.role === "assistant") lastMessage = entry.message;
-      if (entry.type === "message_end" && entry.message.role === "toolResult" && entry.message.toolName === "todo")
-        void childUi.projectTodos(manager).catch(() => { uiFailed = true; });
+      if (entry.type === "message_end" && entry.message.role === "assistant")
+        lastMessage = entry.message;
+      if (
+        entry.type === "message_end" &&
+        entry.message.role === "toolResult" &&
+        entry.message.toolName === "todo"
+      )
+        void childUi.projectTodos(manager).catch(() => {
+          uiFailed = true;
+        });
     });
     allowTransientStreamRetry(session);
     await session.bindExtensions({
@@ -995,7 +1001,11 @@ function event(event, source, sourceModel) {
       });
     }
   }
-  if (!source && event.type === "message_start" && event.message.role === "user") {
+  if (
+    !source &&
+    event.type === "message_start" &&
+    event.message.role === "user"
+  ) {
     const text = contentText(event.message.content);
     let index = queuedInputs.findIndex(
       (item) => item.mode === "steer" && item.injectedText === text,
@@ -1013,8 +1023,13 @@ function event(event, source, sourceModel) {
       emitQueue();
     }
   }
-  if (!source && event.type === "auto_retry_start") modelRetried = event.attempt;
-  if (!source && event.type === "message_start" && event.message?.role === "assistant")
+  if (!source && event.type === "auto_retry_start")
+    modelRetried = event.attempt;
+  if (
+    !source &&
+    event.type === "message_start" &&
+    event.message?.role === "assistant"
+  )
     ruleText = "";
   if (event.type === "message_update") {
     const update = event.assistantMessageEvent;
@@ -1077,7 +1092,8 @@ function event(event, source, sourceModel) {
     });
   if (event.type === "message_end") {
     if (source) {
-      if (event.message.role === "assistant") recordUsage(event.message.usage, sourceModel);
+      if (event.message.role === "assistant")
+        recordUsage(event.message.usage, sourceModel);
       return;
     }
     if (
