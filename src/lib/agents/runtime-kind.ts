@@ -99,6 +99,7 @@ export type AgentOptionalBuiltinTool = {
 };
 
 /** Register only implemented, trusted tools. Optional tools are always opt-in. */
+<<<<<<< HEAD
 export const AGENT_OPTIONAL_BUILTIN_TOOLS: readonly AgentOptionalBuiltinTool[] =
   [
     { name: "web_search", category: "search", implementation: "platform" },
@@ -107,11 +108,9 @@ export const AGENT_OPTIONAL_BUILTIN_TOOLS: readonly AgentOptionalBuiltinTool[] =
     { name: "memory_recall", category: "context", implementation: "platform" },
     { name: "memory_forget", category: "context", implementation: "platform" },
     { name: "eval", category: "shell", implementation: "sandbox-extension" },
-    {
-      name: "task",
-      category: "orchestration",
-      implementation: "sandbox-extension",
-    },
+    { name: "checkpoint", category: "context", implementation: "sandbox-extension" },
+    { name: "rewind", category: "context", implementation: "sandbox-extension" },
+    { name: "context_notes", category: "context", implementation: "sandbox-extension" },
   ];
 
 export function agentOptionalBuiltinTools(value: unknown) {

@@ -21,6 +21,7 @@ import {
   RuntimeCommandsSchema,
   RuntimeUsageSchema,
 } from "@/lib/agents/runtime-commands";
+import { CONTEXT_MAINTENANCE_PART, ContextMaintenanceSchema, type ContextMaintenance } from "@/lib/agents/context-maintenance";
 import type {
   RuntimeCommand,
   RuntimeCommandResult,
@@ -570,11 +571,13 @@ export type AgentEntryRuntimePart =
   | { type: typeof RUNTIME_USAGE_PART; data: RuntimeUsage }
   | { type: typeof AGENT_TURN_MODEL_PART; data: AgentModelOverride }
   | { type: typeof COMMAND_RESULT_PART; data: RuntimeCommandResult }
-  | StreamRuleTriggerPart;
+  | StreamRuleTriggerPart
+  | { type: typeof CONTEXT_MAINTENANCE_PART; data: ContextMaintenance };
 const piSdkMetadataSchema = z
   .object({
     commands: RuntimeCommandsSchema,
     streamRuleTriggers: z.array(StreamRuleTriggerSchema).optional(),
+    contextMaintenance: z.array(ContextMaintenanceSchema).optional(),
     model: z
       .object({ providerId: z.string().min(1), model: z.string().min(1) })
       .optional(),
@@ -616,7 +619,7 @@ export function agentEntryRuntimeParts(task: Task): AgentEntryRuntimePart[] {
         : artifact.metadata?.toolplanePiSdk,
     );
     if (!parsed.success) continue;
-    const { commands, usage, commandResult, model } = parsed.data;
+    const { commands, usage, commandResult, model, contextMaintenance } = parsed.data;
     const parts: AgentEntryRuntimePart[] = [
       identity,
       {
@@ -630,6 +633,8 @@ export function agentEntryRuntimeParts(task: Task): AgentEntryRuntimePart[] {
       parts.push({ type: COMMAND_RESULT_PART, data: commandResult });
     for (const trigger of parsed.data.streamRuleTriggers ?? [])
       parts.push({ type: STREAM_RULE_TRIGGER_PART, data: trigger });
+    for (const marker of contextMaintenance ?? [])
+      parts.push({ type: CONTEXT_MAINTENANCE_PART, data: marker });
     return parts;
   }
   return [identity];

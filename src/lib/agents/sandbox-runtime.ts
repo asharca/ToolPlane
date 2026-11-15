@@ -14,6 +14,7 @@ import type { AgentConversationSandbox } from "./conversation-sandbox";
 import { PiRuntimeInterruptedError } from "./pi-harness";
 import { hasNativeConversationHistory } from "./conversation-context";
 import { parseRuntimeFailure, runtimeFailureText } from "./runtime-failure";
+import { ContextMaintenanceSchema, type ContextMaintenance } from "./context-maintenance";
 import {
   assertRuntimeOwner,
   trackRuntimeOperation,
@@ -239,6 +240,7 @@ export type RunSandboxAgentTurnOptions = {
     message: QueuedAgentMessage,
     assistantText: string,
   ) => void | Promise<void>;
+  onContextMaintenance?: (marker: ContextMaintenance) => void | Promise<void>;
 };
 
 export type SandboxRuntimeActivity = {
@@ -2882,6 +2884,7 @@ async function runPiSdk(
     [`${privateRoot}/pi-sdk-install.mjs`, "pi-sdk-install.mjs"],
     [`${privateRoot}/pi-sdk-capabilities.mjs`, "pi-sdk-capabilities.mjs"],
     [`${privateRoot}/pi-sdk-ui.mjs`, "pi-sdk-ui.mjs"],
+    [`${privateRoot}/pi-sdk-context.mjs`, "pi-sdk-context.mjs"],
     [`${privateRoot}/native-session-paths.mjs`, "native-session-paths.mjs"],
     [
       `${privateRoot}/pi-sdk-native-resources.mjs`,
@@ -3171,6 +3174,16 @@ async function runPiSdk(
       await options.onPromptInvocation?.(
         event.invocation as AgentPromptInvocation,
       );
+      return;
+    }
+    if (event.type === "context_maintenance") {
+      const marker = ContextMaintenanceSchema.safeParse(event.marker);
+      if (marker.success) {
+        const safe = marker.data.kind === "rewind"
+          ? { ...marker.data, report: redact(marker.data.report, [options.runtimeAccessToken]) }
+          : { ...marker.data, summary: redact(marker.data.summary, [options.runtimeAccessToken]) };
+        await options.onContextMaintenance?.(safe);
+      }
       return;
     }
     if (event.type === "toolplane_sdk_response") {

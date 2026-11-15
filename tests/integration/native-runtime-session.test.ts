@@ -678,6 +678,11 @@ export default function(pi) {
     count++;
     pi.sendMessage({ customType: 'daemon-test', content: 'count=' + count, display: true });
     console.log('untrusted stdout must not become protocol');
+    // Exercise the broker's non-terminal event lane; state remains host-private.
+    writeFileSync(3, JSON.stringify({ type: 'context_maintenance', marker: {
+      kind: 'rewind', at: '2026-11-15T00:00:00.000Z', checkpointId: 'checkpoint-node',
+      entryId: 'report-node', report: 'Retained investigation report'
+    } }) + '\\n');
     writeFileSync(${JSON.stringify(join(dir, "context"))}, process.env.TOOLPLANE_RUNTIME_TOKEN);
     // Exercise the broker's raw tool-event path, distinct from response results.
     writeSync(3, JSON.stringify({ type: 'tool_execution_end', toolCallId: 'edit-patch', toolName: 'edit', patch: '--- a/file\\n+++ b/file\\n@@ -1 +1 @@\\n-old\\n+new\\n', truncated: true, firstChangedLine: 1 }) + '\\n');
@@ -840,6 +845,10 @@ export default function(pi) {
       },
     });
     expect(JSON.stringify(first)).not.toContain("untrusted stdout");
+    expect(first).toContainEqual({ type: "context_maintenance", marker: {
+      kind: "rewind", at: "2026-11-15T00:00:00.000Z", checkpointId: "checkpoint-node",
+      entryId: "report-node", report: "Retained investigation report",
+    } });
     expect(first.some((event) => event.type === "agent_end")).toBe(false);
     const sdkState = JSON.parse(await readFile(statePath, "utf8"));
     expect(sdkState).toMatchObject({
