@@ -48,6 +48,7 @@ export async function usageCostUsd(
   usage: RuntimeUsage,
   metering?: TaskUsage,
 ): Promise<number> {
+
   if (usage.costUsd) return usage.costUsd;
   if (usage.modelUsage?.length) {
     const costs = await Promise.all(

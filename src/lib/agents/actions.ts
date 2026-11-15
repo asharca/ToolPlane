@@ -81,6 +81,7 @@ import { db } from "@/lib/db";
 import { McpPinningError } from "@/lib/process/mcp-pinning";
 import { deleteManagedAgent } from "@/lib/agents/deletion";
 import {
+  AgentAdvisorSchema,
   AgentEnvironmentSnapshotSchema,
   OptionalBuiltinToolsSchema,
 } from "./revision-types";
@@ -193,6 +194,17 @@ function agentMaxSteps(formData: FormData): number {
         Math.max(AGENT_STEP_BOUNDS.min, Math.trunc(value)),
       )
     : AGENT_STEP_BOUNDS.default;
+}
+
+function agentAdvisor(formData: FormData) {
+  const value = formData.get("advisor");
+  if (value === null) return undefined;
+  if (value === "" || value === "null") return null;
+  try {
+    return AgentAdvisorSchema.parse(JSON.parse(String(value)));
+  } catch {
+    throw new AgentConfigurationError("AGENT_ADVISOR_INVALID");
+  }
 }
 
 function agentReasoningEffort(formData: FormData) {
@@ -773,6 +785,7 @@ export async function createAgentAction(
             )
           : undefined,
         secretObfuscation: agentSecretObfuscation(formData),
+        advisor: agentAdvisor(formData),
         piPackages: piPackagesFromForm(formData),
       },
       {
@@ -1023,6 +1036,7 @@ export async function updateAgentAction(
             )
           : undefined,
         secretObfuscation: agentSecretObfuscation(formData),
+        advisor: agentAdvisor(formData),
         piPackages: piPackagesFromForm(formData),
       });
       await setAgentTools(ctx.ws.id, agentId, {

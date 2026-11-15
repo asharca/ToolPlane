@@ -625,6 +625,7 @@ model Agent {
   streamRules             Json?
   toolApproval            Json?
   secretObfuscation       Boolean                  @default(true)
+  advisor                 Json?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
   servers                 AgentServer[]

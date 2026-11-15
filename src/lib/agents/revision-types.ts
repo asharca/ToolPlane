@@ -160,6 +160,16 @@ export const NativeSubagentPolicySchema = z
   })
   .strict();
 
+export const AgentAdvisorSchema = z
+  .object({
+    providerId: reference,
+    model: reference,
+    cadence: z.enum(["each_tool_batch", "final"]),
+    minSeverity: z.enum(["info", "warning", "critical"]),
+  })
+  .strict();
+export type AgentAdvisor = z.infer<typeof AgentAdvisorSchema>;
+
 // Resource identifiers and credential references only. Runtime materialization
 // resolves live grants and secrets separately; it must never persist their values.
 const PiRevisionConfigSchema = z
@@ -182,8 +192,9 @@ const PiRevisionConfigSchema = z
     reasoningEffort: z.enum(REASONING_LEVELS).optional(),
     streamRules: StreamRulesSchema.optional(),
     toolApproval: ToolApprovalPolicySchema.optional(),
-    // No default: historical revision JSON and checksums remain unchanged.
+    // No defaults: historical revision JSON and checksums remain unchanged.
     secretObfuscation: z.boolean().optional(),
+    advisor: AgentAdvisorSchema.optional(),
     maxSteps: z
       .number()
       .int()
@@ -287,6 +298,17 @@ export const AgentRevisionConfigSchema = z
           message: "AGENT_ROLE_MODELS_INVALID",
           path: ["roleModels", role, "providerId"],
         });
+    }
+    if (
+      config.advisor &&
+      config.advisor.providerId !== config.providerId &&
+      !config.modelProviderIds.includes(config.advisor.providerId)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["advisor", "providerId"],
+        message: "Advisor provider must belong to this revision.",
+      });
     }
     // "native" enables OMP's in-sandbox task tool alongside any platform delegation.
     if (config.subagentMode !== "native") return;

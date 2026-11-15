@@ -199,6 +199,101 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
       submitAgentEntry({ ...input, messageId: randomUUID() }, () => {}),
     ).rejects.toThrow("AGENT_BUDGET_EXCEEDED");
   });
+  it("includes advisor tokens in Agent totals and prices each model independently", async () => {
+    const { agent, conversation } = await fixture();
+    const reviewer = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Review ${randomUUID()}`,
+        format: "openai",
+        baseUrl: "https://review.test.invalid",
+        apiKey: "fixture",
+        models: ["review"],
+      },
+    });
+    await db.providerModel.upsert({
+      where: { providerId_modelId: { providerId, modelId: "original" } },
+      create: {
+        providerId,
+        modelId: "original",
+        name: "Primary",
+        cost: { input: 1, output: 2 },
+      },
+      update: { cost: { input: 1, output: 2 } },
+    });
+    await db.providerModel.create({
+      data: {
+        providerId: reviewer.id,
+        modelId: "review",
+        name: "Reviewer",
+        cost: { input: 10, output: 20 },
+      },
+    });
+    const admitted = await submitAgentEntry(
+      {
+        kind: "chat",
+        sourceId: conversation.id,
+        workspaceId,
+        agentId: agent.id,
+        actorId: userId,
+        messageId: randomUUID(),
+        text: "review accounting",
+      },
+      () => {},
+    );
+    const claimed = await claimTask(admitted.row.id);
+    if (!claimed?.leaseToken) throw new Error("Missing task lease");
+    await finishTask(
+      claimed.id,
+      claimed.leaseToken,
+      TaskState.TASK_STATE_FAILED,
+      "PI_SDK_MODEL_FAILED",
+    );
+    const metering = {
+      providerId,
+      model: "original",
+      usage: {
+        inputTokens: 150,
+        outputTokens: 15,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        modelUsage: [
+          {
+            providerId,
+            model: "original",
+            inputTokens: 100,
+            outputTokens: 10,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
+          {
+            providerId: reviewer.id,
+            model: "review",
+            inputTokens: 50,
+            outputTokens: 5,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
+        ],
+      },
+    };
+    await recordAgentTaskUsage(claimed, metering);
+    await recordAgentTaskUsage(claimed, metering);
+    expect(await db.agentUsage.count({ where: { taskId: claimed.id } })).toBe(
+      1,
+    );
+    expect(
+      await db.agentUsage.findUniqueOrThrow({ where: { taskId: claimed.id } }),
+    ).toMatchObject({
+      inputTokens: 150,
+      outputTokens: 15,
+      costMicros: BigInt(720),
+      succeeded: false,
+    });
+  });
+
+
+
 
   it.each([120_000, 220_000])(
     "warns once without failing the turn and reconciles terminal usage to %i input tokens",

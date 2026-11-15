@@ -295,6 +295,7 @@ export function workContentParts(
       };
     if (part.type === "hook-activity" || part.type === "data-hook-activity")
       return { type: "data-hook-activity", data: part.data };
+    if (part.type === "data-advisor-suggestions") return part;
     if (reasoning)
       return { ...part, state: status === "running" ? "streaming" : "done" };
     if (part.type === "work-tool" || part.type === "tool")

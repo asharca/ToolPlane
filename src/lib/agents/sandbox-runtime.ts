@@ -92,6 +92,14 @@ import {
   type QueueControl,
   type QueueResult,
 } from "./execution/message-queue";
+import { AgentRevisionConfigSchema } from "./revision-types";
+import {
+  AdvisorSuggestionsSchema,
+  ADVISOR_SUGGESTIONS_PART,
+  type AdvisorSuggestions,
+} from "./advisor";
+import { runtimeModelProxyBase } from "./runtime-access";
+import { recordEvent } from "@/lib/observability/events";
 
 export const PI_SDK_RUNTIME = {
   specs: [
@@ -221,6 +229,7 @@ export type RunSandboxAgentTurnOptions = {
   onContextUsage?: (usage: ContextUsageSnapshot) => void | Promise<void>;
   onCommands?: (commands: RuntimeCommand[]) => void | Promise<void>;
   onUsage?: (usage: RuntimeUsage) => void | Promise<void>;
+  onAdvisorSuggestions?: (advisory: AdvisorSuggestions) => void | Promise<void>;
   onPromptInvocation?: (
     invocation: AgentPromptInvocation,
   ) => void | Promise<void>;
@@ -2402,6 +2411,7 @@ async function runNativeSessionExec(
     mcpConfig: unknown;
     hostSourceChecksum: string;
     model: unknown;
+    advisor?: unknown;
   },
   preparation: SandboxTurnPreparation,
 ) {
@@ -2511,6 +2521,7 @@ async function runNativeSessionExec(
         ),
         mcpConfig: sdk.mcpConfig,
         model: sdk.model,
+        advisor: sdk.advisor,
         fallbackModels,
         roleModels: compactionModel
           ? { compaction: compactionModel }
@@ -2840,6 +2851,7 @@ async function runPiSdk(
       `${privateRoot}/pi-sdk-native-resources.mjs`,
       "pi-sdk-native-resources.mjs",
     ],
+    [`${privateRoot}/pi-sdk-advisor.mjs`, "pi-sdk-advisor.mjs"],
     // Imported relative to pi-mcp.mjs by mcp_result_to_file.
     [`${privateRoot}/a2a-sandbox-files.mjs`, "a2a-sandbox-files.mjs"],
   ]) {
@@ -2889,6 +2901,124 @@ async function runPiSdk(
     api: models.api,
     baseUrl: models.baseUrl,
     contextWindow: options.contextWindow,
+  };
+  let advisor:
+    | {
+        providerId: string;
+        cadence: "each_tool_batch" | "final";
+        minSeverity: "info" | "warning" | "critical";
+        model: Record<string, unknown>;
+      }
+    | undefined;
+  if (options.agentRevisionId) {
+    try {
+      const revision = await db.agentRevision.findFirst({
+        where: {
+          id: options.agentRevisionId,
+          agentId: options.agentId,
+          agent: { workspaceId: options.workspaceId },
+        },
+        select: { config: true },
+      });
+      const selected =
+        revision && AgentRevisionConfigSchema.parse(revision.config).advisor;
+      if (selected) {
+        const provider = await db.modelProvider.findFirst({
+          where: {
+            id: selected.providerId,
+            workspaceId: options.workspaceId,
+          },
+          include: { modelRecords: { where: { modelId: selected.model } } },
+        });
+        if (
+          !provider?.apiKey.trim() ||
+          !provider.models.includes(selected.model)
+        )
+          throw new Error("ADVISOR_MODEL_UNAVAILABLE");
+        const modelConfig = JSON.parse(
+          buildPiModelsConfig({
+            provider,
+            modelId: selected.model,
+            modelProxyBase: runtimeModelProxyBase(provider.id),
+          }),
+        ).providers.toolplane;
+        advisor = {
+          ...selected,
+          model: {
+            ...modelConfig.models[0],
+            id: selected.model,
+            toolplaneProviderId: selected.providerId,
+            reasoning: modelReasoningSupported(
+              provider,
+              selected.model,
+              provider.modelRecords[0],
+            ),
+            provider: "toolplane-advisor",
+            api: modelConfig.api,
+            baseUrl: modelConfig.baseUrl,
+          },
+        };
+      }
+    } catch {
+      void recordEvent({
+        domain: "agent",
+        eventName: "agent.advisor.failed",
+        outcome: "error",
+        agentId: options.agentId,
+        errorCode: "ADVISOR_MODEL_UNAVAILABLE",
+      });
+    }
+  }
+  const reportedAdvisories = new Set<string>();
+  const reportAdvisor = async (value: unknown) => {
+    const parsed = AdvisorSuggestionsSchema.safeParse(value);
+    if (
+      !advisor ||
+      !parsed.success ||
+      reportedAdvisories.has(parsed.data.id) ||
+      parsed.data.providerId !== advisor.providerId ||
+      parsed.data.model !== advisor.model.id ||
+      parsed.data.cadence !== advisor.cadence
+    )
+      return;
+    reportedAdvisories.add(parsed.data.id);
+    const advisory = {
+      ...parsed.data,
+      suggestions: parsed.data.suggestions.map((note) => ({
+        ...note,
+        message: redact(note.message, [options.runtimeAccessToken]),
+      })),
+    };
+    try {
+      if (options.conversationId) {
+        const conversation = await db.conversation.findFirst({
+          where: {
+            id: options.conversationId,
+            agentId: options.agentId,
+            agent: { workspaceId: options.workspaceId },
+          },
+          select: { id: true },
+        });
+        if (conversation)
+          await db.message.create({
+            data: {
+              conversationId: conversation.id,
+              role: "assistant",
+              textCharacters: 0,
+              parts: [{ type: ADVISOR_SUGGESTIONS_PART, data: advisory }],
+            },
+          });
+      }
+      await options.onAdvisorSuggestions?.(advisory);
+    } catch {
+      void recordEvent({
+        domain: "agent",
+        eventName: "agent.advisor.failed",
+        outcome: "error",
+        agentId: options.agentId,
+        errorCode: "ADVISOR_PERSIST_FAILED",
+      });
+    }
   };
   const excludeTools = normalizeDisabledBuiltinTools(
     "pi-sdk",
@@ -2961,6 +3091,27 @@ async function runPiSdk(
       streamed = "";
       return;
     }
+    if (event.type === "advisor_suggestions") {
+      await reportAdvisor(event.advisory);
+      return;
+    }
+    if (event.type === "advisor_error") {
+      void recordEvent({
+        domain: "agent",
+        eventName: "agent.advisor.failed",
+        outcome: "error",
+        agentId: options.agentId,
+        errorCode: `ADVISOR_${
+          /^(TIMEOUT|OUTPUT_TRUNCATED|INVALID_OUTPUT|HTTP_[1-5]\d\d|UNREACHABLE|EMPTY_STREAM|STREAM_INCOMPLETE|CONTENT_FILTER|PROVIDER_ERROR)$/.test(
+            String(event.reason),
+          )
+            ? event.reason
+            : "PROVIDER_ERROR"
+        }`,
+        attributes: { durationMs: event.durationMs },
+      });
+      return;
+    }
     if (event.type === "toolplane_mcp_unavailable") {
       const server = mcpServers.find(
         (item) => item.deploymentId === event.deploymentId,
@@ -2998,6 +3149,8 @@ async function runPiSdk(
         typeof entries.leafEntryId === "string"
       )
         await options.onSessionEntries?.(entries);
+      for (const advisory of event.result?.advisories ?? [])
+        await reportAdvisor(advisory);
       if (!event.success) {
         const failure = parseRuntimeFailure(
           `${String(event.error?.code ?? "")}: ${String(event.error?.reason ?? "")}`,
@@ -3088,6 +3241,7 @@ async function runPiSdk(
         ),
       ),
       model: sessionModel,
+      advisor,
     },
     {
       files: hostFiles,

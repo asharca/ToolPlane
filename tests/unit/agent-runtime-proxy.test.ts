@@ -183,6 +183,40 @@ describe("pinned Agent runtime proxy authorization", () => {
     expect(mocks.provider).not.toHaveBeenCalled();
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
+  it("allows only the pinned advisor provider/model pair through the same runtime gateway", async () => {
+    mocks.revision.mockResolvedValue({
+      ...pin,
+      config: {
+        ...pin.config,
+        modelProviderIds: ["advisor-provider"],
+        advisor: {
+          providerId: "advisor-provider",
+          model: "role-model",
+          cadence: "final",
+          minSeverity: "warning",
+        },
+      },
+    });
+    const call = (body: unknown, providerId = "advisor-provider") =>
+      request(`model/${providerId}/chat/completions`, body).then((req) =>
+        proxyModel(req, {
+          params: Promise.resolve({
+            providerId,
+            path: ["chat", "completions"],
+          }),
+        }),
+      );
+    const allowed = await call({ model: "role-model", messages: [] });
+    expect(allowed.status).toBe(200);
+    await allowed.text();
+    expect((await call({ model: "child-model" })).status).toBe(403);
+    expect((await call({})).status).toBe(403);
+    expect(
+      (await call({ model: "role-model" }, "unlisted-provider")).status,
+    ).toBe(403);
+    mocks.provider.mockResolvedValue(null);
+    expect((await call({ model: "role-model" })).status).toBe(404);
+  });
   it("uses the persisted revision and session mapping and strips caller credentials", async () => {
     const response = await model();
     expect(response.status).toBe(200);

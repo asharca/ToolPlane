@@ -18,6 +18,7 @@ import {
   AgentEnvironmentSnapshotSchema,
   AgentA2APolicySchema,
   AgentSkillSnapshotSchema,
+  AgentAdvisorSchema,
 } from "./revision-types";
 import type {
   AgentRevisionConfig,
@@ -255,6 +256,30 @@ export async function captureAgentRevisionConfig(
   if (!frozenEnvironment)
     throw new AgentRevisionError("AGENT_ENVIRONMENT_REQUIRED");
   const packages = resolveAgentPiPackages(agent);
+  const advisor = agent.advisor
+    ? AgentAdvisorSchema.parse(agent.advisor)
+    : undefined;
+  let modelProviderIds = prior?.modelProviderIds ?? [];
+  // Replacing or disabling the advisor must not retain its exclusive grant.
+  // Shared fallback/role providers keep their existing authorization.
+  const previousAdvisorProviderId = prior?.advisor?.providerId;
+  if (
+    previousAdvisorProviderId &&
+    previousAdvisorProviderId !== advisor?.providerId &&
+    previousAdvisorProviderId !== agent.providerId &&
+    !prior?.fallbackModels?.some(
+      (target) => target.providerId === previousAdvisorProviderId,
+    ) &&
+    !Object.values(prior?.roleModels ?? {}).some(
+      (target) => target?.providerId === previousAdvisorProviderId,
+    )
+  ) {
+    modelProviderIds = modelProviderIds.filter(
+      (id) => id !== previousAdvisorProviderId,
+    );
+  }
+  if (advisor && !modelProviderIds.includes(advisor.providerId))
+    modelProviderIds = [...modelProviderIds, advisor.providerId];
   return AgentRevisionConfigSchema.parse({
     schemaVersion: 1,
     runtimeKind: agent.runtimeKind,
@@ -262,13 +287,14 @@ export async function captureAgentRevisionConfig(
     contextFiles: agent.contextFiles,
     providerId: agent.providerId,
     model: agent.model,
-    modelProviderIds: prior?.modelProviderIds ?? [],
+    modelProviderIds,
     ...(prior?.fallbackModels !== undefined
       ? { fallbackModels: prior.fallbackModels }
       : {}),
     ...(prior?.roleModels !== undefined
       ? { roleModels: prior.roleModels }
       : {}),
+    ...(advisor ? { advisor } : {}),
     maxSteps: agent.maxSteps,
     ...(agent.reasoningEffort != null
       ? { reasoningEffort: agent.reasoningEffort }
@@ -384,6 +410,9 @@ async function validateRevisionAuthorization(
   const selectedProviders = new Set([
     agent.providerId,
     ...targets.map((target) => target.providerId),
+    ...(agent.advisor
+      ? [AgentAdvisorSchema.parse(agent.advisor).providerId]
+      : []),
   ]);
   if (config.modelProviderIds.some((id) => !selectedProviders.has(id)))
     throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
@@ -409,6 +438,19 @@ async function validateRevisionAuthorization(
     } catch {
       throw new AgentRevisionError("AGENT_MODEL_UNAVAILABLE");
     }
+  }
+  if (config.advisor) {
+    const provider = await tx.modelProvider.findFirst({
+      where: {
+        id: config.advisor.providerId,
+        workspaceId,
+      },
+    });
+    if (
+      !provider?.apiKey.trim() ||
+      !provider.models.includes(config.advisor.model)
+    )
+      throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
   }
   const skills = new Set(agent.skills.map((entry) => entry.installedSkillId));
   const knowledge = new Set(
@@ -1074,6 +1116,7 @@ export async function resolvePinnedAgent<
       reasoningEffort: config.reasoningEffort ?? null,
       toolApproval: config.toolApproval ?? { mode: "off" },
       secretObfuscation: config.secretObfuscation ?? false,
+      advisor: config.advisor,
       disabledBuiltinTools: [
         ...new Set([
           ...config.disabledBuiltinTools,

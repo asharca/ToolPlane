@@ -35,6 +35,7 @@ import {
 import { recordedToolSchema } from "./schemas";
 import { getConsoleTaskTree } from "@/lib/a2a/console-tasks";
 import { isLocalGrant, type TaskGrant } from "@/lib/a2a/principal";
+import { ADVISOR_SUGGESTIONS_PART } from "@/lib/agents/advisor";
 const id = z.string().min(1).max(240);
 const scopeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("agent") }).strict(),
@@ -495,6 +496,18 @@ export async function handleMessageFeedback(
       },
     });
     if (!message) throw new EvolutionError("NOT_FOUND");
+    if (
+      Array.isArray(message.parts) &&
+      message.parts.length > 0 &&
+      message.parts.every(
+        (part) =>
+          part &&
+          typeof part === "object" &&
+          !Array.isArray(part) &&
+          part.type === ADVISOR_SUGGESTIONS_PART,
+      )
+    )
+      throw new EvolutionError("NOT_FOUND");
     if (!canReview) {
       const ownWork = await db.workSession.findFirst({
         where: {

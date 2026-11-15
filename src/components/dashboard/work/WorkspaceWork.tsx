@@ -112,6 +112,10 @@ import {
 } from "@/lib/agents/stream-rules";
 import { HookActivitySchema } from "../agents/HookActivity";
 import {
+  ADVISOR_SUGGESTIONS_PART,
+  AdvisorSuggestionsSchema,
+} from "@/lib/agents/advisor";
+import {
   MessageBubble,
   MessageBubbleContent,
   MessageFooter,
@@ -855,6 +859,14 @@ function WorkTranscript({
   const lastTurnMessage = messages.findLast(
     (message) =>
       !isConversationControl(message) &&
+      !(
+        message.parts.some((part) => part.type === ADVISOR_SUGGESTIONS_PART) &&
+        message.parts.every(
+          (part) =>
+            part.type === ADVISOR_SUGGESTIONS_PART ||
+            (part.type === "text" && !part.text),
+        )
+      ) &&
       (message.role === "user" || message.role === "assistant"),
   );
   const treeActionBlocked =
@@ -996,6 +1008,20 @@ function WorkTranscript({
           if (messageCompaction(message))
             return <CompactionNote key={message.id} message={message} />;
           const isStreamingMessage = message.id === "work-stream";
+          const advisorPart = message.parts.find(
+            (part) => part.type === ADVISOR_SUGGESTIONS_PART,
+          );
+          const advisorResult = AdvisorSuggestionsSchema.safeParse(
+            advisorPart?.data,
+          );
+          const advisory = advisorResult.success ? advisorResult.data : null;
+          const advisorOnly =
+            advisorPart !== undefined &&
+            message.parts.every(
+              (part) =>
+                part.type === ADVISOR_SUGGESTIONS_PART ||
+                (part.type === "text" && !part.text),
+            );
           const actionVisibility =
             messageIndex === transcript.length - 1
               ? ""
@@ -1006,6 +1032,7 @@ function WorkTranscript({
           const sessionEnd = Date.parse(sessionCompletedAt ?? "");
           const fallbackTiming: WorkTiming | null =
             !persistedTiming &&
+            !advisorOnly &&
             !isStreamingMessage &&
             message.role === "assistant" &&
             messages.filter((item) => item.role === "assistant").length === 1 &&
@@ -1030,6 +1057,7 @@ function WorkTranscript({
               ? turnModelData.model
               : null;
           const messageModelName =
+            advisory?.model ??
             turnModel ??
             messageTiming?.modelName ??
             resolveContextUsage([message])?.modelName ??
@@ -1294,7 +1322,9 @@ function WorkTranscript({
                   live={isStreamingMessage}
                 />
               ) : null}
-              {message.role === "assistant" && !isStreamingMessage ? (
+              {message.role === "assistant" &&
+              !isStreamingMessage &&
+              !advisorOnly ? (
                 <MessageFooter className={`gap-0.5 ${actionVisibility}`}>
                   {text ? (
                     <CopyButton

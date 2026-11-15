@@ -39,6 +39,7 @@ export function hasNativeConversationHistory(
         return part.status !== "failed" && part.status !== "cancelled";
       return (
         part.type !== "data-agent-turn-model" &&
+        part.type !== "data-advisor-suggestions" &&
         part.type !== "data-work-timing"
       );
     });

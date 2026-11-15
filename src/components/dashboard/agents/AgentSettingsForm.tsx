@@ -172,6 +172,7 @@ type Props = {
   reasoningEffort: ReasoningLevel | null;
   toolApproval?: ToolApprovalPolicy;
   secretObfuscation: boolean;
+  advisor?: AgentRevisionConfig["advisor"] | null;
   maxSteps: number;
   providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
@@ -267,6 +268,7 @@ export function AgentSettingsForm(props: Props) {
   const [secretObfuscation, setSecretObfuscation] = useState(
     props.secretObfuscation,
   );
+  const [advisor, setAdvisor] = useState(props.advisor ?? null);
   const [steps, setSteps] = useState(String(props.maxSteps));
   const [disabledTools, setDisabledTools] = useState(
     new Set(props.disabledBuiltinTools ?? []),
@@ -379,6 +381,7 @@ export function AgentSettingsForm(props: Props) {
       JSON.stringify(toolApproval) !==
       JSON.stringify(props.toolApproval ?? { mode: "off" }),
     secretObfuscation: secretObfuscation !== props.secretObfuscation,
+    advisor: JSON.stringify(advisor) !== JSON.stringify(props.advisor ?? null),
     mcp: !sameSet(deploymentIds, selected(deployments)),
     skills: !sameSet(skillIds, selected(skills)),
     sandboxes:
@@ -409,7 +412,8 @@ export function AgentSettingsForm(props: Props) {
     fieldDirty.description ||
     fieldDirty.model ||
     fieldDirty.reasoningEffort ||
-    fieldDirty.secretObfuscation
+    fieldDirty.secretObfuscation ||
+    fieldDirty.advisor
       ? ["general" as const]
       : []),
     ...(
@@ -600,7 +604,13 @@ export function AgentSettingsForm(props: Props) {
       await streamRules.save();
       const result = await updateAgentAction({}, data);
       if (result.error)
-        throw new Error(t.has(result.error) ? t(result.error) : result.error);
+        throw new Error(
+          result.error === "AGENT_ADVISOR_INVALID"
+            ? t("advisorInvalid")
+            : t.has(result.error)
+              ? t(result.error)
+              : result.error,
+        );
       if (subagentsDirty && subagentDraft) {
         const response = await fetch(
           `/api/v1/agents/${encodeURIComponent(agentId)}/subagents`,
@@ -796,6 +806,11 @@ export function AgentSettingsForm(props: Props) {
                 type="hidden"
                 name="toolApproval"
                 value={JSON.stringify(toolApproval)}
+              />
+              <input
+                type="hidden"
+                name="advisor"
+                value={JSON.stringify(advisor)}
               />
               <input
                 type="hidden"
@@ -1082,6 +1097,120 @@ export function AgentSettingsForm(props: Props) {
                       {t("secretObfuscationDescription")}
                     </p>
                   </DialogField>
+                  <DialogField label={t("advisor")} dirty={fieldDirty.advisor}>
+                    <Switch
+                      checked={advisor !== null}
+                      disabled={pending}
+                      label={t("advisorEnabled")}
+                      onCheckedChange={(enabled) => {
+                        setAdvisor(
+                          enabled
+                            ? {
+                                providerId: provider,
+                                model,
+                                cadence: "final",
+                                minSeverity: "warning",
+                              }
+                            : null,
+                        );
+                        changed();
+                      }}
+                    />
+                  </DialogField>
+                  {advisor ? (
+                    <div className="space-y-5">
+                      <DialogField label={t("advisorModel")}>
+                        <ModelPicker
+                          className="flex w-full"
+                          pending={pending}
+                          providers={providers.filter((item) =>
+                            agentRuntimeSupportsProviderFormat(
+                              runtimeKind,
+                              item.format,
+                            ),
+                          )}
+                          value={
+                            advisor.providerId && advisor.model ? advisor : null
+                          }
+                          onSelect={(selection) => {
+                            setAdvisor({ ...advisor, ...selection });
+                            changed();
+                          }}
+                          onConfigure={() =>
+                            window.location.assign(
+                              `/app/${encodeURIComponent(slug)}/providers`,
+                            )
+                          }
+                          trigger={
+                            <ModelPickerTrigger
+                              label={advisor.model || t("selectModel")}
+                              placeholder={!advisor.model}
+                              provider={
+                                providers.find(
+                                  (item) => item.id === advisor.providerId,
+                                )?.name
+                              }
+                              aria-label={t("advisorModel")}
+                              disabled={pending}
+                            />
+                          }
+                        />
+                      </DialogField>
+                      <DialogField
+                        label={t("advisorCadence")}
+                        htmlFor={`${formId}-advisor-cadence`}
+                      >
+                        <FormSelect
+                          id={`${formId}-advisor-cadence`}
+                          label={t("advisorCadence")}
+                          value={advisor.cadence}
+                          disabled={pending}
+                          options={[
+                            {
+                              value: "each_tool_batch",
+                              label: t("advisorEachToolBatch"),
+                            },
+                            { value: "final", label: t("advisorFinal") },
+                          ]}
+                          onValueChange={(value) => {
+                            if (
+                              value !== "each_tool_batch" &&
+                              value !== "final"
+                            )
+                              return;
+                            setAdvisor({ ...advisor, cadence: value });
+                            changed();
+                          }}
+                        />
+                      </DialogField>
+                      <DialogField
+                        label={t("advisorMinSeverity")}
+                        htmlFor={`${formId}-advisor-severity`}
+                      >
+                        <FormSelect
+                          id={`${formId}-advisor-severity`}
+                          label={t("advisorMinSeverity")}
+                          value={advisor.minSeverity}
+                          disabled={pending}
+                          options={[
+                            { value: "info", label: t("advisorInfo") },
+                            { value: "warning", label: t("advisorWarning") },
+                            { value: "critical", label: t("advisorCritical") },
+                          ]}
+                          onValueChange={(value) => {
+                            if (
+                              value !== "info" &&
+                              value !== "warning" &&
+                              value !== "critical"
+                            )
+                              return;
+                            setAdvisor({ ...advisor, minSeverity: value });
+                            changed();
+                          }}
+                        />
+                      </DialogField>
+                    </div>
+                  ) : null}
                 </section>
                 <section
                   hidden={active !== "instructions"}
