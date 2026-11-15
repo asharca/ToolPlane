@@ -106,6 +106,7 @@ export const AGENT_OPTIONAL_BUILTIN_TOOLS: readonly AgentOptionalBuiltinTool[] =
     { name: "memory_retain", category: "context", implementation: "platform" },
     { name: "memory_recall", category: "context", implementation: "platform" },
     { name: "memory_forget", category: "context", implementation: "platform" },
+    { name: "eval", category: "shell", implementation: "sandbox-extension" },
   ];
 
 export function agentOptionalBuiltinTools(value: unknown) {
