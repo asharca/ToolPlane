@@ -292,9 +292,6 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
     });
   });
 
-
-
-
   it.each([120_000, 220_000])(
     "warns once without failing the turn and reconciles terminal usage to %i input tokens",
     async (finalInput) => {

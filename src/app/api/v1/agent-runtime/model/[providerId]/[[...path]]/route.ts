@@ -102,7 +102,6 @@ async function proxyProviderRequest(
     );
   }
 
-
   const hasBody = req.method !== "GET" && req.method !== "HEAD";
   let model: string | undefined;
   let stream = false;

@@ -878,7 +878,9 @@ export function AgentConversation({
   );
   const { displayMessages, sourceMessagesById } = useMemo(() => {
     const sources = new Map<string, AgentUIMessage>();
-    const existingIds = new Set(transcriptMessages.map((message) => message.id));
+    const existingIds = new Set(
+      transcriptMessages.map((message) => message.id),
+    );
     // Persisted advisor records arrive via Work refresh, independently of the main stream.
     const advisories = initialMessages.filter(
       (message) =>

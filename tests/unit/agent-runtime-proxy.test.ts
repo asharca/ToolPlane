@@ -183,40 +183,53 @@ describe("pinned Agent runtime proxy authorization", () => {
     expect(mocks.provider).not.toHaveBeenCalled();
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
-  it("allows only the pinned advisor provider/model pair through the same runtime gateway", async () => {
-    mocks.revision.mockResolvedValue({
-      ...pin,
-      config: {
-        ...pin.config,
-        modelProviderIds: ["advisor-provider"],
-        advisor: {
-          providerId: "advisor-provider",
-          model: "role-model",
-          cadence: "final",
-          minSeverity: "warning",
+  it.each(["advisor-provider", "provider-1"])(
+    "allows only the pinned advisor pair on %s through the same runtime gateway",
+    async (advisorProviderId) => {
+      mocks.revision.mockResolvedValue({
+        ...pin,
+        config: {
+          ...pin.config,
+          modelProviderIds:
+            advisorProviderId === "provider-1" ? [] : [advisorProviderId],
+          advisor: {
+            providerId: advisorProviderId,
+            model: "role-model",
+            cadence: "final",
+            minSeverity: "warning",
+          },
         },
-      },
-    });
-    const call = (body: unknown, providerId = "advisor-provider") =>
-      request(`model/${providerId}/chat/completions`, body).then((req) =>
-        proxyModel(req, {
-          params: Promise.resolve({
-            providerId,
-            path: ["chat", "completions"],
+      });
+      mocks.grantProvider.mockResolvedValue({
+        id: advisorProviderId,
+        apiKey: "real-provider-key",
+        format: "openai",
+        models: ["role-model"],
+      });
+      mocks.lockProvider.mockResolvedValue([
+        { id: advisorProviderId, format: "openai", models: ["role-model"] },
+      ]);
+      const call = (body: unknown, providerId = advisorProviderId) =>
+        request(`model/${providerId}/chat/completions`, body).then((req) =>
+          proxyModel(req, {
+            params: Promise.resolve({
+              providerId,
+              path: ["chat", "completions"],
+            }),
           }),
-        }),
-      );
-    const allowed = await call({ model: "role-model", messages: [] });
-    expect(allowed.status).toBe(200);
-    await allowed.text();
-    expect((await call({ model: "child-model" })).status).toBe(403);
-    expect((await call({})).status).toBe(403);
-    expect(
-      (await call({ model: "role-model" }, "unlisted-provider")).status,
-    ).toBe(403);
-    mocks.provider.mockResolvedValue(null);
-    expect((await call({ model: "role-model" })).status).toBe(404);
-  });
+        );
+      const allowed = await call({ model: "role-model", messages: [] });
+      expect(allowed.status).toBe(200);
+      await allowed.text();
+      expect((await call({ model: "child-model" })).status).toBe(403);
+      expect((await call({})).status).toBe(403);
+      expect(
+        (await call({ model: "role-model" }, "unlisted-provider")).status,
+      ).toBe(403);
+      mocks.provider.mockResolvedValue(null);
+      expect((await call({ model: "role-model" })).status).toBe(404);
+    },
+  );
   it("uses the persisted revision and session mapping and strips caller credentials", async () => {
     const response = await model();
     expect(response.status).toBe(200);
@@ -288,6 +301,8 @@ describe("pinned Agent runtime proxy authorization", () => {
     { kind: "next", providerId: "provider-1", model: "selected-model" },
     { kind: "native", providerId: "provider-backup", model: "backup-model" },
     { kind: "next", providerId: "provider-backup", model: "backup-model" },
+    { kind: "native", providerId: "provider-advisor", model: "review-model" },
+    { kind: "next", providerId: "provider-advisor", model: "review-model" },
   ])(
     "scrubs a real upstream request and restores only response tool arguments ($kind, $providerId)",
     async ({ kind, providerId, model }) => {
@@ -342,10 +357,16 @@ describe("pinned Agent runtime proxy authorization", () => {
           config: {
             ...pin.config,
             secretObfuscation: true,
-            modelProviderIds: ["provider-backup"],
+            modelProviderIds: ["provider-backup", "provider-advisor"],
             fallbackModels: [
               { providerId: "provider-backup", model: "backup-model" },
             ],
+            advisor: {
+              providerId: "provider-advisor",
+              model: "review-model",
+              cadence: "final",
+              minSeverity: "warning",
+            },
           },
         });
         mocks.grantProvider.mockResolvedValue({

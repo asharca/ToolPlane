@@ -12,7 +12,6 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 import { expect, it, vi } from "vitest";
 import { stopNativeSessionHosts } from "../../scripts/native-runtime-stop.mjs";
-import { createServer as createHttpServer } from "node:http";
 import {
   createAdvisor,
   ADVISOR_REVIEW_TIMEOUT_MS,
@@ -242,6 +241,7 @@ it.each([
       );
       const model = {
         id: "primary",
+        toolplaneProviderId: "primary-provider",
         name: "Primary",
         provider: "toolplane",
         api: "openai-completions",
@@ -304,6 +304,7 @@ it.each([
               model: {
                 ...model,
                 id: "reviewer",
+                toolplaneProviderId: "review-provider",
                 provider: "toolplane-advisor",
                 reasoning: true,
               },
@@ -333,6 +334,18 @@ it.each([
         (event) => event.type === "toolplane_sdk_response",
       );
       expect(result.success).toBe(true);
+      expect(result.result.usage.modelUsage).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            providerId: "primary-provider",
+            model: "primary",
+          }),
+          expect.objectContaining({
+            providerId: "review-provider",
+            model: "reviewer",
+          }),
+        ]),
+      );
       expect(
         requests.filter((request) => request.model === "reviewer"),
       ).toHaveLength(1);

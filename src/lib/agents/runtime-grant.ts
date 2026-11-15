@@ -211,7 +211,6 @@ export async function resolveAgentRuntimeGrant(
         };
         const targets = [
           ...(revision.config.fallbackModels ?? []),
-          ...(revision.config.advisor ? [revision.config.advisor] : []),
           ...Object.values(revision.config.roleModels ?? {}).filter(
             (target) => target !== undefined,
           ),
@@ -219,6 +218,9 @@ export async function resolveAgentRuntimeGrant(
         const isPrimary =
           modelTarget.providerId === primary.providerId &&
           modelTarget.model === primary.model;
+        const isAdvisor =
+          modelTarget.providerId === revision.config.advisor?.providerId &&
+          modelTarget.model === revision.config.advisor?.model;
         const isSelected =
           revision.config.modelProviderIds.includes(modelTarget.providerId) &&
           targets.some(
@@ -226,7 +228,7 @@ export async function resolveAgentRuntimeGrant(
               target.providerId === modelTarget.providerId &&
               target.model === modelTarget.model,
           );
-        if (!isPrimary && !isSelected) return null;
+        if (!isPrimary && !isSelected && !isAdvisor) return null;
         if (!isPrimary)
           await resolveAgentModelOverride(
             token.workspaceId,

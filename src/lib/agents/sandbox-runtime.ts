@@ -92,13 +92,11 @@ import {
   type QueueControl,
   type QueueResult,
 } from "./execution/message-queue";
-import { AgentRevisionConfigSchema } from "./revision-types";
 import {
   AdvisorSuggestionsSchema,
   ADVISOR_SUGGESTIONS_PART,
   type AdvisorSuggestions,
 } from "./advisor";
-import { runtimeModelProxyBase } from "./runtime-access";
 import { recordEvent } from "@/lib/observability/events";
 
 export const PI_SDK_RUNTIME = {
