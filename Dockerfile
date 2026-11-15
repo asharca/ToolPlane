@@ -41,6 +41,12 @@ RUN set -eux; \
 RUN node -e "require('node:fs').writeFileSync('package.json', JSON.stringify({name:'pi-sdk',private:true,pnpm:{overrides:{semver:'7.8.5',undici:'8.12.3'}}}))" \
     && pnpm add --prod --ignore-scripts --save-exact --config.auto-install-peers=false @earendil-works/pi-coding-agent@1.5.2 \
     && node --input-type=module -e "import {createRequire} from 'node:module'; import {realpathSync} from 'node:fs'; const r=createRequire(realpathSync('/opt/pi-sdk/node_modules/@earendil-works/pi-coding-agent/dist/index.js')); if(r('semver/package.json').version!=='7.8.5'||r('undici/package.json').version!=='8.12.3')process.exit(1)"
+# Distribute debugpy separately from the immutable SDK archive. No sandbox
+# network is required, and existing SDK installations are not replaced.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3-pip \
+    && python3 -m pip install --no-cache-dir --no-compile --no-deps --target /opt/toolplane-tools/debugpy debugpy==1.8.17 \
+    && rm -rf /var/lib/apt/lists/*
 COPY scripts/pi-package-capture.mjs scripts/pi-package-archive.py scripts/omp-plugin-resources.mjs /app/scripts/
 WORKDIR /app
 USER node

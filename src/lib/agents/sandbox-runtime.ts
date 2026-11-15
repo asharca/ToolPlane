@@ -1733,6 +1733,44 @@ async function piOptionalBuiltinExtensionSources(
   return sources;
 }
 
+let debugpyArtifact: Promise<string> | undefined;
+/** Separate dependency artifact: never changes or replaces an installed SDK. */
+function prepareDebugpyArtifact(): Promise<string> {
+  if (debugpyArtifact) return debugpyArtifact;
+  debugpyArtifact = trackRuntimeOperation(async () => {
+    assertRuntimeOwner(true);
+    const name = `toolplane-debugpy-export-${randomUUID()}`;
+    const signal = runtimeAbortSignal();
+    const command = (args: string[], stdin?: string) => {
+      assertRuntimeOwner(true);
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const child = execFile("docker", args, {
+        env: dockerEnv(), signal, timeout: 60_000, maxBuffer: 16 * 1024 * 1024,
+      }, (error, stdout) => error
+        ? reject(new Error("DEBUG_DEPENDENCY_MISSING", { cause: error }))
+        : resolve(stdout));
+      child.stdin?.end(stdin);
+      return promise;
+    };
+    let created = false;
+    try {
+      const imageId = (await command(["image", "inspect", PI_PACKAGE_CAPTURE_IMAGE, "--format", "{{.Id}}"])).trim();
+      if (!/^sha256:[a-f0-9]{64}$/.test(imageId)) throw new Error("DEBUG_DEPENDENCY_MISSING");
+      const source = await readFile(`${process.cwd()}/scripts/pi-debugpy-export.mjs`, "utf8");
+      await command(["create", "--name", name, "-i", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "256m", "--pids-limit", "32", "--entrypoint", "node", imageId, "--input-type=module", "-"]);
+      created = true;
+      const raw = await command(["start", "-ai", name], `${source}\nprocess.stdout.write(JSON.stringify(await exportDebugpy()));`);
+      const artifact = z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/), data: z.string().max(12 * 1024 * 1024) }).strict().parse(JSON.parse(raw));
+      const bytes = Buffer.from(artifact.data, "base64");
+      if (bytes.toString("base64") !== artifact.data || createHash("sha256").update(bytes).digest("hex") !== artifact.sha256) throw new Error("DEBUG_DEPENDENCY_MISSING");
+      return JSON.stringify(artifact);
+    } finally {
+      if (created) await runDockerOnce(["rm", "-f", name]);
+    }
+  }).catch((error: unknown) => { debugpyArtifact = undefined; throw error; });
+  return debugpyArtifact;
+}
+
 /** Executes native factories only inside the credential-free, offline capture image. */
 export async function preflightPiSdkCapabilities(input: {
   piPackages?: RunSandboxAgentTurnOptions["piPackages"];
@@ -1792,6 +1830,10 @@ export async function preflightPiSdkCapabilities(input: {
       )) {
         const path = `${directory}/optional-${name}.mjs`;
         await writeFile(path, content, { mode: 0o444 });
+        if (name === "debug") {
+          const artifact = await waitForSandboxRuntimeInstall(prepareDebugpyArtifact(), signal);
+          await writeFile(`${directory}/debugpy.artifact.json`, artifact, { mode: 0o444 });
+        }
         optionalBuiltinExtensions.push(
           `/opt/toolplane-preflight/optional-${name}.mjs`,
         );
@@ -2957,6 +2999,11 @@ async function runPiSdk(
     hostSources.update(name).update(content);
     hostFiles.push({ path, content });
     optionalBuiltinExtensions.push(path);
+    if (name === "debug") {
+      const artifact = await waitForSandboxRuntimeInstall(prepareDebugpyArtifact(), options.signal);
+      hostSources.update("debugpy-artifact").update(artifact);
+      hostFiles.push({ path: `${privateRoot}/debugpy.artifact.json`, content: artifact });
+    }
   }
   const factorySource = piMcpExtensionSource({ eventFd: 3, workspaceRoot });
   hostSources.update(factorySource);
