@@ -175,7 +175,11 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
       const args = request.params.arguments ?? {};
       // Rejected retention input can itself contain a credential. Never log
       // memory payloads (including recall output) into observability storage.
-      const memoryTool = ["memory_retain", "memory_recall", "memory_forget"].includes(toolName);
+      const memoryTool = [
+        "memory_retain",
+        "memory_recall",
+        "memory_forget",
+      ].includes(toolName);
       const { row, grant } = authority;
       const binding = known
         ? {

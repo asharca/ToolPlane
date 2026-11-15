@@ -2,4 +2,7 @@ import { handleAgentMemories } from "@/lib/agents/memories-api";
 import { withRequestLogging } from "@/lib/observability/http";
 
 export const runtime = "nodejs";
-export const DELETE = withRequestLogging("/api/v1/agents/[agentId]/memories/[memoryId]", handleAgentMemories);
+export const DELETE = withRequestLogging(
+  "/api/v1/agents/[agentId]/memories/[memoryId]",
+  handleAgentMemories,
+);
