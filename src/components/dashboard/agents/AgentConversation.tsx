@@ -101,6 +101,11 @@ import {
 import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
 import { SubagentActivity, SubagentActivitySchema } from "./SubagentActivity";
 import { HookActivity, HookActivitySchema } from "./HookActivity";
+import { AdvisorSuggestionsCard } from "./AdvisorSuggestionsCard";
+import {
+  ADVISOR_SUGGESTIONS_PART,
+  AdvisorSuggestionsSchema,
+} from "@/lib/agents/advisor";
 
 const MAX_ATTACHMENTS = 5;
 
@@ -867,15 +872,39 @@ export function AgentConversation({
     ],
   );
 
+  const persistedMessageIds = useMemo(
+    () => new Set(initialMessages.map((message) => message.id)),
+    [initialMessages],
+  );
   const { displayMessages, sourceMessagesById } = useMemo(() => {
     const sources = new Map<string, AgentUIMessage>();
-    const messages = transcriptMessages.flatMap((message) => {
+    const existingIds = new Set(
+      transcriptMessages.map((message) => message.id),
+    );
+    // Persisted advisor records arrive via Work refresh, independently of the main stream.
+    const advisories = initialMessages.filter(
+      (message) =>
+        !existingIds.has(message.id) &&
+        message.parts.some((part) => part.type === ADVISOR_SUGGESTIONS_PART),
+    );
+    const insertionIndex =
+      chatBusy && transcriptMessages.at(-1)?.role === "assistant"
+        ? transcriptMessages.length - 1
+        : transcriptMessages.length;
+    const combined = advisories.length
+      ? [
+          ...transcriptMessages.slice(0, insertionIndex),
+          ...advisories,
+          ...transcriptMessages.slice(insertionIndex),
+        ]
+      : transcriptMessages;
+    const messages = combined.flatMap((message) => {
       const expanded = expandAssistantMessages([message]);
       for (const displayed of expanded) sources.set(displayed.id, message);
       return expanded;
     });
     return { displayMessages: messages, sourceMessagesById: sources };
-  }, [transcriptMessages]);
+  }, [transcriptMessages, chatBusy, initialMessages]);
   const renderedActivityIds = useMemo(
     () =>
       transcriptMessages.flatMap((message) =>
@@ -1256,8 +1285,18 @@ export function AgentConversation({
                 typeof turnModelData.model === "string"
                   ? turnModelData.model
                   : null;
+              const advisorOnly =
+                sourceMessage.parts.some(
+                  (part) => part.type === ADVISOR_SUGGESTIONS_PART,
+                ) &&
+                sourceMessage.parts.every(
+                  (part) =>
+                    part.type === ADVISOR_SUGGESTIONS_PART ||
+                    (part.type === "text" && !part.text),
+                );
               const streaming =
                 message.role === "assistant" &&
+                !advisorOnly &&
                 chat.status === "streaming" &&
                 messageIndex === displayMessages.length - 1;
               const text = message.parts
@@ -1350,8 +1389,17 @@ export function AgentConversation({
                       processDataTypes={[
                         "data-subagent-activity",
                         "data-hook-activity",
+                        ADVISOR_SUGGESTIONS_PART,
                       ]}
                       renderDataStep={(step) => {
+                        if (step.type === ADVISOR_SUGGESTIONS_PART) {
+                          const parsed = AdvisorSuggestionsSchema.safeParse(
+                            step.data,
+                          );
+                          return parsed.success ? (
+                            <AdvisorSuggestionsCard advisory={parsed.data} />
+                          ) : null;
+                        }
                         if (step.type === "data-hook-activity") {
                           const hook = HookActivitySchema.safeParse(step.data);
                           return hook.success ? (
@@ -1411,11 +1459,12 @@ export function AgentConversation({
                   ) : from === "assistant" ? (
                     <>
                       {messageBody}
-                      {!streaming ? (
+                      {!streaming && !advisorOnly ? (
                         <MessageFooter
                           className={`gap-0.5 ${actionVisibility}`}
                         >
-                          {activeConversationId ? (
+                          {activeConversationId &&
+                          persistedMessageIds.has(sourceMessage.id) ? (
                             <AgentMessageFeedback
                               agentId={agentId}
                               conversationId={activeConversationId}

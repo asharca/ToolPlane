@@ -28,6 +28,7 @@ export async function resolveAgentRuntimeGrant(
   runtimeKind: "pi-sdk";
   model: string | null;
   secretObfuscation: boolean;
+  advisor?: { providerId: string; model: string };
   /** Attached sandbox ID → tools allowed by both the pinned revision and the live attachment. */
   externalSandboxTools: Record<string, SandboxMcpTool[]>;
 } | null> {
@@ -217,6 +218,9 @@ export async function resolveAgentRuntimeGrant(
         const isPrimary =
           modelTarget.providerId === primary.providerId &&
           modelTarget.model === primary.model;
+        const isAdvisor =
+          modelTarget.providerId === revision.config.advisor?.providerId &&
+          modelTarget.model === revision.config.advisor?.model;
         const isSelected =
           revision.config.modelProviderIds.includes(modelTarget.providerId) &&
           targets.some(
@@ -224,7 +228,7 @@ export async function resolveAgentRuntimeGrant(
               target.providerId === modelTarget.providerId &&
               target.model === modelTarget.model,
           );
-        if (!isPrimary && !isSelected) return null;
+        if (!isPrimary && !isSelected && !isAdvisor) return null;
         if (!isPrimary)
           await resolveAgentModelOverride(
             token.workspaceId,
@@ -286,6 +290,14 @@ export async function resolveAgentRuntimeGrant(
         externalSandboxTools: externalTools,
         runtimeKind: revision.config.runtimeKind,
         secretObfuscation: revision.config.secretObfuscation === true,
+        ...(revision.config.advisor
+          ? {
+              advisor: {
+                providerId: revision.config.advisor.providerId,
+                model: revision.config.advisor.model,
+              },
+            }
+          : {}),
         model:
           modelTarget?.model ??
           token.modelOverride?.model ??

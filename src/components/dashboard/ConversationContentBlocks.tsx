@@ -19,6 +19,11 @@ import { CopyButton } from "@/components/dashboard/CopyButton";
 import { ConversationToolDiff } from "./ConversationToolDiff";
 import { SubagentActivity } from "./agents/SubagentActivity";
 import { HookActivity, HookActivitySchema } from "./agents/HookActivity";
+import { AdvisorSuggestionsCard } from "./agents/AdvisorSuggestionsCard";
+import {
+  ADVISOR_SUGGESTIONS_PART,
+  AdvisorSuggestionsSchema,
+} from "@/lib/agents/advisor";
 import {
   contentProcessStatus,
   toContentBlocks,
@@ -285,6 +290,22 @@ function ConversationProcessBlock({
           : block.steps.every((step) => step.kind === "thinking")
             ? t("thought")
             : t("processed");
+  // Advisor-only messages are visible records, not a collapsed execution summary.
+  if (
+    block.steps.every(
+      (step) => step.kind === "data" && step.type === ADVISOR_SUGGESTIONS_PART,
+    )
+  ) {
+    return (
+      <div className="space-y-3">
+        {block.steps.map((step) =>
+          step.kind === "data" ? (
+            <div key={step.id}>{renderDataStep?.(step)}</div>
+          ) : null,
+        )}
+      </div>
+    );
+  }
   return (
     <div
       data-ui="conversation-process"
@@ -481,8 +502,15 @@ export function WorkContentBlocks({
         "data-subagent-activity",
         "data-hook-activity",
         "data-work-runtime",
+        ADVISOR_SUGGESTIONS_PART,
       ]}
       renderDataStep={(step) => {
+        if (step.type === ADVISOR_SUGGESTIONS_PART) {
+          const parsed = AdvisorSuggestionsSchema.safeParse(step.data);
+          return parsed.success ? (
+            <AdvisorSuggestionsCard advisory={parsed.data} />
+          ) : null;
+        }
         if (step.type === "data-subagent-activity")
           return <SubagentActivity value={step.data} />;
         if (step.type === "data-hook-activity") {

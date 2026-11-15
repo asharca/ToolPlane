@@ -21,6 +21,7 @@ import { pathToFileURL } from "node:url";
 
 import { enforceNativeNamespaces } from "./pi-sdk-capabilities.mjs";
 import { createNativeUi } from "./pi-sdk-ui.mjs";
+import { createAdvisor } from "./pi-sdk-advisor.mjs";
 import {
   configureNativeTodo,
   officialTodoPath,
@@ -408,6 +409,14 @@ modelRuntime.registerProvider("toolplane", {
   apiKey: "$TOOLPLANE_RUNTIME_TOKEN",
   authHeader: true,
   models: [config.model],
+});
+const advisor = createAdvisor({
+  modelRuntime,
+  emit,
+  onUsage: (value) => recordUsage(value, context.advisor?.model),
+  getFailureReason: modelFailureReason,
+  getSession: () => runtime.session,
+  isAborted: () => aborted,
 });
 const packageReferences = config.packages.map(
   ({ marketInstallId, releaseId, checksum, mcpBindingsChecksum }) => ({
@@ -1076,6 +1085,7 @@ async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }) {
               if (active) emit({ type: "model_request" });
             });
             pi.on("tool_call", approveToolCall);
+            pi.on("turn_end", (boundary) => advisor.review(boundary));
           },
         },
       ],
@@ -1214,6 +1224,7 @@ async function handle(request) {
   if (request.type === "abort") {
     try {
       aborted = true;
+      advisor.cancel();
       nativeUi.cancel();
       await runtime?.session.abort();
       respond(true, {
@@ -1375,6 +1386,7 @@ async function handle(request) {
     applyConfiguredThinkingLevel(runtime.session);
     applyRetryBudget();
     await nativeUi.projectTodos(runtime.session.sessionManager);
+    await advisor.start(context.advisor, context.runtimeToken, request.id);
     let command;
     let compaction;
     if (request.navigateBeforeEntryId !== undefined) {
@@ -1463,6 +1475,7 @@ async function handle(request) {
         text,
         commands: commands(),
         queue: queueState(),
+        ...advisor.result,
         ...(usage ? { usage } : {}),
         ...(sessionEntries() ? { sessionEntries: sessionEntries() } : {}),
         ...(actualModel ? { actualModel } : {}),
@@ -1507,6 +1520,7 @@ async function handle(request) {
         usage || ruleTriggers.length || sessionEntries()
           ? {
               ...(usage ? { usage } : {}),
+              ...advisor.result,
               ...(actualModel ? { actualModel } : {}),
               ...(ruleTriggers.length
                 ? { streamRuleTriggers: ruleTriggers }
@@ -1523,6 +1537,7 @@ async function handle(request) {
       queuedInputs = [];
       emitQueue();
     }
+    await advisor.finish();
     nativeUi.cancel();
     await nativeUi.drain();
     context = undefined;

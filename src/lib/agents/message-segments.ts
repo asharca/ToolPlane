@@ -1,5 +1,6 @@
 import type { UIMessage } from "ai";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
+import type { AdvisorSuggestions } from "@/lib/agents/advisor";
 
 export type AssistantSegment = {
   id: string;
@@ -15,6 +16,7 @@ export type AgentUIData = {
   "context-usage": ContextUsageSnapshot;
   model: { providerId: string; model: string };
   "agent-turn-model": { providerId: string; model: string };
+  "advisor-suggestions": AdvisorSuggestions;
   "subagent-activity": {
     type: "reasoning" | "tool";
     status: "running" | "completed" | "failed";
@@ -90,7 +92,8 @@ export function expandAssistantMessages(
           ? message.parts.filter(
               (part) =>
                 part.type === "data-subagent-activity" ||
-                part.type === "data-hook-activity",
+                part.type === "data-hook-activity" ||
+                part.type === "data-advisor-suggestions",
             )
           : []),
         { type: "text" as const, text: segment.text, state: "done" as const },

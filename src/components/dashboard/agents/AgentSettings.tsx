@@ -61,6 +61,7 @@ type SettingsData = {
   reasoningEffort: ReasoningLevel | null;
   toolApproval?: ToolApprovalPolicy;
   secretObfuscation: boolean;
+  advisor?: AgentRevisionConfig["advisor"] | null;
   maxSteps: number;
   providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
@@ -256,6 +257,7 @@ export function AgentSettings({
                 reasoningEffort={settings.reasoningEffort}
                 toolApproval={settings.toolApproval}
                 secretObfuscation={settings.secretObfuscation}
+                advisor={settings.advisor}
                 maxSteps={settings.maxSteps}
                 providers={settings.providers}
                 deployments={settings.deployments}

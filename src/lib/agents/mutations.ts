@@ -47,6 +47,22 @@ import { isExecutableAgentRuntimeKind } from "./runtime-kind";
 import { preparePiRuntime } from "./pi-runtime";
 import { parseOmpConfigSnapshot } from "./omp-config-server";
 import { isOmpInstructionPath } from "./omp-config";
+import { AgentAdvisorSchema, type AgentAdvisor } from "./revision-types";
+
+async function validateAdvisor(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  advisor: AgentAdvisor | null | undefined,
+) {
+  if (!advisor) return;
+  const parsed = AgentAdvisorSchema.safeParse(advisor);
+  if (!parsed.success)
+    throw new AgentConfigurationError("AGENT_ADVISOR_INVALID");
+  const provider = await lockProvider(tx, workspaceId, advisor.providerId);
+  if (!provider?.models.includes(advisor.model))
+    throw new AgentConfigurationError("AGENT_ADVISOR_INVALID");
+  assertRuntimeProviderFormat("pi-sdk", provider.format);
+}
 
 function assertNativeAgent(runtimeKind: string, retiredAt: Date | null): void {
   if (!isExecutableAgentRuntimeKind(runtimeKind) || retiredAt !== null) {
@@ -518,6 +534,7 @@ export type AgentConfig = {
   reasoningEffort?: ReasoningLevel | null;
   toolApproval?: ToolApprovalPolicy;
   secretObfuscation?: boolean;
+  advisor?: AgentAdvisor | null;
   piPackages?: Array<{ marketInstallId: string; releaseId?: string }>;
 };
 
@@ -958,6 +975,7 @@ export async function createConfiguredAgent(
           );
         }
       }
+      await validateAdvisor(tx, workspaceId, cfg.advisor);
 
       // Interactive transactions use one pg connection; keep these awaits
       // sequential so the adapter never issues overlapping client.query calls.
@@ -1014,6 +1032,7 @@ export async function createConfiguredAgent(
           reasoningEffort: cfg.reasoningEffort ?? null,
           toolApproval: cfg.toolApproval ?? { mode: "off" },
           secretObfuscation: cfg.secretObfuscation ?? true,
+          ...(cfg.advisor ? { advisor: cfg.advisor } : {}),
         },
       });
       await tx.agentServer.createMany({
@@ -1091,6 +1110,7 @@ export async function updateAgent(
         cfg.providerId,
         cfg.model,
       );
+      await validateAdvisor(tx, workspaceId, cfg.advisor);
       await tx.agent.updateMany({
         where: { id: agentId, workspaceId },
         data: {
@@ -1129,6 +1149,9 @@ export async function updateAgent(
           ...(cfg.secretObfuscation === undefined
             ? {}
             : { secretObfuscation: cfg.secretObfuscation }),
+          ...(cfg.advisor !== undefined
+            ? { advisor: cfg.advisor ?? Prisma.DbNull }
+            : {}),
         },
       });
       await validateAndWritePiPackages(

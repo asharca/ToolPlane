@@ -117,7 +117,7 @@ export const RuntimeUsageSchema = usageTokensSchema.extend({
   actualModel: usageModelSchema.optional(),
   modelUsage: z
     .array(usageTokensSchema.extend(usageModelSchema.shape))
-    .max(5)
+    .max(16)
     .optional(),
 });
 export type RuntimeUsage = z.infer<typeof RuntimeUsageSchema>;

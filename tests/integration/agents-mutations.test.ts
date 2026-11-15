@@ -413,6 +413,98 @@ describe("agents mutations", () => {
     );
   });
 
+  it("pins advisor settings without changing historical revisions and rejects foreign review providers", async () => {
+    const reviewer = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Advisor ${Date.now()}`,
+        format: "openai",
+        baseUrl: "https://reviewer.test/v1",
+        apiKey: "fixture",
+        models: ["review"],
+      },
+    });
+    const advisor = {
+      providerId: reviewer.id,
+      model: "review",
+      cadence: "final" as const,
+      minSeverity: "warning" as const,
+    };
+    const agent = await createConfiguredAgent(
+      workspaceId,
+      {
+        name: "Advisor pin",
+        systemPrompt: null,
+        providerId,
+        model: "model-1",
+        maxSteps: 8,
+      },
+      { deploymentIds: [], installedSkillIds: [], toolkitIds: [] },
+      { runtime: "pi-sdk" },
+    );
+    const historical = await seedPublishedRevision(agent.id);
+    const historicalConfig = AgentRevisionConfigSchema.parse(historical.config);
+    expect(historicalConfig).not.toHaveProperty("advisor");
+    await updateAgent(workspaceId, agent.id, {
+      name: agent.name,
+      systemPrompt: null,
+      providerId,
+      model: "model-1",
+      maxSteps: 8,
+      advisor,
+    });
+    const published = await seedPublishedRevision(agent.id);
+    expect(AgentRevisionConfigSchema.parse(published.config)).toMatchObject({
+      advisor,
+      modelProviderIds: [reviewer.id],
+    });
+    expect(
+      (
+        await db.agentRevision.findUniqueOrThrow({
+          where: { id: historical.id },
+        })
+      ).config,
+    ).toEqual(historical.config);
+    expect(
+      AgentRevisionConfigSchema.safeParse({ ...historicalConfig, advisor })
+        .success,
+    ).toBe(false);
+    const foreign = await db.workspace.create({
+      data: {
+        name: "Foreign advisor",
+        ownerId: userId,
+        slug: `foreign-advisor-${Date.now()}`,
+      },
+    });
+    try {
+      const foreignProvider = await db.modelProvider.create({
+        data: {
+          workspaceId: foreign.id,
+          name: "Foreign",
+          format: "openai",
+          baseUrl: "https://foreign.test/v1",
+          apiKey: "fixture",
+          models: ["review"],
+        },
+      });
+      await expect(
+        updateAgent(workspaceId, agent.id, {
+          name: agent.name,
+          systemPrompt: null,
+          providerId,
+          model: "model-1",
+          maxSteps: 8,
+          advisor: { ...advisor, providerId: foreignProvider.id },
+        }),
+      ).rejects.toThrow("AGENT_ADVISOR_INVALID");
+      expect(
+        (await db.agent.findUniqueOrThrow({ where: { id: agent.id } })).advisor,
+      ).toEqual(advisor);
+    } finally {
+      await db.workspace.delete({ where: { id: foreign.id } });
+    }
+  });
+
   it("rejects enabling a new Agent with another workspace's model provider", async () => {
     const foreign = await db.workspace.create({
       data: {

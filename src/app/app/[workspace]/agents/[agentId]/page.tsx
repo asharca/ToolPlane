@@ -19,8 +19,11 @@ import { listAgentChannelConnections } from "@/lib/agents/channel-connections";
 import { toAgentChannelConnectionClientView } from "@/lib/agents/channel-connection-client";
 import { SettingsModal } from "@/components/dashboard/SettingsModal";
 import { db } from "@/lib/db";
-import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 import { ToolApprovalPolicySchema } from "@/lib/agents/tool-approval-policy";
+import {
+  AgentAdvisorSchema,
+  AgentRevisionConfigSchema,
+} from "@/lib/agents/revision-types";
 import { listPlugins } from "@/lib/plugins/catalog";
 import {
   buildAgentPluginCatalog,
@@ -93,7 +96,7 @@ export default async function AgentDetailPage({
     listPluginBindingDeployments(ws.id),
     db.agent.findFirst({
       where: { id: agentId, workspaceId: ws.id },
-      select: { currentRevisionVersion: true },
+      select: { currentRevisionVersion: true, advisor: true },
     }),
     db.agentExternalSandbox.findMany({
       where: { agentId, agent: { workspaceId: ws.id } },
@@ -115,6 +118,8 @@ export default async function AgentDetailPage({
   const publishedRevision = revision
     ? { ...revision, config: AgentRevisionConfigSchema.parse(revision.config) }
     : null;
+  const advisor =
+    current?.advisor == null ? null : AgentAdvisorSchema.parse(current.advisor);
   const allowedSections: AgentSettingsSection[] = [
     "general",
     "instructions",
@@ -163,6 +168,7 @@ export default async function AgentDetailPage({
           optionalBuiltinToolOptions: agent.optionalBuiltinToolOptions,
           providerId: agent.providerId,
           model: agent.model,
+          advisor,
           maxSteps: agent.maxSteps,
           reasoningEffort:
             normalizeReasoningLevel(agent.reasoningEffort) ?? null,

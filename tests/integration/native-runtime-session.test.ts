@@ -10,8 +10,424 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { stopNativeSessionHosts } from "../../scripts/native-runtime-stop.mjs";
+import {
+  createAdvisor,
+  ADVISOR_REVIEW_TIMEOUT_MS,
+} from "../../scripts/pi-sdk-advisor.mjs";
+
+it.each(["deadline", "cancel"] as const)(
+  "releases a nonresponsive advisor on %s",
+  async (mode) => {
+    vi.useFakeTimers();
+    try {
+      const events: Array<Record<string, unknown>> = [];
+      const messages: Array<{ role: string; content: string }> = [];
+      let stopped = false;
+      let requestSignal: AbortSignal | undefined;
+      const session = {
+        messages,
+        systemPrompt: "Review the task",
+        steer: vi.fn(),
+        followUp: vi.fn(),
+      };
+      const advisor = createAdvisor({
+        modelRuntime: {
+          registerProvider: vi.fn(),
+          setRuntimeApiKey: vi.fn(),
+          removeRuntimeApiKey: vi.fn(async () => {}),
+          completeSimple: vi.fn(
+            (
+              _model: unknown,
+              _context: unknown,
+              options: { signal: AbortSignal },
+            ) => {
+              requestSignal = options.signal;
+              // Exercise a provider that ignores cancellation and never resolves.
+              return Promise.withResolvers().promise;
+            },
+          ),
+        },
+        emit: (event: Record<string, unknown>) => events.push(event),
+        onUsage: vi.fn(),
+        getSession: () => session,
+        isAborted: () => stopped,
+        getFailureReason: () => "PROVIDER_ERROR",
+      });
+      await advisor.start(
+        { model: {}, cadence: "final", minSeverity: "info" },
+        "token",
+        "request",
+      );
+      messages.push({ role: "user", content: "Complete the task" });
+      const review = advisor.review({
+        message: { stopReason: "stop" },
+        toolResults: [],
+      });
+      if (mode === "deadline")
+        await vi.advanceTimersByTimeAsync(ADVISOR_REVIEW_TIMEOUT_MS);
+      else {
+        stopped = true;
+        advisor.cancel();
+      }
+      await review;
+      expect(requestSignal?.aborted).toBe(true);
+      expect(session.followUp).not.toHaveBeenCalled();
+      if (mode === "deadline")
+        expect(events).toEqual([
+          {
+            type: "advisor_error",
+            code: "ADVISOR_REVIEW_FAILED",
+            reason: "TIMEOUT",
+            durationMs: ADVISOR_REVIEW_TIMEOUT_MS,
+          },
+        ]);
+      else expect(events).toEqual([]);
+      await advisor.finish();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each([
+  "each_tool_batch",
+  "final",
+  "wrapped",
+  "prose",
+  "invalid",
+  "http-error",
+  "truncated",
+  "truncated-json",
+] as const)(
+  "reviews through the real SDK and broker without blocking the main turn (%s)",
+  async (mode) => {
+    const dir = await mkdtemp(join(tmpdir(), "toolplane-advisor-"));
+    const driver = join(process.cwd(), "scripts/native-runtime-session.mjs");
+    const host = join(process.cwd(), "scripts/pi-sdk-session.mjs");
+    const statePath = join(dir, "state.json");
+    const socketPath = `/tmp/toolplane-runtime-${createHash("sha256").update(statePath).digest("hex").slice(0, 32)}.sock`;
+    const configPath = join(dir, "config.json");
+    const inputPath = join(dir, "request.json");
+    const extension = join(dir, "counter.mjs");
+    const requests: Array<{
+      model: string;
+      messages: unknown[];
+      reasoning_effort?: string;
+      max_completion_tokens?: number;
+    }> = [];
+    let mainCalls = 0;
+    const gateway = createHttpServer((req, res) => {
+      void (async () => {
+        let raw = "";
+        for await (const chunk of req) raw += String(chunk);
+        const body = JSON.parse(raw);
+        requests.push(body);
+        expect(req.headers.authorization).toBe("Bearer advisor-test-token");
+        const review = body.model === "reviewer";
+        if (review && mode === "http-error") {
+          res.writeHead(503, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: { message: "private-provider-diagnostic" },
+            }),
+          );
+          return;
+        }
+        if (!review) mainCalls++;
+        const tool = !review && mode === "each_tool_batch" && mainCalls === 1;
+        let content = review
+          ? mode === "invalid"
+            ? "not JSON"
+            : JSON.stringify([
+                { severity: "info", message: "Cosmetic detail" },
+                {
+                  severity: "warning",
+                  message: "Check the tool result before finishing",
+                },
+                {
+                  severity: "critical",
+                  message: "Verify the missing requirement",
+                },
+              ])
+          : mainCalls > 1
+            ? "MAIN_CONTINUES"
+            : "MAIN_COMPLETE";
+        if (review && mode === "wrapped")
+          content = `<think>Ignore this reasoning: [{"severity":"critical","message":"REASONING_ONLY"}]</think>\nHere are the findings:\n\`\`\`json\n${content}\n\`\`\`\nReview complete.`;
+        if (review && mode === "prose")
+          content = `Not JSON: [invalid] then findings: ${content} Done.`;
+        if (review && mode === "truncated")
+          content = "<think>Unfinished internal reasoning";
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        const delta = tool
+          ? {
+              role: "assistant",
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "counter-1",
+                  type: "function",
+                  function: { name: "increment", arguments: "{}" },
+                },
+              ],
+            }
+          : {
+              role: "assistant",
+              content,
+              ...(review ? { reasoning_content: "REASONING_ONLY" } : {}),
+            };
+        for (const chunk of [
+          { choices: [{ index: 0, delta, finish_reason: null }] },
+          {
+            choices: [
+              {
+                index: 0,
+                delta: {},
+                finish_reason: tool
+                  ? "tool_calls"
+                  : review && mode.startsWith("truncated")
+                    ? "length"
+                    : "stop",
+              },
+            ],
+            usage: {
+              prompt_tokens: 20,
+              completion_tokens: 5,
+              total_tokens: 25,
+            },
+          },
+        ])
+          res.write(
+            `data: ${JSON.stringify({ id: "fixed", object: "chat.completion.chunk", created: 1, model: body.model, ...chunk })}\n\n`,
+          );
+        res.end("data: [DONE]\n\n");
+      })().catch(() => {
+        res.writeHead(500);
+        res.end();
+      });
+    });
+    const listening = Promise.withResolvers<void>();
+    gateway.listen(0, "127.0.0.1", listening.resolve);
+    await listening.promise;
+    let daemon: ChildProcess | undefined;
+    try {
+      const address = gateway.address();
+      if (!address || typeof address === "string")
+        throw new Error("No gateway address");
+      const home = join(dir, "home");
+      const env = {
+        ...process.env,
+        HOME: home,
+        XDG_CONFIG_HOME: join(home, ".config"),
+        XDG_DATA_HOME: join(home, ".local/share"),
+        XDG_CACHE_HOME: join(home, ".cache"),
+        XDG_STATE_HOME: join(home, ".local/state"),
+        PI_OFFLINE: "1",
+        PI_TELEMETRY: "0",
+        NODE_CHANNEL_FD: undefined,
+        NODE_CHANNEL_SERIALIZATION_MODE: undefined,
+      };
+      await mkdir(join(dir, "sessions"));
+      await mkdir(join(dir, "private"));
+      await writeFile(
+        extension,
+        `export default pi => { pi.registerTool({name:'increment',label:'Counter',description:'Count',parameters:{type:'object',properties:{}},async execute(){return {content:[{type:'text',text:'COUNTER_OK'}],details:{count:1}};}}); };`,
+      );
+      await writeFile(
+        join(dir, "mcp.mjs"),
+        "export async function createPiMcpTools(){return [];}",
+      );
+      const model = {
+        id: "primary",
+        toolplaneProviderId: "primary-provider",
+        name: "Primary",
+        provider: "toolplane",
+        api: "openai-completions",
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        reasoning: false,
+        input: ["text"],
+        contextWindow: 32768,
+        maxTokens: 16384,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      };
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          sdkVersion: "1.5.2",
+          compatibleSdkVersions: ["1.5.2"],
+          packageRoot: process.cwd(),
+          cwd: dir,
+          workspaceRoot: dir,
+          sharedDir: join(dir, "shared"),
+          agentDir: join(dir, "private"),
+          sessionsDir: join(dir, "sessions"),
+          statePath,
+          packageSetChecksum: "empty",
+          agentRevisionId: "pinned",
+          model,
+          systemPrompt: "Verify results before finishing.",
+          defaultTools: [],
+          excludeTools: [],
+          packages: [],
+          resources: {
+            extensions: [extension],
+            skills: [],
+            prompts: [],
+            themes: [],
+          },
+          packageVerifierPath: join(
+            process.cwd(),
+            "scripts/pi-sdk-package-files.mjs",
+          ),
+          mcpFactoryPath: join(dir, "mcp.mjs"),
+          hostOnlyCommands: [],
+        }),
+      );
+      await writeFile(
+        inputPath,
+        JSON.stringify({
+          kind: "pi-sdk",
+          binary: process.execPath,
+          args: [host, configPath],
+          cwd: dir,
+          statePath,
+          signature: "advisor",
+          message: "Complete this task",
+          context: {
+            runtimeToken: "advisor-test-token",
+            model,
+            mcpConfig: { servers: [] },
+            advisor: {
+              providerId: "review-provider",
+              model: {
+                ...model,
+                id: "reviewer",
+                toolplaneProviderId: "review-provider",
+                provider: "toolplane-advisor",
+                reasoning: true,
+              },
+              cadence: mode === "each_tool_batch" ? mode : "final",
+              minSeverity: "warning",
+            },
+          },
+        }),
+      );
+      daemon = spawn(process.execPath, [driver, inputPath, "serve"], {
+        env,
+        stdio: "ignore",
+      });
+      await expect
+        .poll(() => existsSync(socketPath), { timeout: 10000 })
+        .toBe(true);
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [driver, inputPath],
+        { env, timeout: 20000 },
+      );
+      const events = stdout
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const result = events.find(
+        (event) => event.type === "toolplane_sdk_response",
+      );
+      expect(result.success).toBe(true);
+      expect(result.result.usage.modelUsage).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            providerId: "primary-provider",
+            model: "primary",
+          }),
+          expect.objectContaining({
+            providerId: "review-provider",
+            model: "reviewer",
+          }),
+        ]),
+      );
+      expect(
+        requests.filter((request) => request.model === "reviewer"),
+      ).toHaveLength(1);
+      expect(
+        requests.find((request) => request.model === "reviewer")
+          ?.reasoning_effort,
+      ).toBe("minimal");
+      expect(
+        requests.find((request) => request.model === "reviewer")
+          ?.max_completion_tokens,
+      ).toBe(8192);
+      if (
+        mode === "invalid" ||
+        mode === "http-error" ||
+        mode.startsWith("truncated")
+      ) {
+        expect(mainCalls).toBe(1);
+        expect(result.result.text).toContain("MAIN_COMPLETE");
+        expect(
+          events.find((event) => event.type === "advisor_error"),
+        ).toMatchObject({
+          code: "ADVISOR_REVIEW_FAILED",
+          reason:
+            mode === "invalid"
+              ? "INVALID_OUTPUT"
+              : mode === "http-error"
+                ? "HTTP_503"
+                : "OUTPUT_TRUNCATED",
+        });
+        expect(JSON.stringify(events)).not.toContain(
+          "private-provider-diagnostic",
+        );
+        expect(result.result.advisories).toBeUndefined();
+      } else {
+        expect(mainCalls).toBe(2);
+        expect(result.result.text).toContain("MAIN_CONTINUES");
+        const advice = events.find(
+          (event) => event.type === "advisor_suggestions",
+        ).advisory;
+        expect(
+          advice.suggestions.map((note: { severity: string }) => note.severity),
+        ).toEqual(["critical", "warning"]);
+        expect(result.result.advisories).toEqual([advice]);
+        expect(
+          JSON.stringify(
+            requests.filter((request) => request.model === "primary").at(-1)
+              ?.messages,
+          ),
+        ).toContain("Verify the missing requirement");
+        expect(JSON.stringify(advice)).not.toContain("REASONING_ONLY");
+      }
+      // Invalid JSON consumes tokens; an HTTP rejection carries Pi's zero-token usage.
+      if (mode === "http-error") {
+        expect(result.result.advisorUsage).toMatchObject({
+          inputTokens: 0,
+          outputTokens: 0,
+        });
+        expect(result.result.usage.inputTokens).toBe(20);
+      } else {
+        expect(result.result.advisorUsage).toMatchObject({
+          inputTokens: 20,
+          outputTokens: 5,
+        });
+        expect(result.result.usage.inputTokens).toBe(
+          mode === "invalid" || mode.startsWith("truncated") ? 40 : 60,
+        );
+      }
+    } finally {
+      if (daemon && daemon.exitCode === null && daemon.signalCode === null) {
+        const stopped = once(daemon, "exit");
+        daemon.kill("SIGTERM");
+        await stopped;
+      }
+      gateway.closeAllConnections();
+      const closed = Promise.withResolvers<void>();
+      gateway.close(() => closed.resolve());
+      await closed.promise;
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+  60000,
+);
 
 it("stops only one conversation's resident SDK host while preserving its sibling and saved native state", async () => {
   const root = await mkdtemp(join(tmpdir(), "toolplane-session-stop-"));

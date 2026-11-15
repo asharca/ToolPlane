@@ -221,6 +221,12 @@ async function serve() {
           ...(event.result.actualModel
             ? { actualModel: event.result.actualModel }
             : {}),
+          ...(event.result.advisories
+            ? { advisories: event.result.advisories }
+            : {}),
+          ...(event.result.advisorUsage
+            ? { advisorUsage: event.result.advisorUsage }
+            : {}),
           ...(event.result.contextBreakdown
             ? { contextBreakdown: event.result.contextBreakdown }
             : {}),
@@ -290,6 +296,12 @@ async function serve() {
                           : {}),
                         ...(event.result?.sessionEntries
                           ? { sessionEntries: event.result.sessionEntries }
+                          : {}),
+                        ...(event.result?.advisories
+                          ? { advisories: event.result.advisories }
+                          : {}),
+                        ...(event.result?.advisorUsage
+                          ? { advisorUsage: event.result.advisorUsage }
                           : {}),
                       },
                     }

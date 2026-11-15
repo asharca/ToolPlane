@@ -206,6 +206,7 @@ export function diffAgentRevisions(
         a.nativeRoleModels ?? [],
         a.fallbackModels ?? [],
         a.roleModels ?? {},
+        a.advisor ?? null,
       ],
       [
         b.providerId,
@@ -214,6 +215,7 @@ export function diffAgentRevisions(
         b.nativeRoleModels ?? [],
         b.fallbackModels ?? [],
         b.roleModels ?? {},
+        b.advisor ?? null,
       ],
     ],
     ["maxSteps", a.maxSteps, b.maxSteps],
