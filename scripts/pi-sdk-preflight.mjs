@@ -110,7 +110,14 @@ if (process.argv[2] !== "worker") {
     stage = "extension-loading";
     const todoPath = officialTodoPath(join(sdkRoot, "index.js"));
     const extensions = configureNativeTodo(
-      await loadExtensions([...resources.extensions, todoPath], cwd),
+      await loadExtensions(
+        [
+          ...resources.extensions,
+          ...(input.optionalBuiltinExtensions ?? []),
+          todoPath,
+        ],
+        cwd,
+      ),
       todoPath,
     );
     const skills = loadSkills({

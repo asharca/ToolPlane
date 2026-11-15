@@ -219,7 +219,11 @@ export function diffAgentRevisions(
       ],
     ],
     ["externalSandboxes", a.externalSandboxes, b.externalSandboxes],
-    ["builtinTools", a.disabledBuiltinTools, b.disabledBuiltinTools],
+    [
+      "builtinTools",
+      [a.disabledBuiltinTools, a.optionalBuiltinTools ?? []],
+      [b.disabledBuiltinTools, b.optionalBuiltinTools ?? []],
+    ],
     [
       "a2a",
       [
@@ -247,6 +251,9 @@ export function diffAgentRevisions(
       revisionGrantsNewPermissions(mcp) ||
       agentPermissionAdditions(a, b).some(
         (addition) => addition.kind === "delegation",
+      ) ||
+      (b.optionalBuiltinTools ?? []).some(
+        (name) => !(a.optionalBuiltinTools ?? []).includes(name),
       ) ||
       (b.runtimeKind === "omp" &&
         (a.runtimeKind !== "omp" ||

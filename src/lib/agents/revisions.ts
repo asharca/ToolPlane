@@ -252,6 +252,7 @@ export async function captureAgentRevisionConfig(
       ? { reasoningEffort: agent.reasoningEffort }
       : {}),
     disabledBuiltinTools: agent.disabledBuiltinTools,
+    optionalBuiltinTools: agent.optionalBuiltinTools,
     sandboxTemplateId: template?.id ?? null,
     environment: frozenEnvironment,
     externalSandboxes: agent.externalSandboxes.map(({ sandboxId, access }) => ({
@@ -331,6 +332,12 @@ async function validateRevisionAuthorization(
     include: captureInclude,
   });
   if (!agent) throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
+  if (
+    (config.optionalBuiltinTools ?? []).some(
+      (name) => !agent.optionalBuiltinTools.includes(name),
+    )
+  )
+    throw new AgentRevisionError("AGENT_GRANT_REVOKED");
   if ((config.subagentMode ?? "platform") !== agent.subagentMode)
     throw new AgentRevisionError("SUBAGENT_MODE_CONFLICT");
   if (
@@ -615,7 +622,10 @@ export async function publishAgentRevisionInTransaction(
         ),
       );
     nativeToolNames.push(
-      ...piRuntimeCatalog(config.a2a.outboundEnabled).map((tool, toolIndex) =>
+      ...piRuntimeCatalog(
+        config.a2a.outboundEnabled,
+        config.optionalBuiltinTools,
+      ).map((tool, toolIndex) =>
         nativePiMcpToolName(
           config.mcpGrants.length + config.externalSandboxes.length,
           toolIndex,
@@ -624,6 +634,7 @@ export async function publishAgentRevisionInTransaction(
       ),
     );
     await preflightPiSdkCapabilities({
+      optionalBuiltinTools: config.optionalBuiltinTools,
       piPackages: resolveAgentPiPackages({
         ...authorized,
         piPackages: authorized.piPackages.filter((binding) =>
@@ -1010,6 +1021,9 @@ export async function resolvePinnedAgent<
           ...live.disabledBuiltinTools,
         ]),
       ],
+      optionalBuiltinTools: (config.optionalBuiltinTools ?? []).filter((name) =>
+        live.optionalBuiltinTools.includes(name),
+      ),
       servers: grants.map((grant) => ({ deploymentId: grant.deploymentId })),
       mcpToolPolicy: Object.fromEntries(
         grants.map((grant) => [grant.deploymentId, grant.allowedToolNames]),

@@ -618,6 +618,7 @@ model Agent {
   ompConfig               Json?
   capabilityImport Json?
   disabledBuiltinTools    String[]                 @default([])
+  optionalBuiltinTools    String[]                 @default([])
   maxSteps                Int                      @default(100)
   reasoningEffort         String?
   createdAt               DateTime                 @default(now())

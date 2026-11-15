@@ -43,6 +43,8 @@ import { skillLabel } from "@/lib/workspace/skill-label";
 import {
   agentRuntimeBuiltinToolGroups,
   normalizeDisabledBuiltinTools,
+  agentOptionalBuiltinTool,
+  normalizeOptionalBuiltinTools,
 } from "./runtime-kind";
 import type { SkillForPrompt } from "./resolve";
 import {
@@ -167,6 +169,7 @@ export type RunSandboxAgentTurnOptions = {
   systemPrompt?: string | null;
   piVersion?: string;
   disabledBuiltinTools?: readonly string[];
+  optionalBuiltinTools?: readonly string[];
   messages: readonly SandboxRuntimeMessage[];
   skills?: readonly SkillForPrompt[];
   mcpServers?: readonly SandboxRuntimeMcpServer[];
@@ -1612,11 +1615,33 @@ export type PiSdkCapabilityInventory = {
   skills: string[];
 };
 
+/** Module names come exclusively from the trusted registry, never a user path. */
+async function piOptionalBuiltinExtensionSources(
+  names: readonly string[] | undefined,
+) {
+  const sources: { name: string; content: string }[] = [];
+  for (const name of normalizeOptionalBuiltinTools(names)) {
+    if (agentOptionalBuiltinTool(name)?.implementation !== "sandbox-extension")
+      continue;
+    if (!/^[a-z][a-z0-9_]*$/.test(name))
+      throw new Error("OPTIONAL_BUILTIN_TOOLS_INVALID");
+    sources.push({
+      name,
+      content: await readFile(
+        `${process.cwd()}/scripts/pi-optional-tools/${name}.mjs`,
+        "utf8",
+      ),
+    });
+  }
+  return sources;
+}
+
 /** Executes native factories only inside the credential-free, offline capture image. */
 export async function preflightPiSdkCapabilities(input: {
   piPackages?: RunSandboxAgentTurnOptions["piPackages"];
   skills?: readonly SkillForPrompt[];
   toolNames?: readonly string[];
+  optionalBuiltinTools?: readonly string[];
   signal?: AbortSignal;
 }): Promise<PiSdkCapabilityInventory> {
   return trackRuntimeOperation(async () => {
@@ -1663,6 +1688,16 @@ export async function preflightPiSdkCapabilities(input: {
           { mode: 0o444 },
         );
       }
+      const optionalBuiltinExtensions = [];
+      for (const { name, content } of await piOptionalBuiltinExtensionSources(
+        input.optionalBuiltinTools,
+      )) {
+        const path = `${directory}/optional-${name}.mjs`;
+        await writeFile(path, content, { mode: 0o444 });
+        optionalBuiltinExtensions.push(
+          `/opt/toolplane-preflight/optional-${name}.mjs`,
+        );
+      }
       await command([
         "create",
         "--name",
@@ -1702,6 +1737,7 @@ export async function preflightPiSdkCapabilities(input: {
           skills: buildSandboxSkillBundles(input.skills ?? []),
           toolNames: input.toolNames ?? [],
           hostCommands: HOST_ONLY_COMMAND_NAMES,
+          optionalBuiltinExtensions,
         }),
       );
       const result: unknown = JSON.parse(output);
@@ -2228,6 +2264,7 @@ async function runNativeSessionExec(
                   .digest("hex"),
                 packageSetChecksum: sdk.packageSetChecksum,
                 agentRevisionId: options.agentRevisionId,
+                optionalBuiltinTools: options.optionalBuiltinTools ?? [],
                 nativeUi: Boolean(options.nativeUiUrl),
                 workdir: exec.workdir,
                 system: options.systemPrompt,
@@ -2466,6 +2503,17 @@ async function runPiSdk(
     hostSources.update(source).update(content);
     hostFiles.push({ path, content });
   }
+  const optionalBuiltinExtensions: string[] = [];
+  for (const { name, content } of await piOptionalBuiltinExtensionSources(
+    options.optionalBuiltinTools,
+  )) {
+    // The existing materializer accepts trusted files under stateRoot/host;
+    // keep modules there rather than adding arbitrary revision-selected roots.
+    const path = `${privateRoot}/optional-${name}.mjs`;
+    hostSources.update(name).update(content);
+    hostFiles.push({ path, content });
+    optionalBuiltinExtensions.push(path);
+  }
   const factorySource = piMcpExtensionSource({ eventFd: 3, workspaceRoot });
   hostSources.update(factorySource);
   hostFiles.push({ path: factoryPath, content: factorySource });
@@ -2521,9 +2569,17 @@ async function runPiSdk(
       model: sessionModel,
       systemPrompt: options.systemPrompt?.trim() ?? "",
       excludeTools,
-      defaultTools: agentRuntimeBuiltinToolGroups("pi-sdk")
-        .flatMap((group) => group.tools)
-        .filter((name) => !excludeTools.includes(name)),
+      defaultTools: [
+        ...agentRuntimeBuiltinToolGroups("pi-sdk")
+          .flatMap((group) => group.tools)
+          .filter((name) => !excludeTools.includes(name)),
+        ...normalizeOptionalBuiltinTools(options.optionalBuiltinTools).filter(
+          (name) =>
+            agentOptionalBuiltinTool(name)?.implementation ===
+            "sandbox-extension",
+        ),
+      ],
+      optionalBuiltinExtensions,
       resources,
       packages: packages.map(({ manifest: _manifest, ...item }) => item),
       packageVerifierPath: verifierPath,

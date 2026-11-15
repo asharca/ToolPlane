@@ -1076,6 +1076,20 @@ describe("official Pi SDK headless session host", () => {
     });
     expect(f.requests).toEqual([]);
   }, 60000);
+  it("loads an explicitly enabled optional extension through the native SDK", async () => {
+    const f = await setup();
+    // Reuse the real counter extension, but load it via the optional-host config path.
+    const host = await f.launch({
+      resources: { ...f.config.resources, extensions: [] },
+      optionalBuiltinExtensions: [f.extension],
+      defaultTools: ["increment"],
+    });
+    expect(await host.request("prompt", "Use increment")).toMatchObject({
+      success: true,
+    });
+    expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("1");
+    await host.stop();
+  }, 60000);
   it("runs real tools, preserves custom branch state on restart and isolates stdout", async () => {
     const f = await setup(),
       host = await f.launch();

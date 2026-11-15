@@ -79,7 +79,10 @@ import { safeRelativePath } from "@/lib/auth/safe-redirect";
 import { db } from "@/lib/db";
 import { McpPinningError } from "@/lib/process/mcp-pinning";
 import { deleteManagedAgent } from "@/lib/agents/deletion";
-import { AgentEnvironmentSnapshotSchema } from "./revision-types";
+import {
+  AgentEnvironmentSnapshotSchema,
+  OptionalBuiltinToolsSchema,
+} from "./revision-types";
 import {
   captureAgentRevisionConfig,
   prepareAgentRevisionMcpDeployments,
@@ -225,6 +228,19 @@ function piPackagesFromForm(formData: FormData): AgentConfig["piPackages"] {
     return piPackagesFormSchema.parse(JSON.parse(raw));
   } catch {
     throw new AgentConfigurationError("pi_packages_invalid");
+  }
+}
+
+function optionalBuiltinToolsFromForm(
+  formData: FormData,
+): AgentConfig["optionalBuiltinTools"] {
+  if (!formData.has("optionalBuiltinTools")) return undefined;
+  const raw = formData.get("optionalBuiltinTools");
+  try {
+    if (typeof raw !== "string" || raw.length > 16_000) throw new Error();
+    return OptionalBuiltinToolsSchema.parse(JSON.parse(raw));
+  } catch {
+    throw new AgentConfigurationError("OPTIONAL_BUILTIN_TOOLS_INVALID");
   }
 }
 
@@ -728,6 +744,7 @@ export async function createAgentAction(
         disabledBuiltinTools: formData
           .getAll("disabledBuiltinTool")
           .map(String),
+        optionalBuiltinTools: optionalBuiltinToolsFromForm(formData) ?? [],
         maxSteps: agentMaxSteps(formData),
         reasoningEffort: agentReasoningEffort(formData),
         piPackages: piPackagesFromForm(formData),
@@ -970,6 +987,7 @@ export async function updateAgentAction(
         disabledBuiltinTools: formData
           .getAll("disabledBuiltinTool")
           .map(String),
+        optionalBuiltinTools: optionalBuiltinToolsFromForm(formData),
         maxSteps,
         reasoningEffort: agentReasoningEffort(formData),
         piPackages: piPackagesFromForm(formData),

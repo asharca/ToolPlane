@@ -17,7 +17,10 @@ import type { AgentPluginCatalogOption } from "@/components/dashboard/agents/Age
 import type { PluginBindingDeployment } from "@/lib/plugins/binding-deployments";
 import type { AgentChannelConnectionClientView } from "@/lib/agents/channel-connection-client";
 import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
-import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
+import {
+  isExecutableAgentRuntimeKind,
+  type AgentOptionalBuiltinTool,
+} from "@/lib/agents/runtime-kind";
 import type { ReasoningLevel } from "@/lib/agents/constants";
 import { AgentTriggersPanel } from "./AgentTriggersPanel";
 import { AgentUsagePanel } from "../AgentUsagePanel";
@@ -49,6 +52,8 @@ type SettingsData = {
   runtimeKind: string;
   systemPrompt: string;
   disabledBuiltinTools?: string[];
+  optionalBuiltinTools: string[];
+  optionalBuiltinToolOptions: readonly AgentOptionalBuiltinTool[];
   providerId: string | null;
   model: string | null;
   reasoningEffort: ReasoningLevel | null;
@@ -232,6 +237,8 @@ export function AgentSettings({
                 description={settings.description}
                 systemPrompt={settings.systemPrompt}
                 disabledBuiltinTools={settings.disabledBuiltinTools}
+                optionalBuiltinTools={settings.optionalBuiltinTools}
+                optionalBuiltinToolOptions={settings.optionalBuiltinToolOptions}
                 providerId={settings.providerId}
                 model={settings.model}
                 reasoningEffort={settings.reasoningEffort}

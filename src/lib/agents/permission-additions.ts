@@ -47,6 +47,13 @@ export function agentPermissionAdditions(
     "builtin",
     tools.filter((tool) => !next.disabledBuiltinTools.includes(tool)),
   );
+  add(
+    "builtin",
+    "optionalBuiltinTools",
+    (next.optionalBuiltinTools ?? []).filter(
+      (tool) => !(previous?.optionalBuiltinTools ?? []).includes(tool),
+    ),
+  );
   for (const skill of next.skills) {
     const old = previous?.skills.find(
       (item) => item.installedSkillId === skill.installedSkillId,

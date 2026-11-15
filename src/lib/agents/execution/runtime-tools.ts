@@ -21,11 +21,29 @@ import {
 import { assertLocalRuntimeToken } from "@/lib/a2a/local-runtime";
 import { LOCAL_LIMITS } from "@/lib/a2a/local-policy";
 import { Rpc } from "@/lib/a2a/validation";
-import { piRuntimeCatalog } from "./runtime-tool-catalog";
+import {
+  piRuntimeCatalog,
+  piOptionalPlatformTools,
+} from "./runtime-tool-catalog";
 import { A2AHttpError } from "@/lib/a2a/principal";
 import { requireAgentRevision } from "@/lib/agents/revisions";
 import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
 import { publishLocalArtifact } from "@/lib/a2a/local-artifacts";
+import { agentOptionalBuiltinTool } from "../runtime-kind";
+
+/** Trusted platform dispatch; implementations must validate arguments and preserve task authority. */
+export const optionalBuiltinPlatformHandlers: Readonly<
+  Record<
+    string,
+    (
+      token: AgentRuntimeTokenPayload,
+      raw: unknown,
+      signal: AbortSignal,
+    ) => Promise<unknown>
+  >
+> = {};
+
+const optionalBuiltinDeniedMessage = "Optional built-in tool is not enabled.";
 
 const requests = new Map<string, { until: number; count: number }>();
 function admit(id: string) {
@@ -119,7 +137,10 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
     );
     // Catalog positions participate in immutable native tool names. Revocation
     // narrows calls, never renumbers the pinned revision's remaining tools.
-    const tools = piRuntimeCatalog(revision.config.a2a.outboundEnabled);
+    const tools = piRuntimeCatalog(
+      revision.config.a2a.outboundEnabled,
+      revision.config.optionalBuiltinTools,
+    );
     const server = new Server(
       { name: "toolplane-agent-runtime", version: "1.0.0" },
       { capabilities: { tools: {} } },
@@ -146,6 +167,8 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
           }
         : undefined;
       try {
+        if (!known && agentOptionalBuiltinTool(request.params.name))
+          throw new A2AHttpError(403, optionalBuiltinDeniedMessage);
         if (!known) throw new Error("Unknown runtime tool");
         const result = await executeRuntimeTool(
           token,
@@ -190,16 +213,24 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
         return response;
       } catch (error) {
         const rpc = toJsonRpcError(error);
+        const optionalDenied =
+          error instanceof A2AHttpError &&
+          error.status === 403 &&
+          error.message === optionalBuiltinDeniedMessage;
         const response = {
           content: [
             {
               type: "text" as const,
               text: JSON.stringify({
                 code: rpc.code,
-                message:
-                  rpc.code === -32603
+                message: optionalDenied
+                  ? optionalBuiltinDeniedMessage
+                  : rpc.code === -32603
                     ? "Agent runtime tool operation failed."
                     : rpc.message,
+                ...(optionalDenied
+                  ? { reason: "OPTIONAL_BUILTIN_TOOL_FORBIDDEN" }
+                  : {}),
               }),
             },
           ],
@@ -254,6 +285,37 @@ async function executeRuntimeTool(
   // Recheck the execution lease after MCP admission and before dispatch.
   const { row, grant } = await assertLocalRuntimeToken(token);
   if (!row.leaseToken) throw new Error("Runtime task lease unavailable.");
+  const optional = agentOptionalBuiltinTool(name);
+  if (optional) {
+    const revision = await requireAgentRevision(
+      db,
+      grant.agentId,
+      grant.agentRevisionId,
+    );
+    const live = await db.agent.findFirst({
+      where: {
+        id: grant.agentId,
+        workspaceId: grant.workspaceId,
+        retiredAt: null,
+      },
+      select: { optionalBuiltinTools: true },
+    });
+    if (
+      optional.implementation !== "platform" ||
+      !(revision.config.optionalBuiltinTools ?? []).includes(name) ||
+      !live?.optionalBuiltinTools.includes(name)
+    )
+      throw new A2AHttpError(403, optionalBuiltinDeniedMessage);
+    const handler = optionalBuiltinPlatformHandlers[name];
+    if (!handler)
+      throw new Error("Optional built-in tool implementation unavailable.");
+    const definition = piOptionalPlatformTools.find(
+      (tool) => tool.name === name,
+    );
+    if (!definition)
+      throw new Error("Optional built-in tool definition unavailable.");
+    return handler(token, definition.schema.parse(raw), signal);
+  }
   if (name === "a2a_publish_artifact")
     return publishLocalArtifact(row.id, row.leaseToken, raw);
   if (

@@ -48,6 +48,7 @@ import { DeleteAgentButton } from "@/components/dashboard/agents/DeleteAgentButt
 import { ConnectDialog } from "@/components/dashboard/ConnectDialog";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
 import {
+  agentOptionalBuiltinToolOptions,
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
   isExecutableAgentRuntimeKind,
@@ -178,6 +179,10 @@ export function AgentsBrowser({
   const [disabledBuiltinTools, setDisabledBuiltinTools] = useState<Set<string>>(
     () => new Set(),
   );
+  const [enabledOptionalTools, setEnabledOptionalTools] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const optionalToolOptions = agentOptionalBuiltinToolOptions(runtime);
   const setupCount = agents.filter(
     (agent) =>
       isExecutableAgentRuntimeKind(agent.runtimeKind) && !isAgentReady(agent),
@@ -242,6 +247,7 @@ export function AgentsBrowser({
     setSelectedDeploymentIds(new Set());
     setSelectedSkillIds(new Set());
     setDisabledBuiltinTools(new Set());
+    setEnabledOptionalTools(new Set());
   }
 
   return (
@@ -361,7 +367,8 @@ export function AgentsBrowser({
                       : step.id === "instructions"
                         ? systemPrompt !== ""
                         : step.id === "builtInTools"
-                          ? disabledBuiltinTools.size > 0
+                          ? disabledBuiltinTools.size > 0 ||
+                            enabledOptionalTools.size > 0
                           : step.id === "mcp"
                             ? selectedDeploymentIds.size > 0
                             : selectedSkillIds.size > 0;
@@ -629,12 +636,19 @@ export function AgentsBrowser({
                 </div>
                 <DialogField
                   label={t("builtInTools")}
-                  dirty={disabledBuiltinTools.size > 0}
+                  dirty={
+                    disabledBuiltinTools.size > 0 ||
+                    enabledOptionalTools.size > 0
+                  }
                 >
                   <AgentBuiltInTools
                     runtimeKind={runtime}
                     disabledTools={disabledBuiltinTools}
                     onDisabledToolsChange={setDisabledBuiltinTools}
+                    optionalToolOptions={optionalToolOptions}
+                    enabledOptionalTools={enabledOptionalTools}
+                    onEnabledOptionalToolsChange={setEnabledOptionalTools}
+                    disabled={createPending}
                   />
                 </DialogField>
               </section>
@@ -712,7 +726,11 @@ export function AgentsBrowser({
               role="alert"
               className="mx-4 mb-3 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm leading-relaxed text-destructive sm:mx-6"
             >
-              {t("createFailed", { reason: createState.error })}
+              {t("createFailed", {
+                reason: t.has(createState.error)
+                  ? t(createState.error)
+                  : createState.error,
+              })}
             </p>
           ) : null}
 

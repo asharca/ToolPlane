@@ -7,6 +7,7 @@ import {
 } from "@/lib/agents/revision-types";
 import { ChatAssistantRevisionConfigSchema } from "@/lib/chat/revision-types";
 import { db } from "@/lib/db";
+import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
 
 const stamp = `${process.pid}-${Date.now()}`;
 const assistantConfig = ChatAssistantRevisionConfigSchema.parse({
@@ -182,6 +183,25 @@ describe("capability revision persistence", () => {
         policy: { schemaVersion: 1, targets: [] },
       },
     });
+    // Parsing historical revisions must not introduce the opt-in field or change its hash.
+    expect(config).not.toHaveProperty("optionalBuiltinTools");
+    expect(marketReleaseChecksum(AgentRevisionConfigSchema.parse(config))).toBe(
+      marketReleaseChecksum(config),
+    );
+    const explicitEmpty = AgentRevisionConfigSchema.parse({
+      ...config,
+      optionalBuiltinTools: [],
+    });
+    expect(explicitEmpty.optionalBuiltinTools).toEqual([]);
+    expect(marketReleaseChecksum(explicitEmpty)).not.toBe(
+      marketReleaseChecksum(config),
+    );
+    expect(
+      AgentRevisionConfigSchema.safeParse({
+        ...config,
+        optionalBuiltinTools: ["unregistered_optional_builtin"],
+      }).success,
+    ).toBe(false);
     const first = await db.agent.create({
       data: {
         workspaceId,

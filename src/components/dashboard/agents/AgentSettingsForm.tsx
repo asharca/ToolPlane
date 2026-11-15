@@ -80,6 +80,7 @@ import {
 import {
   isExecutableAgentRuntimeKind,
   agentRuntimeSupportsProviderFormat,
+  type AgentOptionalBuiltinTool,
 } from "@/lib/agents/runtime-kind";
 import {
   SubagentResources,
@@ -151,6 +152,8 @@ type Props = {
   description?: string;
   systemPrompt: string;
   disabledBuiltinTools?: string[];
+  optionalBuiltinTools: string[];
+  optionalBuiltinToolOptions: readonly AgentOptionalBuiltinTool[];
   providerId: string | null;
   model: string | null;
   reasoningEffort: ReasoningLevel | null;
@@ -220,6 +223,9 @@ export function AgentSettingsForm(props: Props) {
   const [steps, setSteps] = useState(String(props.maxSteps));
   const [disabledTools, setDisabledTools] = useState(
     new Set(props.disabledBuiltinTools ?? []),
+  );
+  const [enabledOptionalTools, setEnabledOptionalTools] = useState(
+    () => new Set(props.optionalBuiltinTools),
   );
   const [deploymentIds, setDeploymentIds] = useState(() =>
     selected(deployments),
@@ -300,10 +306,9 @@ export function AgentSettingsForm(props: Props) {
     reasoningEffort:
       reasoningEffort !== (props.reasoningEffort ?? DEFAULT_REASONING_LEVEL),
     instructions: prompt !== props.systemPrompt,
-    builtInTools: !sameSet(
-      disabledTools,
-      new Set(props.disabledBuiltinTools ?? []),
-    ),
+    builtInTools:
+      !sameSet(disabledTools, new Set(props.disabledBuiltinTools ?? [])) ||
+      !sameSet(enabledOptionalTools, new Set(props.optionalBuiltinTools)),
     mcp: !sameSet(deploymentIds, selected(deployments)),
     skills: !sameSet(skillIds, selected(skills)),
     sandboxes:
@@ -466,7 +471,8 @@ export function AgentSettingsForm(props: Props) {
     await perform(async () => {
       setReview(null);
       const result = await updateAgentAction({}, data);
-      if (result.error) throw new Error(result.error);
+      if (result.error)
+        throw new Error(t.has(result.error) ? t(result.error) : result.error);
       if (subagentsDirty && subagentDraft) {
         const response = await fetch(
           `/api/v1/agents/${encodeURIComponent(agentId)}/subagents`,
@@ -761,6 +767,13 @@ export function AgentSettingsForm(props: Props) {
                         setDisabledTools(next);
                         changed();
                       }}
+                      optionalToolOptions={props.optionalBuiltinToolOptions}
+                      enabledOptionalTools={enabledOptionalTools}
+                      onEnabledOptionalToolsChange={(next) => {
+                        setEnabledOptionalTools(next);
+                        changed();
+                      }}
+                      disabled={pending}
                     />
                   </DialogField>
                 </section>
