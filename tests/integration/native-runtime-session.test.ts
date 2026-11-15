@@ -827,8 +827,17 @@ export default function(pi) {
       }),
     );
     expect(first.find((event) => event.toolCallId === "child-call")).toEqual({
-      type: "tool_execution_end", toolCallId: "child-call", toolName: "bash", isError: false, result: "CHILD_OK",
-      source: { subagentId: "local-child", subagentName: "Local child", parentToolCallId: "task-batch", depth: 1 },
+      type: "tool_execution_end",
+      toolCallId: "child-call",
+      toolName: "bash",
+      isError: false,
+      result: "CHILD_OK",
+      source: {
+        subagentId: "local-child",
+        subagentName: "Local child",
+        parentToolCallId: "task-batch",
+        depth: 1,
+      },
     });
     expect(JSON.stringify(first)).not.toContain("untrusted stdout");
     expect(first.some((event) => event.type === "agent_end")).toBe(false);

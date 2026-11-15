@@ -86,14 +86,35 @@ describe("settings permission additions", () => {
   });
   it("reviews optional local task authority and increases to its pinned concurrency policy without native mode", () => {
     const previous = config();
-    const enabled = { ...previous, optionalBuiltinTools: ["task"], nativeSubagentPolicy: { maxConcurrency: 1, maxDepth: 1 } };
-    expect(agentPermissionAdditions(previous, enabled)).toEqual(expect.arrayContaining([
-      { kind: "builtin", resourceId: "optionalBuiltinTools", values: ["task"] },
-      { kind: "delegation", resourceId: "native", values: ["native", "maxConcurrency:1", "maxDepth:1"] },
-    ]));
-    const widened = { ...enabled, nativeSubagentPolicy: { maxConcurrency: 2, maxDepth: 1 } };
+    const enabled = {
+      ...previous,
+      optionalBuiltinTools: ["task"],
+      nativeSubagentPolicy: { maxConcurrency: 1, maxDepth: 1 },
+    };
+    expect(agentPermissionAdditions(previous, enabled)).toEqual(
+      expect.arrayContaining([
+        {
+          kind: "builtin",
+          resourceId: "optionalBuiltinTools",
+          values: ["task"],
+        },
+        {
+          kind: "delegation",
+          resourceId: "native",
+          values: ["native", "maxConcurrency:1", "maxDepth:1"],
+        },
+      ]),
+    );
+    const widened = {
+      ...enabled,
+      nativeSubagentPolicy: { maxConcurrency: 2, maxDepth: 1 },
+    };
     expect(agentPermissionAdditions(enabled, widened)).toEqual([
-      { kind: "delegation", resourceId: "native", values: ["native", "maxConcurrency:2", "maxDepth:1"] },
+      {
+        kind: "delegation",
+        resourceId: "native",
+        values: ["native", "maxConcurrency:2", "maxDepth:1"],
+      },
     ]);
     expect(agentPermissionAdditions(widened, enabled)).toEqual([]);
   });

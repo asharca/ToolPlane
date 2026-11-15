@@ -298,7 +298,10 @@ export async function runDedicatedSandboxTurn(
             onTextDelta: input.onTextDelta,
             onActivity: async (activity) => {
               if (activity.type === "tool" && activity.toolCallId) {
-                const key = JSON.stringify([activity.source?.subagentId ?? null, activity.toolCallId]);
+                const key = JSON.stringify([
+                  activity.source?.subagentId ?? null,
+                  activity.toolCallId,
+                ]);
                 const started = runningTools.get(key);
                 const merged = {
                   ...started,

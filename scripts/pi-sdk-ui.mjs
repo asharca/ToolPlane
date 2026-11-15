@@ -33,7 +33,8 @@ export function createNativeUi({ getContext, theme, onError, source }) {
     return { url, token: context.runtimeToken };
   };
   async function post(target, body, signal) {
-    if (source && body.action === "request") body = { ...body, request: { ...body.request, source } };
+    if (source && body.action === "request")
+      body = { ...body, request: { ...body.request, source } };
     if (source && body.action === "todos") body = { ...body, source };
     const payload = JSON.stringify(body);
     if (Buffer.byteLength(payload) > MAX_PAYLOAD_BYTES) throw transportError();

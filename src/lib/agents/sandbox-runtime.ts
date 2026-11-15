@@ -993,8 +993,23 @@ export function parsePiStreamLine(line: string): PiStreamLine | null {
     const parsed = parsePiStreamLine(JSON.stringify(parentEvent));
     if (!parsed) return null;
     // A child's answer is activity, never an incremental part of the parent answer.
-    const activities = parsed.activities ?? (parsed.delta ? [{ type: "reasoning" as const, status: "running" as const, delta: parsed.delta }] : []);
-    return { activities: activities.map((activity) => ({ ...activity, source: source.data })) };
+    const activities =
+      parsed.activities ??
+      (parsed.delta
+        ? [
+            {
+              type: "reasoning" as const,
+              status: "running" as const,
+              delta: parsed.delta,
+            },
+          ]
+        : []);
+    return {
+      activities: activities.map((activity) => ({
+        ...activity,
+        source: source.data,
+      })),
+    };
   }
   if (
     payload.type === "toolplane_mcp_origin" &&

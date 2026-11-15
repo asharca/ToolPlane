@@ -1105,8 +1105,14 @@ export async function resolvePinnedAgent<
       revisionConfig: config,
       // Never inherit a draft mode into a pinned historical session.
       subagentMode: config.subagentMode,
-      nativeSubagentMaxConcurrency: Math.min(config.nativeSubagentPolicy?.maxConcurrency ?? 1, live.nativeSubagentMaxConcurrency),
-      nativeSubagentMaxDepth: Math.min(config.nativeSubagentPolicy?.maxDepth ?? 1, live.nativeSubagentMaxDepth),
+      nativeSubagentMaxConcurrency: Math.min(
+        config.nativeSubagentPolicy?.maxConcurrency ?? 1,
+        live.nativeSubagentMaxConcurrency,
+      ),
+      nativeSubagentMaxDepth: Math.min(
+        config.nativeSubagentPolicy?.maxDepth ?? 1,
+        live.nativeSubagentMaxDepth,
+      ),
       systemPrompt: config.systemPrompt,
       contextFiles: config.contextFiles ?? false,
       providerId: config.providerId,

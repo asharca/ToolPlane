@@ -18,6 +18,16 @@ vi.mock("next-intl/server", () => ({
   getTranslations: async () => (key: string) => key,
 }));
 import { createHash, randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { createInterface } from "node:readline";
+import { Readable } from "node:stream";
+import { POST as runtimeToolsPost } from "@/app/api/v1/agent-runtime/tasks/[taskId]/tools/route";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 import { emptyOmpConfig } from "@/lib/agents/omp-config";
@@ -2771,11 +2781,14 @@ describe("unified native ingress mappings", () => {
     agentId: agents[0],
     slug: "local-test",
   });
-  async function entry(kind: "chat" | "control" | "work" | "channel" = "chat") {
+  async function entry(
+    kind: "chat" | "control" | "work" | "channel" = "chat",
+    revisionId = grant.agentRevisionId,
+  ) {
     const conversation = await db.conversation.create({
       data: {
         agentId: agents[0],
-        agentRevisionId: grant.agentRevisionId,
+        agentRevisionId: revisionId,
         legacyRevisionUnresolved: false,
         title: "Existing conversation",
         messages: {
@@ -2824,7 +2837,7 @@ describe("unified native ingress mappings", () => {
           data: {
             workspaceId: ws,
             agentId: agents[0],
-            agentRevisionId: grant.agentRevisionId,
+            agentRevisionId: revisionId,
             legacyRevisionUnresolved: false,
             sandboxId: sandboxes[0],
             conversationId: conversation.id,
@@ -4108,6 +4121,306 @@ describe("unified native ingress mappings", () => {
       upgradeAgentConversationRevision(scope),
     ).resolves.toMatchObject({ version: revision.version });
   });
+
+  it("starts task-only Work through the real runtime-tools route and dispatches local SDK children without MCP or A2A grants", async () => {
+    await db.agent.update({
+      where: { id: agents[0] },
+      data: {
+        optionalBuiltinTools: ["task"],
+        a2aInboundEnabled: false,
+        a2aOutboundEnabled: false,
+        a2aPolicy: { schemaVersion: 1, targets: [] },
+      },
+    });
+    const published = await publishFixtureAgentRevision(ws, agents[0]);
+    const input = await entry("work", published.id);
+    const parent = assertDefined(
+      await claimTask((await submitAgentEntry(input, vi.fn())).row.id),
+    );
+    const payload = await runtimeToken(parent);
+    expect(payload.deploymentIds).toEqual([]);
+    const revision = await requireAgentRevision(db, agents[0], published.id);
+    expect(revision.config.optionalBuiltinTools).toEqual(["task"]);
+    expect(revision.config.mcpGrants).toEqual([]);
+    expect(revision.config.a2a.outboundEnabled).toBe(false);
+    const signed = await createAgentRuntimeToken(payload);
+    const directory = await mkdtemp(join(tmpdir(), "task-work-route-"));
+    const routeStatuses: number[] = [];
+    const routeErrors: unknown[] = [];
+    const childResponses: ServerResponse[] = [];
+    const modelTools: string[][] = [];
+    const gateway = createServer((request, response) => {
+      void (async () => {
+        let raw = "";
+        for await (const chunk of request) raw += String(chunk);
+        if (request.url === `/api/v1/agent-runtime/tasks/${parent.id}/tools`) {
+          const result = await runtimeToolsPost(
+            new Request(`http://localhost${request.url}`, {
+              method: "POST",
+              body: raw,
+              headers: {
+                authorization: request.headers.authorization ?? "",
+                "content-type": "application/json",
+                accept: "application/json, text/event-stream",
+              },
+            }),
+            { params: Promise.resolve({ taskId: parent.id }) },
+          );
+          routeStatuses.push(result.status);
+          response.writeHead(result.status, Object.fromEntries(result.headers));
+          response.end(await result.text());
+          return;
+        }
+        expect(request.headers.authorization).toBe(`Bearer ${signed}`);
+        const body = z
+          .object({
+            messages: z.array(z.object({ role: z.string() })),
+            tools: z
+              .array(z.object({ function: z.object({ name: z.string() }) }))
+              .optional(),
+          })
+          .parse(JSON.parse(raw));
+        const names = body.tools?.map((tool) => tool.function.name) ?? [];
+        modelTools.push(names);
+        const complete = (
+          target: ServerResponse,
+          delta: Record<string, unknown>,
+          finish: string,
+        ) => {
+          target.writeHead(200, { "content-type": "text/event-stream" });
+          for (const chunk of [
+            {
+              choices: [
+                {
+                  index: 0,
+                  delta: { role: "assistant", ...delta },
+                  finish_reason: null,
+                },
+              ],
+            },
+            {
+              choices: [{ index: 0, delta: {}, finish_reason: finish }],
+              usage: {
+                prompt_tokens: 20,
+                completion_tokens: 5,
+                total_tokens: 25,
+              },
+            },
+          ])
+            target.write(
+              `data: ${JSON.stringify({ id: "controlled", object: "chat.completion.chunk", created: 1, model: "controlled", ...chunk })}\n\n`,
+            );
+          target.end("data: [DONE]\n\n");
+        };
+        if (names.includes("task")) {
+          if (body.messages.at(-1)?.role === "tool")
+            complete(response, { content: "TASK_ONLY_WORK_OK" }, "stop");
+          else
+            complete(
+              response,
+              {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: "local-task-batch",
+                    type: "function",
+                    function: {
+                      name: "task",
+                      arguments: JSON.stringify({
+                        tasks: [
+                          {
+                            id: "one",
+                            description: "One",
+                            prompt: "Return ONE",
+                          },
+                          {
+                            id: "two",
+                            description: "Two",
+                            prompt: "Return TWO",
+                          },
+                        ],
+                      }),
+                    },
+                  },
+                ],
+              },
+              "tool_calls",
+            );
+        } else {
+          childResponses.push(response);
+          if (childResponses.length === 2)
+            childResponses.forEach((child, index) => {
+              complete(child, { content: `CHILD_${index}` }, "stop");
+            });
+        }
+      })().catch((error) => {
+        routeErrors.push(error);
+        response.writeHead(500);
+        response.end();
+      });
+    });
+    const listening = once(gateway, "listening");
+    gateway.listen(0, "127.0.0.1");
+    await listening;
+    const address = gateway.address();
+    if (!address || typeof address === "string")
+      throw new Error("Missing gateway address");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const workspace = join(directory, "workspace");
+    const agentDir = join(directory, "private");
+    const home = join(directory, "home");
+    await Promise.all([workspace, agentDir].map((path) => mkdir(path)));
+    const configPath = join(directory, "config.json");
+    const factoryPath = join(directory, "mcp.mjs");
+    const { piMcpExtensionSource, buildPiMcpConfig } = await vi.importActual<
+      typeof AgentSandboxRuntime
+    >("@/lib/agents/sandbox-runtime");
+    await writeFile(factoryPath, piMcpExtensionSource({ eventFd: 3 }));
+    const model = {
+      id: "controlled",
+      name: "Controlled",
+      api: "openai-completions",
+      provider: "toolplane",
+      baseUrl: `${origin}/v1`,
+      reasoning: false,
+      input: ["text"],
+      contextWindow: 128000,
+      maxTokens: 4096,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        sdkVersion: "1.5.2",
+        compatibleSdkVersions: ["1.5.2"],
+        packageRoot: resolve("."),
+        cwd: workspace,
+        workspaceRoot: directory,
+        sharedDir: join(directory, "shared"),
+        agentDir,
+        sessionsDir: join(directory, "sessions"),
+        statePath: join(agentDir, "state.json"),
+        packageSetChecksum: "task-only",
+        agentRevisionId: revision.id,
+        model,
+        systemPrompt: "Complete assigned work.",
+        defaultTools: ["task"],
+        optionalBuiltinExtensions: [
+          resolve("scripts/pi-optional-tools/task.mjs"),
+        ],
+        nativeSubagentPolicy: { maxConcurrency: 2, maxDepth: 1 },
+        resources: { extensions: [], skills: [], prompts: [], themes: [] },
+        packages: [],
+        packageVerifierPath: resolve("scripts/pi-sdk-package-files.mjs"),
+        mcpFactoryPath: factoryPath,
+      }),
+    );
+    const host = spawn(
+      process.execPath,
+      [resolve("scripts/pi-sdk-session.mjs"), configPath],
+      {
+        stdio: ["pipe", "ignore", "ignore", "pipe"],
+        env: {
+          ...process.env,
+          HOME: home,
+          XDG_CONFIG_HOME: join(home, ".config"),
+          XDG_DATA_HOME: join(home, ".local/share"),
+          XDG_CACHE_HOME: join(home, ".cache"),
+          XDG_STATE_HOME: join(home, ".local/state"),
+          PI_OFFLINE: "1",
+          PI_TELEMETRY: "0",
+          NODE_CHANNEL_FD: undefined,
+          NODE_CHANNEL_SERIALIZATION_MODE: undefined,
+        },
+      },
+    );
+    const events: Record<string, unknown>[] = [];
+    try {
+      const stream = host.stdio[3];
+      if (!(stream instanceof Readable)) throw new Error("Missing event pipe");
+      const settled = Promise.withResolvers<Record<string, unknown>>();
+      createInterface({ input: stream }).on("line", (line) => {
+        const event = z.record(z.string(), z.unknown()).parse(JSON.parse(line));
+        events.push(event);
+        if (event.type === "toolplane_sdk_response") settled.resolve(event);
+      });
+      host.once("error", settled.reject);
+      host.once("exit", () =>
+        settled.reject(new Error("SDK exited before response")),
+      );
+      assertDefined(host.stdin).write(
+        `${JSON.stringify({
+          id: randomUUID(),
+          type: "prompt",
+          message: "Dispatch two children",
+          context: {
+            runtimeToken: signed,
+            model,
+            mcpConfig: JSON.parse(
+              buildPiMcpConfig(
+                [
+                  {
+                    deploymentId: "toolplane-runtime",
+                    url: `${origin}/api/v1/agent-runtime/tasks/${parent.id}/tools`,
+                  },
+                ],
+                10 * 1024 * 1024,
+              ),
+            ),
+          },
+        })}\n`,
+      );
+      const result = await settled.promise;
+      expect(routeErrors).toEqual([]);
+      expect(routeStatuses).toEqual([200]);
+      expect(result).toMatchObject({
+        success: true,
+        result: {
+          text: "TASK_ONLY_WORK_OK",
+          usage: { inputTokens: 80, outputTokens: 20 },
+        },
+      });
+      expect(childResponses).toHaveLength(2);
+      expect(
+        modelTools.every(
+          (names) => !names.some((name) => name.includes("pi_a2a_")),
+        ),
+      ).toBe(true);
+      expect(
+        events.find(
+          (event) =>
+            event.type === "tool_execution_end" &&
+            event.toolCallId === "local-task-batch",
+        ),
+      ).toMatchObject({
+        isError: false,
+        result: {
+          details: {
+            status: "completed",
+            results: [
+              { id: "one", status: "completed" },
+              { id: "two", status: "completed" },
+            ],
+          },
+        },
+      });
+    } finally {
+      if (host.exitCode === null && host.signalCode === null) {
+        const exited = once(host, "exit");
+        host.kill("SIGKILL");
+        await exited;
+      }
+      gateway.closeAllConnections();
+      const closed = once(gateway, "close");
+      gateway.close();
+      await closed;
+      await rm(directory, { recursive: true, force: true });
+      await db.agent.update({
+        where: { id: agents[0] },
+        data: { optionalBuiltinTools: [] },
+      });
+    }
+  }, 60000);
 
   it("does not inject platform delegation tools into Work without pinned outbound grants", async () => {
     await db.agent.update({

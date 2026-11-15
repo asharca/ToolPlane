@@ -271,14 +271,22 @@ let runtime,
 const childRuns = new Set();
 const childSlots = new Set();
 async function acquireChildSlot(signal) {
-  const limit = Math.max(1, Math.min(8, config.nativeSubagentPolicy?.maxConcurrency ?? 1));
+  const limit = Math.max(
+    1,
+    Math.min(8, config.nativeSubagentPolicy?.maxConcurrency ?? 1),
+  );
   while (childSlots.size >= limit) {
     if (signal.aborted) return;
     await Promise.race(childSlots);
   }
   if (signal.aborted) return;
   let release;
-  const slot = new Promise((done) => { release = () => { childSlots.delete(slot); done(); }; });
+  const slot = new Promise((done) => {
+    release = () => {
+      childSlots.delete(slot);
+      done();
+    };
+  });
   childSlots.add(slot);
   return release;
 }
@@ -290,73 +298,169 @@ async function cancelChildren() {
   await Promise.all([...childRuns]);
 }
 async function runTasks(parentToolCallId, args, signal) {
-  const invalid = !args || !Array.isArray(args.tasks) || args.tasks.length < 1 || args.tasks.length > 8 ||
-    (args.context !== undefined && (typeof args.context !== "string" || args.context.length > 100000)) ||
+  const invalid =
+    !args ||
+    !Array.isArray(args.tasks) ||
+    args.tasks.length < 1 ||
+    args.tasks.length > 8 ||
+    (args.context !== undefined &&
+      (typeof args.context !== "string" || args.context.length > 100000)) ||
     Object.keys(args).some((key) => !["tasks", "context"].includes(key)) ||
-    args.tasks.some((task) => !task || typeof task !== "object" ||
-      Object.keys(task).some((key) => !["id", "description", "prompt"].includes(key)) ||
-      typeof task.id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(task.id) ||
-      typeof task.description !== "string" || !task.description.trim() || task.description.length > 240 ||
-      typeof task.prompt !== "string" || !task.prompt.trim() || task.prompt.length > 100000) ||
-    new Set(args.tasks.map((task) => task.id.toLowerCase())).size !== args.tasks.length;
-  if (invalid || !active || !runtime || !turnController) return {
-    content: [{ type: "text", text: "TASK_INPUT_INVALID: Supply 1–8 uniquely named, non-empty tasks." }],
-    isError: true, details: { reason: "TASK_INPUT_INVALID", results: [] },
-  };
-  const maxConcurrency = Math.max(1, Math.min(8, config.nativeSubagentPolicy?.maxConcurrency ?? 1));
+    args.tasks.some(
+      (task) =>
+        !task ||
+        typeof task !== "object" ||
+        Object.keys(task).some(
+          (key) => !["id", "description", "prompt"].includes(key),
+        ) ||
+        typeof task.id !== "string" ||
+        !/^[A-Za-z0-9_-]{1,64}$/.test(task.id) ||
+        typeof task.description !== "string" ||
+        !task.description.trim() ||
+        task.description.length > 240 ||
+        typeof task.prompt !== "string" ||
+        !task.prompt.trim() ||
+        task.prompt.length > 100000,
+    ) ||
+    new Set(args.tasks.map((task) => task.id.toLowerCase())).size !==
+      args.tasks.length;
+  if (invalid || !active || !runtime || !turnController)
+    return {
+      content: [
+        {
+          type: "text",
+          text: "TASK_INPUT_INVALID: Supply 1–8 uniquely named, non-empty tasks.",
+        },
+      ],
+      isError: true,
+      details: { reason: "TASK_INPUT_INVALID", results: [] },
+    };
+  const maxConcurrency = Math.max(
+    1,
+    Math.min(8, config.nativeSubagentPolicy?.maxConcurrency ?? 1),
+  );
   const maxDepth = config.nativeSubagentPolicy?.maxDepth ?? 1;
-  if (maxDepth < 1) return {
-    content: [{ type: "text", text: "TASK_DEPTH_EXCEEDED: Subagents cannot spawn further children." }],
-    isError: true, details: { reason: "TASK_DEPTH_EXCEEDED", results: [] },
-  };
-  const batchSignal = AbortSignal.any([turnController.signal, ...(signal ? [signal] : [])]);
-  const tools = runtime.session.getActiveToolNames().filter((name) => name !== "task");
+  if (maxDepth < 1)
+    return {
+      content: [
+        {
+          type: "text",
+          text: "TASK_DEPTH_EXCEEDED: Subagents cannot spawn further children.",
+        },
+      ],
+      isError: true,
+      details: { reason: "TASK_DEPTH_EXCEEDED", results: [] },
+    };
+  const batchSignal = AbortSignal.any([
+    turnController.signal,
+    ...(signal ? [signal] : []),
+  ]);
+  const tools = runtime.session
+    .getActiveToolNames()
+    .filter((name) => name !== "task");
   const results = new Array(args.tasks.length);
   let next = 0;
-  const batch = Promise.all(Array.from({ length: Math.min(maxConcurrency, args.tasks.length) }, async () => {
-    while (next < args.tasks.length) {
-      const index = next++;
-      results[index] = await runChild(args.tasks[index], args.context, parentToolCallId, tools, batchSignal);
-    }
-  }));
+  const batch = Promise.all(
+    Array.from(
+      { length: Math.min(maxConcurrency, args.tasks.length) },
+      async () => {
+        while (next < args.tasks.length) {
+          const index = next++;
+          results[index] = await runChild(
+            args.tasks[index],
+            args.context,
+            parentToolCallId,
+            tools,
+            batchSignal,
+          );
+        }
+      },
+    ),
+  );
   childRuns.add(batch);
-  try { await batch; } finally { childRuns.delete(batch); }
+  try {
+    await batch;
+  } finally {
+    childRuns.delete(batch);
+  }
   const isError = results.some((result) => result.status !== "completed");
-  const details = { status: isError ? "partial_failure" : "completed", results };
-  return { content: [{ type: "text", text: JSON.stringify(details) }], details, isError };
+  const details = {
+    status: isError ? "partial_failure" : "completed",
+    results,
+  };
+  return {
+    content: [{ type: "text", text: JSON.stringify(details) }],
+    details,
+    isError,
+  };
 }
-async function runChild(task, sharedContext, parentToolCallId, tools, parentSignal) {
-  const source = { subagentId: `${task.id}-${randomUUID()}`, subagentName: task.description, parentToolCallId: parentToolCallId.slice(0, 240), depth: 1 };
+async function runChild(
+  task,
+  sharedContext,
+  parentToolCallId,
+  tools,
+  parentSignal,
+) {
+  const source = {
+    subagentId: `${task.id}-${randomUUID()}`,
+    subagentName: task.description,
+    parentToolCallId: parentToolCallId.slice(0, 240),
+    depth: 1,
+  };
   const started = Date.now();
   const release = await acquireChildSlot(parentSignal);
   const controller = new AbortController();
   const signal = AbortSignal.any([parentSignal, controller.signal]);
-  let timedOut = false, session, childUi, unsubscribeChild, lastMessage, uiFailed = false;
+  let timedOut = false,
+    session,
+    childUi,
+    unsubscribeChild,
+    lastMessage,
+    uiFailed = false;
   let stop = Promise.resolve();
   const cancel = () => {
     childUi?.cancel();
     stop = session?.abort().catch(() => {}) ?? Promise.resolve();
   };
   signal.addEventListener("abort", cancel, { once: true });
-  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, CHILD_TIMEOUT_MS);
-  const lifecycle = (status, output) => emit({
-    type: status === "running" ? "tool_execution_start" : "tool_execution_end",
-    source, toolCallId: source.subagentId, toolName: "task",
-    ...(status === "running" ? { args: { id: task.id, description: task.description } } :
-      { isError: status !== "completed", result: { status, ...output } }),
-  });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, CHILD_TIMEOUT_MS);
+  const lifecycle = (status, output) =>
+    emit({
+      type:
+        status === "running" ? "tool_execution_start" : "tool_execution_end",
+      source,
+      toolCallId: source.subagentId,
+      toolName: "task",
+      ...(status === "running"
+        ? { args: { id: task.id, description: task.description } }
+        : { isError: status !== "completed", result: { status, ...output } }),
+    });
   lifecycle("running");
   let result;
   try {
     if (signal.aborted) throw new Error("cancelled");
     const root = join(cwd, ".toolplane-subagents");
     mkdirSync(root, { recursive: true, mode: 0o700 });
-    if (lstatSync(root).isSymbolicLink() || !within(cwd, realpathSync(root))) throw new Error("scope");
+    if (lstatSync(root).isSymbolicLink() || !within(cwd, realpathSync(root)))
+      throw new Error("scope");
     const directory = join(root, source.subagentId);
     mkdirSync(directory, { mode: 0o700 });
-    childUi = createNativeUi({ getContext: () => context, theme, source, onError: () => { uiFailed = true; } });
+    childUi = createNativeUi({
+      getContext: () => context,
+      theme,
+      source,
+      onError: () => {
+        uiFailed = true;
+      },
+    });
     const manager = sdk.SessionManager.create(cwd, directory);
-    const child = await factory({ cwd, sessionManager: manager }, { tools, ui: childUi, source });
+    const child = await factory(
+      { cwd, sessionManager: manager },
+      { tools, ui: childUi, source },
+    );
     session = child.session;
     unsubscribeChild = session.subscribe((entry) => {
       event(entry, source, session.model);
@@ -365,18 +469,59 @@ async function runChild(task, sharedContext, parentToolCallId, tools, parentSign
         void childUi.projectTodos(manager).catch(() => { uiFailed = true; });
     });
     allowTransientStreamRetry(session);
-    await session.bindExtensions({ mode: context?.uiUrl ? "rpc" : "json", uiContext: context?.uiUrl ? childUi.uiContext : undefined, onError: () => { uiFailed = true; } });
+    await session.bindExtensions({
+      mode: context?.uiUrl ? "rpc" : "json",
+      uiContext: context?.uiUrl ? childUi.uiContext : undefined,
+      onError: () => {
+        uiFailed = true;
+      },
+    });
     applyConfiguredThinkingLevel(session);
-    if (signal.aborted) { cancel(); throw new Error("cancelled"); }
-    await session.prompt([sharedContext ? `Shared background:\n${sharedContext}` : "", `Assignment (${task.id}): ${task.description}\n${task.prompt}`].filter(Boolean).join("\n\n"));
+    if (signal.aborted) {
+      cancel();
+      throw new Error("cancelled");
+    }
+    await session.prompt(
+      [
+        sharedContext ? `Shared background:\n${sharedContext}` : "",
+        `Assignment (${task.id}): ${task.description}\n${task.prompt}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    );
     await session.waitForIdle();
     await childUi.drain();
-    if (signal.aborted || uiFailed || !lastMessage || ["error", "aborted"].includes(lastMessage.stopReason)) throw new Error("failed");
+    if (
+      signal.aborted ||
+      uiFailed ||
+      !lastMessage ||
+      ["error", "aborted"].includes(lastMessage.stopReason)
+    )
+      throw new Error("failed");
     const text = contentText(lastMessage.content);
-    result = { id: task.id, status: "completed", text: text.slice(0, CHILD_OUTPUT_CHARS), truncated: text.length > CHILD_OUTPUT_CHARS };
+    result = {
+      id: task.id,
+      status: "completed",
+      text: text.slice(0, CHILD_OUTPUT_CHARS),
+      truncated: text.length > CHILD_OUTPUT_CHARS,
+    };
   } catch {
-    const status = timedOut ? "timed_out" : signal.aborted ? "cancelled" : "failed";
-    result = { id: task.id, status, text: "", truncated: false, reason: { timed_out: "TASK_TIMEOUT", cancelled: "TASK_CANCELLED", failed: "TASK_EXECUTION_FAILED" }[status] };
+    const status = timedOut
+      ? "timed_out"
+      : signal.aborted
+        ? "cancelled"
+        : "failed";
+    result = {
+      id: task.id,
+      status,
+      text: "",
+      truncated: false,
+      reason: {
+        timed_out: "TASK_TIMEOUT",
+        cancelled: "TASK_CANCELLED",
+        failed: "TASK_EXECUTION_FAILED",
+      }[status],
+    };
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", cancel);
@@ -974,6 +1119,7 @@ function event(event, source, sourceModel) {
     }
   }
 }
+
 // Session setup and reload recompute settings from storage, so apply after them.
 function applyRetryBudget() {
   const retries = config.modelRetries ?? 0;
@@ -1157,18 +1303,34 @@ async function bindSession(session) {
   applyConfiguredThinkingLevel(session);
   persist();
 }
-async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }, child) {
+async function factory(
+  { cwd: nextCwd, sessionManager, sessionStartEvent },
+  child,
+) {
   if (
     realpathSync(nextCwd) !== cwd ||
-    !within(child ? join(cwd, ".toolplane-subagents") : sessionsDir, resolve(sessionManager.getSessionDir()))
+    !within(
+      child ? join(cwd, ".toolplane-subagents") : sessionsDir,
+      resolve(sessionManager.getSessionDir()),
+    )
   )
     fail("PI_SDK_SESSION_SCOPE");
   await verifyPiPackageSnapshots(config.packages);
   const ui = child?.ui ?? nativeUi;
-  const sessionSettings = child ? sdk.SettingsManager.inMemory({
-    defaultTools: child.tools, packages: [], extensions: [], skills: [], prompts: [], themes: [],
-    retry: { enabled: (config.modelRetries ?? 0) > 0, maxRetries: config.modelRetries ?? 0 },
-  }) : settingsManager;
+  const sessionSettings = child
+    ? sdk.SettingsManager.inMemory({
+        defaultTools: child.tools,
+        packages: [],
+        extensions: [],
+        skills: [],
+        prompts: [],
+        themes: [],
+        retry: {
+          enabled: (config.modelRetries ?? 0) > 0,
+          maxRetries: config.modelRetries ?? 0,
+        },
+      })
+    : settingsManager;
   const extensions = [
     ...config.resources.extensions,
     ...(config.optionalBuiltinExtensions ?? []),
@@ -1223,7 +1385,11 @@ async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }, chil
             pi.on("session_start", project);
             pi.on("session_tree", project);
             pi.on("before_provider_request", () => {
-              if (active) emit({ type: "model_request", ...(child ? { source: child.source } : {}) });
+              if (active)
+                emit({
+                  type: "model_request",
+                  ...(child ? { source: child.source } : {}),
+                });
             });
             pi.on("tool_call", approveToolCall);
             pi.on("turn_end", (boundary) => advisor.review(boundary));
@@ -1264,10 +1430,13 @@ async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }, chil
     model: config.model,
     ...(child ? { tools: child.tools } : {}),
     excludeTools: [...(config.excludeTools ?? []), ...(child ? ["task"] : [])],
-    customTools: child ? customTools.map((tool) => ({
-      ...tool,
-      execute: (...args) => toolSources.run(child.source, () => tool.execute(...args)),
-    })) : customTools,
+    customTools: child
+      ? customTools.map((tool) => ({
+          ...tool,
+          execute: (...args) =>
+            toolSources.run(child.source, () => tool.execute(...args)),
+        }))
+      : customTools,
   });
   return { ...result, services, diagnostics: services.diagnostics };
 }
