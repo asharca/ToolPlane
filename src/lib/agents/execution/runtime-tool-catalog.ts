@@ -1,5 +1,14 @@
 import { piCommunicationCatalog } from "@/lib/a2a/pi-tool-catalog";
 import { LocalArtifactInput } from "./tool-inputs";
+import type { z } from "zod";
+import { agentOptionalBuiltinTool } from "../runtime-kind";
+
+/** Append implemented platform definitions here and register their handler in runtime-tools.ts. */
+export const piOptionalPlatformTools: readonly {
+  name: string;
+  description: string;
+  schema: z.ZodObject;
+}[] = [];
 
 /** The historic wire name and catalog positions are immutable revision inputs. */
 export const piArtifactTool = {
@@ -10,8 +19,20 @@ export const piArtifactTool = {
 } as const;
 
 /** Data-only catalog shared by revision capture and the runtime MCP bridge. */
-export function piRuntimeCatalog(communicationEnabled: boolean) {
-  return communicationEnabled
+export function piRuntimeCatalog(
+  communicationEnabled: boolean,
+  optionalBuiltinTools: readonly string[] = [],
+) {
+  const base = communicationEnabled
     ? [...piCommunicationCatalog, piArtifactTool]
     : [piArtifactTool];
+  // Append only: existing base tools retain their immutable native indices.
+  return [
+    ...base,
+    ...piOptionalPlatformTools.filter(
+      (tool) =>
+        agentOptionalBuiltinTool(tool.name)?.implementation === "platform" &&
+        optionalBuiltinTools.includes(tool.name),
+    ),
+  ];
 }

@@ -91,6 +91,53 @@ export type AgentRuntimeBuiltinToolGroup = {
   tools: readonly string[];
 };
 
+export type AgentOptionalBuiltinTool = {
+  /** Stable native tool name; never accept module paths from revision data. */
+  name: string;
+  category: AgentRuntimeBuiltinToolCategory;
+  implementation: "sandbox-extension" | "platform";
+};
+
+/** Register only implemented, trusted tools. Optional tools are always opt-in. */
+export const AGENT_OPTIONAL_BUILTIN_TOOLS: readonly AgentOptionalBuiltinTool[] =
+  [];
+
+export function agentOptionalBuiltinTools(value: unknown) {
+  return isExecutableAgentRuntimeKind(value)
+    ? AGENT_OPTIONAL_BUILTIN_TOOLS
+    : [];
+}
+
+export function agentOptionalBuiltinTool(name: string) {
+  return AGENT_OPTIONAL_BUILTIN_TOOLS.find((tool) => tool.name === name);
+}
+
+/** Reject rather than silently discard unknown authority requested by a caller. */
+export function normalizeOptionalBuiltinTools(
+  tools: readonly string[] | undefined,
+): string[] {
+  if (
+    tools !== undefined &&
+    (!Array.isArray(tools) ||
+      tools.length > 1_000 ||
+      tools.some(
+        (name) => typeof name !== "string" || !agentOptionalBuiltinTool(name),
+      ))
+  )
+    throw new Error("OPTIONAL_BUILTIN_TOOLS_INVALID");
+  return [...new Set(tools ?? [])].sort();
+}
+
+export function agentOptionalBuiltinToolOptions(
+  runtimeKind: unknown,
+  enabled: readonly string[] = [],
+) {
+  return agentOptionalBuiltinTools(runtimeKind).map((tool) => ({
+    ...tool,
+    enabled: enabled.includes(tool.name),
+  }));
+}
+
 const AGENT_RUNTIME_BUILTIN_TOOL_GROUPS: Record<
   AgentRuntimeKind,
   readonly AgentRuntimeBuiltinToolGroup[]

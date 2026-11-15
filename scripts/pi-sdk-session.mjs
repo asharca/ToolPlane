@@ -607,7 +607,11 @@ async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }) {
   )
     fail("PI_SDK_SESSION_SCOPE");
   await verifyPiPackageSnapshots(config.packages);
-  const extensions = [...config.resources.extensions, todoPath];
+  const extensions = [
+    ...config.resources.extensions,
+    ...(config.optionalBuiltinExtensions ?? []),
+    todoPath,
+  ];
   const services = await sdk.createAgentSessionServices({
     cwd,
     agentDir: config.agentDir,

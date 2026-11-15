@@ -357,6 +357,7 @@ export async function localTaskOptions(
       .filter(Boolean)
       .join("\n\n"),
     disabledBuiltinTools: agent.disabledBuiltinTools,
+    optionalBuiltinTools: agent.optionalBuiltinTools,
     skills: resolved.skills,
     runtimeSessionId,
     ...(command ? { command: commandText } : {}),

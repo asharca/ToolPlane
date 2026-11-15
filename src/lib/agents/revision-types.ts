@@ -11,9 +11,14 @@ import {
   EXTERNAL_SANDBOX_ACCESS,
   MAX_EXTERNAL_SANDBOXES,
 } from "@/lib/sandboxes/external";
+import { agentOptionalBuiltinTool } from "./runtime-kind";
 
 const reference = z.string().trim().min(1).max(240);
 const references = z.array(reference).max(1_000);
+export const OptionalBuiltinToolsSchema = references.refine(
+  (names) => names.every((name) => Boolean(agentOptionalBuiltinTool(name))),
+  { message: "OPTIONAL_BUILTIN_TOOLS_INVALID" },
+);
 const checksum = z.string().regex(/^[a-f0-9]{64}$/);
 
 // Reuse the serializable Sandbox model subset, never its arbitrary config JSON
@@ -167,6 +172,8 @@ const PiRevisionConfigSchema = z
       .min(AGENT_STEP_BOUNDS.min)
       .max(AGENT_STEP_BOUNDS.max),
     disabledBuiltinTools: references,
+    // No default: historical JSON and its checksum must remain unchanged.
+    optionalBuiltinTools: OptionalBuiltinToolsSchema.optional(),
     sandboxTemplateId: reference.nullable(),
     environment: PiEnvironmentSnapshotSchema,
     // Attachment and maximum access only; live attachments narrow it at use.

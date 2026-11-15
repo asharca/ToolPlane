@@ -7,6 +7,7 @@ import { skillLabel } from "@/lib/workspace/skill-label";
 import { AGENT_ENDPOINT_RUNTIME_MANAGED_BY } from "@/lib/agents/public-api/tool-policy";
 import { AgentRevisionConfigSchema } from "./revision-types";
 import { AGENT_PI_PACKAGES_INCLUDE } from "./pi-package-includes";
+import { agentOptionalBuiltinToolOptions } from "./runtime-kind";
 
 export type AgentResourceOption = {
   id: string;
@@ -237,7 +238,7 @@ export async function getProvider(workspaceId: string, providerId: string) {
 }
 
 export async function getAgentPageData(workspaceId: string, agentId: string) {
-  return db.agent.findFirst({
+  const agent = await db.agent.findFirst({
     where: {
       id: agentId,
       workspaceId,
@@ -252,6 +253,7 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       description: true,
       systemPrompt: true,
       disabledBuiltinTools: true,
+      optionalBuiltinTools: true,
       providerId: true,
       model: true,
       maxSteps: true,
@@ -275,6 +277,35 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       subAgents: { select: { childId: true } },
     },
   });
+  return agent
+    ? {
+        ...agent,
+        optionalBuiltinToolOptions: agentOptionalBuiltinToolOptions(
+          agent.runtimeKind,
+          agent.optionalBuiltinTools,
+        ),
+      }
+    : null;
+}
+
+export async function getAgentOptionalBuiltinTools(
+  workspaceId: string,
+  agentId: string,
+) {
+  const agent = await db.agent.findFirst({
+    where: { id: agentId, workspaceId, ...ORDINARY_AGENT_FILTER },
+    select: { runtimeKind: true, retiredAt: true, optionalBuiltinTools: true },
+  });
+  return agent
+    ? {
+        optionalBuiltinTools: agent.optionalBuiltinTools,
+        optionalBuiltinToolOptions: agentOptionalBuiltinToolOptions(
+          agent.runtimeKind,
+          agent.optionalBuiltinTools,
+        ),
+        readOnly: agent.retiredAt !== null || agent.runtimeKind !== "pi-sdk",
+      }
+    : null;
 }
 
 export async function listAgents(workspaceId: string) {

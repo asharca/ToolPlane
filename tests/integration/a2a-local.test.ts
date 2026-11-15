@@ -99,7 +99,16 @@ import {
 } from "@/lib/agents/runtime-access";
 import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
 import { assertLocalRuntimeToken } from "@/lib/a2a/local-runtime";
-import { handleRuntimeTools } from "@/lib/agents/execution/runtime-tools";
+import {
+  handleRuntimeTools,
+  optionalBuiltinPlatformHandlers,
+} from "@/lib/agents/execution/runtime-tools";
+import {
+  AGENT_OPTIONAL_BUILTIN_TOOLS,
+  type AgentOptionalBuiltinTool,
+} from "@/lib/agents/runtime-kind";
+import { piOptionalPlatformTools } from "@/lib/agents/execution/runtime-tool-catalog";
+import { z } from "zod";
 import { executeLocalMcpTool } from "@/lib/a2a/local-mcp-tools";
 import { withSandboxExecutionLease } from "@/lib/agents/sandbox-execution-gate";
 import { isAgentRuntimeGrantCurrent } from "@/lib/agents/runtime-grant";
@@ -3796,6 +3805,139 @@ describe("unified native ingress mappings", () => {
       ).toBe(0);
     } finally {
       await client.close();
+    }
+  });
+
+  it("authorizes optional platform tools by the pinned revision and live opt-in", async () => {
+    // Test-only trusted registration; no example tool is shipped in the product catalog.
+    const name = "test_optional_task_count";
+    const registry = AGENT_OPTIONAL_BUILTIN_TOOLS as AgentOptionalBuiltinTool[];
+    const catalog = piOptionalPlatformTools as Array<
+      (typeof piOptionalPlatformTools)[number]
+    >;
+    const handlers = optionalBuiltinPlatformHandlers as Record<
+      string,
+      (typeof optionalBuiltinPlatformHandlers)[string]
+    >;
+    registry.push({ name, category: "context", implementation: "platform" });
+    catalog.push({
+      name,
+      description: "Count this task's real persisted row",
+      schema: z.object({}).strict(),
+    });
+    let executions = 0;
+    handlers[name] = async (token) => {
+      executions++;
+      return {
+        count: await db.a2ATask.count({ where: { id: token.a2aTaskId } }),
+      };
+    };
+    const client = new Client({
+      name: "optional-tool-authorization",
+      version: "1",
+    });
+    try {
+      const parent = await root();
+      const signed = await createAgentRuntimeToken(await runtimeToken(parent));
+      const transport = new StreamableHTTPClientTransport(
+        new URL("https://toolplane.test/runtime-tools"),
+        {
+          requestInit: { headers: { authorization: `Bearer ${signed}` } },
+          fetch: async (input, init) => {
+            const req = new Request(input, init);
+            return req.method === "POST"
+              ? handleRuntimeTools(req, parent.id)
+              : new Response(null, { status: 405 });
+          },
+        },
+      );
+      await client.connect(transport);
+      expect(
+        (await client.listTools()).tools.some((tool) => tool.name === name),
+      ).toBe(false);
+      expect((await client.callTool({ name, arguments: {} })).isError).toBe(
+        true,
+      );
+      await db.agent.update({
+        where: { id: agents[0] },
+        data: { optionalBuiltinTools: [name] },
+      });
+      // A live draft addition cannot widen the already-pinned root.
+      expect((await client.callTool({ name, arguments: {} })).isError).toBe(
+        true,
+      );
+      expect(executions).toBe(0);
+      await client.close();
+      await finishTask(
+        parent.id,
+        assertDefined(parent.leaseToken),
+        TaskState.TASK_STATE_COMPLETED,
+      );
+
+      await publishFixtureAgentRevision(ws, agents[0]);
+      grant = await createLocalRootGrant(ws, agents[0], user);
+      const enabled = await root();
+      const enabledSigned = await createAgentRuntimeToken(
+        await runtimeToken(enabled),
+      );
+      const enabledClient = new Client({
+        name: "enabled-optional-tool",
+        version: "1",
+      });
+      try {
+        await enabledClient.connect(
+          new StreamableHTTPClientTransport(
+            new URL("https://toolplane.test/runtime-tools"),
+            {
+              requestInit: {
+                headers: { authorization: `Bearer ${enabledSigned}` },
+              },
+              fetch: async (input, init) => {
+                const req = new Request(input, init);
+                return req.method === "POST"
+                  ? handleRuntimeTools(req, enabled.id)
+                  : new Response(null, { status: 405 });
+              },
+            },
+          ),
+        );
+        expect(
+          (await enabledClient.listTools()).tools.some(
+            (tool) => tool.name === name,
+          ),
+        ).toBe(true);
+        expect(
+          await enabledClient.callTool({ name, arguments: {} }),
+        ).toMatchObject({ isError: false });
+        expect(executions).toBe(1);
+        await db.agent.update({
+          where: { id: agents[0] },
+          data: { optionalBuiltinTools: [] },
+        });
+        expect(
+          (await enabledClient.callTool({ name, arguments: {} })).isError,
+        ).toBe(true);
+        expect(executions).toBe(1);
+      } finally {
+        await enabledClient.close();
+      }
+    } finally {
+      await client.close();
+      await db.agent.update({
+        where: { id: agents[0] },
+        data: { optionalBuiltinTools: [] },
+      });
+      // Leave the published default parseable after removing test-only registration.
+      await publishFixtureAgentRevision(ws, agents[0]);
+      delete handlers[name];
+      catalog.splice(
+        catalog.findIndex((tool) => tool.name === name),
+        1,
+      );
+      registry.splice(
+        registry.findIndex((tool) => tool.name === name),
+        1,
+      );
     }
   });
 

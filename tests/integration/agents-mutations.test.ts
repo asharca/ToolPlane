@@ -29,6 +29,7 @@ import {
   deleteProviderModel,
   updateAgent,
   updateAgentModelSelection,
+  updateAgentOptionalBuiltinTools,
   setAgentTools,
   updateProvider,
   appendMessage,
@@ -173,6 +174,27 @@ async function createDockerSandbox(label: string) {
 }
 
 describe("agents mutations", () => {
+  it("defaults optional tools off and rejects unknown names without changing the draft", async () => {
+    const agent = await createAgent(workspaceId, "Optional tools draft");
+    expect(agent.optionalBuiltinTools).toEqual([]);
+    await expect(
+      updateAgentOptionalBuiltinTools(workspaceId, agent.id, [
+        "unregistered_optional_builtin",
+      ]),
+    ).rejects.toThrow("OPTIONAL_BUILTIN_TOOLS_INVALID");
+    expect(
+      await db.agent.findUniqueOrThrow({ where: { id: agent.id } }),
+    ).toMatchObject({
+      optionalBuiltinTools: [],
+      currentRevisionVersion: 0,
+    });
+    expect(
+      await updateAgentOptionalBuiltinTools("other-workspace", agent.id, []),
+    ).toBeNull();
+    expect(
+      await updateAgentOptionalBuiltinTools(workspaceId, agent.id, []),
+    ).toMatchObject({ optionalBuiltinTools: [] });
+  });
   it("creates an enabled Agent whose first conversation pins the selected configuration", async () => {
     // External Docker boundaries only; persistence, authorization, and pinning are real.
     vi.spyOn(sandboxRuntime, "resolveDockerImageDigest").mockResolvedValue(

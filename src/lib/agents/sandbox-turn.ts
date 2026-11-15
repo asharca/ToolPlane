@@ -44,6 +44,7 @@ type SandboxTurnAgent = {
   workspaceId: string;
   runtimeKind: string;
   disabledBuiltinTools: string[];
+  optionalBuiltinTools?: string[];
   provider: (ProviderConfig & SandboxRuntimeProvider & { id: string }) | null;
   model: string | null;
   maxSteps?: number;
@@ -267,6 +268,7 @@ export async function runDedicatedSandboxTurn(
             nativeUiUrl: `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/sessions/ui`,
             systemPrompt: input.systemPrompt,
             disabledBuiltinTools: input.agent.disabledBuiltinTools,
+            optionalBuiltinTools: input.agent.optionalBuiltinTools,
             messages: input.messages,
             skills: input.skills,
             piPackages: piSession?.packages,

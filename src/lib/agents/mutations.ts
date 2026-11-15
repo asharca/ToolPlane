@@ -22,6 +22,7 @@ import {
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
   normalizeDisabledBuiltinTools,
+  normalizeOptionalBuiltinTools,
   type ImplementedAgentRuntimeKind,
 } from "@/lib/agents/runtime-kind";
 import {
@@ -226,6 +227,7 @@ export async function createAgentRecords(
       name,
       slug,
       runtimeKind: runtime,
+      optionalBuiltinTools: [],
     },
   });
   const templateSlug =
@@ -501,6 +503,7 @@ export type AgentConfig = {
   providerId: string | null;
   model: string | null;
   disabledBuiltinTools?: string[];
+  optionalBuiltinTools?: string[];
   maxSteps: number;
   reasoningEffort?: ReasoningLevel | null;
   piPackages?: Array<{ marketInstallId: string; releaseId?: string }>;
@@ -524,6 +527,37 @@ export class AgentConfigurationError extends Error {
     super(message);
     this.name = "AgentConfigurationError";
   }
+}
+
+function validatedOptionalBuiltinTools(tools: readonly string[] | undefined) {
+  try {
+    return normalizeOptionalBuiltinTools(tools);
+  } catch {
+    throw new AgentConfigurationError("OPTIONAL_BUILTIN_TOOLS_INVALID");
+  }
+}
+
+/** Save draft authority only; publishing still requires the normal revision review. */
+export async function updateAgentOptionalBuiltinTools(
+  workspaceId: string,
+  agentId: string,
+  tools: readonly string[],
+) {
+  const optionalBuiltinTools = validatedOptionalBuiltinTools(tools);
+  return withAgentDraftLease(agentId, () =>
+    db.$transaction(async (tx) => {
+      const agent = await tx.agent.findFirst({
+        where: { id: agentId, workspaceId },
+        select: { runtimeKind: true, retiredAt: true },
+      });
+      if (!agent) return null;
+      assertNativeAgent(agent.runtimeKind, agent.retiredAt);
+      return tx.agent.update({
+        where: { id: agentId },
+        data: { optionalBuiltinTools },
+      });
+    }),
+  );
 }
 
 async function validateAndWritePiPackages(
@@ -960,6 +994,9 @@ export async function createConfiguredAgent(
             runtime,
             cfg.disabledBuiltinTools,
           ),
+          optionalBuiltinTools: validatedOptionalBuiltinTools(
+            cfg.optionalBuiltinTools,
+          ),
           maxSteps: cfg.maxSteps,
           reasoningEffort: cfg.reasoningEffort ?? null,
         },
@@ -1055,6 +1092,13 @@ export async function updateAgent(
                 disabledBuiltinTools: normalizeDisabledBuiltinTools(
                   agent.runtimeKind,
                   cfg.disabledBuiltinTools,
+                ),
+              }),
+          ...(cfg.optionalBuiltinTools === undefined
+            ? {}
+            : {
+                optionalBuiltinTools: validatedOptionalBuiltinTools(
+                  cfg.optionalBuiltinTools,
                 ),
               }),
           maxSteps: cfg.maxSteps,
