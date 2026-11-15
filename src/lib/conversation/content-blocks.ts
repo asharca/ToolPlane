@@ -1,3 +1,9 @@
+import {
+  StreamRuleTriggerSchema,
+  STREAM_RULE_TRIGGER_PART,
+  type StreamRuleTrigger,
+} from "@/lib/agents/stream-rules";
+
 export type ToolBlockStatus =
   | "running"
   | "awaiting"
@@ -33,6 +39,7 @@ export type ContentStep =
 
 export type ContentBlock =
   | { kind: "text"; id: string; text: string; streaming: boolean }
+  | { kind: "stream-rule"; id: string; trigger: StreamRuleTrigger }
   | {
       kind: "process";
       id: string;
@@ -128,6 +135,7 @@ export function toContentBlocks(
   },
 ): ContentBlock[] {
   const blocks: ContentBlock[] = [];
+  const ruleTriggerIds = new Set<string>();
   const appendStep = (step: ContentStep, partIndex: number) => {
     const previous = blocks.at(-1);
     if (previous?.kind === "process") previous.steps.push(step);
@@ -142,6 +150,18 @@ export function toContentBlocks(
 
   parts.forEach((part, partIndex) => {
     const id = `${messageId}:part:${partIndex}`;
+    if (part.type === STREAM_RULE_TRIGGER_PART) {
+      const parsed = StreamRuleTriggerSchema.safeParse(part.data);
+      if (parsed.success && !ruleTriggerIds.has(parsed.data.id)) {
+        ruleTriggerIds.add(parsed.data.id);
+        blocks.push({
+          kind: "stream-rule",
+          id: `${messageId}:rule:${parsed.data.id}`,
+          trigger: parsed.data,
+        });
+      }
+      return;
+    }
     if (part.type === "text") {
       // Empty text slots still delimit process groups and retain their identity.
       blocks.push({
@@ -260,6 +280,7 @@ export function workContentParts(
   streaming: boolean,
 ): { type: string; [key: string]: unknown }[] {
   return parts.map((part) => {
+    if (part.type === STREAM_RULE_TRIGGER_PART) return part;
     const reasoning = part.type === "reasoning";
     const status =
       !streaming && part.status === "running"

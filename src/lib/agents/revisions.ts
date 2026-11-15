@@ -252,6 +252,7 @@ export async function captureAgentRevisionConfig(
     ...(agent.reasoningEffort != null
       ? { reasoningEffort: agent.reasoningEffort }
       : {}),
+    ...(agent.streamRules != null ? { streamRules: agent.streamRules } : {}),
     disabledBuiltinTools: agent.disabledBuiltinTools,
     optionalBuiltinTools: agent.optionalBuiltinTools,
     sandboxTemplateId: template?.id ?? null,

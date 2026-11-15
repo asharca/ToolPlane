@@ -1,7 +1,14 @@
 import { applyPatch } from "diff";
 import { describe, expect, it } from "vitest";
 import { buildAgentRevisionDiff } from "@/lib/revisions/config-diff";
-import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
+import {
+  AgentRevisionConfigSchema,
+  type AgentRevisionConfig,
+} from "@/lib/agents/revision-types";
+import {
+  StreamRulesSchema,
+  streamRuleValidationCode,
+} from "@/lib/agents/stream-rules";
 
 const config: AgentRevisionConfig = {
   schemaVersion: 1,
@@ -134,5 +141,53 @@ describe("revision review exact content", () => {
       encoding: "base64",
       content: "AA==",
     });
+  });
+});
+
+describe("immutable stream rule configuration", () => {
+  const rule = {
+    id: "shell",
+    name: "Shell guard",
+    target: "tool_call",
+    toolName: "bash",
+    pattern: "forbidden",
+    action: "block",
+    message: "Do not execute this command.",
+  };
+  it("does not add defaults to historical revisions and includes configured rules in review", () => {
+    expect(AgentRevisionConfigSchema.parse(config)).not.toHaveProperty(
+      "streamRules",
+    );
+    const after = AgentRevisionConfigSchema.parse({
+      ...config,
+      streamRules: [rule],
+    });
+    expect(after.streamRules).toEqual([rule]);
+    expect(
+      buildAgentRevisionDiff(config, after).files.find(
+        (file) => file.path === "configuration.json",
+      )?.patch,
+    ).toContain("Shell guard");
+  });
+  it.each([
+    [[{ ...rule, pattern: "(" }], "STREAM_RULE_PATTERN_INVALID"],
+    [[{ ...rule, pattern: "(a+)+$" }], "STREAM_RULE_PATTERN_UNSAFE"],
+    [[{ ...rule, pattern: "(a|aa)+$" }], "STREAM_RULE_PATTERN_UNSAFE"],
+    [[{ ...rule, target: "assistant_text" }], "STREAM_RULE_INVALID_TARGET"],
+    [[rule, rule], "STREAM_RULE_DUPLICATE_ID"],
+    [[{ ...rule, pattern: "a".repeat(501) }], "STREAM_RULES_INVALID"],
+    [[{ ...rule, message: "a".repeat(2001) }], "STREAM_RULES_INVALID"],
+    [
+      Array.from({ length: 51 }, (_, index) => ({
+        ...rule,
+        id: String(index),
+      })),
+      "STREAM_RULES_INVALID",
+    ],
+  ])("rejects invalid rule configurations %#", (rules, code) => {
+    const parsed = StreamRulesSchema.safeParse(rules);
+    expect(parsed.success).toBe(false);
+    if (!parsed.success)
+      expect(streamRuleValidationCode(parsed.error)).toBe(code);
   });
 });

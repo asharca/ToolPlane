@@ -1,4 +1,9 @@
 import "server-only";
+import {
+  StreamRuleTriggerSchema,
+  type StreamRule,
+  type StreamRuleTrigger,
+} from "./stream-rules";
 import { MCP_RESULT_TO_FILE_TOOL } from "./native-tools";
 import {
   serializeSandboxStep,
@@ -186,6 +191,8 @@ export type RunSandboxAgentTurnOptions = {
   command?: string;
   historyRequired?: boolean;
   reasoningEffort?: ReasoningEffort;
+  streamRules?: readonly StreamRule[];
+  onStreamRule?: (trigger: StreamRuleTrigger) => void | Promise<void>;
   signal?: AbortSignal;
   timeoutMs?: number;
   onTextDelta?: (text: string) => void | Promise<void>;
@@ -2298,6 +2305,7 @@ async function runNativeSessionExec(
                 workdir: exec.workdir,
                 system: options.systemPrompt,
                 skills: options.skills,
+                streamRules: options.streamRules,
               }),
             )
             .digest("hex"),
@@ -2595,6 +2603,7 @@ async function runPiSdk(
           hasNativeConversationHistory(options.messages),
       ),
       reasoningEffort: options.reasoningEffort,
+      streamRules: options.streamRules,
       model: sessionModel,
       systemPrompt: options.systemPrompt?.trim() ?? "",
       contextFiles: options.contextFiles === true,
@@ -2640,6 +2649,11 @@ async function runPiSdk(
             ? String(event.reason)
             : "MCP_UNREACHABLE",
         };
+      return;
+    }
+    if (event.type === "stream_rule_triggered") {
+      const trigger = StreamRuleTriggerSchema.safeParse(event.trigger);
+      if (trigger.success) await options.onStreamRule?.(trigger.data);
       return;
     }
     if (event.type === "prompt_invocation") {

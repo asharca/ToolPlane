@@ -10,6 +10,7 @@ import { ToolResult } from "@/components/agents/tool-result";
 import { ConversationFilePreview } from "@/components/dashboard/ConversationComposer";
 import {
   AssistantMarkdown,
+  StreamRuleNotice,
   ToolPayload,
   toolOutputText,
   toolResultUnboundedHeight,
@@ -429,6 +430,8 @@ export function ConversationContentBlocks({
   return (
     <div className="w-full min-w-0 space-y-3">
       {blocks.map((block, index) => {
+        if (block.kind === "stream-rule")
+          return <StreamRuleNotice key={block.id} trigger={block.trigger} />;
         if (block.kind === "text")
           return block.text ? (
             <AssistantMarkdown

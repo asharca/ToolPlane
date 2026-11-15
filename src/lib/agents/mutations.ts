@@ -318,6 +318,7 @@ export async function cloneAgent(
           disabledBuiltinTools: true,
           maxSteps: true,
           reasoningEffort: true,
+          streamRules: true,
         },
       });
       if (!source) return null;
@@ -346,6 +347,9 @@ export async function cloneAgent(
           ),
           maxSteps: source.maxSteps,
           reasoningEffort: source.reasoningEffort,
+          ...(source.streamRules != null
+            ? { streamRules: source.streamRules as Prisma.InputJsonValue }
+            : {}),
         },
       });
       if (deployments.length) {

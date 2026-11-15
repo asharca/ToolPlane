@@ -333,6 +333,7 @@ export async function localTaskOptions(
     provider,
     modelId: model,
     maxSteps: agent.maxSteps,
+    streamRules: agent.revisionConfig.streamRules,
     contextWindow: modelContext.maxTokens,
     contextWindowEstimated: modelContext.estimated,
     modelProxyBase: runtimeModelProxyBase(provider.id),

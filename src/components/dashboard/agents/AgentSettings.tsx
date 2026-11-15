@@ -95,6 +95,7 @@ const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
   "general",
   "instructions",
   "builtInTools",
+  "streamRules",
   "mcp",
   "skills",
   "piPackages",
@@ -179,6 +180,9 @@ export function AgentSettings({
     { id: "sandboxes", label: t("sandboxes") },
     { id: "advanced", label: t("advanced") },
     { id: "builtInTools", label: t("builtInTools") },
+    ...(supportsChannelSettings
+      ? [{ id: "streamRules" as const, label: t("streamRules.title") }]
+      : []),
     { id: "mcp", label: t("mcp") },
     { id: "skills", label: t("skills") },
     { id: "piPackages", label: t("piPackages") },

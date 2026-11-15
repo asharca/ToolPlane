@@ -18,6 +18,7 @@ import { workRuntimeObserver } from "@/lib/work/run-control";
 import { recordTaskExecutionStage } from "@/lib/a2a/store";
 import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
 import { MeteredExecutionError } from "@/lib/agents/usage";
+import type { StreamRuleTrigger } from "@/lib/agents/stream-rules";
 import { getLogContext } from "@/lib/observability/context";
 import { db } from "@/lib/db";
 import { recordTaskToolActivity } from "@/lib/agents/evolution/tool-activity";
@@ -64,6 +65,7 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
   let commands: RuntimeCommand[] = [];
   let usage: RuntimeUsage | undefined;
   let commandResult: RuntimeCommandResult | undefined;
+  const streamRuleTriggers: StreamRuleTrigger[] = [];
   let text: string;
   try {
     text = await runSandboxAgentTurn({
@@ -81,6 +83,10 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
       },
       onExecutionStage,
       onContextUsage: observer?.onContextUsage,
+      onStreamRule: async (trigger) => {
+        streamRuleTriggers.push(trigger);
+        await observer?.onStreamRule?.(trigger);
+      },
       onCommands: async (value) => {
         commands = value;
         await observer?.onCommands?.(value);
@@ -113,6 +119,7 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
       toolplanePiSdk: {
         commands,
         model: { providerId: options.provider.id, model: options.modelId },
+        streamRuleTriggers,
         ...(usage ? { usage } : {}),
         ...(commandResult ? { commandResult } : {}),
       },

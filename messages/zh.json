@@ -705,6 +705,51 @@
       }
     },
     "agents": {
+      "streamRules": {
+        "title": "流式规则",
+        "count": "{count} / 50 条规则",
+        "add": "新增规则",
+        "remove": "删除规则",
+        "moveUp": "上移",
+        "moveDown": "下移",
+        "rule": "规则 {number}",
+        "name": "名称",
+        "target": "目标",
+        "targets": {
+          "assistant_text": "助手文本",
+          "tool_call": "工具调用"
+        },
+        "action": "动作",
+        "actions": {
+          "remind": "提醒",
+          "block": "阻止"
+        },
+        "toolName": "工具名（可选）",
+        "anyTool": "任意工具",
+        "pattern": "正则表达式源（最多 500 字符）",
+        "message": "提示内容（最多 2000 字符）",
+        "loading": "正在加载规则…",
+        "retry": "重试",
+        "triggered": "流式规则已触发",
+        "triggerActions": {
+          "remind": "提醒",
+          "block": "已阻止"
+        },
+        "errors": {
+          "loadFailed": "无法加载流式规则，请重试。",
+          "Unauthorized": "请登录后管理流式规则。",
+          "Forbidden": "此请求不被允许，请刷新页面后重试。",
+          "notFound": "智能体或工作区不可访问。",
+          "AGENT_EXECUTION_RETIRED": "此运行时为只读状态，不能使用流式规则。",
+          "agentBusy": "智能体正忙，请等待当前操作结束后重试。",
+          "STREAM_RULES_INVALID": "请检查规则字段：最多 50 条规则，名称最多 240 字符，正则最多 500 字符，提示内容最多 2000 字符。名称、正则和提示内容不能为空。",
+          "STREAM_RULE_PATTERN_INVALID": "正则表达式无效，请输入不带外围斜杠和 flags 的正则源。",
+          "STREAM_RULE_PATTERN_UNSAFE": "此正则可能包含不安全的重复匹配或反向引用，已被拒绝。请使用更简单的表达式。",
+          "STREAM_RULE_INVALID_TARGET": "助手文本规则只能提醒，不能指定工具名。",
+          "STREAM_RULE_DUPLICATE_ID": "规则 ID 必须唯一，请删除重复规则后重新添加。",
+          "STREAM_RULES_SAVE_FAILED": "流式规则保存失败，编辑内容已保留，请重试。"
+        }
+      },
       "ownSandbox": "环境模板",
       "ownSandboxFixed": "随智能体自动创建并固定绑定。各会话共享智能体的执行沙箱，工作目录相互独立。",
       "ownSandboxMissing": "环境模板暂不可用。",
@@ -1775,6 +1820,7 @@
       "PI_SDK_SESSION_SCOPE": "扩展试图离开 Agent 的私有会话目录，已阻止执行。",
       "PI_SDK_TOOL_FAILED": "Pi SDK 工具执行失败，请检查工具结果后继续；未自动重放任务。",
       "PI_SDK_MODEL_FAILED": "Pi SDK 模型请求失败或被中断，请检查模型供应商后重新发起请求。",
+      "PI_STREAM_RULE_DELIVERY_FAILED": "流式规则提醒未能加入队列，请重新发起请求。",
       "MODEL_OVERRIDE_UNAVAILABLE": "当前会话指定的模型已不可用。请在频道中发送 /model reset，或选择其他模型。",
       "OMP_MODEL_FAILED": "OMP 模型请求失败或被中断，请检查模型供应商后重新发起请求。",
       "PI_TASK_QUEUE_TIMEOUT": "任务在等待执行时已到期，尚未获准启动；这不是模型响应超时。请稍后重试；若反复发生，请联系管理员检查执行队列与并发容量。",
@@ -3347,6 +3393,7 @@
         "modelParameters": "模型参数已调整",
         "reasoningEffort": "思考强度已调整",
         "contextFiles": "项目指令文件加载已调整",
+        "streamRules": "流式规则已调整",
         "maxSteps": "最大步数已调整",
         "packages": "Pi 插件已变更",
         "knowledge": "知识库已变更",

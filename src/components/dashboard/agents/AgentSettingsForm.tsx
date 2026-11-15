@@ -40,6 +40,10 @@ import {
   type AgentResourceOption,
 } from "./AgentResourceSelect";
 import { AgentBuiltInTools } from "./AgentBuiltInTools";
+import {
+  AgentStreamRulesEditor,
+  useStreamRulesDraft,
+} from "./AgentStreamRulesEditor";
 import { SystemPromptEditor } from "../SystemPromptEditor";
 import type { AgentPluginCapabilityDiff } from "./AgentPluginSyncReview";
 import {
@@ -97,6 +101,7 @@ export type AgentSettingsSection =
   | "general"
   | "instructions"
   | "builtInTools"
+  | "streamRules"
   | "mcp"
   | "skills"
   | "piPackages"
@@ -206,6 +211,11 @@ export function AgentSettingsForm(props: Props) {
   } = props;
   const t = useTranslations("console.agents");
   const r = useTranslations("console.agents.revisions");
+  const streamRules = useStreamRulesDraft(
+    slug,
+    agentId,
+    runtimeKind === "pi-sdk",
+  );
   const s = useTranslations("console.sandboxes");
   const diffT = useTranslations("console.revisionDiff");
   const router = useRouter();
@@ -297,6 +307,7 @@ export function AgentSettingsForm(props: Props) {
   const hasUnsavedChanges =
     dirty ||
     subagentsDirty ||
+    streamRules.dirty ||
     environment !==
       (appliedConfig ? JSON.stringify(appliedConfig.environment, null, 2) : "");
   const sameSet = (left: Set<string>, right: Set<string>) =>
@@ -310,6 +321,7 @@ export function AgentSettingsForm(props: Props) {
       reasoningEffort !== (props.reasoningEffort ?? DEFAULT_REASONING_LEVEL),
     instructions:
       prompt !== props.systemPrompt || contextFiles !== props.contextFiles,
+    streamRules: streamRules.dirty,
     builtInTools:
       !sameSet(disabledTools, new Set(props.disabledBuiltinTools ?? [])) ||
       !sameSet(enabledOptionalTools, new Set(props.optionalBuiltinTools)),
@@ -349,6 +361,7 @@ export function AgentSettingsForm(props: Props) {
       [
         "instructions",
         "builtInTools",
+        "streamRules",
         "mcp",
         "skills",
         "sandboxes",
@@ -474,6 +487,7 @@ export function AgentSettingsForm(props: Props) {
   async function save(data: FormData) {
     await perform(async () => {
       setReview(null);
+      await streamRules.save();
       const result = await updateAgentAction({}, data);
       if (result.error)
         throw new Error(t.has(result.error) ? t(result.error) : result.error);
@@ -529,7 +543,7 @@ export function AgentSettingsForm(props: Props) {
     });
   }
   async function apply() {
-    if (!review || dirty || subagentsDirty) return;
+    if (!review || dirty || subagentsDirty || streamRules.dirty) return;
     await perform(() => publish(review));
   }
   async function loadCredentials() {
@@ -541,6 +555,7 @@ export function AgentSettingsForm(props: Props) {
     ["general", t("basic")],
     ["instructions", t("instructions")],
     ["builtInTools", t("builtInTools")],
+    ["streamRules", t("streamRules.title")],
     ["mcp", t("mcp")],
     ["skills", t("skills")],
     ["piPackages", t("piPackages")],
@@ -776,6 +791,13 @@ export function AgentSettingsForm(props: Props) {
                     maxLength={100_000}
                     placeholder={t("youAreAHelpfulAssistant")}
                     dirty={prompt !== props.systemPrompt}
+                  />
+                </section>
+                <section hidden={active !== "streamRules"}>
+                  <AgentStreamRulesEditor
+                    draft={streamRules}
+                    disabled={pending}
+                    onChange={changed}
                   />
                 </section>
                 <section hidden={active !== "builtInTools"}>
@@ -1382,7 +1404,7 @@ export function AgentSettingsForm(props: Props) {
             </Button>
             <Button
               type="button"
-              disabled={pending || dirty || subagentsDirty}
+              disabled={pending || dirty || subagentsDirty || streamRules.dirty}
               onClick={() => void apply()}
               className="gap-2"
             >
@@ -1399,7 +1421,10 @@ export function AgentSettingsForm(props: Props) {
           <Button
             form={formId}
             type="submit"
-            disabled={pending}
+            disabled={
+              pending ||
+              (active === "streamRules" && streamRules.rules === null)
+            }
             aria-busy={pending}
             className="min-w-24 gap-2 rounded-xl"
           >
