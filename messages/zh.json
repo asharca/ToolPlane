@@ -1814,6 +1814,8 @@
       "PI_EXTENSION_LOAD_FAILED": "所选 Pi 扩展加载失败，请检查其无界面 SDK 兼容性后新建会话。",
       "PI_EXTENSION_RESOURCE_DENIED": "扩展请求了 Agent 许可目录之外的资源，已阻止执行。",
       "PI_SDK_SESSION_MISSING": "SDK 会话文件或尚未持久化的活会话已丢失，请新建会话或 Work；原历史仍可阅读。",
+      "PI_SDK_ENTRY_NOT_FOUND": "消息对应的原生会话节点已丢失，无法重新执行或分支，请新建 Work。",
+      "PI_SDK_NAVIGATION_CANCELLED": "原生对话导航已取消，本轮未执行；已有历史仍保留。",
       "PI_SDK_PACKAGE_SET_CHANGED": "已启用的扩展集合发生变化，请新建会话或 Work 使用新配置；原历史仍可阅读。",
       "PI_SDK_TOOLSET_CHANGED": "可用工具集合已改变，请新建会话或 Work 使用当前工具。",
       "PI_SDK_VERSION_MISMATCH": "此扩展所需的 Pi SDK 版本与当前安装不符，请联系管理员检查运行时安装。",
@@ -3557,6 +3559,28 @@
       "restoreBranchPanel": "还原分支视图"
     },
     "work": {
+      "tree": {
+        "edit": "编辑并重新执行",
+        "retry": "重试最后一轮",
+        "branch": "从此处分支",
+        "queued": "已加入重新执行队列。",
+        "branched": "已创建分支。",
+        "contextOnly": "只回退对话，不回退沙箱文件和外部操作；再次运行可能重复执行操作。",
+        "branchFiles": "分支在新工作目录中保持空闲，不复制源目录文件。",
+        "errors": {
+          "Unauthorized": "请重新登录后操作此会话。",
+          "notFound": "会话不存在或你已无权访问。",
+          "messageNotFound": "此消息已不在当前分支，请刷新会话。",
+          "invalidText": "请输入 1 至 20,000 个字符。",
+          "userMessageRequired": "只能编辑用户消息。",
+          "conversationTreeUnsupported": "仅普通 Work 会话支持编辑、重试和分支。",
+          "readOnly": "此 Work 为只读，修订不可用、已退役或已归档。",
+          "busy": "会话或子任务仍在运行或处理中，请明确停止或等待结束。",
+          "piEntryMappingMissing": "此消息没有已保存的原生会话映射，无法编辑、重试或分支。",
+          "PI_SDK_SESSION_SCOPE": "原生会话与当前对话归属不一致，已阻止操作。",
+          "conversationTreeFailed": "无法完成会话操作，请刷新确认当前状态后再试。"
+        }
+      },
       "a2a": {
         "group": "A2A",
         "title": "A2A 会话",

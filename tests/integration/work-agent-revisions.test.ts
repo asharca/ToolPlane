@@ -49,6 +49,10 @@ import { updateTaskUi } from "@/lib/agents/execution/task-ui";
 import { mapTaskSandbox } from "./task-sandbox-fixture";
 import { withAgentMaintenanceLease } from "@/lib/agents/agent-execution-gate";
 import type * as SandboxRuntimeModule from "@/lib/agents/sandbox-runtime";
+import { mutateWorkConversationTree } from "@/lib/agents/conversation-tree";
+import * as workCoordinator from "@/lib/work/coordinator";
+import { getWorkSession } from "@/lib/work/sessions";
+import { conversationTreePost } from "@/lib/agents/conversation-tree-http";
 
 // Revision and Work authorization use real persistence, not Docker SDK preparation.
 vi.mock("@/lib/agents/pi-runtime", () => ({
@@ -66,6 +70,8 @@ vi.mock("@/lib/agents/sandbox-runtime", async (original) => ({
 
 const browserActor = vi.hoisted(() => ({ id: "" }));
 vi.mock("@/lib/auth/request-user", () => ({
+  resolveRequestUser: async () =>
+    browserActor.id ? { id: browserActor.id } : null,
   resolveRequestPrincipal: async () => ({
     credential: "session",
     user: { id: browserActor.id },
@@ -180,6 +186,259 @@ async function fixture() {
   return { agent, config, revision };
 }
 describe.sequential("Work and local A2A owner revisions", () => {
+  it("retains superseded Work history while edit and retry queue only the current branch", async () => {
+    const { agent, revision } = await fixture();
+    const work = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      a2aActorId: userId,
+      task: "keep this user",
+    });
+    if (!work) throw new Error("Work fixture unavailable");
+    const first = await db.message.findFirstOrThrow({
+      where: { conversationId: work.conversationId },
+    });
+    const base = Date.now() - 60_000;
+    await db.message.update({
+      where: { id: first.id },
+      data: { piEntryId: "native-first", createdAt: new Date(base) },
+    });
+    await db.message.create({
+      data: {
+        conversationId: work.conversationId,
+        role: "assistant",
+        parts: [{ type: "text", text: "keep this reply" }],
+        piEntryId: "native-first-reply",
+        createdAt: new Date(base + 1),
+      },
+    });
+    const replaced = await db.message.create({
+      data: {
+        conversationId: work.conversationId,
+        role: "user",
+        parts: [{ type: "text", text: "old user" }],
+        piEntryId: "native-edited-user",
+        createdAt: new Date(base + 2),
+      },
+    });
+    const suffix = await db.message.create({
+      data: {
+        conversationId: work.conversationId,
+        role: "assistant",
+        parts: [{ type: "text", text: "old reply" }],
+        piEntryId: "native-old-reply",
+        createdAt: new Date(base + 3),
+      },
+    });
+    await db.workSession.update({
+      where: { id: work.id },
+      data: { status: "idle" },
+    });
+    const kick = vi
+      .spyOn(workCoordinator, "kickWorkCoordinator")
+      .mockImplementation(() => {});
+    try {
+      const edited = await mutateWorkConversationTree({
+        workspaceId,
+        agentId: agent.id,
+        conversationId: work.conversationId,
+        actorId: userId,
+        action: "edit",
+        messageId: replaced.id,
+        text: "replacement user",
+      });
+      expect(edited).toMatchObject({
+        kind: "queued",
+        filesRewound: false,
+        externalEffectsRewound: false,
+      });
+      if (edited.kind !== "queued")
+        throw new Error("Edit must queue a replacement turn");
+      const all = await db.message.findMany({
+        where: { conversationId: work.conversationId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+      expect(all).toHaveLength(5);
+      expect(all.find((message) => message.id === replaced.id)).toMatchObject({
+        supersededAt: expect.any(Date),
+        supersededById: edited.messageId,
+      });
+      expect(
+        all.find((message) => message.id === suffix.id)?.supersededAt,
+      ).toBeInstanceOf(Date);
+      const visible = await getWorkSession(workspaceId, work.id);
+      expect(
+        visible?.conversation.messages.map((message) => message.id),
+      ).toEqual([first.id, all[1].id, edited.messageId]);
+      const replacement = all.find(
+        (message) => message.id === edited.messageId,
+      );
+      if (!replacement) throw new Error("Replacement user message unavailable");
+      expect(replacement).toMatchObject({
+        piRewindEntryId: "native-edited-user",
+        piEntryId: null,
+      });
+      expect(visible?.agentRevisionId).toBe(revision.id);
+      await db.message.update({
+        where: { id: replacement.id },
+        data: { piEntryId: "native-replacement" },
+      });
+      await db.workSession.update({
+        where: { id: work.id },
+        data: { status: "idle" },
+      });
+      const retried = await mutateWorkConversationTree({
+        workspaceId,
+        agentId: agent.id,
+        conversationId: work.conversationId,
+        actorId: userId,
+        action: "retry",
+      });
+      if (retried.kind !== "queued")
+        throw new Error("Retry must queue a replacement turn");
+      expect(
+        await db.message.findUnique({ where: { id: retried.messageId } }),
+      ).toMatchObject({
+        parts: replacement.parts,
+        piRewindEntryId: "native-replacement",
+      });
+      expect(
+        await db.message.count({
+          where: { conversationId: work.conversationId },
+        }),
+      ).toBe(6);
+      expect(
+        await db.message.count({
+          where: { conversationId: work.conversationId, supersededAt: null },
+        }),
+      ).toBe(3);
+    } finally {
+      kick.mockRestore();
+    }
+  });
+
+  it("rejects unmapped history, active Work and cross-Agent conversation mutations without changing history", async () => {
+    const { agent } = await fixture();
+    const other = await fixture();
+    const work = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      a2aActorId: userId,
+      task: "unmapped history",
+    });
+    if (!work) throw new Error("Work fixture unavailable");
+    const args = {
+      workspaceId,
+      agentId: agent.id,
+      conversationId: work.conversationId,
+      actorId: userId,
+      action: "retry" as const,
+    };
+    await expect(mutateWorkConversationTree(args)).rejects.toMatchObject({
+      code: "busy",
+      status: 409,
+    });
+    await db.workSession.update({
+      where: { id: work.id },
+      data: { status: "idle" },
+    });
+    await expect(mutateWorkConversationTree(args)).rejects.toMatchObject({
+      code: "piEntryMappingMissing",
+      status: 409,
+    });
+    await expect(
+      mutateWorkConversationTree({ ...args, agentId: other.agent.id }),
+    ).rejects.toMatchObject({ code: "notFound", status: 404 });
+    await db.conversation.update({
+      where: { id: work.conversationId },
+      data: { runtimeSessionKey: "channel:fixture:chat" },
+    });
+    await expect(mutateWorkConversationTree(args)).rejects.toMatchObject({
+      code: "conversationTreeUnsupported",
+      status: 409,
+    });
+    expect(
+      await db.message.count({
+        where: { conversationId: work.conversationId },
+      }),
+    ).toBe(1);
+  });
+
+  it("does not expose or mutate another workspace or Agent through the conversation tree API", async () => {
+    const { agent } = await fixture();
+    const other = await fixture();
+    const work = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      a2aActorId: userId,
+      task: "private tree",
+    });
+    if (!work) throw new Error("Work fixture unavailable");
+    const foreign = await db.user.create({
+      data: {
+        email: `tree-foreign-${randomUUID()}@test.invalid`,
+        passwordHash: "fixture",
+      },
+    });
+    const post = conversationTreePost("retry");
+    const request = () =>
+      new Request(
+        `http://localhost/api/v1/agents/${agent.id}/conversations/${work.conversationId}/retry`,
+        { method: "POST" },
+      );
+    try {
+      browserActor.id = "";
+      expect(
+        (
+          await post(request(), {
+            params: Promise.resolve({
+              agentId: agent.id,
+              conversationId: work.conversationId,
+            }),
+          })
+        ).status,
+      ).toBe(401);
+      browserActor.id = foreign.id;
+      expect(
+        (
+          await post(request(), {
+            params: Promise.resolve({
+              agentId: agent.id,
+              conversationId: work.conversationId,
+            }),
+          })
+        ).status,
+      ).toBe(404);
+      browserActor.id = userId;
+      expect(
+        (
+          await post(request(), {
+            params: Promise.resolve({
+              agentId: other.agent.id,
+              conversationId: work.conversationId,
+            }),
+          })
+        ).status,
+      ).toBe(404);
+      expect(
+        await db.message.count({
+          where: { conversationId: work.conversationId },
+        }),
+      ).toBe(1);
+    } finally {
+      browserActor.id = userId;
+      await db.user.delete({ where: { id: foreign.id } });
+    }
+    expect(
+      await db.message.count({
+        where: {
+          conversationId: work.conversationId,
+          supersededAt: { not: null },
+        },
+      }),
+    ).toBe(0);
+  });
+
   it("rejects retry and new input while conversation deletion holds maintenance", async () => {
     const { agent } = await fixture();
     const work = await createWorkSession({

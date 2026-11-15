@@ -31,6 +31,9 @@ import {
   Pin,
   PanelLeft,
   TerminalSquare,
+  GitBranch,
+  Pencil,
+  RotateCcw,
 } from "lucide-react";
 import { Tooltip } from "@/components/motion/tooltip";
 import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
@@ -62,6 +65,7 @@ import type { BudgetWarning } from "@/lib/agents/budget-warning";
 import { AgentPromptProvenance } from "@/components/dashboard/agents/AgentPromptProvenance";
 import {
   ConversationContextUsage,
+  ConversationComposer,
   conversationComposerDockClassName,
 } from "@/components/dashboard/ConversationComposer";
 import { WorkComposer } from "./WorkComposer";
@@ -430,6 +434,7 @@ type WorkMessage = {
   id: string;
   role: string;
   createdAt?: string;
+  piEntryId?: string | null;
   parts: WorkPart[];
 };
 type ConversationSummary = {
@@ -475,6 +480,12 @@ type WorkTiming = {
   approvalWaitMs?: number;
   runtimeKind?: string;
   modelName?: string;
+};
+
+type WorkTreeAction = {
+  kind: "edit" | "retry" | "branch";
+  messageId: string;
+  text?: string;
 };
 
 type WorkPanel = "files" | "terminal";
@@ -799,6 +810,10 @@ function WorkTranscript({
   sessionStartedAt,
   sessionCompletedAt,
   streaming,
+  treeActionsEnabled = false,
+  treeActionsDisabled = false,
+  treeActionPending = false,
+  onTreeAction,
 }: {
   workspaceSlug: string;
   agentName: string;
@@ -817,10 +832,57 @@ function WorkTranscript({
   sessionStartedAt?: string | null;
   sessionCompletedAt?: string | null;
   streaming: boolean;
+  treeActionsEnabled?: boolean;
+  treeActionsDisabled?: boolean;
+  treeActionPending?: boolean;
+  onTreeAction?: (action: WorkTreeAction) => Promise<boolean>;
 }) {
   const t = useTranslations("console.work");
   const agentsT = useTranslations("console.agents");
   const common = useTranslations("common");
+  const [treeAction, setTreeAction] = useState<WorkTreeAction | null>(null);
+  const [editText, setEditText] = useState("");
+  const lastUserMessage = messages.findLast(
+    (message) => message.role === "user",
+  );
+  const lastTurnMessage = messages.findLast(
+    (message) =>
+      !isConversationControl(message) &&
+      (message.role === "user" || message.role === "assistant"),
+  );
+  const treeActionBlocked =
+    streaming || treeActionsDisabled || treeActionPending;
+  const confirmTreeAction = async () => {
+    if (
+      !treeAction ||
+      !onTreeAction ||
+      !treeActionsEnabled ||
+      treeActionBlocked
+    )
+      return;
+    if (
+      !messages.some(
+        (message) => message.id === treeAction.messageId && message.piEntryId,
+      ) ||
+      (treeAction.kind === "retry" &&
+        treeAction.messageId !== lastUserMessage?.id)
+    ) {
+      notify(t("tree.errors.messageNotFound"), { severity: "error" });
+      return;
+    }
+    const text = editText.trim();
+    if (treeAction.kind === "edit" && (!text || text.length > 20_000)) {
+      notify(t("tree.errors.invalidText"), { severity: "error" });
+      return;
+    }
+    if (
+      await onTreeAction({
+        ...treeAction,
+        ...(treeAction.kind === "edit" ? { text } : {}),
+      })
+    )
+      setTreeAction(null);
+  };
   const messageActionClassName =
     "size-7 rounded-lg border-0 bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5";
   const streamPersisted =
@@ -918,260 +980,184 @@ function WorkTranscript({
   }
 
   return (
-    <MessageGroup
-      spacing="default"
-      className="mx-auto w-full max-w-3xl gap-6 px-4 py-8 sm:px-6"
-    >
-      {transcript.map((message, messageIndex) => {
-        if (messageCompaction(message))
-          return <CompactionNote key={message.id} message={message} />;
-        const isStreamingMessage = message.id === "work-stream";
-        const actionVisibility =
-          messageIndex === transcript.length - 1
-            ? ""
-            : "opacity-0 pointer-events-none transition-opacity group-hover/message:opacity-100 group-hover/message:pointer-events-auto group-focus-within/message:opacity-100 group-focus-within/message:pointer-events-auto [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto motion-reduce:transition-none";
-        const messageTime = formatWorkMessageTime(message.createdAt);
-        const persistedTiming = messageWorkTiming(message);
-        const sessionStart = Date.parse(sessionStartedAt ?? "");
-        const sessionEnd = Date.parse(sessionCompletedAt ?? "");
-        const fallbackTiming: WorkTiming | null =
-          !persistedTiming &&
-          !isStreamingMessage &&
-          message.role === "assistant" &&
-          messages.filter((item) => item.role === "assistant").length === 1 &&
-          Number.isFinite(sessionStart) &&
-          Number.isFinite(sessionEnd) &&
-          sessionEnd >= sessionStart
-            ? {
-                startedAt: sessionStart,
-                completedAt: sessionEnd,
-                durationMs: sessionEnd - sessionStart,
-              }
-            : null;
-        const messageTiming = persistedTiming ?? fallbackTiming;
-        const turnModelData = message.parts.find(
-          (part) => part.type === "data-agent-turn-model",
-        )?.data;
-        const turnModel =
-          turnModelData &&
-          typeof turnModelData === "object" &&
-          "model" in turnModelData &&
-          typeof turnModelData.model === "string"
-            ? turnModelData.model
-            : null;
-        const messageModelName =
-          turnModel ??
-          messageTiming?.modelName ??
-          resolveContextUsage([message])?.modelName ??
-          fallbackModelName;
-        const commandResult = message.parts.find(
-          (part) => part.type === COMMAND_RESULT_PART,
-        )?.data as { text?: string } | undefined;
-        const rawText =
-          message.parts
-            .filter(
-              (part) =>
-                part.type === "text" &&
-                typeof part.text === "string" &&
-                !part.reference,
-            )
-            .map((part) => part.text)
-            .join("\n\n") ||
-          (typeof commandResult?.text === "string" ? commandResult.text : "");
-        const text =
-          message.role === "user"
-            ? displayMessagingUserText(rawText)
-            : isStreamingMessage
-              ? rawText
-              : rawText.trim();
-        // Tool errors are results the model handles; only the runtime outcome fails a turn.
-        const processFailed = message.parts.some(
-          (part) => part.type === "work-runtime" && part.status === "failed",
-        );
-        const fileParts = message.parts.filter(
-          (part) =>
-            part.type === "file" &&
-            typeof part.url === "string" &&
-            (part.url.startsWith("/api/v1/attachments/") ||
-              /^data:[\w.+-]+\/[\w.+-]+;base64,/.test(part.url)),
-        );
-        const attachmentLinks = fileParts.length ? (
-          <div className="flex max-w-full flex-wrap gap-1.5">
-            {fileParts.map((part, index) => (
-              <a
-                // biome-ignore lint/suspicious/noArrayIndexKey: Streamed attachment parts are append-only; retain their positional identity, including duplicate URLs.
-                key={`${part.url}-${index}`}
-                href={part.url}
-                download={part.filename ?? agentsT("attachment")}
-                className={`inline-flex min-w-0 max-w-56 items-center gap-1.5 rounded-lg bg-muted/70 px-2 py-1.5 text-xs text-foreground hover:bg-muted ${part.mediaType?.startsWith("image/") ? "flex-wrap" : "flex-nowrap"}`}
-              >
-                {part.mediaType?.startsWith("image/") ? (
-                  // biome-ignore lint/performance/noImgElement: Authorized attachment URLs and base64 data must render directly without the Next image optimizer or layout sizing changes.
-                  <img
-                    src={part.url}
-                    alt={part.filename ?? agentsT("attachment")}
-                    className="max-h-48 w-full object-contain"
-                  />
-                ) : (
-                  <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-                )}
-                <span className="min-w-0 truncate">
-                  {part.filename ?? agentsT("attachment")}
-                </span>
-              </a>
-            ))}
-          </div>
-        ) : null;
-        const messageBody = (
-          <>
-            {attachmentLinks}
-            {message.role === "user" ? (
-              <AgentPromptProvenance parts={message.parts} />
-            ) : null}
-            {message.parts
-              .filter((part) => part.reference)
-              .map((part, index) =>
-                part.reference ? (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: Streamed reference parts are append-only and can repeat the same reference; preserve existing disclosure identity.
-                  <details key={index} className="my-1 text-xs">
-                    <summary className="cursor-pointer break-words">
-                      @{part.reference.label}
-                    </summary>
-                    <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">
-                      {part.text}
-                    </pre>
-                  </details>
-                ) : null,
-              )}
-            {message.role === "user" ? (
-              text ? (
-                <span className="whitespace-pre-wrap">{text}</span>
-              ) : null
-            ) : (
-              <>
-                <div data-ui="work-process" className="w-full">
-                  <WorkContentBlocks
-                    messageId={message.id}
-                    parts={message.parts}
-                    streaming={isStreamingMessage}
-                    activeLabel={t(executionStageKeys[executionStage])}
-                    headerExtra={
-                      <WorkElapsed
-                        timing={messageTiming}
-                        live={isStreamingMessage}
-                        dataUi="work-process-duration"
-                      />
-                    }
-                  />
-                </div>
-                {!rawText ||
-                message.parts.some(
-                  (part) =>
-                    part.type === "text" && !part.reference && part.text,
-                ) ? null : (
-                  <AssistantMarkdown
-                    text={text}
-                    streaming={isStreamingMessage}
-                  />
-                )}
-              </>
-            )}
-          </>
-        );
-        const showIdentity =
-          messageIndex === 0 ||
-          transcript[messageIndex - 1]?.role !== "assistant";
-        const replyMetadata =
-          message.role !== "user" ? (
-            <div
-              className={`flex min-w-0 flex-wrap items-center gap-2 text-[11px] font-normal text-muted-foreground ${actionVisibility}`}
-            >
-              {messageModelName ? (
-                <span
-                  data-ui="assistant-reply-model"
-                  title={messageModelName}
-                  className="truncate"
+    <>
+      <MessageGroup
+        spacing="default"
+        className="mx-auto w-full max-w-3xl gap-6 px-4 py-8 sm:px-6"
+      >
+        {transcript.map((message, messageIndex) => {
+          if (messageCompaction(message))
+            return <CompactionNote key={message.id} message={message} />;
+          const isStreamingMessage = message.id === "work-stream";
+          const actionVisibility =
+            messageIndex === transcript.length - 1
+              ? ""
+              : "opacity-0 pointer-events-none transition-opacity group-hover/message:opacity-100 group-hover/message:pointer-events-auto group-focus-within/message:opacity-100 group-focus-within/message:pointer-events-auto [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto motion-reduce:transition-none";
+          const messageTime = formatWorkMessageTime(message.createdAt);
+          const persistedTiming = messageWorkTiming(message);
+          const sessionStart = Date.parse(sessionStartedAt ?? "");
+          const sessionEnd = Date.parse(sessionCompletedAt ?? "");
+          const fallbackTiming: WorkTiming | null =
+            !persistedTiming &&
+            !isStreamingMessage &&
+            message.role === "assistant" &&
+            messages.filter((item) => item.role === "assistant").length === 1 &&
+            Number.isFinite(sessionStart) &&
+            Number.isFinite(sessionEnd) &&
+            sessionEnd >= sessionStart
+              ? {
+                  startedAt: sessionStart,
+                  completedAt: sessionEnd,
+                  durationMs: sessionEnd - sessionStart,
+                }
+              : null;
+          const messageTiming = persistedTiming ?? fallbackTiming;
+          const turnModelData = message.parts.find(
+            (part) => part.type === "data-agent-turn-model",
+          )?.data;
+          const turnModel =
+            turnModelData &&
+            typeof turnModelData === "object" &&
+            "model" in turnModelData &&
+            typeof turnModelData.model === "string"
+              ? turnModelData.model
+              : null;
+          const messageModelName =
+            turnModel ??
+            messageTiming?.modelName ??
+            resolveContextUsage([message])?.modelName ??
+            fallbackModelName;
+          const commandResult = message.parts.find(
+            (part) => part.type === COMMAND_RESULT_PART,
+          )?.data as { text?: string } | undefined;
+          const rawText =
+            message.parts
+              .filter(
+                (part) =>
+                  part.type === "text" &&
+                  typeof part.text === "string" &&
+                  !part.reference,
+              )
+              .map((part) => part.text)
+              .join("\n\n") ||
+            (typeof commandResult?.text === "string" ? commandResult.text : "");
+          const text =
+            message.role === "user"
+              ? displayMessagingUserText(rawText)
+              : isStreamingMessage
+                ? rawText
+                : rawText.trim();
+          // Tool errors are results the model handles; only the runtime outcome fails a turn.
+          const processFailed = message.parts.some(
+            (part) => part.type === "work-runtime" && part.status === "failed",
+          );
+          const fileParts = message.parts.filter(
+            (part) =>
+              part.type === "file" &&
+              typeof part.url === "string" &&
+              (part.url.startsWith("/api/v1/attachments/") ||
+                /^data:[\w.+-]+\/[\w.+-]+;base64,/.test(part.url)),
+          );
+          const attachmentLinks = fileParts.length ? (
+            <div className="flex max-w-full flex-wrap gap-1.5">
+              {fileParts.map((part, index) => (
+                <a
+                  // biome-ignore lint/suspicious/noArrayIndexKey: Streamed attachment parts are append-only; retain their positional identity, including duplicate URLs.
+                  key={`${part.url}-${index}`}
+                  href={part.url}
+                  download={part.filename ?? agentsT("attachment")}
+                  className={`inline-flex min-w-0 max-w-56 items-center gap-1.5 rounded-lg bg-muted/70 px-2 py-1.5 text-xs text-foreground hover:bg-muted ${part.mediaType?.startsWith("image/") ? "flex-wrap" : "flex-nowrap"}`}
                 >
-                  {messageModelName}
-                </span>
-              ) : null}
-              {messageTime ? (
-                <time
-                  data-ui="work-message-time"
-                  dateTime={message.createdAt}
-                  title={messageTime.title}
-                >
-                  {messageTime.label}
-                </time>
-              ) : null}
-              <WorkElapsed
-                timing={messageTiming}
-                live={isStreamingMessage}
-                dataUi="work-message-duration"
-              />
+                  {part.mediaType?.startsWith("image/") ? (
+                    // biome-ignore lint/performance/noImgElement: Authorized attachment URLs and base64 data must render directly without the Next image optimizer or layout sizing changes.
+                    <img
+                      src={part.url}
+                      alt={part.filename ?? agentsT("attachment")}
+                      className="max-h-48 w-full object-contain"
+                    />
+                  ) : (
+                    <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="min-w-0 truncate">
+                    {part.filename ?? agentsT("attachment")}
+                  </span>
+                </a>
+              ))}
             </div>
           ) : null;
-        return (
-          <ConversationMessageShell
-            key={message.id}
-            from={message.role === "user" ? "user" : "assistant"}
-            name={agentName}
-            showIdentity={showIdentity}
-            metadata={replyMetadata}
-            data-message-id={message.id}
-            aria-busy={isStreamingMessage || undefined}
-          >
-            {showIdentity ? null : replyMetadata}
-            {message.role === "user" ? (
-              <MessageBubble
-                variant="soft"
-                className={conversationUserBubbleClassName}
+          const messageBody = (
+            <>
+              {attachmentLinks}
+              {message.role === "user" ? (
+                <AgentPromptProvenance parts={message.parts} />
+              ) : null}
+              {message.parts
+                .filter((part) => part.reference)
+                .map((part, index) =>
+                  part.reference ? (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: Streamed reference parts are append-only and can repeat the same reference; preserve existing disclosure identity.
+                    <details key={index} className="my-1 text-xs">
+                      <summary className="cursor-pointer break-words">
+                        @{part.reference.label}
+                      </summary>
+                      <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">
+                        {part.text}
+                      </pre>
+                    </details>
+                  ) : null,
+                )}
+              {message.role === "user" ? (
+                text ? (
+                  <span className="whitespace-pre-wrap">{text}</span>
+                ) : null
+              ) : (
+                <>
+                  <div data-ui="work-process" className="w-full">
+                    <WorkContentBlocks
+                      messageId={message.id}
+                      parts={message.parts}
+                      streaming={isStreamingMessage}
+                      activeLabel={t(executionStageKeys[executionStage])}
+                      headerExtra={
+                        <WorkElapsed
+                          timing={messageTiming}
+                          live={isStreamingMessage}
+                          dataUi="work-process-duration"
+                        />
+                      }
+                    />
+                  </div>
+                  {!rawText ||
+                  message.parts.some(
+                    (part) =>
+                      part.type === "text" && !part.reference && part.text,
+                  ) ? null : (
+                    <AssistantMarkdown
+                      text={text}
+                      streaming={isStreamingMessage}
+                    />
+                  )}
+                </>
+              )}
+            </>
+          );
+          const showIdentity =
+            messageIndex === 0 ||
+            transcript[messageIndex - 1]?.role !== "assistant";
+          const replyMetadata =
+            message.role !== "user" ? (
+              <div
+                className={`flex min-w-0 flex-wrap items-center gap-2 text-[11px] font-normal text-muted-foreground ${actionVisibility}`}
               >
-                <MessageBubbleContent>{messageBody}</MessageBubbleContent>
-              </MessageBubble>
-            ) : (
-              <StreamingResponse
-                status={
-                  isStreamingMessage
-                    ? "streaming"
-                    : processFailed
-                      ? "error"
-                      : "complete"
-                }
-                showActions={false}
-                announce={false}
-              >
-                {messageBody}
-              </StreamingResponse>
-            )}
-            {message.role === "assistant" ? (
-              <ConversationBudgetWarnings
-                parts={message.parts}
-                workspaceSlug={workspaceSlug}
-                live={isStreamingMessage}
-              />
-            ) : null}
-            {message.role === "assistant" && !isStreamingMessage ? (
-              <MessageFooter className={`gap-0.5 ${actionVisibility}`}>
-                {text ? (
-                  <CopyButton
-                    text={text}
-                    label={common("copy")}
-                    iconOnly
-                    className={messageActionClassName}
-                  />
+                {messageModelName ? (
+                  <span
+                    data-ui="assistant-reply-model"
+                    title={messageModelName}
+                    className="truncate"
+                  >
+                    {messageModelName}
+                  </span>
                 ) : null}
-                {agentId && conversationId ? (
-                  <AgentMessageFeedback
-                    agentId={agentId}
-                    conversationId={conversationId}
-                    messageId={message.id}
-                  />
-                ) : null}
-              </MessageFooter>
-            ) : null}
-            {message.role === "user" && text ? (
-              <MessageFooter className={`gap-0.5 ${actionVisibility}`}>
                 {messageTime ? (
                   <time
                     data-ui="work-message-time"
@@ -1181,18 +1167,206 @@ function WorkTranscript({
                     {messageTime.label}
                   </time>
                 ) : null}
-                <CopyButton
-                  text={text}
-                  label={common("copy")}
-                  iconOnly
-                  className={messageActionClassName}
+                <WorkElapsed
+                  timing={messageTiming}
+                  live={isStreamingMessage}
+                  dataUi="work-message-duration"
                 />
-              </MessageFooter>
+              </div>
+            ) : null;
+          const treeActions =
+            treeActionsEnabled && onTreeAction && !isStreamingMessage ? (
+              <>
+                {message.role === "user" && message.piEntryId ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className={messageActionClassName}
+                    disabled={treeActionBlocked}
+                    aria-label={t("tree.edit")}
+                    title={t("tree.edit")}
+                    onClick={() => {
+                      setEditText(rawText);
+                      setTreeAction({ kind: "edit", messageId: message.id });
+                    }}
+                  >
+                    <Pencil className="size-3.5" />
+                  </Button>
+                ) : null}
+                {message.id === lastTurnMessage?.id &&
+                lastUserMessage?.piEntryId ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className={messageActionClassName}
+                    disabled={treeActionBlocked}
+                    aria-label={t("tree.retry")}
+                    title={t("tree.retry")}
+                    onClick={() =>
+                      setTreeAction({
+                        kind: "retry",
+                        messageId: lastUserMessage.id,
+                      })
+                    }
+                  >
+                    <RotateCcw className="size-3.5" />
+                  </Button>
+                ) : null}
+                {message.piEntryId ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className={messageActionClassName}
+                    disabled={treeActionBlocked}
+                    aria-label={t("tree.branch")}
+                    title={t("tree.branch")}
+                    onClick={() =>
+                      setTreeAction({ kind: "branch", messageId: message.id })
+                    }
+                  >
+                    <GitBranch className="size-3.5" />
+                  </Button>
+                ) : null}
+              </>
+            ) : null;
+          return (
+            <ConversationMessageShell
+              key={message.id}
+              from={message.role === "user" ? "user" : "assistant"}
+              name={agentName}
+              showIdentity={showIdentity}
+              metadata={replyMetadata}
+              data-message-id={message.id}
+              aria-busy={isStreamingMessage || undefined}
+            >
+              {showIdentity ? null : replyMetadata}
+              {message.role === "user" ? (
+                <MessageBubble
+                  variant="soft"
+                  className={conversationUserBubbleClassName}
+                >
+                  <MessageBubbleContent>{messageBody}</MessageBubbleContent>
+                </MessageBubble>
+              ) : (
+                <StreamingResponse
+                  status={
+                    isStreamingMessage
+                      ? "streaming"
+                      : processFailed
+                        ? "error"
+                        : "complete"
+                  }
+                  showActions={false}
+                  announce={false}
+                >
+                  {messageBody}
+                </StreamingResponse>
+              )}
+              {message.role === "assistant" ? (
+                <ConversationBudgetWarnings
+                  parts={message.parts}
+                  workspaceSlug={workspaceSlug}
+                  live={isStreamingMessage}
+                />
+              ) : null}
+              {message.role === "assistant" && !isStreamingMessage ? (
+                <MessageFooter className={`gap-0.5 ${actionVisibility}`}>
+                  {text ? (
+                    <CopyButton
+                      text={text}
+                      label={common("copy")}
+                      iconOnly
+                      className={messageActionClassName}
+                    />
+                  ) : null}
+                  {agentId && conversationId ? (
+                    <AgentMessageFeedback
+                      agentId={agentId}
+                      conversationId={conversationId}
+                      messageId={message.id}
+                    />
+                  ) : null}
+                  {treeActions}
+                </MessageFooter>
+              ) : null}
+              {message.role === "user" ? (
+                <MessageFooter className={`gap-0.5 ${actionVisibility}`}>
+                  {messageTime ? (
+                    <time
+                      data-ui="work-message-time"
+                      dateTime={message.createdAt}
+                      title={messageTime.title}
+                    >
+                      {messageTime.label}
+                    </time>
+                  ) : null}
+                  {text ? (
+                    <CopyButton
+                      text={text}
+                      label={common("copy")}
+                      iconOnly
+                      className={messageActionClassName}
+                    />
+                  ) : null}
+                  {treeActions}
+                </MessageFooter>
+              ) : null}
+            </ConversationMessageShell>
+          );
+        })}
+      </MessageGroup>
+      <CenterMorphModal
+        open={Boolean(treeAction)}
+        onOpenChange={(open) => {
+          if (!open && !treeActionPending) setTreeAction(null);
+        }}
+      >
+        <CenterMorphModalContent
+          ariaLabel={t(`tree.${treeAction?.kind ?? "edit"}`)}
+          closeButtonLabel={agentsT("close")}
+          className="max-w-lg"
+        >
+          <DialogHeader title={t(`tree.${treeAction?.kind ?? "edit"}`)} />
+          <DialogBody>
+            <p className="mb-4 text-sm text-muted-foreground">
+              {t("tree.contextOnly")}
+              {treeAction?.kind === "branch"
+                ? ` ${t("tree.branchFiles")}`
+                : null}
+            </p>
+            {treeAction?.kind === "edit" ? (
+              <ConversationComposer
+                value={editText}
+                onValueChange={setEditText}
+                onSubmit={() => void confirmTreeAction()}
+                autoFocus
+                disabled={treeActionBlocked || !treeActionsEnabled}
+                loading={treeActionPending}
+                aria-label={t("tree.edit")}
+                maxLength={20_000}
+                placeholder={t("tree.edit")}
+              />
             ) : null}
-          </ConversationMessageShell>
-        );
-      })}
-    </MessageGroup>
+          </DialogBody>
+          <DialogFooter cancel={<DialogCancel disabled={treeActionPending} />}>
+            {treeAction?.kind !== "edit" ? (
+              <Button
+                type="button"
+                variant="primary"
+                disabled={treeActionBlocked || !treeActionsEnabled}
+                aria-busy={treeActionPending}
+                onClick={() => void confirmTreeAction()}
+              >
+                {t(`tree.${treeAction?.kind ?? "retry"}`)}
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </CenterMorphModalContent>
+      </CenterMorphModal>
+    </>
   );
 }
 
@@ -1369,6 +1543,7 @@ export function WorkspaceWork({
   const commandsT = useTranslations("console.runtimeCommands");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const treeActionInFlight = useRef(false);
   const [followingOutput, setFollowingOutput] = useState(true);
   const [desktopPanel, setDesktopPanel] = useState<WorkPanel | null>(null);
   const [mobilePanel, setMobilePanel] = useState<WorkPanel | null>(null);
@@ -2622,6 +2797,104 @@ export function WorkspaceWork({
     return false;
   }
 
+  async function mutateConversationTree(action: WorkTreeAction) {
+    if (
+      !selected ||
+      sessionReadOnly ||
+      selectedActive ||
+      busy ||
+      composerPending ||
+      treeActionInFlight.current
+    )
+      return false;
+    treeActionInFlight.current = true;
+    setBusy("tree");
+    const target = selected;
+    try {
+      const path =
+        action.kind === "retry"
+          ? "retry"
+          : `messages/${encodeURIComponent(action.messageId)}/${action.kind}`;
+      const response = await fetch(
+        `/api/v1/agents/${encodeURIComponent(target.agentId)}/conversations/${encodeURIComponent(target.conversationId)}/${path}`,
+        {
+          method: "POST",
+          ...(action.kind === "edit"
+            ? {
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ text: action.text }),
+              }
+            : {}),
+        },
+      );
+      const result = (await response.json().catch(() => null)) as {
+        error?: string;
+        kind?: string;
+        workSessionId?: string;
+        contextOnly?: boolean;
+        filesRewound?: boolean;
+        externalEffectsRewound?: boolean;
+      } | null;
+      if (!response.ok) {
+        const code = result?.error ?? "conversationTreeFailed";
+        notify(
+          t.has(`tree.errors.${code}`)
+            ? t(`tree.errors.${code}`)
+            : (describeRuntimeError(code)?.text ??
+                t("tree.errors.conversationTreeFailed")),
+          { severity: "error" },
+        );
+        return false;
+      }
+      if (
+        !result?.workSessionId ||
+        result.kind !== (action.kind === "branch" ? "branched" : "queued")
+      ) {
+        notify(t("tree.errors.conversationTreeFailed"), { severity: "error" });
+        return false;
+      }
+      const contextOnly =
+        result.contextOnly === true &&
+        result.filesRewound === false &&
+        result.externalEffectsRewound === false;
+      notify(
+        `${t(action.kind === "branch" ? "tree.branched" : "tree.queued")}${contextOnly ? ` ${t("tree.contextOnly")}` : ""}`,
+      );
+      if (action.kind === "branch") {
+        if (activeResourceIdRef.current === `session:${target.id}`)
+          router.push(workHref(slug, result.workSessionId));
+      } else {
+        if (activeResourceIdRef.current === `session:${target.id}`) {
+          setError(null);
+          setFollowingOutput(true);
+          setStreamOutput({
+            workSessionId: target.id,
+            text: "",
+            activities: [],
+          });
+          setLiveSelected({
+            ...target,
+            status: "queued",
+            error: null,
+            result: null,
+            artifacts: [],
+            completedAt: null,
+            waitingQuestion: null,
+          });
+        }
+        await refreshSelected();
+      }
+      router.refresh();
+      return true;
+    } catch {
+      notify(t("tree.errors.conversationTreeFailed"), { severity: "error" });
+      return false;
+    } finally {
+      treeActionInFlight.current = false;
+      setBusy(null);
+    }
+  }
+
   async function sendMessage(event?: FormEvent) {
     event?.preventDefault();
     if (sessionReadOnly || conversation || busy || running || composerPending)
@@ -3794,6 +4067,19 @@ export function WorkspaceWork({
                         <>
                           <WorkTranscript
                             workspaceSlug={slug}
+                            treeActionsEnabled={Boolean(
+                              selected &&
+                                !sessionReadOnly &&
+                                selected.runtimeKind === "pi-sdk",
+                            )}
+                            treeActionsDisabled={
+                              selectedActive ||
+                              Boolean(busy) ||
+                              composerPending ||
+                              !MESSAGEABLE_STATUSES.has(selected?.status ?? "")
+                            }
+                            treeActionPending={busy === "tree"}
+                            onTreeAction={mutateConversationTree}
                             agentName={controlAgent?.name ?? t("agent")}
                             agentId={conversation?.agentId ?? selected?.agentId}
                             conversationId={

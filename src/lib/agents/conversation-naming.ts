@@ -117,13 +117,17 @@ async function generateConversationTitle(
 
   const [firstUser, recentMessages] = await Promise.all([
     db.message.findFirst({
-      where: { conversationId, role: "user" },
+      where: { conversationId, role: "user", supersededAt: null },
       orderBy: { createdAt: "asc" },
       select: { parts: true },
     }),
     // ponytail: 25 rows cover normal five-turn chats; group in SQL if segmented replies exceed it.
     db.message.findMany({
-      where: { conversationId, role: { in: ["user", "assistant"] } },
+      where: {
+        conversationId,
+        role: { in: ["user", "assistant"] },
+        supersededAt: null,
+      },
       orderBy: { createdAt: "desc" },
       take: 25,
       select: { role: true, parts: true },

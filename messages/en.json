@@ -1814,6 +1814,8 @@
       "PI_EXTENSION_LOAD_FAILED": "A selected Pi extension failed to load. Check its headless SDK compatibility before starting a new conversation.",
       "PI_EXTENSION_RESOURCE_DENIED": "The extension requested a resource outside this Agent's permitted directories. Execution was blocked.",
       "PI_SDK_SESSION_MISSING": "The SDK session file or live unpersisted session is missing. Start a new conversation or Work; existing history remains readable.",
+      "PI_SDK_ENTRY_NOT_FOUND": "The message's native session entry is missing. It cannot be replayed or branched; start a new Work.",
+      "PI_SDK_NAVIGATION_CANCELLED": "Native conversation navigation was cancelled. The turn did not run; existing history is preserved.",
       "PI_SDK_PACKAGE_SET_CHANGED": "Enabled packages changed. Start a new conversation or Work to use them; existing history remains readable.",
       "PI_SDK_TOOLSET_CHANGED": "Available tools changed. Start a new conversation or Work to use the current tools.",
       "PI_SDK_VERSION_MISMATCH": "This package requires a Pi SDK version this installation does not provide. Ask an administrator to check the installation.",
@@ -3557,6 +3559,28 @@
       "restoreBranchPanel": "Restore branch view"
     },
     "work": {
+      "tree": {
+        "edit": "Edit and rerun",
+        "retry": "Retry last turn",
+        "branch": "Branch from here",
+        "queued": "Rerun queued.",
+        "branched": "Branch created.",
+        "contextOnly": "Only the conversation is rewound, not sandbox files or external actions. Rerunning may repeat actions.",
+        "branchFiles": "The branch starts idle in a new working directory; source files are not copied.",
+        "errors": {
+          "Unauthorized": "Sign in again to change this conversation.",
+          "notFound": "This conversation is unavailable or you no longer have access.",
+          "messageNotFound": "This message is no longer on the current branch. Refresh the conversation.",
+          "invalidText": "Enter between 1 and 20,000 characters.",
+          "userMessageRequired": "Only user messages can be edited.",
+          "conversationTreeUnsupported": "Editing, retrying and branching are only available in ordinary Work conversations.",
+          "readOnly": "This Work is read-only. Its revision is unavailable, retired or archived.",
+          "busy": "This conversation or a child task is still busy. Stop it explicitly or wait for it to finish.",
+          "piEntryMappingMissing": "This message has no saved native session mapping and cannot be edited, retried or branched.",
+          "PI_SDK_SESSION_SCOPE": "The native session does not belong to this conversation. The operation was blocked.",
+          "conversationTreeFailed": "The conversation operation could not be completed. Refresh to check its state before trying again."
+        }
+      },
       "a2a": {
         "group": "A2A",
         "title": "A2A conversation",

@@ -123,7 +123,7 @@ async function serve() {
         if (!child) start();
         const args = job.command?.match(/^\/compact(?:\s+([\s\S]*))?$/);
         child.stdin.write(
-          `${JSON.stringify({ id: sdkRequestId, type: args ? "compact" : "prompt", ...(args ? { customInstructions: args[1] } : { message: job.command || job.message }), context: job.context })}\n`,
+          `${JSON.stringify({ id: sdkRequestId, type: job.type === "fork" ? "fork" : args ? "compact" : "prompt", ...(job.type === "fork" ? { entryId: job.entryId, target: job.target } : args ? { customInstructions: args[1] } : { message: job.command || job.message }), navigateBeforeEntryId: job.navigateBeforeEntryId, context: job.context })}\n`,
         );
       } catch {
         fail("PI_SDK_RUNTIME_FAILED");
@@ -181,6 +181,10 @@ async function serve() {
           text: event.result.text,
           commands: event.result.commands,
           ...(event.result.usage ? { usage: event.result.usage } : {}),
+          ...(event.result.sessionEntries
+            ? { sessionEntries: event.result.sessionEntries }
+            : {}),
+          ...(event.result.fork ? { fork: event.result.fork } : {}),
           ...(event.result.contextBreakdown
             ? { contextBreakdown: event.result.contextBreakdown }
             : {}),
@@ -226,6 +230,9 @@ async function serve() {
                               streamRuleTriggers:
                                 event.result.streamRuleTriggers,
                             }
+                          : {}),
+                        ...(event.result?.sessionEntries
+                          ? { sessionEntries: event.result.sessionEntries }
                           : {}),
                       },
                     }

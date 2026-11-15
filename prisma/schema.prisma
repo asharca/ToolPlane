@@ -1189,6 +1189,9 @@ model Conversation {
   sandboxId             String?
   sandbox               Sandbox?                 @relation(fields: [sandboxId], references: [id], onDelete: Restrict)
   title                 String?
+  // Provenance only; source history remains append-only even if its conversation is removed.
+  branchedFromConversationId String?
+  branchedFromMessageId String?
   // No relation: deleted triggers retain their classified run history.
   triggerId             String?
   // Some runtimes keep their own state outside this database. These aliases
@@ -1222,6 +1225,14 @@ model Message {
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role           String
   parts          Json
+  // Exact Pi tree identity; null on legacy messages is intentionally not reconstructed.
+  piEntryId      String?
+  piParentEntryId String?
+  piTurnLeafId   String?
+  // Trusted navigation instruction on a replacement user turn, never accepted from clients.
+  piRewindEntryId String?
+  supersededAt   DateTime?
+  supersededById String?
   textCharacters Int          @default(0)
   // Public API conversations assign a monotonically increasing sequence so a
   // user/assistant turn stays deterministic even when DB timestamps tie.
@@ -1230,6 +1241,7 @@ model Message {
 
   @@index([conversationId, createdAt])
   @@index([conversationId, sequence])
+  @@index([conversationId, supersededAt])
 }
 
 // Chat is deliberately isolated from Agent/Work. It can bind only a model,

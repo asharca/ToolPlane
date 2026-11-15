@@ -57,6 +57,18 @@ type SdkResponse = {
     text: string;
     commands: Array<{ name: string }>;
     commandResult?: { command: string; text: string; status: string };
+    sessionEntries?: {
+      userEntryId: string;
+      userParentEntryId: string | null;
+      leafEntryId: string;
+    };
+    fork?: {
+      forked: boolean;
+      entryId: string;
+      contextOnly: boolean;
+      filesRewound: boolean;
+      externalEffectsRewound: boolean;
+    };
     state: SdkState;
   };
   error?: { code: string };
@@ -477,13 +489,14 @@ export default function(pi) {
       type: string,
       message?: string,
       current: RequestContext = context,
+      extra: Record<string, unknown> = {},
     ) {
       const id = randomUUID();
       const result = new Promise<SdkResponse>((done, reject) =>
         pending.set(id, { resolve: done, reject }),
       );
       assertDefined(child.stdin).write(
-        `${JSON.stringify({ id, type, message, context: current })}\n`,
+        `${JSON.stringify({ id, type, message, context: current, ...extra })}\n`,
       );
       return result;
     }
@@ -715,6 +728,119 @@ describe("official Pi SDK headless session host", () => {
       "Report the actual counter value.",
     );
   }, 60000);
+  it("navigates before an edited user turn without summarizing discarded context or rewinding files", async () => {
+    const f = await setup();
+    const host = await f.launch();
+    f.behavior.completionText = "KEPT_ASSISTANT";
+    const kept = await host.request("prompt", "KEPT_USER");
+    expect(kept.success).toBe(true);
+    f.behavior.completionText = "DISCARDED_ASSISTANT";
+    const discarded = await host.request("prompt", "DISCARDED_USER");
+    const target = assertDefined(
+      assertDefined(discarded.result).sessionEntries,
+    );
+    expect(target.userEntryId).not.toBe(
+      assertDefined(assertDefined(kept.result).sessionEntries).userEntryId,
+    );
+    expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("2");
+    f.behavior.tool = "";
+    f.behavior.completionText = "EDITED_ASSISTANT";
+    const edited = await host.request("prompt", "EDITED_USER", f.context, {
+      navigateBeforeEntryId: target.userEntryId,
+    });
+    expect(edited.success).toBe(true);
+    const context = JSON.stringify(f.requests.at(-1)?.body);
+    expect(context).toContain("KEPT_USER");
+    expect(context).toContain("KEPT_ASSISTANT");
+    expect(context).toContain("EDITED_USER");
+    expect(context).not.toContain("DISCARDED_USER");
+    expect(context).not.toContain("DISCARDED_ASSISTANT");
+    expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("2");
+    const persisted = await readFile(
+      assertDefined(edited.result).state.sessionFile,
+      "utf8",
+    );
+    expect(persisted).toContain("DISCARDED_USER");
+    const retryTarget = assertDefined(
+      assertDefined(edited.result).sessionEntries,
+    ).userEntryId;
+    const retried = await host.request("prompt", "EDITED_USER", f.context, {
+      navigateBeforeEntryId: retryTarget,
+    });
+    expect(retried.success).toBe(true);
+    expect(
+      f.requests
+        .at(-1)
+        ?.body.messages.filter((message) => message.role === "user"),
+    ).toHaveLength(2);
+    const before = f.requests.length;
+    expect(
+      await host.request("prompt", "never sent", f.context, {
+        navigateBeforeEntryId: "missing-entry",
+      }),
+    ).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_ENTRY_NOT_FOUND" },
+    });
+    expect(f.requests).toHaveLength(before);
+  }, 60_000);
+
+  it("forks a user-only native tree durably into a separate session and continues only that prefix", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    const host = await f.launch();
+    const first = await host.request("prompt", "BRANCH_PREFIX");
+    await host.request("prompt", "EXCLUDED_BRANCH_SUFFIX");
+    const sourceFile = assertDefined(first.result).state.sessionFile;
+    const sourceBefore = await readFile(sourceFile, "utf8");
+    const targetRoot = `${f.root}-fork`;
+    cleanups.push(() => rm(targetRoot, { recursive: true, force: true }));
+    const target = {
+      workspaceRoot: targetRoot,
+      cwd: join(targetRoot, "workspace"),
+      sessionsDir: join(targetRoot, "sessions"),
+      statePath: join(targetRoot, "private", "state.json"),
+    };
+    await mkdir(join(targetRoot, "private"), { recursive: true });
+    const fork = await host.request("fork", undefined, f.context, {
+      entryId: assertDefined(assertDefined(first.result).sessionEntries)
+        .userEntryId,
+      target,
+    });
+    expect(fork).toMatchObject({
+      success: true,
+      result: {
+        fork: {
+          forked: true,
+          contextOnly: true,
+          filesRewound: false,
+          externalEffectsRewound: false,
+        },
+      },
+    });
+    expect(await readFile(sourceFile, "utf8")).toBe(sourceBefore);
+    const state = JSON.parse(await readFile(target.statePath, "utf8"));
+    expect(state).toMatchObject({
+      sessionPersisted: true,
+      agentRevisionId: "revision-one",
+    });
+    const branchFile = await readFile(state.sessionFile, "utf8");
+    expect(branchFile).toContain("BRANCH_PREFIX");
+    expect(branchFile).not.toContain("EXCLUDED_BRANCH_SUFFIX");
+    const branch = await f.launch({
+      ...target,
+      agentDir: join(targetRoot, "private"),
+      historyRequired: true,
+      resources: { extensions: [], skills: [], prompts: [], themes: [] },
+    });
+    expect(
+      (await branch.request("prompt", "BRANCH_CONTINUATION")).success,
+    ).toBe(true);
+    expect(JSON.stringify(f.requests.at(-1)?.body)).toContain("BRANCH_PREFIX");
+    expect(JSON.stringify(f.requests.at(-1)?.body)).not.toContain(
+      "EXCLUDED_BRANCH_SUFFIX",
+    );
+  }, 60_000);
 
   it("keeps Python imports from changing skill files across continued native turns", async () => {
     const f = await setup();
