@@ -252,6 +252,7 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       ompConfig: true,
       description: true,
       systemPrompt: true,
+      contextFiles: true,
       disabledBuiltinTools: true,
       optionalBuiltinTools: true,
       providerId: true,

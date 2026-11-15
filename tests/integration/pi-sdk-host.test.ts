@@ -12,6 +12,7 @@ import {
   readdir,
   rm,
   writeFile,
+  symlink,
 } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -109,17 +110,19 @@ function emptyStream(response: ServerResponse) {
     `data: ${JSON.stringify({ error: { message: "empty_stream", type: "upstream_error" } })}\n\n`,
   );
 }
-async function setup() {
+async function setup(workspaceSubdirectory = "") {
   const root = await mkdtemp(join(tmpdir(), "pi-sdk-host-"));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
-  const workspace = join(root, "workspace"),
+  const workspace = join(root, "workspace", workspaceSubdirectory),
     agentDir = join(root, "private"),
     sessionsDir = join(root, "sessions");
   // Mirror the Agent-wide HOME contract without reading or writing the runner's home.
   const home = join(root, "home");
   const requestEvents = new EventEmitter();
   await Promise.all(
-    [workspace, agentDir, sessionsDir].map((path) => mkdir(path)),
+    [workspace, agentDir, sessionsDir].map((path) =>
+      mkdir(path, { recursive: true }),
+    ),
   );
   const requests: Array<{
     authorization?: string;
@@ -516,6 +519,61 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 describe("official Pi SDK headless session host", () => {
+  it.each([true, false, undefined])(
+    "loads only bounded project instruction files when contextFiles=%s",
+    async (contextFiles) => {
+      const f = await setup("project");
+      const project = f.workspace;
+      const workspaceRoot = join(f.root, "workspace");
+      const otherSession = join(f.root, "other-session");
+      await mkdir(otherSession);
+      await Promise.all([
+        writeFile(join(project, "AGENTS.md"), "SESSION_INSTRUCTION_MARKER"),
+        writeFile(
+          join(workspaceRoot, "CLAUDE.md"),
+          "WORKSPACE_INSTRUCTION_MARKER",
+        ),
+        writeFile(
+          join(f.config.agentDir, "AGENTS.md"),
+          "AGENT_INSTRUCTION_MARKER",
+        ),
+        writeFile(join(f.root, "AGENTS.md"), "OUTSIDE_ROOT_INSTRUCTION_MARKER"),
+        writeFile(
+          join(otherSession, "AGENTS.md"),
+          "OTHER_SESSION_PRIVATE_MARKER",
+        ),
+      ]);
+      await symlink(
+        join(otherSession, "AGENTS.md"),
+        join(project, "AGENTS.override.md"),
+      );
+      const host = await f.launch({
+        contextFiles,
+        cwd: project,
+        workspaceRoot,
+      });
+      const response = await host.request("prompt", "Use increment");
+      expect(response.success).toBe(true);
+      const systemMessages = JSON.stringify(
+        f.requests[0]?.body.messages.filter(
+          (message) => message.role === "system",
+        ),
+      );
+      for (const marker of [
+        "SESSION_INSTRUCTION_MARKER",
+        "WORKSPACE_INSTRUCTION_MARKER",
+        "AGENT_INSTRUCTION_MARKER",
+      ]) {
+        if (contextFiles === true) expect(systemMessages).toContain(marker);
+        else expect(systemMessages).not.toContain(marker);
+      }
+      expect(systemMessages).not.toContain("OUTSIDE_ROOT_INSTRUCTION_MARKER");
+      expect(systemMessages).not.toContain("OTHER_SESSION_PRIVATE_MARKER");
+      await host.stop();
+    },
+    60000,
+  );
+
   it("keeps Python imports from changing skill files across continued native turns", async () => {
     const f = await setup();
     const skill = join(f.workspace, "python-skill");

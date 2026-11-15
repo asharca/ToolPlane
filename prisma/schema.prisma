@@ -611,6 +611,7 @@ model Agent {
   pinned                  Boolean                  @default(false)
   slug                    String
   systemPrompt            String?
+  contextFiles            Boolean                  @default(false)
   providerId              String?
   provider                ModelProvider?           @relation(fields: [providerId], references: [id], onDelete: SetNull)
   model                   String?

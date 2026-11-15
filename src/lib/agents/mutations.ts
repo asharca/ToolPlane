@@ -228,6 +228,7 @@ export async function createAgentRecords(
       slug,
       runtimeKind: runtime,
       optionalBuiltinTools: [],
+      contextFiles: true,
     },
   });
   const templateSlug =
@@ -500,6 +501,7 @@ export type AgentConfig = {
   name: string;
   description?: string | null;
   systemPrompt: string | null;
+  contextFiles?: boolean;
   providerId: string | null;
   model: string | null;
   disabledBuiltinTools?: string[];
@@ -988,6 +990,7 @@ export async function createConfiguredAgent(
           name: cleanName,
           description: cfg.description?.trim() || null,
           systemPrompt: cfg.systemPrompt,
+          contextFiles: cfg.contextFiles ?? true,
           providerId: cfg.providerId,
           model: cfg.providerId ? cfg.model : null,
           disabledBuiltinTools: normalizeDisabledBuiltinTools(
@@ -1084,6 +1087,9 @@ export async function updateAgent(
             ? {}
             : { description: cfg.description?.trim() || null }),
           systemPrompt: cfg.systemPrompt,
+          ...(cfg.contextFiles !== undefined
+            ? { contextFiles: cfg.contextFiles }
+            : {}),
           providerId,
           model: providerId ? cfg.model : null,
           ...(cfg.disabledBuiltinTools === undefined

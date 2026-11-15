@@ -196,6 +196,7 @@ export function diffAgentRevisions(
     b = to.config;
   const fields: Array<[RevisionChangedField, unknown, unknown]> = [
     ["systemPrompt", a.systemPrompt, b.systemPrompt],
+    ["contextFiles", a.contextFiles ?? false, b.contextFiles ?? false],
     [
       "model",
       [a.providerId, a.model, a.modelProviderIds, a.nativeRoleModels ?? []],

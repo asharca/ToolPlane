@@ -155,6 +155,7 @@ export default async function AgentDetailPage({
           description: agent.description ?? "",
           runtimeKind: agent.runtimeKind,
           systemPrompt: agent.systemPrompt ?? "",
+          contextFiles: agent.contextFiles,
           disabledBuiltinTools: agent.disabledBuiltinTools,
           optionalBuiltinTools: agent.optionalBuiltinTools,
           optionalBuiltinToolOptions: agent.optionalBuiltinToolOptions,

@@ -51,6 +51,7 @@ type SettingsData = {
   description?: string;
   runtimeKind: string;
   systemPrompt: string;
+  contextFiles: boolean;
   disabledBuiltinTools?: string[];
   optionalBuiltinTools: string[];
   optionalBuiltinToolOptions: readonly AgentOptionalBuiltinTool[];
@@ -236,6 +237,7 @@ export function AgentSettings({
                 name={settings.name}
                 description={settings.description}
                 systemPrompt={settings.systemPrompt}
+                contextFiles={settings.contextFiles}
                 disabledBuiltinTools={settings.disabledBuiltinTools}
                 optionalBuiltinTools={settings.optionalBuiltinTools}
                 optionalBuiltinToolOptions={settings.optionalBuiltinToolOptions}

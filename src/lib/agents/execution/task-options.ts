@@ -339,6 +339,7 @@ export async function localTaskOptions(
     runtimeAccessToken: token,
     nativeUiUrl: `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/tasks/${row.id}/ui`,
     workingDirectory: work ? grant.entryPolicy?.workingDirectory : undefined,
+    contextFiles: agent.contextFiles,
     systemPrompt: [
       agent.systemPrompt,
       playbook,
