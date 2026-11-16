@@ -131,6 +131,21 @@ jobs:
             TOOLPLANE_VERSION=${{ steps.tag.outputs.name || steps.release.outputs.tag_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=min
+
+      - name: Build and push desktop sandbox image
+        if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: sandbox-desktop
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/toolplane-desktop:${{ steps.tag.outputs.version || steps.release.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/toolplane-desktop:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha
       - name: Package runtime release artifact
         if: github.ref_type == 'tag' || steps.release.outputs.release_created == 'true'
         run: |

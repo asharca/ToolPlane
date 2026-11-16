@@ -74,6 +74,7 @@ import {
   hasBuiltInPairingProvider,
 } from "@/lib/agents/platforms";
 import { stopSandboxAction } from "@/lib/sandboxes/actions";
+import { desktopSandboxImage } from "@/lib/sandboxes/desktop";
 import { approveAgentPluginSync } from "@/lib/plugins/agent-sync";
 import { safeRelativePath } from "@/lib/auth/safe-redirect";
 import { db } from "@/lib/db";
@@ -740,6 +741,9 @@ export async function createAgentAction(
       {
         runtime,
         enable: true,
+        ...(formData.get("desktop") === "on"
+          ? { sandboxImage: desktopSandboxImage() }
+          : {}),
       },
     );
     agentId = agent.id;

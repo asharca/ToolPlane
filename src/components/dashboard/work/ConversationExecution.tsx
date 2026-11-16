@@ -52,6 +52,9 @@ export function ConversationExecution({
   showActivities = true,
   onBusyChange,
   paused = false,
+  onOpenScreen,
+  onTakeoverRequest,
+  onTakeoverAnswered,
 }: {
   /** Same-origin endpoint returning the native execution projection. */
   endpoint: string;
@@ -73,6 +76,9 @@ export function ConversationExecution({
   onBusyChange?: (busy: boolean) => void;
   /** Freeze observation and disable decisions until monitoring resumes. */
   paused?: boolean;
+  onOpenScreen?: () => void;
+  onTakeoverRequest?: (id: string) => void;
+  onTakeoverAnswered?: () => void;
 }) {
   const t = useTranslations("console.work");
   const tAgents = useTranslations("console.agents");
@@ -420,6 +426,9 @@ export function ConversationExecution({
           onRespond={(result) => void respond(result)}
           onSetEditorText={onSetEditorText}
           belowEditorElement={belowEditorElement}
+          onOpenScreen={onOpenScreen}
+          onTakeoverRequest={onTakeoverRequest}
+          onTakeoverAnswered={onTakeoverAnswered}
         />
       ) : null}
     </div>

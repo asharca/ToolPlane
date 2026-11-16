@@ -13,6 +13,8 @@ export type SandboxImageOption = {
 export const DEFAULT_SANDBOX_IMAGE =
   "mcr.microsoft.com/devcontainers/javascript-node:26-bookworm";
 
+export const DESKTOP_SANDBOX_IMAGE = "ghcr.io/asharca/toolplane-desktop:latest";
+
 export const SANDBOX_IMAGE_OPTIONS = [
   {
     id: "javascript-node-24",
@@ -21,6 +23,16 @@ export const SANDBOX_IMAGE_OPTIONS = [
     summary: "Node.js and frontend tooling on Debian Bookworm.",
     bestFor: "Next.js, React, frontend apps",
     badge: "Default",
+    category: "recommended",
+  },
+  {
+    id: "toolplane-desktop",
+    image: DESKTOP_SANDBOX_IMAGE,
+    name: "Desktop + Chromium",
+    summary:
+      "Node 26 with a watchable desktop and Chromium the Agent can operate.",
+    bestFor: "Browser tasks, sign-ins and steps you take over",
+    badge: "Desktop",
     category: "recommended",
   },
   {

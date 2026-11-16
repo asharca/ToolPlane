@@ -2,6 +2,7 @@
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button, ButtonLink } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
+import { Switch } from "@/components/motion/switch";
 import { CenterMorphModalClose } from "@/components/motion/center-morph-modal";
 import {
   DialogHeader,
@@ -11,7 +12,7 @@ import {
 } from "@/components/dashboard/dialog";
 
 import { useTranslations } from "next-intl";
-import { Fragment, useActionState, useState } from "react";
+import { Fragment, startTransition, useActionState, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
@@ -43,7 +44,7 @@ import {
   ModelPickerTrigger,
 } from "@/components/dashboard/models/ModelPicker";
 import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
-import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { StatefulButton } from "@/components/motion/button/stateful";
 import { DeleteAgentButton } from "@/components/dashboard/agents/DeleteAgentButton";
 import { ConnectDialog } from "@/components/dashboard/ConnectDialog";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
@@ -169,6 +170,7 @@ export function AgentsBrowser({
     defaultNativeModel?.providerId ?? "",
   );
   const [modelId, setModelId] = useState(defaultNativeModel?.model ?? "");
+  const [desktop, setDesktop] = useState(false);
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<
     Set<string>
   >(() => new Set());
@@ -239,6 +241,7 @@ export function AgentsBrowser({
     setMaxSteps(String(AGENT_STEP_BOUNDS.default));
     setProviderId(defaultNativeModel?.providerId ?? "");
     setModelId(defaultNativeModel?.model ?? "");
+    setDesktop(false);
     setSelectedDeploymentIds(new Set());
     setSelectedSkillIds(new Set());
     setDisabledBuiltinTools(new Set());
@@ -327,7 +330,12 @@ export function AgentsBrowser({
       ) : creating ? (
         <form
           id="agent-create-form"
-          action={createAction}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (createPending || !createReady) return;
+            const formData = new FormData(event.currentTarget);
+            startTransition(() => createAction(formData));
+          }}
           className={cx(
             "flex min-h-0 flex-col overflow-hidden bg-background text-foreground",
             createOnly
@@ -338,6 +346,7 @@ export function AgentsBrowser({
           {!createOnly ? <DialogHeader title={t("createAgent")} /> : null}
           <input type="hidden" name="workspace" value={slug} />
           <input type="hidden" name="returnTo" value={requestedReturnTo} />
+          {desktop ? <input type="hidden" name="desktop" value="on" /> : null}
           <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
             <nav
               aria-label={t("configurationNavigation")}
@@ -355,6 +364,7 @@ export function AgentsBrowser({
                     step.id === "basic"
                       ? agentName !== "" ||
                         agentDescription !== "" ||
+                        desktop ||
                         maxSteps !== String(AGENT_STEP_BOUNDS.default) ||
                         providerId !== (defaultNativeModel?.providerId ?? "") ||
                         modelId !== (defaultNativeModel?.model ?? "")
@@ -526,6 +536,18 @@ export function AgentsBrowser({
                         note={selectedProvider?.name}
                       />
                     }
+                  />
+                </DialogField>
+                <DialogField
+                  label={t("desktopAndBrowser")}
+                  description={t("desktopAndBrowserHint")}
+                  dirty={desktop}
+                >
+                  <Switch
+                    checked={desktop}
+                    onCheckedChange={setDesktop}
+                    disabled={createPending}
+                    ariaLabel={t("desktopAndBrowser")}
                   />
                 </DialogField>
                 <DialogField
@@ -747,17 +769,19 @@ export function AgentsBrowser({
             }
           >
             {lastCreateStep ? (
-              <SubmitButton
+              <StatefulButton
+                type="submit"
                 size="md"
-                pendingLabel={t("creatingAgent")}
-                savedLabel={t("agentCreated")}
+                state={createPending ? "loading" : "idle"}
+                loadingText={t("creatingAgent")}
+                aria-busy={createPending || undefined}
                 disabled={!createReady || createPending}
                 variant="primary"
                 className="rounded-full px-3 sm:px-5"
               >
                 <Plus className="size-[18px] shrink-0" />
                 {t("createAndEnable")}
-              </SubmitButton>
+              </StatefulButton>
             ) : (
               <Button
                 type="button"

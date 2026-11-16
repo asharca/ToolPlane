@@ -28,6 +28,7 @@ import {
   isConnectorToken,
 } from "@/lib/sandboxes/connector";
 import { connectorStatus } from "@/lib/sandboxes/connector-broker";
+import { dockerSandboxDisplays } from "@/lib/sandboxes/desktop";
 import { readConnectorSetupTokenCookie } from "@/lib/sandboxes/connector-setup-token";
 import {
   deleteSandboxAction,
@@ -212,6 +213,11 @@ export default async function SandboxDetailPage({
       : undefined;
   const connectorLive =
     sandbox.kind === "connector" ? connectorStatus(sandbox.id) : null;
+  const displays =
+    connectorLive?.displays ??
+    (sandbox.kind === "docker" && status === "running"
+      ? await dockerSandboxDisplays(sandbox.id)
+      : []);
   const connectorWaiting = Boolean(
     connector && running && !connectorLive?.connected,
   );
@@ -771,7 +777,7 @@ export default async function SandboxDetailPage({
               key={`${sandbox.id}:${canUseConsole ? (connectorLive?.connectedAt ?? "ready") : "offline"}`}
               workspace={slug}
               sandboxId={sandbox.id}
-              displays={connectorLive?.displays ?? []}
+              displays={displays}
               deploymentId={sandbox.deploymentId}
               running={canUseConsole}
               offlineHint={

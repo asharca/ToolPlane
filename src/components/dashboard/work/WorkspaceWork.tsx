@@ -28,6 +28,7 @@ import {
   FileOutput,
   Folder,
   MessageSquarePlus,
+  Monitor,
   Pin,
   PanelLeft,
   TerminalSquare,
@@ -102,6 +103,10 @@ import {
 import { StreamingResponse } from "@/components/agents/streaming-response";
 import { MessageScroller } from "@/components/agents/message-scroller";
 import { SandboxConsole } from "@/components/dashboard/sandboxes/SandboxConsole";
+import {
+  SandboxScreen,
+  type SandboxDisplay,
+} from "@/components/dashboard/sandboxes/SandboxScreen";
 import { resolveContextUsage } from "@/lib/context-usage";
 import {
   deleteAgentAction,
@@ -291,7 +296,7 @@ type WorkTiming = {
   modelName?: string;
 };
 
-type WorkPanel = "files" | "terminal";
+type WorkPanel = "files" | "terminal" | "screen";
 
 type WorkItem = {
   id: string;
@@ -345,6 +350,7 @@ const DELETABLE_STATUSES = new Set([
   "cancelled",
 ]);
 const EMPTY_WORK_ACTIVITIES: WorkActivity[] = [];
+const EMPTY_SANDBOX_DISPLAYS: SandboxDisplay[] = [];
 const EMPTY_EXPANDED_AGENTS: Record<string, boolean> = {};
 const UNGROUPED_SIDEBAR_GROUP_ID = "__ungrouped__";
 
@@ -1159,6 +1165,16 @@ export function WorkspaceWork({
   const [followingOutput, setFollowingOutput] = useState(true);
   const [desktopPanel, setDesktopPanel] = useState<WorkPanel | null>(null);
   const [mobilePanel, setMobilePanel] = useState<WorkPanel | null>(null);
+  const [screenDisplays, setScreenDisplays] = useState<{
+    key: string;
+    displays: SandboxDisplay[];
+  }>({ key: "", displays: EMPTY_SANDBOX_DISPLAYS });
+  const [screenControlRequest, setScreenControlRequest] = useState({
+    scope: "",
+    value: 0,
+  });
+  const [screenReleaseRequest, setScreenReleaseRequest] = useState(0);
+  const seenTakeoverRequests = useRef(new Set<string>());
   const [streamOutput, setStreamOutput] = useState<{
     workSessionId: string;
     text: string;
@@ -1205,6 +1221,79 @@ export function WorkspaceWork({
         : t("noSandbox");
   const controlWorkspaceRoot = "/workspace";
   const composerScope = `${controlAgent?.id}:${controlSandbox?.id}:${selected?.id ?? conversation?.id ?? "new"}`;
+  const screenSandboxId = controlSandbox?.id;
+  const screenRunning = controlSandbox?.running === true;
+  const screenKey = `${slug}:${screenSandboxId}`;
+  const displays =
+    screenRunning && screenDisplays.key === screenKey
+      ? screenDisplays.displays
+      : EMPTY_SANDBOX_DISPLAYS;
+  const hasScreen = displays.length > 0;
+  const controlRequest =
+    screenControlRequest.scope === composerScope
+      ? screenControlRequest.value
+      : 0;
+
+  useEffect(() => {
+    if (!screenSandboxId || !screenRunning) {
+      setScreenDisplays({ key: screenKey, displays: EMPTY_SANDBOX_DISPLAYS });
+      return;
+    }
+    const controller = new AbortController();
+    void fetch(
+      `/api/v1/workspaces/${encodeURIComponent(slug)}/sandboxes/${encodeURIComponent(screenSandboxId)}/screen`,
+      { cache: "no-store", signal: controller.signal },
+    )
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        const data = (await response.json()) as { displays: SandboxDisplay[] };
+        if (!controller.signal.aborted) {
+          setScreenDisplays({ key: screenKey, displays: data.displays });
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setScreenDisplays({
+            key: screenKey,
+            displays: EMPTY_SANDBOX_DISPLAYS,
+          });
+        }
+      });
+    return () => controller.abort();
+  }, [screenSandboxId, screenRunning, screenKey, slug]);
+
+  const openScreen = useCallback(() => {
+    if (!hasScreen) return;
+    if (window.matchMedia("(min-width: 1280px)").matches) {
+      setMobilePanel(null);
+      setDesktopPanel("screen");
+    } else {
+      setDesktopPanel(null);
+      setMobilePanel("screen");
+    }
+    setScreenControlRequest((current) => ({
+      scope: composerScope,
+      value: current.scope === composerScope ? current.value + 1 : 1,
+    }));
+  }, [hasScreen, composerScope]);
+
+  const openTakeoverScreen = useCallback(
+    (id: string) => {
+      if (!hasScreen || !window.matchMedia("(min-width: 1280px)").matches)
+        return;
+      const key = `${composerScope}:${id}`;
+      if (seenTakeoverRequests.current.has(key)) return;
+      seenTakeoverRequests.current.add(key);
+      setScreenControlRequest({ scope: composerScope, value: 0 });
+      setMobilePanel(null);
+      setDesktopPanel("screen");
+    },
+    [hasScreen, composerScope],
+  );
+  const releaseScreenControl = useCallback(
+    () => setScreenReleaseRequest((current) => current + 1),
+    [],
+  );
   const defaultModelSelection =
     controlAgent?.providerId && controlAgent.model
       ? { providerId: controlAgent.providerId, model: controlAgent.model }
@@ -1421,7 +1510,10 @@ export function WorkspaceWork({
       streamText,
     ],
   );
-  const workspacePanelOpen = !viewingA2A && Boolean(desktopPanel);
+  const workspacePanelOpen =
+    !viewingA2A &&
+    Boolean(desktopPanel) &&
+    (desktopPanel !== "screen" || hasScreen);
 
   const activeAgentId = viewingA2A
     ? (requestedAgentId ?? agentId)
@@ -2626,13 +2718,18 @@ export function WorkspaceWork({
   const localCommand = Boolean(parseRuntimeCommand(draft, commandRuntimeKind));
 
   function togglePanel(panel: WorkPanel) {
+    if (panel === "screen") {
+      setScreenControlRequest({ scope: composerScope, value: 0 });
+    }
     if (
       typeof window.matchMedia === "function" &&
       window.matchMedia("(min-width: 1280px)").matches
     ) {
+      if (panel === "screen") setMobilePanel(null);
       setDesktopPanel((current) => (current === panel ? null : panel));
       return;
     }
+    if (panel === "screen") setDesktopPanel(null);
     setMobilePanel(panel);
   }
 
@@ -3271,6 +3368,22 @@ export function WorkspaceWork({
                       >
                         <TerminalSquare className="size-4" />
                       </Button>
+                      {hasScreen ? (
+                        <Button
+                          type="button"
+                          onClick={() => togglePanel("screen")}
+                          aria-label={tSandboxes("screen")}
+                          title={tSandboxes("screen")}
+                          aria-pressed={
+                            desktopPanel === "screen" ||
+                            mobilePanel === "screen"
+                          }
+                          variant="ghost"
+                          size="icon"
+                        >
+                          <Monitor className="size-4" />
+                        </Button>
+                      ) : null}
                     </>
                   ) : null}
                 </div>
@@ -3390,6 +3503,9 @@ export function WorkspaceWork({
                           renderedActivityIds={renderedActivityIds}
                           className="mb-3"
                           onChange={() => router.refresh()}
+                          onOpenScreen={hasScreen ? openScreen : undefined}
+                          onTakeoverRequest={openTakeoverScreen}
+                          onTakeoverAnswered={releaseScreenControl}
                         />
                       )}
                       ready={!sessionReadOnly}
@@ -3580,6 +3696,9 @@ export function WorkspaceWork({
                   )}
                   className={conversationComposerDockClassName}
                   onChange={() => router.refresh()}
+                  onOpenScreen={hasScreen ? openScreen : undefined}
+                  onTakeoverRequest={openTakeoverScreen}
+                  onTakeoverAnswered={releaseScreenControl}
                 />
               ) : null}
               {unappliedDraft && agent ? (
@@ -3645,6 +3764,9 @@ export function WorkspaceWork({
                           belowEditorElement={belowEditorElement}
                           renderedActivityIds={renderedHookIds}
                           onChange={() => void refreshSelected()}
+                          onOpenScreen={hasScreen ? openScreen : undefined}
+                          onTakeoverRequest={openTakeoverScreen}
+                          onTakeoverAnswered={releaseScreenControl}
                           className="mb-3"
                         />
                       ) : null}
@@ -3746,7 +3868,17 @@ export function WorkspaceWork({
 
           {workspacePanelOpen ? (
             <aside className="hidden w-96 shrink-0 min-h-0 overflow-hidden bg-background xl:block">
-              {controlSandbox && !workspacePending ? (
+              {desktopPanel === "screen" && controlSandbox && hasScreen ? (
+                <SandboxScreen
+                  key={controlSandbox.id}
+                  workspace={slug}
+                  sandboxId={controlSandbox.id}
+                  displays={displays}
+                  running={controlSandbox.running}
+                  controlRequest={controlRequest}
+                  releaseRequest={screenReleaseRequest}
+                />
+              ) : controlSandbox && !workspacePending ? (
                 <SandboxConsole
                   key={`${conversation?.id ?? selected?.id ?? "new"}:${controlSandbox.id}`}
                   compact
@@ -3773,7 +3905,9 @@ export function WorkspaceWork({
           ) : null}
         </div>
 
-        {!viewingA2A && mobilePanel ? (
+        {!viewingA2A &&
+        mobilePanel &&
+        (mobilePanel !== "screen" || hasScreen) ? (
           <CenterMorphModal
             open={Boolean(mobilePanel)}
             onOpenChange={(open) => {
@@ -3784,7 +3918,9 @@ export function WorkspaceWork({
               ariaLabel={
                 mobilePanel === "files"
                   ? tSandboxes("files")
-                  : tSandboxes("terminal")
+                  : mobilePanel === "screen"
+                    ? tSandboxes("screen")
+                    : tSandboxes("terminal")
               }
               closeButtonLabel={t("closeWorkspace")}
               className="flex h-[calc(100dvh-2rem)] w-full max-w-5xl flex-col"
@@ -3793,18 +3929,32 @@ export function WorkspaceWork({
                 title={
                   mobilePanel === "files"
                     ? tSandboxes("files")
-                    : tSandboxes("terminal")
+                    : mobilePanel === "screen"
+                      ? tSandboxes("screen")
+                      : tSandboxes("terminal")
                 }
                 icon={
                   mobilePanel === "files" ? (
                     <Folder className="size-4" />
+                  ) : mobilePanel === "screen" ? (
+                    <Monitor className="size-4" />
                   ) : (
                     <TerminalSquare className="size-4" />
                   )
                 }
               />
               <div className="min-h-0 flex-1 overflow-hidden">
-                {controlSandbox && !workspacePending ? (
+                {mobilePanel === "screen" && controlSandbox && hasScreen ? (
+                  <SandboxScreen
+                    key={controlSandbox.id}
+                    workspace={slug}
+                    sandboxId={controlSandbox.id}
+                    displays={displays}
+                    running={controlSandbox.running}
+                    controlRequest={controlRequest}
+                    releaseRequest={screenReleaseRequest}
+                  />
+                ) : controlSandbox && !workspacePending ? (
                   <SandboxConsole
                     key={`${conversation?.id ?? selected?.id ?? "new"}:${controlSandbox.id}`}
                     compact

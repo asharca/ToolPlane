@@ -1236,6 +1236,8 @@
       "provider": "提供商",
       "none": "— 无 —",
       "model": "模型",
+      "desktopAndBrowser": "桌面和浏览器",
+      "desktopAndBrowserHint": "Agent 可操作浏览器，你可以实时查看并接管。",
       "providerModelCount": "已缓存 {count} 个模型",
       "select": "— 选择 —",
       "maxToolSteps": "最大工具调用轮次",
@@ -3607,6 +3609,19 @@
       "executionDecisionUnknown": "无法确认响应是否已记录。请刷新当前请求后再回复；系统不会自动重复提交。",
       "executionFailed": "上次运行失败，未自动重试。请检查模型和工具连接后再开始新一轮。",
       "nativeUi": {
+        "takeover": {
+          "title": "需要你接管",
+          "openScreen": "打开屏幕",
+          "continue": "已完成，继续",
+          "reasons": {
+            "captcha": "人机验证",
+            "sso": "单点登录",
+            "passkey": "通行密钥",
+            "qr": "扫码确认",
+            "payment_verification": "支付验证",
+            "human_required": "需要本人操作"
+          }
+        },
         "hooks": {
           "title": "插件钩子活动",
           "plugin": "插件安装",

@@ -269,6 +269,20 @@ export function createNativeUi({ getContext, theme, onError }) {
       for (const cancel of pending.values()) cancel();
     },
     drain: () => writes,
+    // Blocking ToolPlane desktop handoff; "unavailable" when the entry has no Web UI.
+    async takeover({ reason, message, signal }) {
+      if (!getContext()?.uiUrl) return "unavailable";
+      const outcome = await dialog(
+        { signal },
+        "declined",
+        { method: "takeover", reason, title: "Desktop takeover", message },
+        (response) =>
+          !response.cancelled && response.confirmed === true
+            ? "completed"
+            : "declined",
+      );
+      return outcome;
+    },
     projectTodos(sessionManager) {
       const projection = {
         action: "todos",

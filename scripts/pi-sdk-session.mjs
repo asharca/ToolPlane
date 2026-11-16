@@ -19,6 +19,7 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 
 import { enforceNativeNamespaces } from "./pi-sdk-capabilities.mjs";
+import { createDesktopTools } from "./pi-desktop-tools.mjs";
 import { createNativeUi } from "./pi-sdk-ui.mjs";
 import {
   configureNativeTodo,
@@ -210,6 +211,10 @@ const nativeUi = createNativeUi({
   onError: () => {
     turnError = "PI_SDK_UI_FAILED";
   },
+});
+// Present only in sandboxes built from the ToolPlane desktop image.
+const desktopTools = createDesktopTools({
+  requestTakeover: (request) => nativeUi.takeover(request),
 });
 const settingsManager = sdk.SettingsManager.inMemory({
   defaultTools: config.defaultTools,
@@ -717,13 +722,14 @@ async function refreshContext(next) {
     fail("PI_SDK_TOOLSET_CHANGED");
   toolMap = new Map(definitions.map((t) => [t.name, t]));
   if (toolSignature === undefined)
-    customTools = definitions.map((tool) => {
+    customTools = [...definitions, ...desktopTools].map((tool) => {
       const name = tool.name;
+      const desktop = desktopTools.includes(tool);
       return {
         ...tool,
         execute: (...args) => {
           if (!context || !active) fail("PI_SDK_CONTEXT_REQUIRED");
-          return toolMap.get(name).execute(...args);
+          return (desktop ? tool : toolMap.get(name)).execute(...args);
         },
       };
     });
