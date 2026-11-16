@@ -27,7 +27,7 @@ import {
   type ImplementedAgentRuntimeKind,
 } from "@/lib/agents/runtime-kind";
 import {
-  DEFAULT_SANDBOX_IMAGE,
+  getDefaultSandboxImage,
   sandboxVolumeName,
 } from "@/lib/sandboxes/runtime";
 import {
@@ -189,12 +189,13 @@ async function createDedicatedSandboxRecords(
   agent: { id: string; name: string },
   sandboxSlug: string,
 ) {
+  const image = getDefaultSandboxImage();
   const deployment = await tx.deployment.create({
     data: {
       workspaceId,
       name: `Sandbox: ${agent.name} Workspace`,
       source: "sandbox",
-      sourceRef: DEFAULT_SANDBOX_IMAGE,
+      sourceRef: image,
       status: "stopped",
     },
   });
@@ -205,7 +206,7 @@ async function createDedicatedSandboxRecords(
       name: `${agent.name} Workspace`,
       slug: sandboxSlug,
       kind: "docker",
-      image: DEFAULT_SANDBOX_IMAGE,
+      image,
       network: "isolated",
       agentLinks: { create: { agentId: agent.id, isDefault: true } },
     },
@@ -216,7 +217,7 @@ async function createDedicatedSandboxRecords(
       installCfg: {
         sandboxId: sandbox.id,
         kind: "docker",
-        image: DEFAULT_SANDBOX_IMAGE,
+        image,
         network: "isolated",
         volumeName: sandboxVolumeName(sandbox.id),
         env: {},

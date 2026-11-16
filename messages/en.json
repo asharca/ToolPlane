@@ -1632,6 +1632,8 @@
       "toolDiff": "File changes",
       "toolDiffTruncated": "Content truncated",
       "toolDiffFirstChangedLine": "First changed line: {line}",
+      "toolImage": "Tool image {index}",
+      "toolImageUnavailable": "Image unavailable or exceeds the 150 KiB limit.",
       "enableWebSearch": "Enable web search",
       "disableWebSearch": "Disable web search",
       "reasoningEffort": "Thinking effort",

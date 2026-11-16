@@ -11,6 +11,19 @@
 
 ARG NODE_IMAGE=node:26-bookworm-slim
 ARG PNPM_VERSION=10.14.0
+ARG SANDBOX_BASE_IMAGE=mcr.microsoft.com/devcontainers/javascript-node:26-bookworm
+
+# ---- sandbox: default Agent workspace, independent of the application image ----
+FROM ${SANDBOX_BASE_IMAGE} AS sandbox
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends chromium python3 fonts-liberation fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+ENV TOOLPLANE_CHROMIUM_PATH=/usr/bin/chromium
+# Keep the original devcontainer's root user: managed workspace volumes start
+# root-owned, and the trusted turn preparer bootstraps HOME/SDK state there.
+# Runtime isolation still drops all capabilities and forbids privilege escalation.
+WORKDIR /workspace
 
 # ---- Python is used only for agent archive imports, not channels ----
 FROM ${NODE_IMAGE} AS python-runtime-base

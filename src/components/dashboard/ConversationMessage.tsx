@@ -172,7 +172,9 @@ export function ToolPayload({
 }) {
   return (
     <div className="space-y-1">
-      <div className="text-xs text-muted-foreground">{label}</div>
+      {label ? (
+        <div className="text-xs text-muted-foreground">{label}</div>
+      ) : null}
       <div className="max-h-80 overflow-auto overscroll-contain rounded-lg [scrollbar-width:thin] [scrollbar-color:color-mix(in_srgb,var(--foreground)_25%,transparent)_transparent]">
         <ToolResultOutput language={language}>{children}</ToolResultOutput>
       </div>

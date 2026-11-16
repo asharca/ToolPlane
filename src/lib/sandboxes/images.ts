@@ -10,16 +10,15 @@ export type SandboxImageOption = {
   category: SandboxImageCategory;
 };
 
-export const DEFAULT_SANDBOX_IMAGE =
-  "mcr.microsoft.com/devcontainers/javascript-node:26-bookworm";
+export const DEFAULT_SANDBOX_IMAGE = "ghcr.io/asharca/toolplane-sandbox:latest";
 
 export const SANDBOX_IMAGE_OPTIONS = [
   {
-    id: "javascript-node-24",
+    id: "toolplane-sandbox",
     image: DEFAULT_SANDBOX_IMAGE,
-    name: "JavaScript Node 26",
-    summary: "Node.js and frontend tooling on Debian Bookworm.",
-    bestFor: "Next.js, React, frontend apps",
+    name: "ToolPlane Node 26 + Chromium",
+    summary: "Node.js, Chromium and frontend tooling on Debian Bookworm.",
+    bestFor: "Browser automation, Next.js, React, frontend apps",
     badge: "Default",
     category: "recommended",
   },
@@ -142,14 +141,16 @@ export function findSandboxImageOption(
 export function resolveSandboxImage(
   imageChoice: unknown,
   customImage: unknown,
+  defaultImage = DEFAULT_SANDBOX_IMAGE,
 ): string {
   const choice = String(imageChoice ?? "").trim();
   const preset = SANDBOX_IMAGE_OPTIONS.find(
     (option) => option.image === choice || option.id === choice,
   );
-  if (preset) return preset.image;
+  if (preset)
+    return preset.image === DEFAULT_SANDBOX_IMAGE ? defaultImage : preset.image;
 
   const custom = String(customImage ?? "").trim();
   if (choice === "custom" && custom) return custom;
-  return custom || DEFAULT_SANDBOX_IMAGE;
+  return custom || defaultImage;
 }

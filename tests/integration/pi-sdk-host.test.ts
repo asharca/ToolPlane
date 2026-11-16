@@ -1409,6 +1409,169 @@ describe("official Pi SDK headless session host", () => {
     },
     60000,
   );
+  it("preserves bounded JPEG tool content through SDK events, live output and saved history without Chromium", async () => {
+    const f = await setup();
+    // Valid one-pixel JPEG with a legal comment segment larger than the old
+    // text-output cutoff. This tests transport, not browser rendering.
+    const pixel = Buffer.from(
+      "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAABv/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AJIAxFX/2Q==",
+      "base64",
+    );
+    const comment = Buffer.alloc(24_004, 0x5a);
+    comment.writeUInt16BE(0xfffe, 0);
+    comment.writeUInt16BE(comment.length - 2, 2);
+    const jpeg = Buffer.concat([
+      pixel.subarray(0, 2),
+      comment,
+      pixel.subarray(2),
+    ]);
+    expect(jpeg.length).toBeLessThanOrEqual(150 * 1024);
+    const result = {
+      content: [
+        {
+          type: "image",
+          mimeType: "image/jpeg",
+          data: jpeg.toString("base64"),
+        },
+      ],
+      details: { width: 1, height: 1, bytes: jpeg.length },
+    };
+    expect(JSON.stringify(result).length).toBeGreaterThan(20_000);
+    const extension = join(f.workspace, "image-fixture.mjs");
+    await writeFile(
+      extension,
+      `export default pi=>pi.registerTool({name:'browser',label:'Image fixture',description:'Return a bounded JPEG transport fixture',parameters:{type:'object',properties:{}},async execute(){return ${JSON.stringify(result)};}});`,
+    );
+    const events: Array<Record<string, unknown>> = [];
+    const taskId = `image-transport-${randomUUID()}`;
+    startTaskOutput(taskId);
+    f.behavior.tool = "browser";
+    const host = await f.launch(
+      {
+        optionalBuiltinExtensions: [extension],
+        defaultTools: ["browser"],
+      },
+      (event) => {
+        events.push(event);
+        for (const activity of parsePiStreamLine(JSON.stringify(event))
+          ?.activities ?? [])
+          publishTaskActivity(taskId, activity);
+      },
+    );
+    try {
+      const response = await host.request(
+        "prompt",
+        "Return the JPEG transport fixture",
+      );
+      expect(response.success).toBe(true);
+      const event = events.find(
+        (entry) =>
+          entry.type === "tool_execution_end" && entry.toolName === "browser",
+      );
+      expect(event).toMatchObject({ isError: false, result });
+      const activity = taskOutput(taskId)?.activities.findLast(
+        (entry) => entry.type === "tool" && entry.toolName === "browser",
+      );
+      expect(activity?.output).toEqual(result);
+      const history = (
+        await readFile(assertDefined(response.result).state.sessionFile, "utf8")
+      )
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      const saved = history.find(
+        (entry) =>
+          entry.type === "message" &&
+          entry.message?.role === "toolResult" &&
+          entry.message.toolName === "browser",
+      );
+      expect(saved?.message.content).toEqual(result.content);
+      expect(saved?.message.details).toEqual(result.details);
+    } finally {
+      finishTaskOutput(taskId, "completed");
+      await host.stop();
+    }
+  }, 60_000);
+
+  it.skipIf(!process.env.TOOLPLANE_CHROMIUM_PATH)(
+    "preserves real browser screenshot images through native SDK events, live output and saved history",
+    async () => {
+      const f = await setup();
+      const html = join(f.workspace, "browser.html");
+      await writeFile(
+        html,
+        `<!doctype html><canvas width="400" height="300"></canvas><script>const c=document.querySelector('canvas').getContext('2d');const d=c.createImageData(400,300);let n=17;for(let i=0;i<d.data.length;i+=4){for(let j=0;j<3;j++){n=(n*1664525+1013904223)>>>0;d.data[i+j]=n>>>24;}d.data[i+3]=255;}c.putImageData(d,0,0);</script>`,
+      );
+      const events: Array<Record<string, unknown>> = [];
+      const taskId = `browser-image-${randomUUID()}`;
+      startTaskOutput(taskId);
+      f.behavior.tool = "browser";
+      f.behavior.toolArgs = JSON.stringify({
+        action: "open",
+        url: `file://${html}`,
+      });
+      const host = await f.launch(
+        {
+          optionalBuiltinExtensions: [
+            resolve("scripts/pi-optional-tools/browser.mjs"),
+          ],
+          defaultTools: ["browser"],
+          browserNetwork: "isolated",
+        },
+        (event) => {
+          events.push(event);
+          for (const activity of parsePiStreamLine(JSON.stringify(event))
+            ?.activities ?? [])
+            publishTaskActivity(taskId, activity);
+        },
+      );
+      expect((await host.request("prompt", "Open local HTML")).success).toBe(
+        true,
+      );
+      events.length = 0;
+      f.behavior.toolArgs = JSON.stringify({ action: "screenshot" });
+      const response = await host.request("prompt", "Capture screenshot");
+      expect(response.success).toBe(true);
+      const imageEvent = events.find(
+        (event) =>
+          event.type === "tool_execution_end" && event.toolName === "browser",
+      );
+      expect(imageEvent).toMatchObject({
+        isError: false,
+        result: {
+          content: [
+            {
+              type: "image",
+              mimeType: "image/jpeg",
+              data: expect.stringMatching(/^\/9j\//),
+            },
+          ],
+        },
+      });
+      const serialized = JSON.stringify(imageEvent?.result);
+      expect(serialized.length).toBeGreaterThan(20_000);
+      expect(serialized.length).toBeLessThan(206_000);
+      const imageActivity = taskOutput(taskId)?.activities.findLast(
+        (activity) =>
+          activity.type === "tool" && activity.toolName === "browser",
+      );
+      expect(imageActivity?.output).toEqual(imageEvent?.result);
+      expect(
+        await readFile(
+          assertDefined(response.result).state.sessionFile,
+          "utf8",
+        ),
+      ).toContain('"mimeType":"image/jpeg"');
+      f.behavior.toolArgs = JSON.stringify({ action: "close" });
+      expect((await host.request("prompt", "Close browser")).success).toBe(
+        true,
+      );
+      finishTaskOutput(taskId, "completed");
+      await host.stop();
+    },
+    60_000,
+  );
+
   it("keeps Python imports from changing skill files across continued native turns", async () => {
     const f = await setup();
     const skill = join(f.workspace, "python-skill");

@@ -20,11 +20,11 @@ import {
   AssistantMarkdown,
   StreamRuleNotice,
   ToolPayload,
-  toolOutputText,
   toolResultUnboundedHeight,
 } from "@/components/dashboard/ConversationMessage";
 import { CopyButton } from "@/components/dashboard/CopyButton";
 import { ConversationToolDiff } from "./ConversationToolDiff";
+import { ConversationToolOutput } from "@/components/dashboard/ConversationToolOutput";
 import { SubagentActivity } from "./agents/SubagentActivity";
 import { HookActivity, HookActivitySchema } from "./agents/HookActivity";
 import { AdvisorSuggestionsCard } from "./agents/AdvisorSuggestionsCard";
@@ -162,14 +162,6 @@ function ConversationToolStep({ step }: { step: ToolStep }) {
   // Collapsed steps skip payload formatting and code highlighting entirely.
   const input =
     !open || step.input === undefined ? undefined : formatPayload(step.input);
-  const plainOutput =
-    open && (!hasPatch || step.status === "failed")
-      ? toolOutputText(step.output)
-      : undefined;
-  const output =
-    !open || (hasPatch && step.status !== "failed") || step.output === undefined
-      ? undefined
-      : (plainOutput ?? formatPayload(step.output));
   return (
     <div
       onClickCapture={() => {
@@ -227,18 +219,12 @@ function ConversationToolStep({ step }: { step: ToolStep }) {
                 firstChangedLine={step.firstChangedLine}
               />
             ) : null}
-            {output !== undefined ? (
-              <ToolPayload
-                label={
-                  <span className="flex items-center justify-between gap-2">
-                    <span>{t("toolOutput")}</span>
-                    <CopyButton text={output} label={common("copy")} iconOnly />
-                  </span>
-                }
-                language={plainOutput === undefined ? "json" : "text"}
-              >
-                {output}
-              </ToolPayload>
+            {step.output !== undefined &&
+            (!hasPatch || step.status === "failed") ? (
+              <ConversationToolOutput
+                value={step.output}
+                label={t("toolOutput")}
+              />
             ) : null}
             {step.errorText ? (
               <p
