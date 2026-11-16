@@ -12,6 +12,10 @@ import {
   resolveDockerImageDigest,
   digestDockerVolume,
 } from "@/lib/sandboxes/runtime";
+import {
+  DESKTOP_SANDBOX_RESOURCE_LIMITS,
+  desktopSandboxImage,
+} from "@/lib/sandboxes/desktop";
 import { AGENT_PI_PACKAGES_INCLUDE } from "./pi-package-includes";
 import {
   AgentRevisionConfigSchema,
@@ -249,7 +253,10 @@ export async function captureAgentRevisionConfig(
           network: template.network,
           piVersion: PI_SDK_VERSION,
           initialSnapshot: null,
-          resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
+          resourceLimits:
+            template.image === desktopSandboxImage()
+              ? DESKTOP_SANDBOX_RESOURCE_LIMITS
+              : { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
           credentialReferences: [],
         }
       : null);

@@ -45,6 +45,21 @@ export const NativeDialogSchema = z.discriminatedUnion("method", [
   }),
   z.object({
     ...base,
+    method: z.literal("takeover"),
+    reason: z.enum([
+      "captcha",
+      "sso",
+      "passkey",
+      "qr",
+      "payment_verification",
+      "human_required",
+    ]),
+    title: z.string(),
+    message: z.string(),
+    timeout: z.number().optional(),
+  }),
+  z.object({
+    ...base,
     method: z.literal("input"),
     title: z.string(),
     placeholder: z.string().optional(),
@@ -139,11 +154,13 @@ function NativeDialog({
   busy,
   disabled,
   onRespond,
+  onOpenScreen,
 }: {
   request: Dialog;
   busy: boolean;
   disabled: boolean;
   onRespond: (response: NativeResponse) => void;
+  onOpenScreen?: () => void;
 }) {
   const t = useTranslations("console.work.nativeUi");
   const id = useId();
@@ -212,13 +229,27 @@ function NativeDialog({
         }
       }}
     >
-      <legend className="sr-only">{request.title}</legend>
+      <legend className="sr-only">
+        {request.method === "takeover" ? t("takeover.title") : request.title}
+      </legend>
       {request.source ? <SubagentSourceLabel source={request.source} /> : null}
       <ApprovalCard
-        title={request.title}
-        description={request.method === "confirm" ? request.message : undefined}
+        title={
+          request.method === "takeover" ? t("takeover.title") : request.title
+        }
+        description={
+          request.method === "confirm" || request.method === "takeover"
+            ? request.message
+            : undefined
+        }
         status={busy ? "submitting" : "pending"}
-        approveLabel={request.method === "confirm" ? t("confirm") : t("submit")}
+        approveLabel={
+          request.method === "takeover"
+            ? t("takeover.continue")
+            : request.method === "confirm"
+              ? t("confirm")
+              : t("submit")
+        }
         questions={
           request.method === "select"
             ? [
@@ -299,7 +330,7 @@ function NativeDialog({
         }}
         onApprove={() =>
           onRespond(
-            request.method === "confirm"
+            request.method === "confirm" || request.method === "takeover"
               ? {
                   type: "extension_ui_response",
                   id: request.id,
@@ -309,6 +340,23 @@ function NativeDialog({
           )
         }
       >
+        {request.method === "takeover" ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">
+              {t(`takeover.reasons.${request.reason}`)}
+            </span>
+            {onOpenScreen ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onOpenScreen}
+              >
+                {t("takeover.openScreen")}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         {request.method === "input" ? (
           <Input
             aria-label={request.title}
@@ -358,7 +406,9 @@ function NativeDialog({
             onRespond({
               type: "extension_ui_response",
               id: request.id,
-              cancelled: true,
+              ...(request.method === "takeover"
+                ? { confirmed: false }
+                : { cancelled: true }),
             })
           }
         >
@@ -378,6 +428,9 @@ export function NativeSessionUi({
   onRespond,
   onSetEditorText,
   belowEditorElement,
+  onOpenScreen,
+  onTakeoverRequest,
+  onTakeoverAnswered,
   onToolApproval,
   onToolApprovalExpire,
   toolApprovalDisabled = disabled,
@@ -389,6 +442,10 @@ export function NativeSessionUi({
   onRespond: (response: NativeResponse) => void;
   onSetEditorText?: (text: string) => void;
   belowEditorElement?: HTMLDivElement | null;
+  onOpenScreen?: () => void;
+  onTakeoverRequest?: (id: string) => void;
+  /** Called before a takeover answer is sent, so the user hands control back first. */
+  onTakeoverAnswered?: () => void;
   onToolApproval?: (decision: ToolApprovalDecision) => void;
   onToolApprovalExpire?: (id: string) => void;
   toolApprovalDisabled?: boolean;
@@ -438,6 +495,13 @@ export function NativeSessionUi({
       // Notifications and editor updates never depend on storage availability.
     }
   }, [projection.uiEvents, scope, onSetEditorText, t]);
+
+  useEffect(() => {
+    if (disabled || !onTakeoverRequest) return;
+    for (const request of projection.uiRequests) {
+      if (request.method === "takeover") onTakeoverRequest(request.id);
+    }
+  }, [disabled, projection.uiRequests, onTakeoverRequest]);
 
   const statuses = new Map<
     string,
@@ -608,6 +672,7 @@ export function NativeSessionUi({
           request={request}
           busy={busyId === request.id}
           disabled={disabled || busyId !== null}
+          onOpenScreen={onOpenScreen}
           onRespond={(response) => {
             if (
               request.method === "select" &&
@@ -615,6 +680,7 @@ export function NativeSessionUi({
               !request.options.includes(response.value)
             )
               return;
+            if (request.method === "takeover") onTakeoverAnswered?.();
             onRespond({
               ...response,
               ...(request.source ? { source: request.source } : {}),

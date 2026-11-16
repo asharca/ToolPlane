@@ -3047,6 +3047,7 @@ async function runPiSdk(
     [`${privateRoot}/pi-sdk-install.mjs`, "pi-sdk-install.mjs"],
     [`${privateRoot}/pi-sdk-capabilities.mjs`, "pi-sdk-capabilities.mjs"],
     [`${privateRoot}/pi-sdk-ui.mjs`, "pi-sdk-ui.mjs"],
+    [`${privateRoot}/pi-desktop-tools.mjs`, "pi-desktop-tools.mjs"],
     [`${privateRoot}/pi-sdk-context.mjs`, "pi-sdk-context.mjs"],
     [`${privateRoot}/native-session-paths.mjs`, "native-session-paths.mjs"],
     [

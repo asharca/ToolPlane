@@ -1403,6 +1403,8 @@
       "provider": "Provider",
       "none": "— none —",
       "model": "Model",
+      "desktopAndBrowser": "Desktop and browser",
+      "desktopAndBrowserHint": "The Agent can operate a browser you can watch and take over.",
       "providerModelCount": "{count} cached models",
       "select": "— select —",
       "maxToolSteps": "Maximum tool-call rounds",
@@ -3838,6 +3840,19 @@
       "executionDecisionUnknown": "The response could not be confirmed. Refresh the current request before responding again; it is never automatically resubmitted.",
       "executionFailed": "The last run failed and was not retried. Check the model and tool connections before starting another turn.",
       "nativeUi": {
+        "takeover": {
+          "title": "Takeover required",
+          "openScreen": "Open screen",
+          "continue": "Done, continue",
+          "reasons": {
+            "captcha": "CAPTCHA",
+            "sso": "Single sign-on",
+            "passkey": "Passkey",
+            "qr": "QR confirmation",
+            "payment_verification": "Payment verification",
+            "human_required": "Personal action required"
+          }
+        },
         "hooks": {
           "title": "Plugin hook activity",
           "plugin": "Plugin installation",

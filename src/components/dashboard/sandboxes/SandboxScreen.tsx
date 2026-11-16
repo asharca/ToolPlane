@@ -47,6 +47,7 @@ export type SandboxDisplay = {
 };
 
 type RfbSession = {
+  sessionId: string;
   viewerUrl?: string;
 };
 
@@ -55,11 +56,16 @@ export function SandboxScreen({
   sandboxId,
   displays,
   running,
+  controlRequest = 0,
+  releaseRequest = 0,
 }: {
   workspace: string;
   sandboxId: string;
   displays: SandboxDisplay[];
   running: boolean;
+  controlRequest?: number;
+  /** Each new non-zero value hands control back (view only). */
+  releaseRequest?: number;
 }) {
   const t = useTranslations("console.sandboxes");
   const errorT = useTranslations("errors");
@@ -78,11 +84,18 @@ export function SandboxScreen({
   const [virtualKeyboardOpen, setVirtualKeyboardOpen] = useState(false);
   const rfbTarget = useRef<HTMLDivElement>(null);
   const rfbClient = useRef<import("@novnc/novnc").default | null>(null);
+  const rfbSessionId = useRef<string | null>(null);
+  const rfbConnected = useRef(false);
+  const lastControlRequest = useRef(0);
+  const lastReleaseRequest = useRef(releaseRequest);
   const viewOnlyRef = useRef(viewOnly);
   const virtualKeyboard = useRef<HTMLTextAreaElement>(null);
   const virtualKeyboardValue = useRef(VIRTUAL_KEYBOARD_PAD);
   const display =
     displays.find((candidate) => candidate.id === displayId) ?? displays[0];
+  const selectedDisplayId = display?.id;
+  const displayTransport = display?.transport;
+  const displayControl = display?.control;
   const apiBase = useMemo(
     () =>
       `/api/v1/workspaces/${encodeURIComponent(workspace)}/sandboxes/${encodeURIComponent(sandboxId)}/screen`,
@@ -108,7 +121,13 @@ export function SandboxScreen({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: The reconnect action must dispose and recreate the noVNC session even when its endpoint is unchanged.
   useEffect(() => {
-    if (display?.transport !== "rfb" || !running || !visible) return;
+    if (
+      displayTransport !== "rfb" ||
+      !selectedDisplayId ||
+      !running ||
+      !visible
+    )
+      return;
     const controller = new AbortController();
     let active = true;
     const statusTimer = window.setTimeout(
@@ -120,7 +139,7 @@ export function SandboxScreen({
         const response = await fetch(`${apiBase}/sessions`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ displayId: display.id }),
+          body: JSON.stringify({ displayId: selectedDisplayId }),
           signal: controller.signal,
         });
         if (!response.ok) throw new Error(String(response.status));
@@ -130,17 +149,20 @@ export function SandboxScreen({
         const { default: RFB } = await import("@novnc/novnc");
         if (!active || !rfbTarget.current) return;
         const client = new RFB(rfbTarget.current, session.viewerUrl);
+        rfbSessionId.current = session.sessionId;
         client.scaleViewport = true;
         client.viewOnly = viewOnlyRef.current;
         if (!client.viewOnly) client.focus();
-        client.addEventListener(
-          "connect",
-          () => active && setRfbStatus("connected"),
-        );
-        client.addEventListener(
-          "disconnect",
-          () => active && setRfbStatus("error"),
-        );
+        client.addEventListener("connect", () => {
+          if (!active) return;
+          rfbConnected.current = true;
+          setRfbStatus("connected");
+        });
+        client.addEventListener("disconnect", () => {
+          if (!active) return;
+          rfbConnected.current = false;
+          setRfbStatus("error");
+        });
         client.addEventListener(
           "credentialsrequired",
           () => active && setRfbStatus("credentials"),
@@ -161,8 +183,17 @@ export function SandboxScreen({
       controller.abort();
       rfbClient.current?.disconnect();
       rfbClient.current = null;
+      rfbSessionId.current = null;
+      rfbConnected.current = false;
     };
-  }, [apiBase, display, rfbAttempt, running, visible]);
+  }, [
+    apiBase,
+    selectedDisplayId,
+    displayTransport,
+    rfbAttempt,
+    running,
+    visible,
+  ]);
 
   useEffect(() => {
     viewOnlyRef.current = viewOnly;
@@ -171,6 +202,37 @@ export function SandboxScreen({
     rfbClient.current.viewOnly = viewOnly;
     if (!viewOnly) rfbClient.current.focus();
   }, [viewOnly]);
+
+  useEffect(() => {
+    const sessionId = rfbSessionId.current;
+    if (rfbStatus !== "connected" || !rfbConnected.current || !sessionId)
+      return;
+    void fetch(`${apiBase}/control`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId, control: !viewOnly }),
+    }).catch(() => {
+      // Control synchronization must not interrupt the viewer or show repeated toasts.
+    });
+  }, [apiBase, rfbStatus, viewOnly]);
+
+  useEffect(() => {
+    if (!controlRequest) {
+      lastControlRequest.current = 0;
+      return;
+    }
+    if (controlRequest === lastControlRequest.current || !displayControl)
+      return;
+    lastControlRequest.current = controlRequest;
+    setViewOnly(false);
+  }, [controlRequest, displayControl]);
+
+  useEffect(() => {
+    if (!releaseRequest || releaseRequest === lastReleaseRequest.current)
+      return;
+    lastReleaseRequest.current = releaseRequest;
+    setViewOnly(true);
+  }, [releaseRequest]);
 
   const resetVirtualKeyboard = () => {
     if (!virtualKeyboard.current) return;

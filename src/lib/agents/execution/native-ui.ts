@@ -94,6 +94,23 @@ export const NativeUiRequest = z.discriminatedUnion("method", [
   z
     .object({
       ...base,
+      method: z.literal("takeover"),
+      reason: z.enum([
+        "captcha",
+        "sso",
+        "passkey",
+        "qr",
+        "payment_verification",
+        "human_required",
+      ]),
+      title: text,
+      message: text,
+      timeout: z.number().nonnegative().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...base,
       method: z.literal("input"),
       title: text,
       placeholder: text.optional(),
@@ -309,7 +326,11 @@ export function applyNativeUiAction(
       p.hooks.shift();
   } else if (input.action === "request") {
     const r = input.request;
-    if (["select", "confirm", "input", "editor", "ask"].includes(r.method)) {
+    if (
+      ["select", "confirm", "takeover", "input", "editor", "ask"].includes(
+        r.method,
+      )
+    ) {
       let d = p.dialogs.find((d) => d.request.id === r.id);
       if (d && !isDeepStrictEqual(d.request, r))
         throw new RequestMalformedError("Native dialog ID was reused.");
@@ -423,7 +444,10 @@ export function respondNativeUi(
         )
           throw new RequestMalformedError("Invalid native question answer.");
       }
-    } else if (d.request.method === "confirm") {
+    } else if (
+      d.request.method === "confirm" ||
+      d.request.method === "takeover"
+    ) {
       if (
         typeof response.confirmed !== "boolean" ||
         response.value !== undefined ||

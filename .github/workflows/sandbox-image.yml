@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - Dockerfile
+      - scripts/sandbox-desktop-entrypoint.sh
       - .github/workflows/sandbox-image.yml
     tags: ["v*"]
   workflow_dispatch:
@@ -52,3 +53,20 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
           REPOSITORY: ${{ github.repository }}
         run: echo "TOOLPLANE_DEFAULT_SANDBOX_IMAGE=ghcr.io/${REPOSITORY,,}-sandbox@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"
+      - uses: docker/metadata-action@v5
+        id: desktop-meta
+        with:
+          images: ghcr.io/${{ github.repository }}-desktop
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha
+            type=semver,pattern={{version}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: sandbox-desktop
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.desktop-meta.outputs.tags }}
+          labels: ${{ steps.desktop-meta.outputs.labels }}
+          cache-from: type=gha,scope=sandbox

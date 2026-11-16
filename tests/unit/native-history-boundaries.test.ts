@@ -237,6 +237,40 @@ describe("native child attribution persistence", () => {
     });
   });
 
+  it("accepts only allowlisted takeover reasons and a yes/no hand-back answer", () => {
+    const request = {
+      type: "extension_ui_request",
+      id: "takeover",
+      method: "takeover",
+      reason: "captcha",
+      title: "Desktop takeover",
+      message: "Solve the CAPTCHA on screen.",
+    };
+    expect(() =>
+      action({
+        action: "request",
+        request: { ...request, reason: "password" },
+      }),
+    ).toThrow();
+    const p = apply(null, { action: "request", request });
+    expect(nativeUiView(p, "lease", true).uiRequests).toMatchObject([
+      { id: "takeover", method: "takeover", reason: "captcha" },
+    ]);
+    expect(() =>
+      respondNativeUi(JSON.parse(JSON.stringify(p)), "lease", {
+        type: "extension_ui_response",
+        id: "takeover",
+        value: "done",
+      }),
+    ).toThrow();
+    const answered = respondNativeUi(JSON.parse(JSON.stringify(p)), "lease", {
+      type: "extension_ui_response",
+      id: "takeover",
+      confirmed: true,
+    });
+    expect(answered.dialogs[0].response).toMatchObject({ confirmed: true });
+  });
+
   it("separates same-name child widgets and identical local tool IDs by native invocation", () => {
     const a = { subagentId: "invocation-a", subagentVersionId: "same-version" };
     const b = { subagentId: "invocation-b", subagentVersionId: "same-version" };

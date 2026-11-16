@@ -551,4 +551,11 @@
 **规则**：增加内容块联合类型时，同步更新界面和 Markdown 导出的分支；rewind 的保留报告与 handoff 的摘要都应出现在历史导出中，并沿用凭据脱敏。
 
 - **依据**：[会话导出](src/lib/agents/conversation-export.ts)、[导出回归](tests/integration/conversation-export.test.ts)。
+
+### TP-L052：镜像能力要按真实 Agent 创建链路和固定资源验收
+
+**规则**：依赖沙箱镜像能力（桌面、浏览器等）的功能，先确认 Agent 实际如何得到这个镜像及其修订固定的资源限额，再用真实创建、真实 Work 回合和浏览器交互闭环验收；接管类交互必须覆盖“交还”后 Agent 立刻继续操作。
+
+- **证据（2026-11-16，桌面接管实现中的真实验收）**：方案假设 Agent 可从镜像列表选桌面镜像，实际 Agent 模板固定为默认镜像，镜像列表只用于独立沙箱；改为创建时开关。默认修订限额 128 个进程，Chromium 空闲约 85 个任务，导航即打满 `pids.max`，CDP 调用超时；桌面镜像改按 2 GiB／2 CPU／512 进程固定。首轮真实接管中用户点“已完成，继续”后控制租约仍有效，Agent 下一次截图得到 `DISPLAY_USER_CONTROLLED`；改为回答前先交还控制、工具在完成时删除租约。
+- **下次怎么验证**：查 `AgentRevision.config.environment` 的镜像摘要和 `resourceLimits`，在同样 cgroup 限额的容器里跑一次浏览器导航；在 Work 中完成请求接管 → 打开屏幕控制 → noVNC 实际操作 → 已完成 → Agent 读取新页面，以及取消路径。依据：`src/lib/agents/revisions.ts`、`src/lib/sandboxes/desktop.ts`、`scripts/pi-desktop-tools.mjs`。
 - **确认日期**：2026-11-16。

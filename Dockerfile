@@ -65,6 +65,34 @@ WORKDIR /app
 USER node
 ENTRYPOINT ["node", "/app/scripts/pi-package-capture.mjs"]
 
+# ---- sandbox-desktop: Agent sandbox image with a takeover-capable desktop ----
+# Agent sandboxes run `sleep infinity`; the entrypoint starts a loopback-only
+# VNC display, openbox and Chromium (CDP on loopback) before that command.
+# ToolPlane relays the display through `docker exec`; no port is published.
+FROM sandbox AS sandbox-desktop
+RUN set -eux; \
+    echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      fonts-noto-color-emoji \
+      imagemagick \
+      openbox \
+      tigervnc-standalone-server \
+      tini \
+      x11-xserver-utils \
+      xdotool; \
+    rm -rf /var/lib/apt/lists/*
+COPY --chmod=755 scripts/sandbox-desktop-entrypoint.sh /usr/local/bin/toolplane-desktop
+ENV TOOLPLANE_DESKTOP_DISPLAY=:1 \
+    TOOLPLANE_DESKTOP_RFB_PORT=5900 \
+    TOOLPLANE_DESKTOP_CDP_PORT=9222 \
+    TOOLPLANE_DESKTOP_SIZE=1280x800
+LABEL io.toolplane.desktop.rfb-port="5900" \
+      io.toolplane.desktop.size="1280x800"
+# tini reaps Chromium descendants orphaned to PID 1 when the browser restarts.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/toolplane-desktop"]
+CMD ["sleep", "infinity"]
+
 # ---- lsp-tools: independent optional tool artifact; never alters the SDK image ----
 FROM pi-package-capture AS lsp-tools
 USER root

@@ -157,6 +157,8 @@ async function uniqueAgentSlug(
 export type CreateAgentOptions = {
   runtime?: ImplementedAgentRuntimeKind;
   piPackages?: AgentConfig["piPackages"];
+  /** Template image for the Agent sandbox; defaults to the standard Node image. */
+  sandboxImage?: string;
 };
 
 export type AgentCloneOptions = {
@@ -188,8 +190,8 @@ async function createDedicatedSandboxRecords(
   workspaceId: string,
   agent: { id: string; name: string },
   sandboxSlug: string,
+  image = getDefaultSandboxImage(),
 ) {
-  const image = getDefaultSandboxImage();
   const deployment = await tx.deployment.create({
     data: {
       workspaceId,
@@ -253,7 +255,13 @@ export async function createAgentRecords(
   const templateSlug =
     sandboxSlug ??
     (await uniqueSandboxSlug(tx, workspaceId, slug, "workspace"));
-  await createDedicatedSandboxRecords(tx, workspaceId, agent, templateSlug);
+  await createDedicatedSandboxRecords(
+    tx,
+    workspaceId,
+    agent,
+    templateSlug,
+    options.sandboxImage,
+  );
   return agent;
 }
 
@@ -339,13 +347,19 @@ export async function cloneAgent(
           reasoningEffort: true,
           streamRules: true,
           toolApproval: true,
+          sandboxes: {
+            where: { isDefault: true },
+            select: { sandbox: { select: { image: true } } },
+          },
         },
       });
       if (!source) return null;
       await lockAgentSlugNamespace(tx, workspaceId);
       const name = requestedName?.trim() || `${source.name} copy`;
       const slug = await uniqueAgentSlug(tx, workspaceId, slugify(name));
-      const cloned = await createAgentRecords(tx, workspaceId, name, slug, {});
+      const cloned = await createAgentRecords(tx, workspaceId, name, slug, {
+        sandboxImage: source.sandboxes[0]?.sandbox.image ?? undefined,
+      });
       await tx.agent.update({
         where: { id: cloned.id },
         data: {

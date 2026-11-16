@@ -4,9 +4,15 @@ import "server-only";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Duplex } from "node:stream";
+import type { ChildProcess } from "node:child_process";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { CONNECTOR_PROTOCOL_VERSION } from "./connector";
 import { findSandboxByConnectorToken } from "./connector-auth";
+import {
+  dockerDesktopInfo,
+  openDesktopStream,
+  setDesktopUserControl,
+} from "./desktop";
 
 const DEFAULT_CONNECTOR_WS_PORT = 9321;
 const DEFAULT_CONNECTOR_WS_BIND = "0.0.0.0";
@@ -69,6 +75,7 @@ type TerminalSession = {
 
 type ScreenSession = {
   id: string;
+  kind: "connector" | "docker";
   sandboxId: string;
   displayId: string;
   ticket: string;
@@ -76,6 +83,11 @@ type ScreenSession = {
   timer: ReturnType<typeof setTimeout>;
   source?: WebSocket;
   viewer?: WebSocket;
+  desktopPort?: number;
+  child?: ChildProcess;
+  control?: boolean;
+  controlTimer?: NodeJS.Timeout;
+  controlCleanup?: Promise<void>;
   sourceBuffer: Buffer[];
   viewerBuffer: Buffer[];
 };
@@ -281,6 +293,17 @@ function closeScreenSession(session: ScreenSession, reason: string) {
   s.screenSessions.delete(session.id);
   s.screenTickets.delete(session.ticket);
   clearTimeout(session.timer);
+  clearInterval(session.controlTimer);
+  if (session.control) {
+    session.control = false;
+    session.controlCleanup = setDesktopUserControl(
+      session.sandboxId,
+      null,
+    ).catch(() => {});
+  }
+  session.child?.stdin?.destroy();
+  session.child?.stdout?.destroy();
+  session.child?.kill("SIGKILL");
   for (const ws of [session.source, session.viewer]) {
     if (
       ws?.readyState === WebSocket.OPEN ||
@@ -494,6 +517,54 @@ function attachScreenSocket(
   }
 }
 
+function attachDockerScreenViewer(session: ScreenSession, ws: WebSocket) {
+  session.viewer = ws;
+  ws.once("close", () =>
+    closeScreenSession(session, "screen viewer disconnected"),
+  );
+  ws.once("error", () => closeScreenSession(session, "screen viewer failed"));
+  try {
+    const child = openDesktopStream(
+      session.sandboxId,
+      session.desktopPort ?? 0,
+    );
+    session.child = child;
+    child.once("error", () =>
+      closeScreenSession(session, "screen source failed"),
+    );
+    child.once("close", () =>
+      closeScreenSession(session, "screen source disconnected"),
+    );
+    child.stdin?.once("error", () =>
+      closeScreenSession(session, "screen source failed"),
+    );
+    child.stdout?.once("error", () =>
+      closeScreenSession(session, "screen source failed"),
+    );
+    child.stdout?.on("data", (data: Buffer) =>
+      relayScreenData(session, "source", data, true),
+    );
+    ws.on("message", (raw, isBinary) => {
+      if (!isBinary) {
+        closeScreenSession(session, "screen relay requires binary messages");
+        return;
+      }
+      const data = screenData(raw);
+      if (
+        !child.stdin?.writable ||
+        child.stdin.writableLength + data.byteLength > MAX_SCREEN_RELAY_BUFFER
+      ) {
+        closeScreenSession(session, "screen relay buffer exceeded");
+        return;
+      }
+      child.stdin.write(data);
+    });
+    clearTimeout(session.timer);
+  } catch {
+    closeScreenSession(session, "screen source failed");
+  }
+}
+
 async function handleConnectorUpgrade(
   req: IncomingMessage,
   socket: Duplex,
@@ -549,7 +620,7 @@ async function handleScreenSourceUpgrade(
 ) {
   const s = state();
   const session = s.screenSessions.get(sessionId);
-  if (!session) {
+  if (!session || session.kind === "docker") {
     rejectUpgrade(socket, "401 Unauthorized");
     return;
   }
@@ -599,9 +670,10 @@ function handleScreenViewerUpgrade(
     return;
   }
   s.screenTickets.delete(ticket);
-  s.wss?.handleUpgrade(req, socket, head, (ws) =>
-    attachScreenSocket(session, "viewer", ws),
-  );
+  s.wss?.handleUpgrade(req, socket, head, (ws) => {
+    if (session.kind === "docker") attachDockerScreenViewer(session, ws);
+    else attachScreenSocket(session, "viewer", ws);
+  });
 }
 
 async function handleUpgrade(
@@ -921,6 +993,7 @@ export async function createConnectorScreenSession(
   const expiresAt = Date.now() + SCREEN_TICKET_TTL_MS;
   const session = {
     id,
+    kind: "connector",
     sandboxId,
     displayId,
     ticket,
@@ -956,6 +1029,87 @@ export async function createConnectorScreenSession(
     viewerUrl: connectorScreenViewerUrl(serverUrl, ticket),
     expiresAt: new Date(expiresAt).toISOString(),
   };
+}
+
+export async function createDockerScreenSession(
+  sandboxId: string,
+  displayId: string,
+  serverUrl: string,
+): Promise<{ sessionId: string; viewerUrl: string; expiresAt: string }> {
+  const desktop = await dockerDesktopInfo(sandboxId);
+  if (
+    !desktop ||
+    desktop.display.id !== displayId ||
+    desktop.display.transport !== "rfb"
+  ) {
+    throw new Error("screen unavailable");
+  }
+  await ensureConnectorBroker();
+  const s = state();
+  for (const existing of s.screenSessions.values()) {
+    if (existing.sandboxId === sandboxId && existing.displayId === displayId) {
+      closeScreenSession(existing, "replaced by a newer screen viewer");
+    }
+  }
+  const id = randomUUID();
+  const ticket = randomBytes(32).toString("base64url");
+  const expiresAt = Date.now() + SCREEN_TICKET_TTL_MS;
+  const viewerUrl = connectorScreenViewerUrl(serverUrl, ticket);
+  const session: ScreenSession = {
+    id,
+    kind: "docker",
+    sandboxId,
+    displayId,
+    desktopPort: desktop.port,
+    ticket,
+    expiresAt,
+    timer: setTimeout(() => {
+      const current = state().screenSessions.get(id);
+      if (current) closeScreenSession(current, "screen ticket expired");
+    }, SCREEN_TICKET_TTL_MS),
+    sourceBuffer: [],
+    viewerBuffer: [],
+  };
+  session.timer.unref();
+  s.screenSessions.set(id, session);
+  s.screenTickets.set(ticket, id);
+  return {
+    sessionId: id,
+    viewerUrl,
+    expiresAt: new Date(expiresAt).toISOString(),
+  };
+}
+
+export async function setScreenSessionControl(
+  sessionId: string,
+  sandboxId: string,
+  control: boolean,
+): Promise<boolean> {
+  const session = state().screenSessions.get(sessionId);
+  if (!session || session.sandboxId !== sandboxId) return false;
+  if (session.kind !== "docker") return true;
+  clearInterval(session.controlTimer);
+  session.controlTimer = undefined;
+  session.control = control;
+  const write = setDesktopUserControl(
+    sandboxId,
+    control ? Date.now() + 30_000 : null,
+  );
+  if (control) {
+    session.controlTimer = setInterval(() => {
+      void setDesktopUserControl(sandboxId, Date.now() + 30_000).catch(() => {
+        closeScreenSession(session, "screen control lease failed");
+      });
+    }, 10_000);
+    session.controlTimer.unref();
+  }
+  try {
+    await write;
+  } catch (error) {
+    closeScreenSession(session, "screen control lease failed");
+    throw error;
+  }
+  return state().screenSessions.get(sessionId) === session;
 }
 
 export function connectorStatus(sandboxId: string): {
@@ -1043,8 +1197,10 @@ export async function shutdownConnectorBroker(): Promise<void> {
   ]);
   for (const sandboxId of sandboxIds)
     disconnectConnector(sandboxId, "connector broker stopped");
-  for (const session of [...s.screenSessions.values()])
+  const screenSessions = [...s.screenSessions.values()];
+  for (const session of screenSessions)
     closeScreenSession(session, "connector broker stopped");
+  await Promise.all(screenSessions.map((session) => session.controlCleanup));
   const server = s.server;
   if (server?.listening) {
     await new Promise<void>((resolve) => server.close(() => resolve()));

@@ -54,6 +54,9 @@ export function ConversationExecution({
   showActivities = true,
   onBusyChange,
   paused = false,
+  onOpenScreen,
+  onTakeoverRequest,
+  onTakeoverAnswered,
   toolApprovalEndpoint,
   toolApprovalParts = null,
 }: {
@@ -77,6 +80,9 @@ export function ConversationExecution({
   onBusyChange?: (busy: boolean) => void;
   /** Freeze observation and disable decisions until monitoring resumes. */
   paused?: boolean;
+  onOpenScreen?: () => void;
+  onTakeoverRequest?: (id: string) => void;
+  onTakeoverAnswered?: () => void;
   toolApprovalEndpoint?: string;
   /** An authoritative pending set from SSE; null falls back to execution GET. */
   toolApprovalParts?: ToolApprovalDataPart[] | null;
@@ -548,6 +554,9 @@ export function ConversationExecution({
           onToolApprovalExpire={dismissApproval}
           onSetEditorText={onSetEditorText}
           belowEditorElement={belowEditorElement}
+          onOpenScreen={onOpenScreen}
+          onTakeoverRequest={onTakeoverRequest}
+          onTakeoverAnswered={onTakeoverAnswered}
         />
       ) : null}
     </div>
