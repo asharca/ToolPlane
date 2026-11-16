@@ -657,12 +657,14 @@ export function AgentMessagingPanel({
   sandboxId,
   connections: initialConnections,
   ready = true,
+  showHeader = true,
 }: {
   slug: string;
   agentId?: string;
   sandboxId?: string;
   connections: Channel[];
   ready?: boolean;
+  showHeader?: boolean;
 }) {
   const t = useTranslations("console.agentMessaging");
   const endpoint = `/api/v1/workspaces/${encodeURIComponent(slug)}/agent-channels`;
@@ -1017,9 +1019,15 @@ export function AgentMessagingPanel({
     </>
   );
   return (
-    <div className="h-full min-h-0 min-w-0 overflow-y-auto px-4 py-5 sm:px-6">
-      <header className="mb-5 flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">{t("title")}</h2>
+    <div
+      className={`h-full min-h-0 min-w-0 overflow-y-auto py-5 ${showHeader ? "px-4 sm:px-6" : "px-6"}`}
+    >
+      <header
+        className={`mb-5 flex items-center gap-3 ${showHeader ? "justify-between" : "justify-end"}`}
+      >
+        {showHeader ? (
+          <h2 className="text-lg font-semibold">{t("title")}</h2>
+        ) : null}
         <MorphPopover open={adding} onOpenChange={setAdding}>
           <MorphPopoverTrigger>
             <Button disabled={Boolean(pending)} variant="primary" size="sm">

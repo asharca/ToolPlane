@@ -451,23 +451,17 @@ export function AgentEvolutionPanel({
     (resource) => cursors[resource],
   );
   return (
-    <div className="min-w-0 space-y-5 p-4 sm:p-6" aria-busy={busy || loading}>
-      <header className="space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-base font-semibold">{t("title")}</h3>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => void refresh()}
-            disabled={busy || loading}
-          >
-            {t("refresh")}
-          </Button>
-        </div>
-        <p className="text-sm leading-6 text-muted-foreground">
-          {t("description")}
-        </p>
+    <div className="min-w-0 space-y-5 px-6 py-5" aria-busy={busy || loading}>
+      <header className="flex justify-end">
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => void refresh()}
+          disabled={busy || loading}
+        >
+          {t("refresh")}
+        </Button>
       </header>
       <nav aria-label={t("navigation")}>
         <ol className="flex flex-wrap gap-1">

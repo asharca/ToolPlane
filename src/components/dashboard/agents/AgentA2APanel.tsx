@@ -2,6 +2,8 @@
 import { Button, ButtonLink } from "@/components/motion/button/base";
 
 import { AnimatedBadge } from "@/components/motion/animated-badge";
+import { BouncyAccordion } from "@/components/motion/bouncy-accordion";
+import { Switch } from "@/components/motion/switch";
 
 import {
   useCallback,
@@ -12,14 +14,7 @@ import {
 } from "react";
 import { useTranslations } from "next-intl";
 
-import {
-  ArrowUpRight,
-  BookOpen,
-  KeyRound,
-  Network,
-  RefreshCw,
-  ShieldCheck,
-} from "lucide-react";
+import { ArrowUpRight, BookOpen, KeyRound, RefreshCw } from "lucide-react";
 import { AgentA2ARemotes } from "./AgentA2ARemotes";
 import { AgentA2ATaskMonitor } from "./AgentA2ATaskMonitor";
 import { CopyButton } from "@/components/dashboard/CopyButton";
@@ -123,23 +118,13 @@ export function AgentA2APanel({
   const locked = busy || !view?.canManage || !executable;
 
   return (
-    <div className="space-y-6 px-6 py-5">
+    <div className="min-w-0 space-y-5 px-6 py-5">
       {!executable ? (
         <p role="status" className="text-sm text-muted-foreground">
           {t("retiredRuntime")}
         </p>
       ) : null}
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border/60 pb-5">
-        <div>
-          <div className="mb-2 flex items-center gap-2">
-            <Network className="size-5" />
-            <h2 className="text-lg font-semibold">{t("title")}</h2>
-            <AnimatedBadge>A2A 1.0</AnimatedBadge>
-          </div>
-          <p className="max-w-xl text-sm text-muted-foreground">
-            {t("description")}
-          </p>
-        </div>
+      <header className="flex justify-end">
         <Button
           disabled={busy}
           onClick={() => void operation(() => load())}
@@ -176,98 +161,48 @@ export function AgentA2APanel({
             <h3 id="a2a-policy-heading" className="font-semibold">
               {t("internalTitle")}
             </h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-3 rounded-lg border border-border p-3">
-                <h4 className="text-sm font-semibold">{t("inboundTitle")}</h4>
-                <p className="text-sm text-muted-foreground">
-                  {t("inboundDescription")}
-                </p>
-                <AnimatedBadge
-                  status={
-                    view.collaboration.inboundEnabled ? "success" : "neutral"
-                  }
-                >
-                  {t(
-                    view.collaboration.inboundEnabled ? "enabled" : "disabled",
-                  )}
-                </AnimatedBadge>
-                <Button
+            <div className="space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 space-y-1">
+                  <h4 className="text-sm font-medium">{t("inboundTitle")}</h4>
+                  <p className="text-xs text-muted-foreground">
+                    {t("inboundDescription")}
+                  </p>
+                </div>
+                <Switch
+                  checked={view.collaboration.inboundEnabled}
+                  ariaLabel={t("inboundTitle")}
                   disabled={
                     locked ||
                     (!isExecutableAgentRuntimeKind(runtimeKind) &&
                       !view.collaboration.inboundEnabled)
                   }
-                  onClick={() =>
-                    void mutate({
-                      action: "set-inbound",
-                      enabled: !view.collaboration.inboundEnabled,
-                    })
+                  onCheckedChange={(enabled) =>
+                    void mutate({ action: "set-inbound", enabled })
                   }
-                  variant={
-                    view.collaboration.inboundEnabled ? "secondary" : "primary"
-                  }
-                  className="w-full"
-                >
-                  {t(
-                    view.collaboration.inboundEnabled
-                      ? "disableInbound"
-                      : "enableInbound",
-                  )}
-                </Button>
+                />
               </div>
-              <div className="space-y-3 rounded-lg border border-border p-3">
-                <h4 className="text-sm font-semibold">{t("outboundTitle")}</h4>
-                <p className="text-sm text-muted-foreground">
-                  {t("outboundDescription")}
-                </p>
-                <AnimatedBadge
-                  status={
-                    view.collaboration.outboundEnabled ? "success" : "neutral"
-                  }
-                >
-                  {t(
-                    view.collaboration.outboundEnabled ? "enabled" : "disabled",
-                  )}
-                </AnimatedBadge>
-                <Button
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 space-y-1">
+                  <h4 className="text-sm font-medium">{t("outboundTitle")}</h4>
+                  <p className="text-xs text-muted-foreground">
+                    {t("outboundDescription")}
+                  </p>
+                </div>
+                <Switch
+                  checked={view.collaboration.outboundEnabled}
+                  ariaLabel={t("outboundTitle")}
                   disabled={
                     locked ||
                     (!isExecutableAgentRuntimeKind(runtimeKind) &&
                       !view.collaboration.outboundEnabled)
                   }
-                  onClick={() =>
-                    void mutate({
-                      action: "set-outbound",
-                      enabled: !view.collaboration.outboundEnabled,
-                    })
+                  onCheckedChange={(enabled) =>
+                    void mutate({ action: "set-outbound", enabled })
                   }
-                  variant={
-                    view.collaboration.outboundEnabled ? "secondary" : "primary"
-                  }
-                  className="w-full"
-                >
-                  {t(
-                    view.collaboration.outboundEnabled
-                      ? "disableOutbound"
-                      : "enableOutbound",
-                  )}
-                </Button>
+                />
               </div>
             </div>
-          </section>
-          <section className={cardClass} aria-labelledby="a2a-internal-heading">
-            <h3 id="a2a-internal-heading" className="font-semibold">
-              {t("internalTitle")}
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              {t("internalDescription")}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              {t("authorizedTargetsOnly")}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              {t("sandboxWarning")}
-            </p>
             {!view.local.supported ? (
               <div
                 role="alert"
@@ -283,6 +218,24 @@ export function AgentA2APanel({
                 {t("localNotReady")}
               </div>
             ) : null}
+            <p className="text-xs text-muted-foreground">
+              {t("sandboxWarning")}
+            </p>
+            <BouncyAccordion
+              items={[
+                {
+                  id: "collaboration-details",
+                  title: t("details"),
+                  description: (
+                    <div className="space-y-2 pt-3 text-xs text-muted-foreground">
+                      <p>{t("internalDescription")}</p>
+                      <p>{t("authorizedTargetsOnly")}</p>
+                      <p>{t("boundaries")}</p>
+                    </div>
+                  ),
+                },
+              ]}
+            />
             {executable ? (
               <a
                 className="text-sm underline underline-offset-4"
@@ -292,9 +245,6 @@ export function AgentA2APanel({
               </a>
             ) : null}
           </section>
-          {view.local.supported ? (
-            <AgentA2ARemotes key={base} base={base} readOnly={!executable} />
-          ) : null}
           {view.endpoint ? (
             <section className={cardClass} aria-labelledby="a2a-public-heading">
               <div className="flex items-start justify-between gap-3">
@@ -302,9 +252,6 @@ export function AgentA2APanel({
                   <h3 id="a2a-public-heading" className="font-semibold">
                     {t("publicTitle")}
                   </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("publicDescription")}
-                  </p>
                 </div>
                 <AnimatedBadge
                   status={view.endpoint?.enabled ? "success" : "neutral"}
@@ -319,11 +266,6 @@ export function AgentA2APanel({
                 {t("revision", { version: view.endpoint?.revision ?? "—" })}
               </p>
             </section>
-          ) : null}
-          {isExecutableAgentRuntimeKind(runtimeKind) ? (
-            <p className={`${cardClass} text-sm text-muted-foreground`}>
-              {t("piSdkPublicUnsupported")}
-            </p>
           ) : null}
           <section className={cardClass} aria-labelledby="a2a-connect-heading">
             <h3 id="a2a-connect-heading" className="font-semibold">
@@ -363,6 +305,11 @@ export function AgentA2APanel({
             <p className="text-sm text-muted-foreground">
               {t(mode === "local" ? "accountCredential" : "serviceCredential")}
             </p>
+            {isExecutableAgentRuntimeKind(runtimeKind) ? (
+              <p className="text-xs text-muted-foreground">
+                {t("piSdkPublicUnsupported")}
+              </p>
+            ) : null}
             {rpcUrl && cardUrl ? (
               [
                 [t("rpcUrl"), rpcUrl],
@@ -445,6 +392,9 @@ export function AgentA2APanel({
               )}
             </section>
           ) : null}
+          {view.local.supported ? (
+            <AgentA2ARemotes key={base} base={base} readOnly={!executable} />
+          ) : null}
           {initialTaskId ? (
             <AgentA2ATaskMonitor
               key={initialTaskId}
@@ -470,10 +420,6 @@ export function AgentA2APanel({
           {t("docs")}
           <ArrowUpRight className="size-3" />
         </ButtonLink>
-        <p className="flex items-start gap-2 text-xs text-muted-foreground">
-          <ShieldCheck className="size-4 shrink-0" />
-          {t("boundaries")}
-        </p>
       </footer>
     </div>
   );

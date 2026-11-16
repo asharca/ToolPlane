@@ -156,8 +156,20 @@ export function AgentA2ARemotes({
           {t("refresh")}
         </Button>
       </div>
-      <p className="text-sm text-muted-foreground">{t("boundary")}</p>
-      <p className="text-xs text-muted-foreground">{t("allowlist")}</p>
+      <p className="text-xs text-muted-foreground">{t("boundary")}</p>
+      <BouncyAccordion
+        items={[
+          {
+            id: "remote-details",
+            title: t("details"),
+            description: (
+              <p className="pt-3 text-xs text-muted-foreground">
+                {t("allowlist")}
+              </p>
+            ),
+          },
+        ]}
+      />
       {error ? (
         <div role="alert" className="space-y-2 text-sm text-muted-foreground">
           {error}

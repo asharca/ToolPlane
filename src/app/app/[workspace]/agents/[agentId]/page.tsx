@@ -137,8 +137,10 @@ export default async function AgentDetailPage({
     settings === "channels" ||
     settings === "changelog" ||
     settings === "evolution" ||
+    settings === "memories" ||
     settings === "triggers" ||
-    settings === "usage"
+    settings === "usage" ||
+    settings === "clone"
       ? settings
       : (allowedSections.find((section) => section === settings) ?? "general");
   return (

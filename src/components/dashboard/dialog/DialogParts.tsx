@@ -101,7 +101,6 @@ export type DialogNavItem = {
   label: string;
   icon?: ReactNode;
   dirty?: boolean;
-  group?: string;
   disabled?: boolean;
 };
 
@@ -110,12 +109,15 @@ export function DialogNav({
   active,
   onSelect,
   label,
+  footer,
   className,
 }: {
   items: DialogNavItem[];
   active: string;
   onSelect: (id: string) => void;
   label?: string;
+  /** Quiet status shown under the navigation, e.g. the published version. */
+  footer?: ReactNode;
   className?: string;
 }) {
   const t = useTranslations("common");
@@ -123,7 +125,7 @@ export function DialogNav({
   return (
     <aside
       className={cn(
-        "shrink-0 border-b border-border p-3 md:w-56 md:overflow-y-auto md:border-r md:border-b-0",
+        "shrink-0 border-b border-border p-3 md:flex md:w-56 md:flex-col md:overflow-y-auto md:border-r md:border-b-0",
         className,
       )}
     >
@@ -138,19 +140,9 @@ export function DialogNav({
           disabled: item.disabled,
         }))}
       />
-      <nav aria-label={navLabel} className="hidden space-y-1 md:block">
-        {items.map((item, index) => (
+      <nav aria-label={navLabel} className="hidden flex-1 space-y-1 md:block">
+        {items.map((item) => (
           <div key={item.id}>
-            {item.group && item.group !== items[index - 1]?.group ? (
-              <p
-                className={cn(
-                  "px-3 pb-1 text-xs font-medium text-muted-foreground",
-                  index > 0 && "pt-4",
-                )}
-              >
-                {item.group}
-              </p>
-            ) : null}
             <Button
               disabled={item.disabled}
               type="button"
@@ -176,6 +168,11 @@ export function DialogNav({
           </div>
         ))}
       </nav>
+      {footer ? (
+        <p className="mt-2 px-1 text-xs text-muted-foreground md:px-3">
+          {footer}
+        </p>
+      ) : null}
     </aside>
   );
 }

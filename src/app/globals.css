@@ -12,14 +12,17 @@
 @source "../../node_modules/@streamdown/code/dist/*.js";
 @source "../../node_modules/@streamdown/mermaid/dist/*.js";
 
-/* Neutral field borders meet 3:1 against both background and card surfaces.
-   Keep structural borders on --border; only form boundaries use --input. */
+/* Fields read as fields through a faint fill plus a border clearly stronger
+   than structural --border (about 1.6:1), without outlining every control in
+   near-text contrast. Structural borders stay on --border. */
 :root {
-  --input: oklch(64.7% 0 0);
+  --input: oklch(15% 0 0 / 0.24);
+  --field: oklch(15% 0 0 / 0.025);
 }
 
 .dark {
-  --input: oklch(51.28% 0 0);
+  --input: rgb(255 255 255 / 0.16);
+  --field: rgb(255 255 255 / 0.03);
 }
 
 @layer utilities {
@@ -67,6 +70,7 @@
     :not([data-state="focused"], [data-state="error"], [data-dirty="true"])
   ) {
     border-color: var(--input);
+    background-color: var(--field);
   }
 
   /* Keep dropdown hover/open borders at the same contrast without overriding

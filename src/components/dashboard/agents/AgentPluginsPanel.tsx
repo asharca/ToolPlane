@@ -361,8 +361,8 @@ export function AgentPluginsPanel({
 
   return (
     <div className="space-y-4">
-      <p className="text-xs leading-5 text-muted-foreground">
-        {agents("piPackageSecurity")} {agents("piPackagesNewSession")}
+      <p className="text-xs leading-5 text-amber-700 dark:text-amber-400">
+        {agents("piPackageSecurity")}
       </p>
       {!canManage ? (
         <p role="status" className="text-sm">

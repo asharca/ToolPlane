@@ -197,14 +197,8 @@ export function AgentMemoriesPanel({
   }
 
   return (
-    <section
-      aria-labelledby={`${id}-title`}
-      className="min-w-0 space-y-5 px-6 py-5"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <h3 id={`${id}-title`} className="text-base font-semibold">
-          {t("memories")}
-        </h3>
+    <section aria-label={t("memories")} className="min-w-0 space-y-5 px-6 py-5">
+      <div className="flex items-center justify-end gap-3">
         {data ? (
           <span
             className="text-sm tabular-nums text-muted-foreground"

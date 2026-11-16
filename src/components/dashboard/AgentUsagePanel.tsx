@@ -89,8 +89,7 @@ export function AgentUsagePanel({
     return () => controller.abort();
   }, [base]);
   return (
-    <div className="space-y-5 px-6 py-5">
-      <h2 className="text-lg font-semibold">{t("title")}</h2>
+    <div className="min-w-0 space-y-6 px-6 py-5">
       {error ? (
         <p role="alert" className="text-sm text-destructive">
           {error}

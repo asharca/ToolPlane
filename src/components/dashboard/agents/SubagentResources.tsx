@@ -105,21 +105,15 @@ export function SubagentResources({
     });
 
   return (
-    <div className="min-w-0 space-y-6">
-      <p id={`${id}-help`} className="text-sm leading-6 text-muted-foreground">
-        {t("help")}
-      </p>
+    <div className="min-w-0 space-y-5">
       <section className="space-y-3">
         <h3 className="text-sm font-medium">{t("label")}</h3>
-        <p className="text-sm leading-6 text-muted-foreground">
-          {t("platformHelp")}
-        </p>
+        <p className="text-xs text-muted-foreground">{t("platformHelp")}</p>
         {!snapshot.agents.length ? (
           <p className="text-sm text-muted-foreground">{t("empty")}</p>
         ) : (
           <fieldset
             disabled={disabled}
-            aria-describedby={`${id}-help`}
             className="min-w-0 overflow-hidden rounded-xl border border-border/60 bg-background"
           >
             <legend className="sr-only">{t("label")}</legend>
@@ -165,7 +159,6 @@ export function SubagentResources({
           </fieldset>
         )}
       </section>
-      <p className="text-sm text-muted-foreground">{t("platformOnly")}</p>
     </div>
   );
 }

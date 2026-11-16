@@ -115,7 +115,7 @@ export function ToolApprovalSettings({
           </div>
         </div>
       </DialogField>
-      <p className="text-sm text-muted-foreground">{t("help")}</p>
+      <p className="text-xs text-muted-foreground">{t("help")}</p>
     </div>
   );
 }
