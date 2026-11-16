@@ -73,6 +73,7 @@ import type { RuntimeCommandResult } from "./runtime-commands";
 import { z } from "zod";
 import type { ReasoningEffort } from "./constants";
 import { preparePiRuntime } from "./pi-runtime";
+import { prepareLspRuntime } from "./lsp-runtime";
 import {
   agentSessionWorkingDirectory,
   agentSessionWorkspaceRoot,
@@ -1749,6 +1750,7 @@ export async function preflightPiSdkCapabilities(input: {
         : ownerSignal
       : input.signal;
     const name = `toolplane-pi-preflight-${randomUUID()}`;
+    if (input.optionalBuiltinTools?.includes("lsp")) await prepareLspRuntime();
     const directory = await mkdtemp(`${tmpdir()}/toolplane-pi-preflight-`);
     const command = (args: string[], stdin?: string) =>
       new Promise<string>((resolve, reject) => {
@@ -2881,6 +2883,47 @@ async function runPiSdk(
     .digest("hex");
   const hostSources = createHash("sha256");
   const hostFiles: { path: string; content: string }[] = [];
+  const lspRuntime = options.optionalBuiltinTools?.includes("lsp")
+    ? await waitForSandboxRuntimeInstall(prepareLspRuntime(), options.signal)
+    : undefined;
+  if (lspRuntime) {
+    hostSources.update(lspRuntime.sha256).update(lspRuntime.installer);
+    await waitForSandboxRuntimeInstall(
+      serializeSandboxStep(`lsp:${container}`, async () => {
+        const ready = await runTrackedDockerExec({
+          container,
+          workdir: "/workspace",
+          executable: "node",
+          args: [
+            "--input-type=module",
+            "-e",
+            `${lspRuntime.installer}\nprocess.stdout.write(await verifyLspArtifact(process.argv[1]) ? 'ready' : 'missing');`,
+            lspRuntime.sha256,
+          ],
+          signal: options.signal,
+          timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
+        });
+        if (ready === "ready") return;
+        await runTrackedDockerExec({
+          container,
+          workdir: "/workspace",
+          executable: "node",
+          args: [
+            "--input-type=module",
+            "-e",
+            `${lspRuntime.installer}\nawait installLspArtifact(process.argv[1]);`,
+            lspRuntime.sha256,
+          ],
+          stdinFile: lspRuntime.path,
+          signal: options.signal,
+          timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
+        });
+      }),
+      options.signal,
+    ).catch(() => {
+      throw new Error("PI_LSP_ARTIFACT_INVALID");
+    });
+  }
   for (const [path, source] of [
     [hostPath, "pi-sdk-session.mjs"],
     [verifierPath, "pi-sdk-package-files.mjs"],
@@ -3073,6 +3116,7 @@ async function runPiSdk(
       // Sessions saved by these pins resume on sdkVersion and are rewritten as it.
       compatibleSdkVersions: PI_SDK_VERSIONS,
       packageRoot: PI_SDK_RUNTIME.directory,
+      lspPackageRoot: lspRuntime?.directory,
       cwd: workdir,
       workspaceRoot,
       sharedDir: "/workspace/shared",

@@ -37,6 +37,20 @@ services:
       # timeouts, which makes those MCPs exit with "unexpected EOF".
       - ./infra/socket-proxy/haproxy.cfg.template:/usr/local/etc/haproxy/haproxy.cfg.template:ro
 
+  # Provision the published optional-tool image on the same daemon used by the
+  # app. This exits immediately; actual language servers run only in Agent sandboxes.
+  lsp-tools-image:
+    image: ${TOOLPLANE_LSP_TOOLS_IMAGE:-ghcr.io/asharca/toolplane-lsp-tools:1}
+    platform: ${TOOLPLANE_PLATFORM:-linux/amd64}
+    command: ['-e', 'process.exit(0)']
+    restart: 'no'
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   # The app. Publish the HTTP port so an external proxy can route to this host.
   app:
     stop_grace_period: 60s
@@ -64,6 +78,8 @@ services:
         condition: service_healthy
       socket-proxy:
         condition: service_started
+      lsp-tools-image:
+        condition: service_completed_successfully
     environment:
       # Internal network → reach Postgres on 5432.
       DATABASE_URL: postgresql://mcp:mcp@postgres:5432/toolplane
@@ -72,6 +88,7 @@ services:
       TOOLPLANE_A2A_DEADLINE_SECONDS: ${TOOLPLANE_A2A_DEADLINE_SECONDS:-840}
       TOOLPLANE_RUNTIME_DOMAIN: ${TOOLPLANE_RUNTIME_DOMAIN:-default}
       TOOLPLANE_RUNTIME_RECOVERY_ACK: ${TOOLPLANE_RUNTIME_RECOVERY_ACK:-}
+      TOOLPLANE_LSP_TOOLS_IMAGE: ${TOOLPLANE_LSP_TOOLS_IMAGE:-ghcr.io/asharca/toolplane-lsp-tools:1}
       TOOLPLANE_ATTACHMENT_HARD_MAX_BYTES: ${TOOLPLANE_ATTACHMENT_HARD_MAX_BYTES:-2000000000}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:10030}
       NEXT_PUBLIC_SUPPORT_EMAIL: ${NEXT_PUBLIC_SUPPORT_EMAIL:-support@tp.rhzy.ai}

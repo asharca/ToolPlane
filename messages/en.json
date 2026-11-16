@@ -1908,6 +1908,8 @@
       "sdkExecutionFailedWithCode": "The Pi SDK operation failed (code {code}). No automatic replay was attempted. See this run's logs in Observability.",
       "ompExecutionFailedWithCode": "The OMP operation failed (code {code}). No automatic replay was attempted. See this run's logs in Observability.",
       "PI_SDK_REQUEST_FAILED": "The Pi session failed to start or run. No automatic replay was attempted. Common causes: the model service is unavailable, or an extension or MCP server failed to initialize. See this run's logs in Observability.",
+      "PI_LSP_ARTIFACT_UNAVAILABLE": "LSP dependencies are unavailable. Ask an administrator to pull or build the configured LSP tools image on the application's Docker daemon, then try again.",
+      "PI_LSP_ARTIFACT_INVALID": "LSP dependencies failed offline integrity checks or installation. Ask an administrator to inspect the sandbox and restore the trusted LSP artifact.",
       "PI_MCP_TOOLS_UNAVAILABLE": "MCP server “{name}” is unavailable: {reason}. This turn did not run; check the Agent's MCP settings and try again.",
       "mcpUnavailableReasons": {
         "MCP_TOOL_FORBIDDEN": "no tools are enabled for this Agent",

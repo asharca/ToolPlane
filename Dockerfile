@@ -46,6 +46,15 @@ WORKDIR /app
 USER node
 ENTRYPOINT ["node", "/app/scripts/pi-package-capture.mjs"]
 
+# ---- lsp-tools: independent optional tool artifact; never alters the SDK image ----
+FROM pi-package-capture AS lsp-tools
+USER root
+WORKDIR /opt/toolplane-lsp
+RUN node -e "require('node:fs').writeFileSync('package.json', JSON.stringify({name:'toolplane-lsp',private:true}))" \
+    && pnpm add --prod --ignore-scripts --save-exact --config.auto-install-peers=false typescript-language-server@5.0.1 typescript@5.9.3 pyright@1.1.407
+USER node
+ENTRYPOINT ["node"]
+
 # ---- deps: full workspace install for the build stages ----
 FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
