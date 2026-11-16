@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Bot,
   Brain,
@@ -18,11 +18,13 @@ import { ToolResult } from "@/components/agents/tool-result";
 import { ConversationFilePreview } from "@/components/dashboard/ConversationComposer";
 import {
   AssistantMarkdown,
+  assistantCodeRenderers,
   StreamRuleNotice,
   ToolPayload,
   toolResultUnboundedHeight,
 } from "@/components/dashboard/ConversationMessage";
 import { CopyButton } from "@/components/dashboard/CopyButton";
+import { SafeStreamdown } from "@/components/dashboard/SafeStreamdown";
 import { ConversationToolDiff } from "./ConversationToolDiff";
 import { ConversationToolOutput } from "@/components/dashboard/ConversationToolOutput";
 import { SubagentActivity } from "./agents/SubagentActivity";
@@ -34,11 +36,13 @@ import {
 } from "@/lib/agents/advisor";
 import {
   contentProcessStatus,
+  splitReasoning,
   toContentBlocks,
   workContentParts,
   formatContentDuration,
   type ContentBlock,
   type ContentStep,
+  type ReasoningOutline,
   type ToolBlockStatus,
 } from "@/lib/conversation/content-blocks";
 import { cn } from "@/lib/utils";
@@ -98,6 +102,32 @@ const SUMMARY_KEYS = [
   "name",
 ] as const;
 
+const PATH_KEYS: ReadonlySet<string> = new Set([
+  "path",
+  "file_path",
+  "filePath",
+]);
+const SUMMARY_LENGTH = 120;
+const PATH_SUMMARY_LENGTH = 72;
+// A session's working directory and the pinned runtime directory beneath it are
+// platform plumbing: over 100 characters ahead of the part that tells calls apart.
+const SESSION_ROOT =
+  /\/workspace\/conversations\/(?:conversation|context)-[0-9a-f]{64}(?:\/(?=\S))?/g;
+const RUNTIME_ROOT =
+  /\.toolplane\/runtimes\/[^/\s]+\/agents\/[^/\s]+\/(?:revisions\/[^/\s]+\/)?/g;
+
+function summaryText(value: string, path: boolean): string | undefined {
+  const text = value
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(SESSION_ROOT, (root) => (root.endsWith("/") ? "" : "."))
+    .replace(RUNTIME_ROOT, "…/");
+  if (!path || text.length <= PATH_SUMMARY_LENGTH)
+    return text.slice(0, SUMMARY_LENGTH) || undefined;
+  // The file name is what distinguishes one path from the next.
+  return `${text.slice(0, 20)}…${text.slice(21 - PATH_SUMMARY_LENGTH)}`;
+}
+
 /** One-line argument hint so consecutive calls of the same tool stay distinguishable. */
 function toolInputSummary(value: unknown): string | undefined {
   let input = value;
@@ -105,7 +135,7 @@ function toolInputSummary(value: unknown): string | undefined {
     try {
       input = JSON.parse(value);
     } catch {
-      return value.replace(/\s+/g, " ").trim().slice(0, 120) || undefined;
+      return summaryText(value, false);
     }
   }
   if (!input || typeof input !== "object" || Array.isArray(input)) return;
@@ -113,36 +143,100 @@ function toolInputSummary(value: unknown): string | undefined {
   const key = SUMMARY_KEYS.find((name) => typeof record[name] === "string");
   const text =
     key !== undefined
-      ? (record[key] as string)
+      ? record[key]
       : Object.values(record).find((item) => typeof item === "string");
   return typeof text === "string"
-    ? text.replace(/\s+/g, " ").trim().slice(0, 120) || undefined
+    ? summaryText(text, key !== undefined && PATH_KEYS.has(key))
     : undefined;
 }
 
+type ThinkingStep = Extract<ContentStep, { kind: "thinking" }>;
+type TimelineStep =
+  | { step: Exclude<ContentStep, ThinkingStep> }
+  | { step: ThinkingStep; reasoning: ReasoningOutline };
+
+/** Empty reasoning slots carry nothing, and a bare heading directly followed by
+ * more reasoning was only a passing status; neither gets a row. */
+function timelineSteps(steps: readonly ContentStep[]): TimelineStep[] {
+  const shown: TimelineStep[] = [];
+  let beforeReasoning = false;
+  for (let index = steps.length - 1; index >= 0; index--) {
+    const step = steps[index];
+    if (step.kind !== "thinking") {
+      shown.push({ step });
+      beforeReasoning = false;
+      continue;
+    }
+    const reasoning = splitReasoning(step.text, step.streaming);
+    if (!reasoning.body && (!reasoning.title || beforeReasoning)) continue;
+    shown.push({ step, reasoning });
+    beforeReasoning = true;
+  }
+  return shown.reverse();
+}
+
+/** The newest reasoning heading stays the status while its tools run. */
+function liveReasoningTitle(steps: readonly ContentStep[]): string | undefined {
+  for (let index = steps.length - 1; index >= 0; index--) {
+    const step = steps[index];
+    if (step.kind === "tool") continue;
+    if (step.kind !== "thinking") return;
+    if (step.text.trim())
+      return splitReasoning(step.text, step.streaming).latestTitle;
+  }
+  return;
+}
+
 function ConversationThinkingStep({
-  step,
+  reasoning: { title, body },
+  streaming,
 }: {
-  step: Extract<ContentStep, { kind: "thinking" }>;
+  reasoning: ReasoningOutline;
+  streaming: boolean;
 }) {
+  const t = useTranslations("console.work");
   const [expanded, setExpanded] = useState(false);
-  if (!step.text) return null;
+  const renderers = useMemo(
+    () => (expanded ? assistantCodeRenderers(body) : undefined),
+    [expanded, body],
+  );
+  if (!body)
+    return (
+      <div className="py-1 text-xs font-medium leading-relaxed text-muted-foreground">
+        {title}
+      </div>
+    );
+  const heading =
+    title ?? (expanded ? t(streaming ? "thinking" : "thought") : undefined);
   return (
-    <button
-      type="button"
-      aria-expanded={expanded}
-      onClick={() => setExpanded((value) => !value)}
-      className="block w-full rounded-md py-1 text-left text-xs leading-relaxed text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <span
-        className={cn(
-          "block whitespace-pre-wrap break-words",
-          !expanded && "line-clamp-2",
-        )}
+    <div className="min-w-0 text-xs leading-relaxed text-muted-foreground">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+        className="block w-full rounded-md py-1 text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
       >
-        {step.text}
-      </span>
-    </button>
+        {heading ? <span className="block font-medium">{heading}</span> : null}
+        {expanded ? null : (
+          <span className="line-clamp-2 whitespace-pre-wrap break-words">
+            {body.replace(/^\*\*(.+?)\*\*[ \t]*$/gm, "$1")}
+          </span>
+        )}
+      </button>
+      {expanded ? (
+        <div className="min-w-0 break-words pb-1 [&_:not(pre)>code]:text-[0.95em] [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p+p]:mt-2 [&_strong]:font-medium [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5">
+          <SafeStreamdown
+            assistant
+            mode="static"
+            plugins={{ renderers }}
+            preserveSoftBreaks
+            linkSafety={{ enabled: true }}
+          >
+            {body}
+          </SafeStreamdown>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -267,13 +361,15 @@ function ConversationProcessBlock({
     ((current?.kind === "tool" &&
       (current.status === "running" || current.status === "awaiting")) ||
       (current?.kind === "thinking" && current.streaming));
-  const label = currentRunning
-    ? current?.kind === "tool"
-      ? current.status === "awaiting"
-        ? t("toolAwaiting")
-        : t("usingTool", { tool: displayToolName(current.toolName) })
-      : t("thinking")
-    : (activeLabel ?? t("processing"));
+  const label =
+    current?.kind === "tool" && current.status === "awaiting"
+      ? t("toolAwaiting")
+      : ((working ? liveReasoningTitle(block.steps) : undefined) ??
+        (currentRunning
+          ? current?.kind === "tool"
+            ? t("usingTool", { tool: displayToolName(current.toolName) })
+            : t("thinking")
+          : (activeLabel ?? t("processing"))));
   const summary =
     block.status === "failed"
       ? t("processFailed")
@@ -338,7 +434,8 @@ function ConversationProcessBlock({
       >
         {visited ? (
           <ul className="m-0! list-none! space-y-1 p-0! py-2!">
-            {block.steps.map((step) => {
+            {timelineSteps(block.steps).map((item) => {
+              const { step } = item;
               const content =
                 step.kind === "data" ? renderDataStep?.(step) : undefined;
               if (step.kind === "data" && content == null) return null;
@@ -363,8 +460,11 @@ function ConversationProcessBlock({
                           <Zap className="size-3.5" />
                         )}
                       </span>
-                      {step.kind === "thinking" ? (
-                        <ConversationThinkingStep step={step} />
+                      {"reasoning" in item ? (
+                        <ConversationThinkingStep
+                          reasoning={item.reasoning}
+                          streaming={item.step.streaming}
+                        />
                       ) : (
                         content
                       )}

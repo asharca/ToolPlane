@@ -495,6 +495,7 @@
 - **下次怎么验证**：真实回合中用 `PerformanceObserver('layout-shift')`、`aria-expanded` 变更计数和滚动容器高度回缩次数取证；先展开一个旧披露再发送，确认新输出仍跟到底部。依据：`ConversationContentBlocks.tsx`、`tests/unit/workspace-work-failures.test.tsx`。
 - **点击切换复发（2026-11-10，线上用户反馈“工具调用不能正常折叠展开”）**：上述捕获阶段标记用 `queueMicrotask` 复位。React 的捕获与冒泡处理分属根节点上的两个原生监听器，真实点击在两者之间会清空微任务，`onOpenChange` 到达时标记已复位，工具行永远打不开；单元测试的程序化 `click()` 在同一脚本栈内执行，微任务不会提前运行，所以测试通过。改为 `setTimeout(0)` 复位。本地真实浏览器（CDP 输入）先复现微任务版点击后 `aria-expanded` 仍为 false，修复后打开／收起均生效。下次凡依赖事件阶段之间的时序，必须用真实浏览器输入验收，不能只用 Testing Library。
 - **正文顺序补充（同日）**：#201 只修了助手对话；Work 的实时视图把全部正文拼在活动之后，持久化又只存任务最终结果为末尾一段文本，于是工具调用和正文各自堆在一起。实时活动现记录开始时的正文偏移，`interleaveLiveText` 按偏移穿插；协调器按到达顺序记录正文片段，与最终结果去空白后一致时按序持久化，否则仍追加在末尾。已持久化的旧消息无法可靠拆分，保持原样。真实 Work 两次 bash 回合的实时和刷新后结构均为“思考｜正文｜工具｜正文｜工具｜正文”。依据：[协调器](src/lib/work/coordinator.ts)、[输出通道](src/lib/work/run-control.ts)。
+- **推理摘要补充（2026-11-16，用户反馈“流式输出很奇怪”）**：OpenAI Responses 的推理摘要是 `**标题**` 加可选正文，常常只有标题；思考步骤按纯文本渲染，星号原样可见，仅有标题的 reasoning 连续占行。工具行摘要从头截 120 字符，而会话目录前缀就占 102 字符，两次 `read` 只剩相同的 `/.toolplane/runtim`。现在标题作为运行中的状态行，紧跟其他推理的裸标题不占行，路径摘要去掉会话与运行时前缀并保留尾部。验收时先用 chat-completions 协议的脚本化模型回放，标题状态行正常；换成 Responses 协议后 reasoning item 立即结束，标题被“生成中”阶段标签盖住，才把标题优先级调到阶段标签之前。下次推理展示须用与线上相同协议的流验收，覆盖仅标题、连续多个 reasoning item、标题加正文，并在运行中采样状态行文本，不能只看结束后展开的结果。本次经助手对话和本地脚本化 Responses 端点走完真实服务端链路，未做 Work 沙箱回合。依据：`splitReasoning`（`src/lib/conversation/content-blocks.ts`）、`ConversationContentBlocks.tsx`。
 
 ### TP-L045：可配置上限必须贯穿数据流的每一跳
 

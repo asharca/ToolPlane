@@ -375,6 +375,61 @@ export function interleaveLiveText<
   return parts;
 }
 
+export type ReasoningOutline = {
+  /** Heading above the prose. */
+  title?: string;
+  /** Newest heading anywhere in the text: what the model is doing now. */
+  latestTitle?: string;
+  /** Prose and any later sections beneath the heading. */
+  body: string;
+};
+
+const REASONING_TITLE = /^\*\*(.+?)\*\*[ \t]*$/;
+const OPEN_REASONING_TITLE = /^\*\*[^*]*\*?$/;
+
+/**
+ * Reasoning summaries (e.g. OpenAI Responses) are `**Title**` lines with optional
+ * prose beneath; often the titles are all there is. Bare headings ahead of any
+ * prose supersede one another. While streaming, the newest line may be a title
+ * whose closing marker has not arrived yet.
+ */
+export function splitReasoning(
+  text: string,
+  streaming = false,
+): ReasoningOutline {
+  const lines = text.trim().split(/\r?\n/);
+  const last = lines.length - 1;
+  const openTail = streaming && OPEN_REASONING_TITLE.test(lines[last]);
+  const titleAt = (index: number): string | undefined =>
+    openTail && index === last
+      ? lines[index].replace(/^\*\*|\*$/g, "").trim()
+      : REASONING_TITLE.exec(lines[index])?.[1].trim();
+  let title: string | undefined;
+  let start = 0;
+  for (; start <= last; start++) {
+    if (!lines[start].trim()) continue;
+    const found = titleAt(start);
+    if (found === undefined) break;
+    title = found || title;
+  }
+  let latestTitle = title;
+  for (let index = last; index >= start; index--) {
+    const found = titleAt(index);
+    if (found) {
+      latestTitle = found;
+      break;
+    }
+  }
+  return {
+    title,
+    latestTitle,
+    body: lines
+      .slice(start, openTail && start <= last ? last : undefined)
+      .join("\n")
+      .trim(),
+  };
+}
+
 export function formatContentDuration(
   durationMs: number | undefined,
 ): string | null {
