@@ -804,8 +804,11 @@ export function AgentSettingsForm(props: Props) {
   return (
     <div className={props.className ?? "flex h-full min-h-0 flex-col"}>
       <DialogBody className="flex flex-col overscroll-contain">
-        <div className="space-y-5">
-          <div hidden={Boolean(review)} className="space-y-5">
+        <div className="flex min-h-full flex-1 flex-col gap-5">
+          <div
+            hidden={Boolean(review)}
+            className="flex min-h-0 flex-1 flex-col"
+          >
             <form
               onSubmit={(event) => {
                 event.preventDefault();
@@ -824,7 +827,7 @@ export function AgentSettingsForm(props: Props) {
                 props.onSectionChange?.(invalidSection);
               }}
               data-unsaved-changes={hasUnsavedChanges ? "true" : "false"}
-              className="space-y-5"
+              className="flex min-h-0 flex-1 flex-col space-y-5"
             >
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="agentId" value={agentId} />
@@ -865,8 +868,11 @@ export function AgentSettingsForm(props: Props) {
                 name="externalSandboxes"
                 value={JSON.stringify(attachments)}
               />
-              <fieldset disabled={pending} className="min-w-0 space-y-5">
-                <section hidden={!showBasics} className="space-y-5">
+              <fieldset
+                disabled={pending}
+                className="flex min-h-0 flex-1 flex-col space-y-5"
+              >
+                <section hidden={!showBasics} className="max-w-2xl space-y-5">
                   <DialogField
                     label={t("name")}
                     htmlFor={`${formId}-name`}
@@ -964,7 +970,10 @@ export function AgentSettingsForm(props: Props) {
                     )}
                   </div>
                 </section>
-                <section hidden={!showBasics} className="space-y-5">
+                <section
+                  hidden={!showBasics}
+                  className="flex max-w-2xl flex-1 flex-col gap-5"
+                >
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <span className="text-sm font-medium">
                       {t("instructions")}
@@ -993,7 +1002,7 @@ export function AgentSettingsForm(props: Props) {
                     maxLength={100_000}
                     placeholder={t("youAreAHelpfulAssistant")}
                     dirty={prompt !== props.systemPrompt}
-                    className="h-80 min-h-64 flex-none"
+                    className="min-h-72 flex-1"
                   />
                 </section>
                 <section hidden={active !== "streamRules"}>
@@ -1299,7 +1308,10 @@ export function AgentSettingsForm(props: Props) {
                     }}
                   />
                 </section>
-                <section hidden={active !== "advanced"} className="space-y-8">
+                <section
+                  hidden={active !== "advanced"}
+                  className="max-w-2xl space-y-8"
+                >
                   <div className="space-y-5">
                     <h3 className="text-sm font-medium">
                       {t("modelRoutingSection")}

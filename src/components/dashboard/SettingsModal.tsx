@@ -39,11 +39,13 @@ export function SettingsModal({
   title,
   fallbackHref,
   compact = false,
+  className,
   children,
 }: {
   title: string;
   fallbackHref: string;
   compact?: boolean;
+  className?: string;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -86,7 +88,7 @@ export function SettingsModal({
           if (intercepted) router.back();
           else router.replace(closeHref);
         }}
-        className={`flex flex-col overflow-hidden w-full ${compact ? "max-w-5xl h-[min(48rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)]" : "max-w-6xl h-[calc(100dvh-4rem)]"}`}
+        className={`flex flex-col overflow-hidden w-full ${className ?? (compact ? "max-w-5xl h-[min(48rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)]" : "max-w-6xl h-[calc(100dvh-4rem)]")}`}
       >
         <DialogHeader title={displayTitle} />
         <CloseSettingsContext.Provider value={() => setOpen(false)}>
