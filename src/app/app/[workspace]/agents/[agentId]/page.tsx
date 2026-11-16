@@ -147,7 +147,6 @@ export default async function AgentDetailPage({
     <SettingsModal
       title={agent.name}
       fallbackHref={`/app/${slug}/work?agent=${encodeURIComponent(agent.id)}`}
-      className="h-[min(52rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] max-w-5xl"
     >
       <AgentSettings
         slug={slug}
