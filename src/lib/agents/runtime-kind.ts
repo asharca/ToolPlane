@@ -103,6 +103,9 @@ export const AGENT_OPTIONAL_BUILTIN_TOOLS: readonly AgentOptionalBuiltinTool[] =
   [
     { name: "web_search", category: "search", implementation: "platform" },
     { name: "web_fetch", category: "search", implementation: "platform" },
+    { name: "memory_retain", category: "context", implementation: "platform" },
+    { name: "memory_recall", category: "context", implementation: "platform" },
+    { name: "memory_forget", category: "context", implementation: "platform" },
   ];
 
 export function agentOptionalBuiltinTools(value: unknown) {

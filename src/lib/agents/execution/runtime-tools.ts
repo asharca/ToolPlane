@@ -31,6 +31,8 @@ import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
 import { publishLocalArtifact } from "@/lib/a2a/local-artifacts";
 import { agentOptionalBuiltinTool } from "../runtime-kind";
 import { isWebTool, WebToolError } from "./web-tool-errors";
+import { AgentMemoryError } from "../memory-inputs";
+import { executeAgentMemoryTool } from "../memories";
 
 /** Trusted platform dispatch; implementations must validate arguments and preserve task authority. */
 // Registry-selected optional plugins stay lazy: static loading initializes the session-MCP
@@ -53,6 +55,12 @@ export const optionalBuiltinPlatformHandlers: Readonly<
     const { executeWebTool } = await import("./web-tools");
     return executeWebTool(token, "web_fetch", raw, signal);
   },
+  memory_retain: (token, raw, signal) =>
+    executeAgentMemoryTool(token, "memory_retain", raw, signal),
+  memory_recall: (token, raw, signal) =>
+    executeAgentMemoryTool(token, "memory_recall", raw, signal),
+  memory_forget: (token, raw, signal) =>
+    executeAgentMemoryTool(token, "memory_forget", raw, signal),
 };
 
 const optionalBuiltinDeniedMessage = "Optional built-in tool is not enabled.";
@@ -168,6 +176,13 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
       const known = tools.some((tool) => tool.name === request.params.name);
       const toolName = known ? request.params.name : "unknown";
       const args = request.params.arguments ?? {};
+      // Rejected retention input can itself contain a credential. Never log
+      // memory payloads (including recall output) into observability storage.
+      const memoryTool = [
+        "memory_retain",
+        "memory_recall",
+        "memory_forget",
+      ].includes(toolName);
       const { row, grant } = authority;
       const binding = known
         ? {
@@ -216,7 +231,7 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
           toolName,
           outcome: a2aTaskOutcome(state),
           durationMs: performance.now() - started,
-          ...(!isWebTool(request.params.name)
+          ...(!isWebTool(request.params.name) && !memoryTool
             ? { request: args, response }
             : {}),
           responseKind: "json",
@@ -231,6 +246,7 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
           error.status === 403 &&
           error.message === optionalBuiltinDeniedMessage;
         const webFailure = error instanceof WebToolError ? error : undefined;
+        const memoryError = error instanceof AgentMemoryError ? error : null;
         const response = {
           content: [
             {
@@ -239,16 +255,20 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
                 code: rpc.code,
                 message: webFailure
                   ? webFailure.message
-                  : optionalDenied
-                    ? optionalBuiltinDeniedMessage
-                    : rpc.code === -32603
-                      ? "Agent runtime tool operation failed."
-                      : rpc.message,
+                  : memoryError
+                    ? memoryError.message
+                    : optionalDenied
+                      ? optionalBuiltinDeniedMessage
+                      : rpc.code === -32603
+                        ? "Agent runtime tool operation failed."
+                        : rpc.message,
                 ...(webFailure
                   ? { reason: webFailure.reason }
-                  : optionalDenied
-                    ? { reason: "OPTIONAL_BUILTIN_TOOL_FORBIDDEN" }
-                    : {}),
+                  : memoryError
+                    ? { reason: memoryError.reason }
+                    : optionalDenied
+                      ? { reason: "OPTIONAL_BUILTIN_TOOL_FORBIDDEN" }
+                      : {}),
               }),
             },
           ],
@@ -269,7 +289,7 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
           toolName,
           outcome: denied ? "denied" : "error",
           durationMs: performance.now() - started,
-          ...(!denied && known && !isWebTool(request.params.name)
+          ...(!denied && known && !isWebTool(request.params.name) && !memoryTool
             ? { request: args, response }
             : {}),
           responseKind: "json",

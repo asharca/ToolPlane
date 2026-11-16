@@ -4166,6 +4166,125 @@ describe("unified native ingress mappings", () => {
     }
   });
 
+  it("persists optional memory tools immediately within one Agent and forgets without touching peers", async () => {
+    const names = ["memory_retain", "memory_recall", "memory_forget"];
+    await db.agent.update({
+      where: { id: agents[0] },
+      data: { optionalBuiltinTools: names },
+    });
+    await publishFixtureAgentRevision(ws, agents[0]);
+    grant = await createLocalRootGrant(ws, agents[0], user);
+    const parent = await root();
+    const signed = await createAgentRuntimeToken(await runtimeToken(parent));
+    const client = new Client({ name: "memory-tools", version: "1" });
+    const sentinel = `memory-${randomUUID()}`;
+    const peer = await db.agentMemory.create({
+      data: {
+        workspaceId: ws,
+        agentId: agents[1],
+        content: sentinel,
+        creatorType: "user",
+      },
+    });
+    try {
+      await client.connect(
+        new StreamableHTTPClientTransport(
+          new URL("https://toolplane.test/runtime-tools"),
+          {
+            requestInit: { headers: { authorization: `Bearer ${signed}` } },
+            fetch: async (input, init) => {
+              const req = new Request(input, init);
+              return req.method === "POST"
+                ? handleRuntimeTools(req, parent.id)
+                : new Response(null, { status: 405 });
+            },
+          },
+        ),
+      );
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(
+        expect.arrayContaining(names),
+      );
+      expect(
+        (
+          await client.callTool({
+            name: "memory_retain",
+            arguments: { content: sentinel },
+          })
+        ).isError,
+      ).toBe(false);
+      const memory = await db.agentMemory.findFirstOrThrow({
+        where: { workspaceId: ws, agentId: agents[0], content: sentinel },
+      });
+      expect(memory).toMatchObject({ creatorType: "tool", taskId: parent.id });
+      const recalled = await client.callTool({
+        name: "memory_recall",
+        arguments: { query: sentinel },
+      });
+      expect(recalled.isError).toBe(false);
+      expect(JSON.stringify(recalled.content)).toContain(memory.id);
+      expect(JSON.stringify(recalled.content)).toContain(
+        "UNTRUSTED HISTORICAL MEMORIES",
+      );
+      expect(JSON.stringify(recalled.content)).not.toContain(peer.id);
+      expect(
+        (
+          await client.callTool({
+            name: "memory_forget",
+            arguments: { id: peer.id },
+          })
+        ).isError,
+      ).toBe(true);
+      expect(
+        (
+          await client.callTool({
+            name: "memory_forget",
+            arguments: { id: memory.id },
+          })
+        ).isError,
+      ).toBe(false);
+      expect(
+        JSON.stringify(
+          (
+            await client.callTool({
+              name: "memory_recall",
+              arguments: { query: sentinel },
+            })
+          ).content,
+        ),
+      ).not.toContain(memory.id);
+      const rejected = await client.callTool({
+        name: "memory_retain",
+        arguments: { content: `sk-${"a".repeat(24)}` },
+      });
+      expect(rejected.isError).toBe(true);
+      expect(JSON.stringify(rejected.content)).toContain(
+        "AGENT_MEMORY_SECRET_DETECTED",
+      );
+      await db.agent.update({
+        where: { id: agents[0] },
+        data: { optionalBuiltinTools: [] },
+      });
+      expect(
+        (
+          await client.callTool({
+            name: "memory_retain",
+            arguments: { content: sentinel },
+          })
+        ).isError,
+      ).toBe(true);
+      expect(await db.agentMemory.count({ where: { id: peer.id } })).toBe(1);
+    } finally {
+      await client.close();
+      await db.agentMemory.deleteMany({
+        where: { workspaceId: ws, content: sentinel },
+      });
+      await db.agent.update({
+        where: { id: agents[0] },
+        data: { optionalBuiltinTools: [] },
+      });
+    }
+  });
+
   it("authorizes optional platform tools by the pinned revision and live opt-in", async () => {
     // Test-only trusted registration; no example tool is shipped in the product catalog.
     const name = "test_optional_task_count";

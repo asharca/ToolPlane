@@ -27,6 +27,7 @@ import { AgentTriggersPanel } from "./AgentTriggersPanel";
 import { AgentUsagePanel } from "../AgentUsagePanel";
 import { AgentClonePanel } from "./AgentClonePanel";
 import { AgentEvolutionPanel } from "./AgentEvolutionPanel";
+import { AgentMemoriesPanel } from "./AgentMemoriesPanel";
 
 const AgentMessagingPanel = dynamic(() =>
   import("@/components/dashboard/agents/AgentMessagingPanel").then(
@@ -90,6 +91,7 @@ type SettingsTab =
   | "a2a"
   | "changelog"
   | "evolution"
+  | "memories"
   | "triggers"
   | "usage"
   | "clone";
@@ -132,6 +134,7 @@ function resolveSettingsTab({
     requested === "a2a" ||
     requested === "changelog" ||
     requested === "evolution" ||
+    requested === "memories" ||
     requested === "triggers" ||
     requested === "usage"
   )
@@ -190,6 +193,7 @@ export function AgentSettings({
       ? [{ id: "streamRules" as const, label: t("streamRules.title") }]
       : []),
     { id: "toolApproval", label: approvalT("title") },
+    { id: "memories", label: t("memories") },
     { id: "mcp", label: t("mcp") },
     { id: "skills", label: t("skills") },
     { id: "piPackages", label: t("piPackages") },
@@ -286,6 +290,14 @@ export function AgentSettings({
                   key={agentId}
                   agentId={agentId}
                   currentRevisionId={settings.publishedRevision?.id ?? null}
+                />
+              </div>
+            ) : settingsTab === "memories" ? (
+              <div className="h-full min-w-0 overflow-y-auto">
+                <AgentMemoriesPanel
+                  key={`${slug}:${agentId}:memories`}
+                  slug={slug}
+                  agentId={agentId}
                 />
               </div>
             ) : settingsTab === "triggers" ? (
