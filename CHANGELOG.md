@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.39.0](https://github.com/asharca/ToolPlane/compare/v0.38.1...v0.39.0) (2026-11-16)
+
+
+### Features
+
+* **agents:** 上下文占用显示 Pi 分类明细 ([#228](https://github.com/asharca/ToolPlane/issues/228)) ([53c81b9](https://github.com/asharca/ToolPlane/commit/53c81b95ab65d3492dc3162e7a62f5ad8d4f9363))
+* **agents:** 升级 Pi SDK 至 1.5.2 并原地兼容 0.87.1 修订与会话 ([#229](https://github.com/asharca/ToolPlane/issues/229)) ([fe48926](https://github.com/asharca/ToolPlane/commit/fe489260e7ac7dc0ae3dcf8dba41db250a53cdc9))
+* **agents:** 回合中途超出月度预算时告警 ([#234](https://github.com/asharca/ToolPlane/issues/234)) ([c460d78](https://github.com/asharca/ToolPlane/commit/c460d78abbf61eaf83962ca1a9e95c0c64977b22))
+* **agents:** 支持兜底模型以及压缩与标题角色模型 ([#240](https://github.com/asharca/ToolPlane/issues/240)) ([0943c90](https://github.com/asharca/ToolPlane/commit/0943c9065556a036246dd0a29282c8a99d42e2e0))
+* **agents:** 支持按修订加载项目指令文件（AGENTS.md） ([#232](https://github.com/asharca/ToolPlane/issues/232)) ([1075bfb](https://github.com/asharca/ToolPlane/commit/1075bfb6e85931712903117e08c3473cba9117d6))
+* **agents:** 支持默认思考强度并在 Work 输入框调整 ([#227](https://github.com/asharca/ToolPlane/issues/227)) ([3655271](https://github.com/asharca/ToolPlane/commit/3655271fc571296a47d5f60ce18f9e674dad5bca))
+* **agents:** 新增 advisor 审查模型，在回合中注入建议 ([#251](https://github.com/asharca/ToolPlane/issues/251)) ([3853231](https://github.com/asharca/ToolPlane/commit/3853231bb0ea27c417743d98ebf1ee699b4374fd))
+* **agents:** 新增 browser 可选工具，默认沙箱镜像内置 Chromium ([#249](https://github.com/asharca/ToolPlane/issues/249)) ([76e3522](https://github.com/asharca/ToolPlane/commit/76e352207cd4994409f5713fe2ab2d4f8b488d8e))
+* **agents:** 新增 checkpoint/rewind/context_notes 工具与 /handoff 命令 ([#246](https://github.com/asharca/ToolPlane/issues/246)) ([2e4569c](https://github.com/asharca/ToolPlane/commit/2e4569cc4ee45a1fa47c4177198eda3674df7868))
+* **agents:** 新增 web_search 与 web_fetch 可选工具 ([#242](https://github.com/asharca/ToolPlane/issues/242)) ([12bc8cd](https://github.com/asharca/ToolPlane/commit/12bc8cdc27d14d5a42c7e407508ce896190f5356))
+* **agents:** 新增保留会话状态的 eval 可选工具 ([#244](https://github.com/asharca/ToolPlane/issues/244)) ([2c9f890](https://github.com/asharca/ToolPlane/commit/2c9f89020fcc58969dfaf7b474351ba1bbbf2faf))
+* **agents:** 新增基于 DAP 的 debug 可选工具 ([#248](https://github.com/asharca/ToolPlane/issues/248)) ([58cc308](https://github.com/asharca/ToolPlane/commit/58cc3089ad9595a14e7c9cdf938be9093734acad))
+* **agents:** 新增基于语言服务器的 lsp 可选工具 ([#247](https://github.com/asharca/ToolPlane/issues/247)) ([a0343de](https://github.com/asharca/ToolPlane/commit/a0343de280652701f2ea0aa334cc12ec1dc428bc))
+* **agents:** 新增按修订启用的可选内置工具机制 ([#233](https://github.com/asharca/ToolPlane/issues/233)) ([ffe0359](https://github.com/asharca/ToolPlane/commit/ffe0359b32ff07812e3ddeeb9df7bd45d6ee5ed9))
+* **agents:** 新增沙箱内并发子代理 task 可选工具 ([#245](https://github.com/asharca/ToolPlane/issues/245)) ([072f659](https://github.com/asharca/ToolPlane/commit/072f6597585f85cab0aeca22676315128c443b03))
+* **agents:** 新增流式规则，匹配输出或工具调用时提醒或阻止 ([#235](https://github.com/asharca/ToolPlane/issues/235)) ([862577d](https://github.com/asharca/ToolPlane/commit/862577d9cb78593956e4a412636ab093c3257c6b))
+* **agents:** 新增跨会话的 Agent 记忆工具与管理面板 ([#243](https://github.com/asharca/ToolPlane/issues/243)) ([d070756](https://github.com/asharca/ToolPlane/commit/d070756246c40a4054deef0a2ebdebc9cbabdc03))
+* **agents:** 新增逐工具审批，支持控制台与频道短码审批 ([#241](https://github.com/asharca/ToolPlane/issues/241)) ([2084ab3](https://github.com/asharca/ToolPlane/commit/2084ab32f956ea290cef899567bf8824dbd8d0a5))
+* **agents:** 模型网关对已登记环境凭据做占位符混淆 ([#250](https://github.com/asharca/ToolPlane/issues/250)) ([042e1e0](https://github.com/asharca/ToolPlane/commit/042e1e0245ad96cc29ef25a8a8f28ae8b10ad35e))
+* **agents:** 触发器会话分组并支持将结果发送到频道 ([#226](https://github.com/asharca/ToolPlane/issues/226)) ([78442ca](https://github.com/asharca/ToolPlane/commit/78442ca91b34cda4fbc570529a5600f6a8050d3c))
+* **work:** 在工具调用中显示 edit/write 的文件 diff ([#231](https://github.com/asharca/ToolPlane/issues/231)) ([1888645](https://github.com/asharca/ToolPlane/commit/1888645758ae29b097f9a2bf8e8787e8c402131a))
+* **work:** 支持在 Agent 运行中插话和排队追问 ([#238](https://github.com/asharca/ToolPlane/issues/238)) ([86bf66d](https://github.com/asharca/ToolPlane/commit/86bf66d7eba6424f5b9ba4e976d131786fca4aa1))
+* **work:** 支持导出 Agent 会话为 JSONL、HTML 或 Markdown ([#236](https://github.com/asharca/ToolPlane/issues/236)) ([9138b3c](https://github.com/asharca/ToolPlane/commit/9138b3cc678774906d9379311644af071fa45e19))
+* **work:** 支持编辑消息重新执行、重试最后一轮和从消息分支 ([#237](https://github.com/asharca/ToolPlane/issues/237)) ([2f110ac](https://github.com/asharca/ToolPlane/commit/2f110ac428b00b7ccc1a4221b742e10ad20b125f))
+* **work:** 输入框支持 @ 引用已授权的委派 Agent ([#239](https://github.com/asharca/ToolPlane/issues/239)) ([c436bcb](https://github.com/asharca/ToolPlane/commit/c436bcb00546c361cdac0c92443635ff8a506cc2))
+
+
+### Bug Fixes
+
+* **agents:** 旧 Agent 浏览入口改为跳转插件中心并更新失效路径引用 ([#230](https://github.com/asharca/ToolPlane/issues/230)) ([ce0008d](https://github.com/asharca/ToolPlane/commit/ce0008d09fa8799477a2c26ba0d2fb85f87061e9))
+
 ## [0.38.1](https://github.com/asharca/ToolPlane/compare/v0.38.0...v0.38.1) (2026-11-12)
 
 
