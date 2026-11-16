@@ -8,6 +8,12 @@ export const PI_SDK_VERSIONS = [
 ] as const;
 /** Credential-free image that provides the pinned SDK for capture, preflight and installation. */
 export const PI_PACKAGE_CAPTURE_IMAGE = `toolplane-pi-package-capture:${PI_SDK_VERSION}`;
+/** Independent debug dependency image; bump rN for dependency/export changes.
+ * Published in the existing app package, preserving its pull permissions.
+ * Never reuse the SDK-only local tag: old daemons may retain that image forever.
+ */
+export const PI_DEBUGPY_CAPTURE_IMAGE =
+  "ghcr.io/asharca/toolplane:pi-capture-1.5.2-debugpy-1.8.17-r1";
 
 export function isSupportedPiVersion(version: unknown): boolean {
   return (PI_SDK_VERSIONS as readonly unknown[]).includes(version);
