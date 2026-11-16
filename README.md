@@ -1,6 +1,6 @@
 # ToolPlane 项目介绍
 
-> 统一管理 MCP 和 Skill，同步到 AI 客户端，或在沙箱中直接运行 Agent。
+> 统一管理 MCP、Skill 和 Pi 插件，在持久沙箱中运行 Agent，通过 API 与消息渠道集成。
 
 ToolPlane 是一个自托管的 AI 工具与 Agent 平台，以工作区组织工具、技能、模型和运行环境。实例凭据、工作区数据与托管运行时由部署者管理。
 
@@ -9,8 +9,8 @@ ToolPlane 是一个自托管的 AI 工具与 Agent 平台，以工作区组织�
 ## 核心能力
 
 - **MCP 管理**：从目录或自定义配置部署服务，支持 npm、PyPI、GitHub 和 Docker 来源。
-- **插件中心与客户端**：从 GitHub 同步统一版本的组合插件包，一个包可包含 MCP、Skill、Pi 能力包、Agent 和 Assistant；按需选择成员、审阅更新，保留固定提交与审计。不接受本地上传或站内内容发布。客户端按独立 scope 注册，旧 Toolkit 执行与令牌已退役。
-- **Agent 执行**：使用 Pi SDK（`pi-sdk`），审查并应用不可变修订后，每个智能体复用一个持久沙箱，会话分别保留工作目录、原生历史和插件版本。模型、技能、MCP 与插件直接绑定平台资源，子智能体通过平台 A2A 委派。OMP 与其他旧运行时仅保留只读历史；OMP 配置导入只转换为 Pi，专属能力必须明确处理，不能直接恢复执行。
+- **GitHub 插件中心**：从固定 GitHub 提交捕获版本化 Pi 插件，包含 Skill、prompt、extension 或 theme；先添加到工作区，再由 Agent 审阅并应用。支持 v3 多插件索引与单插件仓库，不接受旧 v2 组合包；旧 Toolkit 执行、令牌和外部插件客户端分发已退役。
+- **Agent 执行**：使用 Pi SDK（`pi-sdk`），审查并应用不可变修订后，每个智能体复用一个持久沙箱，会话分别保留工作目录、原生历史和插件版本。模型、技能、MCP 与插件直接绑定平台资源，子智能体通过平台 A2A 委派。OMP 等退役运行时仅保留允许范围内的只读历史；Hermes 记录由退役迁移移除，需在升级前另行归档。OMP 配置只转换为需重新授权的 Pi 草稿，不能直接恢复执行。
 - **沙箱与设备**：管理 Docker 沙箱，通过 Connector 连接自己的电脑，或通过 ADB 桥接 Android。
 - **观测与集成**：查看调用、延迟和错误，通过 MCP、API 或消息渠道接入。
 
@@ -18,10 +18,9 @@ ToolPlane 是一个自托管的 AI 工具与 Agent 平台，以工作区组织�
 
 ```mermaid
 flowchart TB
-  MCP["MCP 服务"] --> Package["不可变能力包"]
-  Skills["Skill · Prompt · 文件"] --> Package
+  GitHub["GitHub 固定提交"] --> Package["不可变 Pi 插件制品"]
   Package -->|审查并应用| Revision["Agent 修订"]
-  Package -->|独立授权注册| Clients["外部 AI 客户端"]
+  MCP["MCP 服务 · 显式工具授权"] --> Revision
   Revision --> Session["Pi 会话 · 固定修订"]
   Session --> Sandbox["Agent 共享持久沙箱 · 会话独立目录"]
 ```
@@ -57,9 +56,11 @@ docker compose up -d
 
 Compose 同时准备独立的 LSP 依赖镜像 `ghcr.io/asharca/toolplane-lsp-tools:1`；该准备容器立即退出，语言服务器仅在获授权的 Agent 沙箱中运行。可通过 `TOOLPLANE_LSP_TOOLS_IMAGE` 固定到已发布的应用版本标签或私有镜像；不使用 Compose 时，须提前在应用连接的 Docker daemon 上拉取该镜像。沙箱内不联网安装依赖，也不因准备镜像而自动启用工具。
 
+容器化应用的原生能力预检还需要专用 `TMPDIR` 与 daemon 宿主同路径挂载，并在该 daemon 准备 `toolplane-pi-package-capture:1.5.2`；启动 Compose 本身不证明 Agent 已可执行。默认沙箱、LSP 和 debugpy 使用不同镜像，按[工具镜像部署](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS#agent-工具镜像部署)及[运行时运维](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS)准备后，实际创建／应用修订并执行一次原生工具。
+
 ### 本地开发
 
-需要 Node.js 26、pnpm 和 Docker。在 `.env` 中使用以下本地地址：
+需要 Node.js **≥26.12.1**、pnpm 和 Docker。在 `.env` 中使用以下本地地址：
 
 ```dotenv
 DATABASE_URL="postgresql://mcp:mcp@localhost:5433/toolplane?schema=public"
@@ -87,7 +88,9 @@ pnpm dev
 
 ## 使用入口
 
-侧栏“插件中心”展开为浏览插件包、工作区资源、更新和 GitHub 来源；独立 Skill/MCP 入口负责工作区管理。工作区 owner/admin 登记 GitHub 仓库并同步 schemaVersion 2 的 `registry.json`，内容与整包版本通过 GitHub PR 管理；初始官方仓库为 [`asharca/toolplane-plugins`](https://github.com/asharca/toolplane-plugins)。安装时选择包内成员，新增成员不会在更新时默认勾选；同步、安装和更新均不执行资源、不自动授权，也不改变已有会话版本。客户端另行注册并授权，旧 Toolkit 转换不继承执行权限。外部 AI 客户端可从 **Agents → Connect AI** 获取 Agent Control MCP 配置。仓库协议、升级顺序、私有来源和签名 Webhook 见[资源同步操作](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS#user-content-github-插件中心)。
+工作区 owner/admin 在插件中心登记 GitHub 来源。多插件仓库使用 `schemaVersion: 3` 的 `registry.json`，每项提供插件 ID 与目录，版本来自对应 Pi `package.json`；单插件仓库可直接使用根目录 Pi 包。旧 v2 组合包需迁移，不再按包内 MCP／Agent／Assistant 成员分发。官方来源为 [`asharca/toolplane-plugins`](https://github.com/asharca/toolplane-plugins)。同步只捕获固定提交；添加到工作区不授予执行权，Agent 须审阅并应用修订。工作区更新可触发已绑定 Agent 自动跟随，新增权限或代码变化仍须审核，现有会话继续固定原版本。完整协议、私有来源及签名 Webhook 见[插件中心运维](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS#user-content-github-插件中心)。
+
+外部 AI 客户端通过 **Agents → Connect AI** 获取[Agent Control MCP](https://asharca.github.io/toolplane-docs/docs/zh/api/docs/AGENT_CONTROL_MCP) 配置，使用账户级个人 API Token；这不是旧插件客户端分发，也不恢复 Toolkit 令牌。公共 Agent Endpoint 当前不支持发布或新执行，不能用公共服务凭据替代账户令牌。
 
 设备连接请使用沙箱页面生成的 Connector 命令；支持范围、系统要求及屏幕访问方式见[沙箱与连接器](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/SANDBOXES)。连接器以本地用户权限运行，不等同于隔离容器。
 
@@ -113,7 +116,7 @@ A2A 任务结束后，重新打开或刷新会话仍可展开已保存的工具�
 
 测试集中保护身份与工作区隔离、Pi/Assistant 执行、不可变修订与凭据授权、会话/Work/A2A 生命周期、MCP 接入以及文件与恢复边界。普通页面、样式、文案、内部函数转发和数据库查询形状不作为永久测试目标；保留的前端测试验证失败恢复、输入保留与错误修订不可应用等核心状态转换。
 
-默认 CI 不运行完整 `pnpm test`，不追求全仓覆盖率数字。完整验证可手动运行 `ci` 并设置 `full=true`，或在本地运行 `pnpm test`；需要诊断覆盖情况时可运行 `pnpm test:coverage`，报告写入 `coverage/coverage-summary.json` 和 `coverage/lcov.info`，不能代表外部容器或子进程内部的覆盖率。集成测试需要独立的 pgvector PostgreSQL 测试库；先生成 Prisma Client并应用数据库迁移；完整运行时测试还需构建 Pi 包捕获镜像（`docker build --target pi-package-capture -t toolplane-pi-package-capture:1.5.2 .`），不要使用业务数据库运行测试。
+默认 CI 不运行完整 `pnpm test`，不追求全仓覆盖率数字。完整验证可手动运行 `ci` 并设置 `full=true`，或在本地运行 `pnpm test`；覆盖率报告不能代表外部容器或子进程内部的覆盖率。集成测试需要独立的 pgvector PostgreSQL 测试库，先生成 Prisma Client 并应用迁移，不能使用业务数据库。完整运行时检查还须按[运维指南](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS#agent-工具镜像部署)准备 SDK 捕获、LSP、debugpy 和浏览器沙箱镜像；具体触发条件以 [CI 工作流](.github/workflows/ci.yml) 为准。
 
 完整 CI 将测试分为三个独立 runner，每个分片使用自己的 PostgreSQL 和 Docker，分片内仍串行；构建、静态检查与运行制品验证独立并行执行，不减少测试覆盖。发布在镜像构建完成后才打包运行制品，避免生成的校验和污染 Docker context；构建缓存使用 `mode=min` 限制导出范围，代价是冷构建可能需要重新执行中间阶段。
 
@@ -126,6 +129,7 @@ A2A 任务结束后，重新打开或刷新会话仍可展开已保存的工具�
 | 主题 | 入口 |
 |---|---|
 | 架构与运行时 | [Pi 内核与历史边界](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/AGENT_RUNTIMES) |
+| 日常 Agent 操作 | [工作台与工具](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/AGENT_WORKBENCH) · [统一入口与交互](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/A2A_INGRESS_APPROVALS) |
 | 工具与客户端 | [文档索引](https://asharca.github.io/toolplane-docs/docs/zh) · [沙箱与连接器](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/SANDBOXES) |
 | 对外集成 | [Agent Control MCP](https://asharca.github.io/toolplane-docs/docs/zh/api/docs/AGENT_CONTROL_MCP) · [公共 API](https://asharca.github.io/toolplane-docs/docs/zh/api/docs/AGENT_PUBLIC_API) · [消息渠道](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/AGENT_MESSAGING_PLATFORMS) |
 | 部署与维护 | [升级与恢复](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS) · [日志与审计](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/OBSERVABILITY) |
