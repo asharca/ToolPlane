@@ -3,6 +3,11 @@ import {
   STREAM_RULE_TRIGGER_PART,
   type StreamRuleTrigger,
 } from "@/lib/agents/stream-rules";
+import {
+  CONTEXT_MAINTENANCE_PART,
+  ContextMaintenanceSchema,
+  type ContextMaintenance,
+} from "@/lib/agents/context-maintenance";
 
 export type ToolBlockStatus =
   | "running"
@@ -40,6 +45,7 @@ export type ContentStep =
 export type ContentBlock =
   | { kind: "text"; id: string; text: string; streaming: boolean }
   | { kind: "stream-rule"; id: string; trigger: StreamRuleTrigger }
+  | { kind: "context-maintenance"; id: string; data: ContextMaintenance }
   | {
       kind: "process";
       id: string;
@@ -136,6 +142,7 @@ export function toContentBlocks(
 ): ContentBlock[] {
   const blocks: ContentBlock[] = [];
   const ruleTriggerIds = new Set<string>();
+  const maintenance: ContentBlock[] = [];
   const appendStep = (step: ContentStep, partIndex: number) => {
     const previous = blocks.at(-1);
     if (previous?.kind === "process") previous.steps.push(step);
@@ -160,6 +167,16 @@ export function toContentBlocks(
           trigger: parsed.data,
         });
       }
+      return;
+    }
+    if (part.type === CONTEXT_MAINTENANCE_PART) {
+      const parsed = ContextMaintenanceSchema.safeParse(part.data);
+      if (parsed.success)
+        maintenance.push({
+          kind: "context-maintenance",
+          id: `${messageId}:context:${parsed.data.kind}:${parsed.data.at}`,
+          data: parsed.data,
+        });
       return;
     }
     if (part.type === "text") {
@@ -258,6 +275,9 @@ export function toContentBlocks(
       });
     }
   });
+  // Runtime metadata precedes persisted text but follows streamed text. Keep
+  // committed context operations at the turn boundary in both projections.
+  blocks.push(...maintenance);
 
   blocks.forEach((block, index) => {
     const last = index === blocks.length - 1;
@@ -281,6 +301,7 @@ export function workContentParts(
 ): { type: string; [key: string]: unknown }[] {
   return parts.map((part) => {
     if (part.type === STREAM_RULE_TRIGGER_PART) return part;
+    if (part.type === CONTEXT_MAINTENANCE_PART) return part;
     const reasoning = part.type === "reasoning";
     const status =
       !streaming && part.status === "running"

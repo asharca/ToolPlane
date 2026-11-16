@@ -296,6 +296,26 @@ describe("sandbox Agent runtime helpers", () => {
     expect(sessionRuntimeCommands("pi", history)).toEqual([
       { name: "compact" },
     ]);
+    expect(sessionRuntimeCommands("pi-sdk", [])).toEqual([{ name: "compact" }]);
+    const handoff = {
+      name: "handoff",
+      description: "Generate a handoff document",
+    };
+    expect(
+      sessionRuntimeCommands("pi-sdk", [
+        {
+          parts: [
+            {
+              type: RUNTIME_COMMANDS_PART,
+              data: {
+                runtimeKind: "pi-sdk",
+                commands: [...commands, handoff],
+              },
+            },
+          ],
+        },
+      ]),
+    ).toContainEqual(handoff);
     expect(parseRuntimeCommand(" /Review:1 Keep Case ", "pi-sdk")).toEqual({
       name: "Review:1",
       args: "Keep Case",

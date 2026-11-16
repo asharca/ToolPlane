@@ -57,11 +57,7 @@ export function runtimeCommands(
     ...new Map(
       [
         ...builtins.map((name) => ({ name })),
-        ...extra.filter(
-          (command) =>
-            !Object.hasOwn(HOST_ONLY, command.name) &&
-            !builtins.includes(command.name),
-        ),
+        ...extra.filter((command) => !Object.hasOwn(HOST_ONLY, command.name)),
       ].map((command) => [command.name, command]),
     ).values(),
   ];

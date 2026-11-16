@@ -112,6 +112,21 @@ export const AGENT_OPTIONAL_BUILTIN_TOOLS: readonly AgentOptionalBuiltinTool[] =
       category: "orchestration",
       implementation: "sandbox-extension",
     },
+    {
+      name: "checkpoint",
+      category: "context",
+      implementation: "sandbox-extension",
+    },
+    {
+      name: "rewind",
+      category: "context",
+      implementation: "sandbox-extension",
+    },
+    {
+      name: "context_notes",
+      category: "context",
+      implementation: "sandbox-extension",
+    },
   ];
 
 export function agentOptionalBuiltinTools(value: unknown) {

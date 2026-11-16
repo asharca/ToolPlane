@@ -24,6 +24,7 @@ import { db } from "@/lib/db";
 import { recordTaskToolActivity } from "@/lib/agents/evolution/tool-activity";
 import { settleQueuedChannelMessage } from "@/lib/agents/channel-message-queue";
 import { isSilentAgentReply } from "@/lib/agents/messaging";
+import type { ContextMaintenance } from "@/lib/agents/context-maintenance";
 import {
   startTaskOutput,
   taskOutput,
@@ -83,6 +84,7 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
   let usage: RuntimeUsage | undefined;
   let commandResult: RuntimeCommandResult | undefined;
   const streamRuleTriggers: StreamRuleTrigger[] = [];
+  const contextMaintenance: ContextMaintenance[] = [];
   let text: string;
   let queuedReplyText = "";
   try {
@@ -197,6 +199,10 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
         commandResult = value;
         await observer?.onCommandResult?.(value);
       },
+      onContextMaintenance: async (marker) => {
+        contextMaintenance.push(marker);
+        await observer?.onContextMaintenance?.(marker);
+      },
     });
     signal.throwIfAborted();
     await assertLiveGrant(grant, "send");
@@ -223,6 +229,7 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
         },
         ...(usage ? { usage } : {}),
         ...(commandResult ? { commandResult } : {}),
+        ...(contextMaintenance.length ? { contextMaintenance } : {}),
       },
       ...(queuedReplyText ? { toolplaneQueuedReplyText: queuedReplyText } : {}),
     };

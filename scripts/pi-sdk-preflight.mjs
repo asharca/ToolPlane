@@ -140,7 +140,7 @@ if (process.argv[2] !== "worker") {
       extensions: extensions.extensions,
       skills: skills.skills,
       prompts: prompts.templates,
-      hostCommands: input.hostCommands,
+      hostCommands: [...(input.hostCommands ?? []), "handoff"],
       toolNames: input.toolNames,
     });
     writeFileSync(3, JSON.stringify(result));

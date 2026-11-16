@@ -22,6 +22,7 @@ export type WorkRuntimeObserver = Pick<
   | "onStreamRule"
   | "onQueuedMessage"
   | "onMessageQueue"
+  | "onContextMaintenance"
 >;
 
 export type WorkOutputSnapshot = {

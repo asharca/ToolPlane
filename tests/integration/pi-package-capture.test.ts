@@ -949,6 +949,7 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
       "native-session-paths.mjs",
       "pi-sdk-capabilities.mjs",
       "pi-sdk-ui.mjs",
+      "pi-sdk-context.mjs",
       "pi-sdk-native-resources.mjs",
       "pi-sdk-package-files.mjs",
     ])

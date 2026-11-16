@@ -35,6 +35,7 @@
 - **同日发布前迁移验收**：全新数据库连续部署时，相邻 MCP 迁移在同一连接重复 `CREATE FUNCTION pg_temp.mcp_catalog_names`；后一个迁移改为 `CREATE OR REPLACE FUNCTION`。隔离空库的完整 `prisma migrate deploy` 退出 0 后删除验收库。已有开发库上分次迁移成功不能替代发布前同连接的完整迁移链验证。依据：[目录跟随迁移](prisma/migrations/20261101010000_mcp_bindings_follow_catalog/migration.sql)。
 - **同日完整 CI 补充**：迁移解锁后，核心套件发现 14 个失败：资源授权测试向按钮而非选择框原生表单值发送 change，旧 SSH 文件注册表夹具调用已退役入口，OMP 包禁止断言和 MCP 清理调用次数断言仍绑定旧实现。修正真实表单值交互，移除失效契约／调用形状断言，不放宽运行时授权。修正后的四个文件共 106 项测试分别通过（95＋11）；发布仍须等待完整 CI，不能用局部测试或预推送类型检查替代。
 - **发布 CI 契约补充（2026-11-12）**：`v0.37.0` 发布前完整 CI [43061829601](https://github.com/asharca/ToolPlane/actions/runs/43061829601) 暴露 83 项测试及一个套件失败：真实宿主 fixture 缺少新 HOME／XDG 和 workspace 配置，日志上下文／传输设置 mock 未跟随当前依赖，历史沙箱 fixture 违反 Agent 共享运行时唯一约束。更新真实宿主启动契约时必须同步所有独立进程和容器 fixture；共享目录由可信配置传入，生产保持 `/workspace/shared`，测试使用隔离临时目录，不能依赖执行者 HOME 或根目录写权限。下次发布前运行完整 CI，并核对启动失败的首个 stderr；不能靠放宽生产校验、延长超时或保留旧授权契约求绿。
+- **宿主静态依赖补充（2026-11-15）**：全量 CI [43714694704](https://github.com/asharca/ToolPlane/actions/runs/43714694704) 的 `pi-package-capture.test.ts` 隔离容器复制了 `pi-sdk-session.mjs`，却漏掉其新增静态依赖 `pi-sdk-context.mjs`，以 `ERR_MODULE_NOT_FOUND` 无法启动；主执行器已正确物化该文件，直连仓库宿主的检查因此不能覆盖遗漏。新增宿主静态 import 时须同步每个独立容器的复制清单，并运行真实 capture/reconnect 回归，不能只验证主执行器或仓库内的宿主。
 - **同日合并后重跑补充**：PR 全套通过后，main 的后台聊天测试读出 `succeeded` 在 `tool_calling` 之前；测试查询没有 `orderBy`，而真实订阅按 `sequence` 升序。测试改用同一持久序号排序，不修改运行时事件和状态机。数据库无显式排序不保证插入顺序；不能依赖本机或某次 CI 的行返回顺序。依据：[后台执行测试](tests/integration/chat-background.test.ts)、[事件订阅](src/lib/chat/run-control.ts)。
 - **同日生产升级演练补充**：旧库多个会话共用一个 AgentRuntime 沙箱，Hermes 退休迁移先回填 Conversation.sandboxId，但其唯一索引直到后续共享沙箱迁移才删除，恢复库实测触发 `Conversation_sandboxId_key` 冲突。把索引解除提前到回填之前，后续删除改为幂等；同一备份重建后，正式镜像加只读修正迁移的完整 27 项升级成功。空库迁移通过不能覆盖真实旧库的数据分布，切换前须从生产备份恢复并验证完整待执行链。
 - **同日生产 Pi 迁移补充**：容器内原生预检把私有 `/tmp` 暂存目录交给宿主 Docker daemon bind mount，真实发布报 `PI_CAPABILITY_PREFLIGHT_FAILED` / `bind source path does not exist`；readiness 当时仍为 200。部署增加同绝对路径的专用 `TMPDIR` 挂载并受控重建后，17 个新 Pi 修订均完成真实预检与发布。下次容器化验收须覆盖准备／应用修订，不能只验应用启动。规范：[运行时运维](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS)；实现：[原生预检](src/lib/agents/sandbox-runtime.ts)。
@@ -540,3 +541,10 @@
 - **证据（2026-11-12，用户纠正）**：自进化面板直接让用户输入“每月预算（微单位）”，显示修订 cuid、记录内部版本号 `v2`、原始 `failureCode` 和 ISO 时间；六个页签平级，读取失败时还显示写操作的“无法确认操作结果”。用户指出“很多概念不清晰”。改为美元输入（提交时换算 micro-USD）、`v3` 版本号（设置接口附带修订号映射）、按流程编号的步骤和待处理角标、本地化失败原因；基于旧版本的建议直接标为过期，不再提示“刷新重试”。
 - **下次怎么验证**：新增管理界面时，逐个字段检查是否出现存储单位、内部 ID 或未翻译代码；用真实数据在浏览器里走一遍完整流程（本次：保存 $2.5 后库内为 2500000，批准建议后显示“候选版本 v4”，停止灰度落库为 `stopped`）。依据：[自进化面板](src/components/dashboard/agents/AgentEvolutionPanel.tsx)。
 - **确认日期**：2026-11-12（用户纠正）。
+
+### TP-L051：新增会话内容块必须同步历史导出
+
+**规则**：增加内容块联合类型时，同步更新界面和 Markdown 导出的分支；rewind 的保留报告与 handoff 的摘要都应出现在历史导出中，并沿用凭据脱敏。
+
+- **依据**：[会话导出](src/lib/agents/conversation-export.ts)、[导出回归](tests/integration/conversation-export.test.ts)。
+- **确认日期**：2026-11-16。

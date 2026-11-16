@@ -27,6 +27,7 @@ import {
   configureNativeTodo,
   officialTodoPath,
 } from "./pi-sdk-native-resources.mjs";
+import { createContextMaintenance } from "./pi-sdk-context.mjs";
 const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
 // Native tools inherit this: importing a skill must not add files to its pinned snapshot.
 process.env.PYTHONDONTWRITEBYTECODE = "1";
@@ -543,6 +544,27 @@ async function runChild(
   lifecycle(result.status, result);
   return result;
 }
+const contextMaintenance = createContextMaintenance({
+  sdk,
+  getSession: () => runtime.session,
+  emit,
+  onUsage: (value) => {
+    usage ??= {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: 0,
+    };
+    usage.inputTokens += value.input ?? 0;
+    usage.outputTokens += value.output ?? 0;
+    usage.cacheReadTokens += value.cacheRead ?? 0;
+    usage.cacheWriteTokens += value.cacheWrite ?? 0;
+    usage.costUsd += value.cost?.total ?? 0;
+  },
+});
+globalThis[Symbol.for("toolplane.pi.host-context.v1")].contextMaintenance =
+  contextMaintenance.bridge;
 let texts = [],
   usage,
   turnError,
@@ -1396,6 +1418,7 @@ async function factory(
           name: "toolplane-web-projection",
           hidden: true,
           factory: (pi) => {
+            contextMaintenance.extension(pi);
             const project = (_event, ctx) =>
               ui.projectTodos(ctx.sessionManager);
             pi.on("session_start", project);
@@ -1784,6 +1807,8 @@ async function handle(request) {
     } while (current !== runtime.session);
     await Promise.all(ruleDeliveries);
     if (aborted) fail("PI_SDK_ABORTED");
+    const handoffSummary = await contextMaintenance.settle();
+    if (handoffSummary) texts.push(handoffSummary);
     if (turnError) fail(turnError);
     if (modelFailed)
       fail(
@@ -1872,6 +1897,7 @@ async function handle(request) {
     }
     await advisor.finish();
     nativeUi.cancel();
+    contextMaintenance.clear();
     await nativeUi.drain();
     context = undefined;
     toolMap = new Map();
