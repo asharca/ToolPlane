@@ -1,5 +1,10 @@
 import { nativeUiView } from "./native-ui";
 import "server-only";
+import {
+  STREAM_RULE_TRIGGER_PART,
+  StreamRuleTriggerSchema,
+  type StreamRuleTriggerPart,
+} from "@/lib/agents/stream-rules";
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { SendMessageRequest, Task, TaskState, Role } from "@a2a-js/sdk";
@@ -14,7 +19,13 @@ import {
   RUNTIME_COMMANDS_PART,
   RUNTIME_USAGE_PART,
   RuntimeCommandsSchema,
+  RuntimeUsageSchema,
 } from "@/lib/agents/runtime-commands";
+import {
+  CONTEXT_MAINTENANCE_PART,
+  ContextMaintenanceSchema,
+  type ContextMaintenance,
+} from "@/lib/agents/context-maintenance";
 import type {
   RuntimeCommand,
   RuntimeCommandResult,
@@ -57,8 +68,14 @@ import {
 import { settled, terminal, A2A_LIMITS } from "@/lib/a2a/model";
 import { refreshTaskStorage } from "@/lib/a2a/quotas";
 import { wakeAgentWorker } from "@/lib/agents/execution/worker";
-import { assertAgentBudget } from "@/lib/agents/usage";
+import { assertAgentBudget, recordAgentTaskUsage } from "@/lib/agents/usage";
+import {
+  taskBudgetWarning,
+  type BudgetWarning,
+} from "@/lib/agents/budget-warning";
 import { taskOutput } from "./live-output";
+import type { AgentMessageQueue } from "./message-queue";
+import { isSilentAgentReply } from "@/lib/agents/messaging";
 
 export type EntryMessage = { id?: string; role: string; parts: unknown };
 export type AgentEntryInput = EntryIdentity & {
@@ -121,6 +138,9 @@ export async function submitAgentEntry(
       kind: input.kind,
       sourceId: input.sourceId,
       ...(input.channelId ? { channelId: input.channelId } : {}),
+      ...(input.kind === "channel" && input.channelSource
+        ? { channelSource: input.channelSource }
+        : {}),
       ...(input.conversationId ? { conversationId: input.conversationId } : {}),
     });
     const grant = await createLocalEntryGrant(
@@ -335,6 +355,8 @@ export async function runAgentEntry(
       invocation: AgentPromptInvocation,
     ) => void | Promise<void>;
     onActivity?: (activity: SandboxRuntimeActivity) => void | Promise<void>;
+    onBudgetWarning?: (warning: BudgetWarning) => void | Promise<void>;
+    onMessageQueue?: (queue: AgentMessageQueue) => void | Promise<void>;
   },
 ) {
   const accepted = await submitAgentEntry(input);
@@ -355,6 +377,20 @@ export async function runAgentEntry(
   const observedPrompts = new Set<string>();
   const notifiedUiRequests = new Set<string>();
   const observedActivities = new Map<string, string>();
+  let budgetWarningObserved = false;
+  const observeBudgetWarning = async () => {
+    if (!input.onBudgetWarning || budgetWarningObserved) return;
+    const warning = await taskBudgetWarning({
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+      taskId: accepted.row.id,
+    });
+    if (warning) {
+      budgetWarningObserved = true;
+      await input.onBudgetWarning(warning);
+    }
+  };
+  let observedQueue = "";
   const observeActivities = async (projection: unknown) => {
     if (!input.onActivity) return;
     for (const activity of nativeUiView(projection).activities) {
@@ -383,6 +419,32 @@ export async function runAgentEntry(
       await assertLocalGrant(accepted.grant);
       const row = await getTaskRow(accepted.grant, accepted.row.id);
       const task = Task.fromJSON(row.snapshot);
+      // Close the terminal-observation/accounting race for successful entry replies.
+      if (row.state === TaskState.TASK_STATE_COMPLETED) {
+        try {
+          await recordAgentTaskUsage(row);
+        } catch (error) {
+          await recordEvent({
+            domain: "agent",
+            eventName: "agent.usage.reconcile_failed",
+            level: "warn",
+            workspaceId: input.workspaceId,
+            agentId: input.agentId,
+            taskId: row.id,
+            error,
+          });
+        }
+      }
+      await observeBudgetWarning();
+      const queue = taskOutput(row.id)?.messageQueue;
+      if (
+        queue &&
+        input.onMessageQueue &&
+        JSON.stringify(queue) !== observedQueue
+      ) {
+        observedQueue = JSON.stringify(queue);
+        await input.onMessageQueue(queue);
+      }
       await observeActivities(row.uiProjection);
       await observePrompts(task);
       if (settled(row.state)) return { task, path };
@@ -410,6 +472,7 @@ export async function runAgentEntry(
     if (recorded) {
       await observeActivities(recorded.uiProjection);
       await observePrompts(Task.fromJSON(recorded.snapshot));
+      await observeBudgetWarning();
     }
     // Work's explicit cancel flag is authoritative. A socket close/shutdown is not.
     if (input.kind === "work") {
@@ -437,13 +500,28 @@ export async function runAgentEntry(
     throw error;
   }
 }
-export function agentEntryResult(task: Task, path: string) {
+export function agentEntryResult(
+  task: Task,
+  path: string,
+  includeQueuedReplies = false,
+) {
   const text = task.artifacts
-    .flatMap((a) =>
-      a.parts.flatMap((p) =>
-        p.content?.$case === "text" ? [p.content.value] : [],
-      ),
-    )
+    .flatMap((a) => {
+      const queued =
+        includeQueuedReplies &&
+        typeof a.metadata?.toolplaneQueuedReplyText === "string"
+          ? a.metadata.toolplaneQueuedReplyText
+          : "";
+      return [
+        ...(queued ? [queued] : []),
+        ...a.parts.flatMap((p) =>
+          p.content?.$case === "text" &&
+          (!queued || !isSilentAgentReply(p.content.value))
+            ? [p.content.value]
+            : [],
+        ),
+      ];
+    })
     .join("\n\n");
   const detail = task.status?.message?.parts
     .flatMap((p) => (p.content?.$case === "text" ? [p.content.value] : []))
@@ -496,23 +574,18 @@ export type AgentEntryRuntimePart =
     }
   | { type: typeof RUNTIME_USAGE_PART; data: RuntimeUsage }
   | { type: typeof AGENT_TURN_MODEL_PART; data: AgentModelOverride }
-  | { type: typeof COMMAND_RESULT_PART; data: RuntimeCommandResult };
+  | { type: typeof COMMAND_RESULT_PART; data: RuntimeCommandResult }
+  | StreamRuleTriggerPart
+  | { type: typeof CONTEXT_MAINTENANCE_PART; data: ContextMaintenance };
 const piSdkMetadataSchema = z
   .object({
     commands: RuntimeCommandsSchema,
+    streamRuleTriggers: z.array(StreamRuleTriggerSchema).optional(),
+    contextMaintenance: z.array(ContextMaintenanceSchema).optional(),
     model: z
       .object({ providerId: z.string().min(1), model: z.string().min(1) })
       .optional(),
-    usage: z
-      .object({
-        inputTokens: z.number().finite().nonnegative(),
-        outputTokens: z.number().finite().nonnegative(),
-        cacheReadTokens: z.number().finite().nonnegative(),
-        cacheWriteTokens: z.number().finite().nonnegative(),
-        costUsd: z.number().finite().nonnegative().optional(),
-      })
-      .strict()
-      .optional(),
+    usage: RuntimeUsageSchema.optional(),
     commandResult: z
       .object({
         command: z.string().min(1).max(A2A_LIMITS.inputCharacters),
@@ -550,7 +623,8 @@ export function agentEntryRuntimeParts(task: Task): AgentEntryRuntimePart[] {
         : artifact.metadata?.toolplanePiSdk,
     );
     if (!parsed.success) continue;
-    const { commands, usage, commandResult, model } = parsed.data;
+    const { commands, usage, commandResult, model, contextMaintenance } =
+      parsed.data;
     const parts: AgentEntryRuntimePart[] = [
       identity,
       {
@@ -562,6 +636,10 @@ export function agentEntryRuntimeParts(task: Task): AgentEntryRuntimePart[] {
     if (model) parts.push({ type: AGENT_TURN_MODEL_PART, data: model });
     if (commandResult)
       parts.push({ type: COMMAND_RESULT_PART, data: commandResult });
+    for (const trigger of parsed.data.streamRuleTriggers ?? [])
+      parts.push({ type: STREAM_RULE_TRIGGER_PART, data: trigger });
+    for (const marker of contextMaintenance ?? [])
+      parts.push({ type: CONTEXT_MAINTENANCE_PART, data: marker });
     return parts;
   }
   return [identity];

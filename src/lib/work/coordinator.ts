@@ -13,6 +13,10 @@ import { generateWorkSessionTitle } from "@/lib/agents/conversation-naming";
 import { activeConversationMessages } from "@/lib/agents/conversation-context";
 import { persistAgentPromptInvocation } from "@/lib/agents/prompt-invocation";
 import type { SandboxRuntimeActivity } from "@/lib/agents/sandbox-runtime";
+import {
+  STREAM_RULE_TRIGGER_PART,
+  type StreamRuleTrigger,
+} from "@/lib/agents/stream-rules";
 import { nativeUiProjection } from "@/lib/agents/execution/native-ui";
 import {
   COMMAND_RESULT_PART,
@@ -27,11 +31,19 @@ import type {
   RuntimeUsage,
 } from "@/lib/agents/runtime-commands";
 import {
+  CONTEXT_MAINTENANCE_PART,
+  type ContextMaintenance,
+} from "@/lib/agents/context-maintenance";
+import {
   runAgentEntry,
   agentEntryResult,
   agentEntryRuntimeParts,
 } from "@/lib/agents/execution/entries";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
+import {
+  BUDGET_WARNING_PART,
+  type BudgetWarning,
+} from "@/lib/agents/budget-warning";
 import {
   agentMessageModelOverride,
   AGENT_TURN_MODEL_PART,
@@ -41,8 +53,12 @@ import {
   finishWorkOutput,
   observeWorkRuntime,
   publishWorkActivity,
+  publishWorkBudgetWarning,
   publishWorkExecutionStage,
+  publishWorkStreamRule,
   publishWorkOutput,
+  publishWorkMessageQueue,
+  resetWorkMessageOutput,
   registerWorkRun,
   startWorkOutput,
   unregisterWorkRun,
@@ -80,6 +96,9 @@ type WorkToolPart = {
   durationMs?: number;
   input: unknown;
   output?: unknown;
+  patch?: string;
+  truncated?: boolean;
+  firstChangedLine?: number;
   isError: boolean;
   status: "running" | "completed" | "failed" | "cancelled";
   source?: SandboxRuntimeActivity["source"];
@@ -179,11 +198,25 @@ async function appendAssistantResult(
       : []),
   ];
   if (!parts.length) return;
+  const user = await db.message.findFirst({
+    where: { conversationId, role: "user", supersededAt: null },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { piTurnLeafId: true },
+  });
+  const previous = await db.message.findFirst({
+    where: { conversationId },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { createdAt: true },
+  });
   await db.message.create({
     data: {
       conversationId,
       role: "assistant",
+      createdAt: new Date(
+        Math.max(Date.now(), (previous?.createdAt.getTime() ?? 0) + 1),
+      ),
       parts,
+      piEntryId: user?.piTurnLeafId,
       textCharacters: trace.reduce(
         (total, part) => total + (part.type === "text" ? part.text.length : 0),
         text.length,
@@ -199,7 +232,10 @@ async function executeWork(workSessionId: string) {
       sandbox: { include: { deployment: true } },
       conversation: {
         include: {
-          messages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
+          messages: {
+            where: { supersededAt: null },
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          },
         },
       },
     },
@@ -268,10 +304,13 @@ async function executeWork(workSessionId: string) {
   let runtimeStatus: "completed" | "failed" | "cancelled" = "completed";
   let tracePersisted = false;
   let contextUsage: ContextUsageSnapshot | undefined;
+  let budgetWarning: BudgetWarning | undefined;
   let commands: RuntimeCommand[] | undefined;
   let usage: RuntimeUsage | undefined;
   let executedCommand: ParsedRuntimeCommand | null = null;
   let commandResult: RuntimeCommandResult | undefined;
+  const streamRuleTriggers = new Map<string, StreamRuleTrigger>();
+  const contextMaintenance: ContextMaintenance[] = [];
   const previousHookIds =
     work.runtimeKind === "omp"
       ? new Set(
@@ -294,12 +333,25 @@ async function executeWork(workSessionId: string) {
       .map((hook) => ({ type: "hook-activity", data: hook }));
   };
   const runtimeMetadata = (): Prisma.InputJsonValue[] => [
+    ...(budgetWarning
+      ? [
+          {
+            type: BUDGET_WARNING_PART,
+            data: budgetWarning,
+          } as Prisma.InputJsonValue,
+        ]
+      : []),
+    ...Array.from(
+      streamRuleTriggers.values(),
+      (data) =>
+        ({ type: STREAM_RULE_TRIGGER_PART, data }) as Prisma.InputJsonValue,
+    ),
     ...(initialModelName &&
     (turnOverride?.providerId ?? initialSnapshot.providerId)
       ? [
           {
             type: AGENT_TURN_MODEL_PART,
-            data: {
+            data: usage?.actualModel ?? {
               providerId:
                 turnOverride?.providerId ?? initialSnapshot.providerId,
               model: initialModelName,
@@ -326,12 +378,17 @@ async function executeWork(workSessionId: string) {
           } as Prisma.InputJsonValue,
         ]
       : []),
+    ...contextMaintenance.map((marker) => ({
+      type: CONTEXT_MAINTENANCE_PART,
+      data: marker,
+    })),
   ];
   let deploymentNames = new Map<string, string>();
   let resolvedDeploymentIds: string[] = [];
 
   const turnTiming = (completedAt = Date.now()): WorkTurnTiming => {
-    const modelName = contextUsage?.modelName ?? initialModelName;
+    const modelName =
+      usage?.actualModel?.model ?? contextUsage?.modelName ?? initialModelName;
     return {
       startedAt: runStartedAt,
       completedAt,
@@ -456,6 +513,13 @@ async function executeWork(workSessionId: string) {
           ? (previous?.input ?? null)
           : activity.input,
       ...(activity.output === undefined ? {} : { output: activity.output }),
+      ...(activity.patch === undefined
+        ? {}
+        : {
+            patch: activity.patch,
+            truncated: activity.truncated === true,
+            firstChangedLine: activity.firstChangedLine,
+          }),
       isError: activity.status === "failed" || activity.isError === true,
       status: activity.status,
       ...((activity.source ?? previous?.source)
@@ -481,6 +545,13 @@ async function executeWork(workSessionId: string) {
       ...(next.durationMs === undefined ? {} : { durationMs: next.durationMs }),
       input: next.input,
       ...(next.output === undefined ? {} : { output: next.output }),
+      ...(next.patch === undefined
+        ? {}
+        : {
+            patch: next.patch,
+            truncated: next.truncated,
+            firstChangedLine: next.firstChangedLine,
+          }),
       isError: next.isError,
     });
   };
@@ -623,6 +694,22 @@ async function executeWork(workSessionId: string) {
           publishWorkOutput(work.id, delta);
         },
         onActivity,
+        onStreamRule: (trigger) => {
+          streamRuleTriggers.set(trigger.id, trigger);
+          publishWorkStreamRule(work.id, trigger);
+        },
+        onMessageQueue: (queue) => publishWorkMessageQueue(work.id, queue),
+        onQueuedMessage: async (_message, assistantText) => {
+          finishReasoning();
+          const parts = traceParts(assistantText).filter(
+            (part) => part.type !== "work-runtime",
+          );
+          await appendAssistantResult(work.conversationId, "", parts);
+          trace.length = 0;
+          toolTrace.clear();
+          toolStartedAt.clear();
+          resetWorkMessageOutput(work.id);
+        },
         onExecutionStage: (stage) => publishWorkExecutionStage(work.id, stage),
         onContextUsage: (next) => {
           contextUsage = next;
@@ -636,6 +723,9 @@ async function executeWork(workSessionId: string) {
         onCommandResult: (next) => {
           commandResult = next;
         },
+        onContextMaintenance: (marker) => {
+          contextMaintenance.push(marker);
+        },
       });
       try {
         const result = await runAgentEntry({
@@ -648,6 +738,10 @@ async function executeWork(workSessionId: string) {
           text: commandText,
           modelOverride: turnOverride,
           signal: controller.signal,
+          onBudgetWarning: (warning) => {
+            budgetWarning = warning;
+            publishWorkBudgetWarning(work.id, warning);
+          },
           onActivity: (activity) => {
             // Native activities already stream from the leased executor above.
             if (activity.toolCallId?.startsWith("platform-child:"))
@@ -667,6 +761,16 @@ async function executeWork(workSessionId: string) {
             commands = part.data.commands;
           else if (part.type === RUNTIME_USAGE_PART) usage = part.data;
           else if (part.type === COMMAND_RESULT_PART) commandResult = part.data;
+          else if (part.type === STREAM_RULE_TRIGGER_PART)
+            streamRuleTriggers.set(part.data.id, part.data);
+          else if (
+            part.type === CONTEXT_MAINTENANCE_PART &&
+            !contextMaintenance.some(
+              (marker) =>
+                marker.kind === part.data.kind && marker.at === part.data.at,
+            )
+          )
+            contextMaintenance.push(part.data);
         }
       } finally {
         stopObserving();

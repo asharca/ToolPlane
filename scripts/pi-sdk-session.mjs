@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Trusted headless SDK host. Extension stdout is deliberately not a protocol channel.
+import { randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -13,6 +14,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { findPackageJSON } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -21,13 +23,17 @@ import { pathToFileURL } from "node:url";
 import { enforceNativeNamespaces } from "./pi-sdk-capabilities.mjs";
 import { createDesktopTools } from "./pi-desktop-tools.mjs";
 import { createNativeUi } from "./pi-sdk-ui.mjs";
+import { createAdvisor } from "./pi-sdk-advisor.mjs";
 import {
   configureNativeTodo,
   officialTodoPath,
 } from "./pi-sdk-native-resources.mjs";
+import { createContextMaintenance } from "./pi-sdk-context.mjs";
 const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
 // Native tools inherit this: importing a skill must not add files to its pinned snapshot.
 process.env.PYTHONDONTWRITEBYTECODE = "1";
+process.env.TOOLPLANE_BROWSER_NETWORK =
+  config.browserNetwork === "isolated" ? "isolated" : "none";
 // Pi state belongs to this conversation; HOME/XDG (CLI logins, user installs)
 // are the Agent-wide directories passed by the runtime, never /root.
 mkdirSync(config.agentDir, { recursive: true, mode: 0o700 });
@@ -87,6 +93,25 @@ const { theme } = await import(
 );
 const todoPath = officialTodoPath(sdkEntry);
 let promptInvocation;
+function sessionEntries() {
+  if (!runtime || !turnExistingEntries) return undefined;
+  const manager = runtime.session.sessionManager;
+  const entry = manager
+    .getBranch()
+    .find(
+      (entry) =>
+        entry.type === "message" &&
+        entry.message.role === "user" &&
+        !turnExistingEntries.has(entry.id),
+    );
+  if (!entry) return undefined;
+  return {
+    userEntryId: entry.id,
+    userParentEntryId: entry.parentId,
+    leafEntryId: manager.getLeafId(),
+  };
+}
+let turnExistingEntries;
 const fail = (code, reason) => {
   throw Object.assign(new Error(code), { code, ...(reason ? { reason } : {}) });
 };
@@ -106,6 +131,8 @@ const compact = (session, instructions) =>
 // sandbox cannot reach ToolPlane; upstream outages arrive as proxied HTTP statuses.
 function modelFailureReason(errorMessage) {
   const message = String(errorMessage ?? "");
+  if (/\bTOOLPLANE_MODEL_GATEWAY_FAILED\b/.test(message))
+    return "GATEWAY_ERROR";
   const status =
     /^([1-5]\d\d)\b/.exec(message)?.[1] ??
     /\(([1-5]\d\d)\):/.exec(message)?.[1];
@@ -118,7 +145,11 @@ function modelFailureReason(errorMessage) {
   )
     return "UNREACHABLE";
   if (EMPTY_STREAM.test(message)) return "EMPTY_STREAM";
-  if (/stream ended|finish_reason: network_error|terminated/i.test(message))
+  if (
+    /stream ended|without finish_reason|finish_reason: network_error|terminated/i.test(
+      message,
+    )
+  )
     return "STREAM_INCOMPLETE";
   if (/content_filter/i.test(message)) return "CONTENT_FILTER";
   return "PROVIDER_ERROR";
@@ -130,6 +161,7 @@ const EMPTY_STREAM = /empty_stream|empty .{0,40}stream/i;
 const TRANSIENT_STREAM =
   /empty_stream|empty .{0,40}stream|without finish_reason/i;
 const MAX_MODEL_RETRIES = 10;
+const toolSources = new AsyncLocalStorage();
 const emit = (event) => writeFileSync(3, `${JSON.stringify(event)}\n`);
 const within = (root, path) => {
   const rel = relative(root, path);
@@ -144,11 +176,58 @@ const within = (root, path) => {
 globalThis[Symbol.for("toolplane.pi.host-context.v1")] = {
   kind: "toolplane-sdk",
   platformMcp: true,
+  runTasks,
+  getEventSource: () => toolSources.getStore(),
+  lsp: {
+    packageRoot: config.lspPackageRoot,
+    sharedDir: config.sharedDir,
+    cwd: resolve(config.cwd),
+  },
 };
 mkdirSync(config.cwd, { recursive: true });
 mkdirSync(config.sessionsDir, { recursive: true });
 const cwd = realpathSync(config.cwd),
   sessionsDir = realpathSync(config.sessionsDir);
+// Pi's default discovery walks to filesystem root before applying overrides.
+// Discover only approved directories so even reading cannot cross a session boundary.
+function projectContextFiles() {
+  if (config.contextFiles !== true) return { agentsFiles: [] };
+  const workspaceRoot = realpathSync(config.workspaceRoot);
+  if (!within(workspaceRoot, cwd)) fail("PI_SDK_SESSION_SCOPE");
+  const directories = [];
+  for (let dir = cwd; ; dir = dirname(dir)) {
+    directories.unshift(dir);
+    if (dir === workspaceRoot) break;
+  }
+  directories.unshift(realpathSync(config.agentDir));
+  const allowedDirectories = new Set(directories);
+  const seen = new Set();
+  const agentsFiles = [];
+  for (const dir of allowedDirectories) {
+    for (const name of [
+      "AGENTS.override.md",
+      "AGENTS.md",
+      "AGENTS.MD",
+      "CLAUDE.md",
+      "CLAUDE.MD",
+    ]) {
+      const path = join(dir, name);
+      if (!existsSync(path)) continue;
+      const actual = realpathSync(path);
+      if (!allowedDirectories.has(dirname(actual))) continue;
+      if (!lstatSync(actual).isFile()) continue;
+      if (!seen.has(actual)) {
+        agentsFiles.push({
+          path,
+          content: readFileSync(actual, "utf8").replace(/^\uFEFF/, ""),
+        });
+        seen.add(actual);
+      }
+      break;
+    }
+  }
+  return { agentsFiles };
+}
 const packageRoots = (config.packages ?? []).map((p) => resolve(p.root));
 function allowedResource(path, base = cwd) {
   if (typeof path !== "string" || /^(npm:|git:|https?:)/.test(path))
@@ -197,6 +276,303 @@ let runtime,
   toolSignature,
   toolMap = new Map(),
   customTools = [];
+const childRuns = new Set();
+const childSlots = new Set();
+async function acquireChildSlot(signal) {
+  const limit = Math.max(
+    1,
+    Math.min(8, config.nativeSubagentPolicy?.maxConcurrency ?? 1),
+  );
+  while (childSlots.size >= limit) {
+    if (signal.aborted) return;
+    await Promise.race(childSlots);
+  }
+  if (signal.aborted) return;
+  let release;
+  const slot = new Promise((done) => {
+    release = () => {
+      childSlots.delete(slot);
+      done();
+    };
+  });
+  childSlots.add(slot);
+  return release;
+}
+let turnController;
+const CHILD_TIMEOUT_MS = 300_000;
+const CHILD_OUTPUT_CHARS = 20_000;
+async function cancelChildren() {
+  turnController?.abort();
+  await Promise.all([...childRuns]);
+}
+async function runTasks(parentToolCallId, args, signal) {
+  const invalid =
+    !args ||
+    !Array.isArray(args.tasks) ||
+    args.tasks.length < 1 ||
+    args.tasks.length > 8 ||
+    (args.context !== undefined &&
+      (typeof args.context !== "string" || args.context.length > 100000)) ||
+    Object.keys(args).some((key) => !["tasks", "context"].includes(key)) ||
+    args.tasks.some(
+      (task) =>
+        !task ||
+        typeof task !== "object" ||
+        Object.keys(task).some(
+          (key) => !["id", "description", "prompt"].includes(key),
+        ) ||
+        typeof task.id !== "string" ||
+        !/^[A-Za-z0-9_-]{1,64}$/.test(task.id) ||
+        typeof task.description !== "string" ||
+        !task.description.trim() ||
+        task.description.length > 240 ||
+        typeof task.prompt !== "string" ||
+        !task.prompt.trim() ||
+        task.prompt.length > 100000,
+    ) ||
+    new Set(args.tasks.map((task) => task.id.toLowerCase())).size !==
+      args.tasks.length;
+  if (invalid || !active || !runtime || !turnController)
+    return {
+      content: [
+        {
+          type: "text",
+          text: "TASK_INPUT_INVALID: Supply 1–8 uniquely named, non-empty tasks.",
+        },
+      ],
+      isError: true,
+      details: { reason: "TASK_INPUT_INVALID", results: [] },
+    };
+  const maxConcurrency = Math.max(
+    1,
+    Math.min(8, config.nativeSubagentPolicy?.maxConcurrency ?? 1),
+  );
+  const maxDepth = config.nativeSubagentPolicy?.maxDepth ?? 1;
+  if (maxDepth < 1)
+    return {
+      content: [
+        {
+          type: "text",
+          text: "TASK_DEPTH_EXCEEDED: Subagents cannot spawn further children.",
+        },
+      ],
+      isError: true,
+      details: { reason: "TASK_DEPTH_EXCEEDED", results: [] },
+    };
+  const batchSignal = AbortSignal.any([
+    turnController.signal,
+    ...(signal ? [signal] : []),
+  ]);
+  const tools = runtime.session
+    .getActiveToolNames()
+    .filter((name) => name !== "task");
+  const results = new Array(args.tasks.length);
+  let next = 0;
+  const batch = Promise.all(
+    Array.from(
+      { length: Math.min(maxConcurrency, args.tasks.length) },
+      async () => {
+        while (next < args.tasks.length) {
+          const index = next++;
+          results[index] = await runChild(
+            args.tasks[index],
+            args.context,
+            parentToolCallId,
+            tools,
+            batchSignal,
+          );
+        }
+      },
+    ),
+  );
+  childRuns.add(batch);
+  try {
+    await batch;
+  } finally {
+    childRuns.delete(batch);
+  }
+  const isError = results.some((result) => result.status !== "completed");
+  const details = {
+    status: isError ? "partial_failure" : "completed",
+    results,
+  };
+  return {
+    content: [{ type: "text", text: JSON.stringify(details) }],
+    details,
+    isError,
+  };
+}
+async function runChild(
+  task,
+  sharedContext,
+  parentToolCallId,
+  tools,
+  parentSignal,
+) {
+  const source = {
+    subagentId: `${task.id}-${randomUUID()}`,
+    subagentName: task.description,
+    parentToolCallId: parentToolCallId.slice(0, 240),
+    depth: 1,
+  };
+  const started = Date.now();
+  const release = await acquireChildSlot(parentSignal);
+  const controller = new AbortController();
+  const signal = AbortSignal.any([parentSignal, controller.signal]);
+  let timedOut = false,
+    session,
+    childUi,
+    unsubscribeChild,
+    lastMessage,
+    uiFailed = false;
+  let stop = Promise.resolve();
+  const cancel = () => {
+    childUi?.cancel();
+    stop = session?.abort().catch(() => {}) ?? Promise.resolve();
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, CHILD_TIMEOUT_MS);
+  const lifecycle = (status, output) =>
+    emit({
+      type:
+        status === "running" ? "tool_execution_start" : "tool_execution_end",
+      source,
+      toolCallId: source.subagentId,
+      toolName: "task",
+      ...(status === "running"
+        ? { args: { id: task.id, description: task.description } }
+        : { isError: status !== "completed", result: { status, ...output } }),
+    });
+  lifecycle("running");
+  let result;
+  try {
+    if (signal.aborted) throw new Error("cancelled");
+    const root = join(cwd, ".toolplane-subagents");
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    if (lstatSync(root).isSymbolicLink() || !within(cwd, realpathSync(root)))
+      throw new Error("scope");
+    const directory = join(root, source.subagentId);
+    mkdirSync(directory, { mode: 0o700 });
+    childUi = createNativeUi({
+      getContext: () => context,
+      theme,
+      source,
+      onError: () => {
+        uiFailed = true;
+      },
+    });
+    const manager = sdk.SessionManager.create(cwd, directory);
+    const child = await factory(
+      { cwd, sessionManager: manager },
+      { tools, ui: childUi, source },
+    );
+    session = child.session;
+    unsubscribeChild = session.subscribe((entry) => {
+      event(entry, source, session.model);
+      if (entry.type === "message_end" && entry.message.role === "assistant")
+        lastMessage = entry.message;
+      if (
+        entry.type === "message_end" &&
+        entry.message.role === "toolResult" &&
+        entry.message.toolName === "todo"
+      )
+        void childUi.projectTodos(manager).catch(() => {
+          uiFailed = true;
+        });
+    });
+    allowTransientStreamRetry(session);
+    await session.bindExtensions({
+      mode: context?.uiUrl ? "rpc" : "json",
+      uiContext: context?.uiUrl ? childUi.uiContext : undefined,
+      onError: () => {
+        uiFailed = true;
+      },
+    });
+    applyConfiguredThinkingLevel(session);
+    if (signal.aborted) {
+      cancel();
+      throw new Error("cancelled");
+    }
+    await session.prompt(
+      [
+        sharedContext ? `Shared background:\n${sharedContext}` : "",
+        `Assignment (${task.id}): ${task.description}\n${task.prompt}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    );
+    await session.waitForIdle();
+    await childUi.drain();
+    if (
+      signal.aborted ||
+      uiFailed ||
+      !lastMessage ||
+      ["error", "aborted"].includes(lastMessage.stopReason)
+    )
+      throw new Error("failed");
+    const text = contentText(lastMessage.content);
+    result = {
+      id: task.id,
+      status: "completed",
+      text: text.slice(0, CHILD_OUTPUT_CHARS),
+      truncated: text.length > CHILD_OUTPUT_CHARS,
+    };
+  } catch {
+    const status = timedOut
+      ? "timed_out"
+      : signal.aborted
+        ? "cancelled"
+        : "failed";
+    result = {
+      id: task.id,
+      status,
+      text: "",
+      truncated: false,
+      reason: {
+        timed_out: "TASK_TIMEOUT",
+        cancelled: "TASK_CANCELLED",
+        failed: "TASK_EXECUTION_FAILED",
+      }[status],
+    };
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", cancel);
+    childUi?.cancel();
+    await stop;
+    await session?.abort().catch(() => {});
+    await childUi?.drain().catch(() => {});
+    unsubscribeChild?.();
+    session?.dispose();
+    release?.();
+  }
+  result.durationMs = Date.now() - started;
+  lifecycle(result.status, result);
+  return result;
+}
+const contextMaintenance = createContextMaintenance({
+  sdk,
+  getSession: () => runtime.session,
+  emit,
+  onUsage: (value) => {
+    usage ??= {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: 0,
+    };
+    usage.inputTokens += value.input ?? 0;
+    usage.outputTokens += value.output ?? 0;
+    usage.cacheReadTokens += value.cacheRead ?? 0;
+    usage.cacheWriteTokens += value.cacheWrite ?? 0;
+    usage.costUsd += value.cost?.total ?? 0;
+  },
+});
+globalThis[Symbol.for("toolplane.pi.host-context.v1")].contextMaintenance =
+  contextMaintenance.bridge;
 let texts = [],
   usage,
   turnError,
@@ -204,7 +580,117 @@ let texts = [],
   modelReason,
   modelRetried = 0,
   aborted = false;
+const streamRules = (config.streamRules ?? []).map((rule) => ({
+  ...rule,
+  regex: new RegExp(rule.pattern),
+}));
+let ruleText = "",
+  ruleTriggers = [],
+  remindedRules = new Set(),
+  ruleDeliveries = [];
+function triggerRule(rule, toolCall) {
+  const trigger = {
+    id: randomUUID(),
+    ruleId: rule.id,
+    name: rule.name,
+    target: rule.target,
+    action: rule.action,
+    message: rule.message,
+    ...(toolCall
+      ? { toolName: toolCall.toolName, toolCallId: toolCall.toolCallId }
+      : {}),
+    timestamp: Date.now(),
+  };
+  ruleTriggers.push(trigger);
+  runtime.session.sessionManager.appendCustomEntry(
+    "toolplane.stream-rule",
+    trigger,
+  );
+  emit({ type: "stream_rule_triggered", trigger });
+  if (rule.action === "remind") {
+    remindedRules.add(rule.id);
+    // The envelope keeps a reminder beginning with '/' from becoming a command.
+    const delivery = runtime.session
+      .steer(`<system-reminder>\n${rule.message}\n</system-reminder>`)
+      .catch(() => {
+        turnError = "PI_STREAM_RULE_DELIVERY_FAILED";
+      });
+    ruleDeliveries.push(delivery);
+    return delivery;
+  }
+}
+let toolStarted = false,
+  fallbackIndex = 0,
+  actualModel;
+const modelIdentity = (model) =>
+  model?.toolplaneProviderId
+    ? { providerId: model.toolplaneProviderId, model: model.id }
+    : undefined;
+function recordUsage(value, model, response = false) {
+  const identity = modelIdentity(model);
+  if (response && identity) actualModel = identity;
+  usage ??= {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: 0,
+  };
+  if (actualModel) usage.actualModel = actualModel;
+  const delta = {
+    inputTokens: value?.input ?? 0,
+    outputTokens: value?.output ?? 0,
+    cacheReadTokens: value?.cacheRead ?? 0,
+    cacheWriteTokens: value?.cacheWrite ?? 0,
+    costUsd: value?.cost?.total ?? 0,
+  };
+  for (const key of Object.keys(delta)) usage[key] += delta[key];
+  if (identity) {
+    usage.modelUsage ??= [];
+    let entry = usage.modelUsage.find(
+      (entry) =>
+        entry.providerId === identity.providerId &&
+        entry.model === identity.model,
+    );
+    if (!entry) {
+      entry = {
+        ...identity,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: 0,
+      };
+      usage.modelUsage.push(entry);
+    }
+    for (const key of Object.keys(delta)) entry[key] += delta[key];
+  }
+}
+const transientModelFailure = (message) =>
+  message?.stopReason === "error" &&
+  (/^(HTTP_(429|5\d\d)|TIMEOUT|EMPTY_STREAM|STREAM_INCOMPLETE)$/.test(
+    modelFailureReason(message.errorMessage),
+  ) ||
+    /rate.?limit|too many requests|overload|service unavailable/i.test(
+      String(message.errorMessage ?? ""),
+    ));
+let runtimeProviders = new Set(["toolplane"]);
 let lastState;
+let queuedInputs = [];
+let queueRequest;
+let queueOperation = Promise.resolve();
+let acceptingQueue = false;
+let queueContinuation = Promise.resolve();
+const queueReceipts = new Map();
+const queueState = () => ({
+  messages: ["steer", "follow_up"].flatMap((mode) =>
+    queuedInputs
+      .filter((item) => item.mode === mode)
+      .map(({ id, mode, text }) => ({ id, mode, text })),
+  ),
+  pendingMessageCount: queuedInputs.length,
+});
+const emitQueue = () => emit({ type: "message_queue", queue: queueState() });
 const nativeUi = createNativeUi({
   getContext: () => context,
   theme,
@@ -237,6 +723,14 @@ modelRuntime.registerProvider("toolplane", {
   apiKey: "$TOOLPLANE_RUNTIME_TOKEN",
   authHeader: true,
   models: [config.model],
+});
+const advisor = createAdvisor({
+  modelRuntime,
+  emit,
+  onUsage: (value) => recordUsage(value, context.advisor?.model),
+  getFailureReason: modelFailureReason,
+  getSession: () => runtime.session,
+  isAborted: () => aborted,
 });
 const packageReferences = config.packages.map(
   ({ marketInstallId, releaseId, checksum, mcpBindingsChecksum }) => ({
@@ -317,6 +811,54 @@ function persist() {
   writeFileSync(temporary, JSON.stringify(value), { mode: 0o600 });
   renameSync(temporary, config.statePath);
   lastState = value;
+}
+// Fork through Pi's canonical tree, without changing the source session or copying files.
+function forkSession(request) {
+  const target = request.target;
+  const sourceState = lastState ?? saved;
+  if (!sourceState?.sessionPersisted) fail("PI_SDK_SESSION_MISSING");
+  if (
+    !target ||
+    typeof request.entryId !== "string" ||
+    typeof target.workspaceRoot !== "string" ||
+    typeof target.cwd !== "string" ||
+    typeof target.sessionsDir !== "string" ||
+    typeof target.statePath !== "string" ||
+    resolve(target.workspaceRoot) === resolve(config.workspaceRoot) ||
+    dirname(resolve(target.workspaceRoot)) !==
+      dirname(resolve(config.workspaceRoot)) ||
+    !within(resolve(target.workspaceRoot), resolve(target.cwd)) ||
+    !within(resolve(target.workspaceRoot), resolve(target.sessionsDir)) ||
+    !within(resolve(target.workspaceRoot), resolve(target.statePath))
+  )
+    fail("PI_SDK_SESSION_SCOPE");
+  mkdirSync(target.cwd, { recursive: true, mode: 0o700 });
+  mkdirSync(target.sessionsDir, { recursive: true, mode: 0o700 });
+  if (existsSync(target.statePath)) fail("PI_SDK_SESSION_EXISTS");
+  const manager = sdk.SessionManager.open(
+    sessionPath(sourceState.sessionFile),
+    target.sessionsDir,
+    target.cwd,
+  );
+  if (!manager.getEntry(request.entryId)) fail("PI_SDK_ENTRY_NOT_FOUND");
+  const file = manager.createBranchedSession(request.entryId);
+  if (!file || !existsSync(file)) fail("PI_SDK_SESSION_MISSING");
+  const value = {
+    ...sourceState,
+    sessionId: manager.getSessionId(),
+    sessionFile: file,
+    sessionPersisted: true,
+  };
+  const temporary = `${target.statePath}.${process.pid}.tmp`;
+  writeFileSync(temporary, JSON.stringify(value), { mode: 0o600, flag: "wx" });
+  renameSync(temporary, target.statePath);
+  return {
+    forked: true,
+    entryId: request.entryId,
+    contextOnly: true,
+    filesRewound: false,
+    externalEffectsRewound: false,
+  };
 }
 // Category split of the current request context. Pi only reports a total, so the
 // provider-anchored total stays authoritative and categories use Pi's chars/4 estimate;
@@ -444,19 +986,120 @@ const contentText = (content) =>
 // Tool input/output for the transcript and the workspace Agent tool log; bounded so one large
 // result (for example `cat` of a big file) cannot bloat the event stream.
 const TOOL_PAYLOAD_CHARS = 20_000;
-function toolPayload(value) {
+function toolPayload(value, toolName) {
   if (value === undefined) return undefined;
   const text =
     typeof value === "string" ? value : (JSON.stringify(value) ?? "");
+  // Browser screenshots are already bounded at capture. Preserve their native
+  // image block for both realtime UI and persisted tool history, not base64 text
+  // cut in half by the ordinary textual-output budget.
+  const image = value?.content?.[0];
+  if (
+    toolName === "browser" &&
+    text.length <= 206_000 &&
+    value.content.length === 1 &&
+    image?.type === "image" &&
+    image.mimeType === "image/jpeg" &&
+    typeof image.data === "string" &&
+    image.data.length <= 204_800 &&
+    image.data.startsWith("/9j/") &&
+    /^[A-Za-z0-9+/]*={0,2}$/.test(image.data)
+  )
+    return value;
   return text.length > TOOL_PAYLOAD_CHARS
     ? `${text.slice(0, TOOL_PAYLOAD_CHARS)}…[truncated]`
     : value;
 }
-function event(event) {
+function toolPatch(event) {
+  const details = event.result?.details;
+  if (
+    !["edit", "write"].includes(event.toolName) ||
+    typeof details?.patch !== "string"
+  )
+    return {};
+  const patch = context?.runtimeToken
+    ? details.patch.split(context.runtimeToken).join("[REDACTED]")
+    : details.patch;
+  const bytes = Buffer.from(patch);
+  const truncated = bytes.length > 65_536;
+  return {
+    patch: truncated
+      ? new TextDecoder("utf-8", { fatal: false }).decode(
+          bytes.subarray(0, 65_536),
+          { stream: true },
+        )
+      : patch,
+    truncated,
+    ...(Number.isInteger(details.firstChangedLine) &&
+    details.firstChangedLine > 0
+      ? { firstChangedLine: details.firstChangedLine }
+      : {}),
+  };
+}
+function event(event, source, sourceModel) {
   if (!active) return;
-  if (event.type === "auto_retry_start") modelRetried = event.attempt;
+  if (!source && event.type === "queue_update" && queueRequest) {
+    const mode = queueRequest.type;
+    const native = mode === "steer" ? event.steering : event.followUp;
+    const known = queuedInputs.filter((item) => item.mode === mode).length;
+    if (native.length > known) {
+      queuedInputs.push({
+        id: queueRequest.messageId ?? queueRequest.id,
+        mode,
+        text: queueRequest.message,
+        injectedText: native.at(-1),
+      });
+    }
+  }
+  if (
+    !source &&
+    event.type === "message_start" &&
+    event.message.role === "user"
+  ) {
+    const text = contentText(event.message.content);
+    let index = queuedInputs.findIndex(
+      (item) => item.mode === "steer" && item.injectedText === text,
+    );
+    if (index < 0)
+      index = queuedInputs.findIndex((item) => item.injectedText === text);
+    if (index >= 0) {
+      const [message] = queuedInputs.splice(index, 1);
+      emit({
+        type: "queued_message_consumed",
+        message: { id: message.id, mode: message.mode, text },
+        assistantText: texts.join("\n\n"),
+      });
+      texts = [];
+      emitQueue();
+    }
+  }
+  if (!source && event.type === "auto_retry_start")
+    modelRetried = event.attempt;
+  if (
+    !source &&
+    event.type === "message_start" &&
+    event.message?.role === "assistant"
+  )
+    ruleText = "";
   if (event.type === "message_update") {
     const update = event.assistantMessageEvent;
+    if (
+      update?.type === "text_delta" &&
+      typeof update.delta === "string" &&
+      streamRules.some(
+        (rule) =>
+          rule.target === "assistant_text" && !remindedRules.has(rule.id),
+      )
+    ) {
+      ruleText += update.delta;
+      for (const rule of streamRules)
+        if (
+          rule.target === "assistant_text" &&
+          !remindedRules.has(rule.id) &&
+          rule.regex.test(ruleText)
+        )
+          triggerRule(rule);
+    }
     if (
       [
         "text_start",
@@ -470,27 +1113,39 @@ function event(event) {
     )
       emit({
         type: "message_update",
+        ...(source ? { source } : {}),
         assistantMessageEvent: { type: update.type, delta: update.delta },
       });
   }
-  if (event.type === "tool_execution_start")
+  if (event.type === "tool_execution_start") {
+    // Even a failed/unknown tool may already have changed external state.
+    toolStarted = true;
     emit({
       type: event.type,
+      ...(source ? { source } : {}),
       toolCallId: event.toolCallId,
       toolName: event.toolName,
       args: toolPayload(event.args),
     });
+  }
   // A failed tool call (for example a shell command exiting non-zero) is an
   // ordinary result the model reads and reacts to; it does not fail the turn.
   if (event.type === "tool_execution_end")
     emit({
       type: event.type,
+      ...(source ? { source } : {}),
       toolCallId: event.toolCallId,
       toolName: event.toolName,
       isError: event.isError,
-      result: toolPayload(event.result),
+      result: toolPayload(event.result, event.toolName),
+      ...toolPatch(event),
     });
   if (event.type === "message_end") {
+    if (source) {
+      if (event.message.role === "assistant")
+        recordUsage(event.message.usage, sourceModel);
+      return;
+    }
     if (
       event.message.role === "toolResult" &&
       event.message.toolName === "todo"
@@ -526,23 +1181,11 @@ function event(event) {
           : undefined;
       const text = contentText(message.content);
       if (text) texts.push(text);
-      if (message.usage) {
-        usage ??= {
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-          costUsd: 0,
-        };
-        usage.inputTokens += message.usage.input ?? 0;
-        usage.outputTokens += message.usage.output ?? 0;
-        usage.cacheReadTokens += message.usage.cacheRead ?? 0;
-        usage.cacheWriteTokens += message.usage.cacheWrite ?? 0;
-        usage.costUsd += message.usage.cost?.total ?? 0;
-      }
+      recordUsage(message.usage, runtime.session.model, true);
     }
   }
 }
+
 // Session setup and reload recompute settings from storage, so apply after them.
 function applyRetryBudget() {
   const retries = config.modelRetries ?? 0;
@@ -566,15 +1209,136 @@ function allowTransientStreamRetry(session) {
   if (piRetryable.toolplane) return;
   const retryable = (message) =>
     piRetryable.call(session, message) ||
+    transientModelFailure(message) ||
     (message?.stopReason === "error" &&
       TRANSIENT_STREAM.test(String(message.errorMessage ?? "")));
   retryable.toolplane = true;
   session._isRetryableError = retryable;
+  const prepareRetry = session._prepareRetry;
+  const summarize = session._runDefaultCompaction;
+  if (
+    typeof prepareRetry !== "function" ||
+    typeof summarize !== "function" ||
+    typeof session._omitRecoveryAttempt !== "function"
+  )
+    fail("PI_SDK_VERSION_MISMATCH");
+  session._prepareRetry = async (message) => {
+    if (await prepareRetry.call(session, message)) return true;
+    // Stay inside Pi's continuation loop: do not replay the prompt or extensions.
+    if (!active || aborted || toolStarted || !transientModelFailure(message))
+      return false;
+    const next = config.fallbackModels?.[fallbackIndex++];
+    if (!next) return false;
+    await session.setModel(next, { persist: false });
+    session._retryAttempt = 0;
+    modelRetried = 0;
+    texts = [];
+    session._omitRecoveryAttempt(message);
+    return true;
+  };
+  // Pi 1.5.2 has no independent compaction-model setting. Both manual and
+  // automatic compaction share this model-parameterized summarization boundary;
+  // replacing its argument avoids mutating the in-flight conversational model.
+  session._runDefaultCompaction = async (preparation, model, ...args) => {
+    const selected = config.roleModels?.compaction ?? model;
+    const result = await summarize.call(
+      session,
+      preparation,
+      selected,
+      ...args,
+    );
+    if (result?.usage) recordUsage(result.usage, selected, !actualModel);
+    return result;
+  };
+}
+const approvedToolArguments = new WeakMap();
+const approvalDenied = () => ({
+  block: true,
+  reason: "TOOL_APPROVAL_DENIED: Tool execution was not approved.",
+});
+async function approveToolCall(event) {
+  if (!context?.toolApprovalBridge) return;
+  const admitted = context;
+  try {
+    const url = new URL(admitted.uiUrl);
+    if (
+      !/^\/api\/v1\/agent-runtime\/tasks\/[^/]+\/ui$/.test(url.pathname) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !["http:", "https:"].includes(url.protocol)
+    )
+      return approvalDenied();
+    url.pathname = url.pathname.replace(/\/ui$/, "/tool-approvals");
+    // Capture once; any later extension mutation is rejected by the final native hook.
+    const argumentsJson = canonicalJson(event.input);
+    const args = JSON.parse(argumentsJson);
+    const toolName = event.toolName,
+      toolCallId = event.toolCallId;
+    const post = async (action) => {
+      if (aborted || admitted !== context)
+        throw new Error("TOOL_APPROVAL_DENIED");
+      const response = await fetch(url, {
+        method: "POST",
+        redirect: "error",
+        headers: {
+          authorization: `Bearer ${admitted.runtimeToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ action, toolCallId, toolName, arguments: args }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error("TOOL_APPROVAL_DENIED");
+      return response.json();
+    };
+    let result = await post("request");
+    const deadline = Math.min(
+      Date.now() + 120_000,
+      Date.parse(result.expiresAt) || Date.now() + 120_000,
+    );
+    while (result.status === "pending" && Date.now() < deadline && !aborted) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      result = await post("poll");
+    }
+    if (!["approved", "allowed"].includes(result.status) || aborted) {
+      await post("consume").catch(() => {});
+      return approvalDenied();
+    }
+    result = await post("consume");
+    if (result.allowed !== true || admitted !== context || aborted)
+      return approvalDenied();
+    approvedToolArguments.set(event.input, {
+      argumentsJson,
+      toolName,
+      toolCallId,
+    });
+    return;
+  } catch {
+    // Native Pi turns a blocked call into an isError tool result, never a turn error.
+    return approvalDenied();
+  }
 }
 async function bindSession(session) {
   unsubscribe?.();
   unsubscribe = session.subscribe(event);
   allowTransientStreamRetry(session);
+  const beforeToolCall = session.agent.beforeToolCall;
+  if (!beforeToolCall?.toolplaneApproval) {
+    const checked = async (call) => {
+      const result = await beforeToolCall?.(call);
+      if (result?.block || !context?.toolApprovalBridge) return result;
+      const approved = approvedToolArguments.get(call.args);
+      approvedToolArguments.delete(call.args);
+      return approved?.argumentsJson === canonicalJson(call.args) &&
+        approved.toolName === call.toolCall.name &&
+        approved.toolCallId === call.toolCall.id
+        ? result
+        : approvalDenied();
+    };
+    checked.toolplaneApproval = true;
+    session.agent.beforeToolCall = checked;
+  }
   await session.bindExtensions({
     mode: context?.uiUrl ? "rpc" : "json",
     uiContext: context?.uiUrl ? nativeUi.uiContext : undefined,
@@ -605,38 +1369,97 @@ async function bindSession(session) {
   applyConfiguredThinkingLevel(session);
   persist();
 }
-async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }) {
+async function factory(
+  { cwd: nextCwd, sessionManager, sessionStartEvent },
+  child,
+) {
   if (
     realpathSync(nextCwd) !== cwd ||
-    !within(sessionsDir, resolve(sessionManager.getSessionDir()))
+    !within(
+      child ? join(cwd, ".toolplane-subagents") : sessionsDir,
+      resolve(sessionManager.getSessionDir()),
+    )
   )
     fail("PI_SDK_SESSION_SCOPE");
   await verifyPiPackageSnapshots(config.packages);
-  const extensions = [...config.resources.extensions, todoPath];
+  const ui = child?.ui ?? nativeUi;
+  const sessionSettings = child
+    ? sdk.SettingsManager.inMemory({
+        defaultTools: child.tools,
+        packages: [],
+        extensions: [],
+        skills: [],
+        prompts: [],
+        themes: [],
+        retry: {
+          enabled: (config.modelRetries ?? 0) > 0,
+          maxRetries: config.modelRetries ?? 0,
+        },
+      })
+    : settingsManager;
+  const extensions = [
+    ...config.resources.extensions,
+    ...(config.optionalBuiltinExtensions ?? []),
+    todoPath,
+  ];
   const services = await sdk.createAgentSessionServices({
     cwd,
     agentDir: config.agentDir,
     modelRuntime,
-    settingsManager,
+    settingsManager: sessionSettings,
     resourceLoaderOptions: {
       noExtensions: true,
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
+      agentsFilesOverride: projectContextFiles,
       additionalExtensionPaths: extensions,
       extensionFactories: [
+        {
+          name: "toolplane-stream-rules",
+          hidden: true,
+          factory: (pi) => {
+            pi.on("tool_call", async (call) => {
+              if (!active) return;
+              const input = JSON.stringify(call.input);
+              const blocked = [];
+              for (const rule of streamRules) {
+                if (
+                  rule.target !== "tool_call" ||
+                  (rule.toolName && rule.toolName !== call.toolName) ||
+                  (rule.action === "remind" && remindedRules.has(rule.id)) ||
+                  !rule.regex.test(input)
+                )
+                  continue;
+                await triggerRule(rule, call);
+                if (rule.action === "block") blocked.push(rule.message);
+              }
+              // Pi turns a blocked call into an isError tool result and continues.
+              // Never use terminate: a rejected tool is not a failed Agent turn.
+              if (blocked.length)
+                return { block: true, reason: blocked.join("\n\n") };
+            });
+          },
+        },
         {
           name: "toolplane-web-projection",
           hidden: true,
           factory: (pi) => {
+            contextMaintenance.extension(pi);
             const project = (_event, ctx) =>
-              nativeUi.projectTodos(ctx.sessionManager);
+              ui.projectTodos(ctx.sessionManager);
             pi.on("session_start", project);
             pi.on("session_tree", project);
             pi.on("before_provider_request", () => {
-              if (active) emit({ type: "model_request" });
+              if (active)
+                emit({
+                  type: "model_request",
+                  ...(child ? { source: child.source } : {}),
+                });
             });
+            pi.on("tool_call", approveToolCall);
+            pi.on("turn_end", (boundary) => advisor.review(boundary));
           },
         },
       ],
@@ -672,8 +1495,15 @@ async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }) {
     sessionManager,
     sessionStartEvent,
     model: config.model,
-    excludeTools: config.excludeTools,
-    customTools,
+    ...(child ? { tools: child.tools } : {}),
+    excludeTools: [...(config.excludeTools ?? []), ...(child ? ["task"] : [])],
+    customTools: child
+      ? customTools.map((tool) => ({
+          ...tool,
+          execute: (...args) =>
+            toolSources.run(child.source, () => tool.execute(...args)),
+        }))
+      : customTools,
   });
   return { ...result, services, diagnostics: services.diagnostics };
 }
@@ -695,6 +1525,8 @@ async function refreshContext(next) {
   // Turn-scoped model/auth; neither the immutable revision nor packages change.
   config.model = next.model;
   config.reasoningEffort = next.reasoningEffort;
+  config.fallbackModels = next.fallbackModels ?? [];
+  config.roleModels = next.roleModels;
   // Workspace setting, live per turn: retries one failed model request in place.
   config.modelRetries =
     Number.isInteger(next.modelRetries) &&
@@ -702,16 +1534,38 @@ async function refreshContext(next) {
     next.modelRetries <= MAX_MODEL_RETRIES
       ? next.modelRetries
       : 0;
-  modelRuntime.registerProvider("toolplane", {
-    baseUrl: config.model.baseUrl,
-    api: config.model.api,
-    apiKey: "$TOOLPLANE_RUNTIME_TOKEN",
-    authHeader: true,
-    models: [config.model],
-  });
+  const models = [
+    config.model,
+    ...config.fallbackModels,
+    ...Object.values(config.roleModels ?? {}),
+  ];
+  for (const model of models) {
+    if (
+      !model ||
+      (model.provider !== "toolplane" &&
+        !/^toolplane-[A-Za-z0-9_-]+$/.test(model.provider))
+    )
+      fail("PI_SDK_MODEL_REQUIRED");
+    if (models.find((entry) => entry.provider === model.provider) !== model)
+      continue;
+    modelRuntime.registerProvider(model.provider, {
+      baseUrl: model.baseUrl,
+      api: model.api,
+      apiKey: "$TOOLPLANE_RUNTIME_TOKEN",
+      authHeader: true,
+      models: [
+        ...new Map(
+          models
+            .filter((entry) => entry.provider === model.provider)
+            .map((entry) => [entry.id, entry]),
+        ).values(),
+      ],
+    });
+    runtimeProviders.add(model.provider);
+    await modelRuntime.setRuntimeApiKey(model.provider, next.runtimeToken);
+  }
   context = next;
   process.env.TOOLPLANE_RUNTIME_TOKEN = next.runtimeToken;
-  await modelRuntime.setRuntimeApiKey("toolplane", next.runtimeToken);
   const definitions = await createPiMcpTools(next.mcpConfig);
   const signature = canonicalJson(
     definitions
@@ -752,6 +1606,8 @@ async function handle(request) {
   if (request.type === "abort") {
     try {
       aborted = true;
+      advisor.cancel();
+      await cancelChildren();
       nativeUi.cancel();
       await runtime?.session.abort();
       respond(true, {
@@ -764,8 +1620,95 @@ async function handle(request) {
     }
     return;
   }
+  if (["steer", "follow_up", "clear_queue"].includes(request.type)) {
+    queueOperation = queueOperation
+      .catch(() => {})
+      .then(async () => {
+        if (
+          !active ||
+          !acceptingQueue ||
+          !runtime ||
+          (request.type !== "clear_queue" && !runtime.session.isStreaming)
+        ) {
+          respond(false, undefined, "PI_SDK_QUEUE_NOT_RUNNING");
+          return;
+        }
+        if (
+          request.type !== "clear_queue" &&
+          (typeof request.message !== "string" ||
+            !request.message.trim() ||
+            request.message.length > 100_000)
+        ) {
+          respond(false, undefined, "PI_SDK_QUEUE_INVALID");
+          return;
+        }
+        if (request.deduplicate && queueReceipts.has(request.messageId)) {
+          respond(true, {
+            disposition: queueReceipts.get(request.messageId),
+            queue: queueState(),
+          });
+          return;
+        }
+        if (
+          request.type !== "clear_queue" &&
+          (queuedInputs.length >= 32 ||
+            Buffer.byteLength(JSON.stringify(queueState())) +
+              Buffer.byteLength(JSON.stringify(request.message)) >
+              1024 * 1024)
+        ) {
+          respond(false, undefined, "PI_SDK_QUEUE_FULL");
+          return;
+        }
+        try {
+          let disposition;
+          if (request.type === "clear_queue") {
+            runtime.session.clearQueue();
+            queuedInputs = [];
+            disposition = "cleared";
+          } else {
+            queueRequest = request;
+            disposition = await runtime.session[
+              request.type === "steer" ? "steer" : "followUp"
+            ](request.message);
+            if (disposition === "queued" && !runtime.session.isStreaming) {
+              const pending = runtime.session.clearQueue();
+              queueContinuation = (async () => {
+                for (const text of [...pending.steering, ...pending.followUp]) {
+                  if (aborted) break;
+                  await runtime.session.sendUserMessage(text);
+                }
+              })();
+            }
+          }
+          if (request.deduplicate && typeof request.messageId === "string")
+            queueReceipts.set(request.messageId, disposition);
+          emitQueue();
+          respond(true, { disposition, queue: queueState() });
+        } catch {
+          respond(false, undefined, "PI_SDK_QUEUE_INVALID");
+        } finally {
+          queueRequest = undefined;
+        }
+      });
+    return;
+  }
   if (active) {
     respond(false, undefined, "PI_SDK_BUSY");
+    return;
+  }
+  if (request.type === "fork") {
+    try {
+      if (initialError) fail(initialError);
+      respond(true, { text: "", fork: forkSession(request) });
+    } catch (error) {
+      respond(
+        false,
+        undefined,
+        /^PI_[A-Z_]+$/.test(error.code ?? "")
+          ? error.code
+          : "PI_SDK_FORK_FAILED",
+      );
+    }
     return;
   }
   if (request.type === "get_state" || request.type === "get_commands") {
@@ -780,6 +1723,7 @@ async function handle(request) {
     return;
   }
   active = request.id;
+  turnController = new AbortController();
   nativeUi.start();
   texts = [];
   usage = undefined;
@@ -788,6 +1732,16 @@ async function handle(request) {
   modelFailed = false;
   modelReason = undefined;
   modelRetried = 0;
+  ruleText = "";
+  ruleTriggers = [];
+  remindedRules = new Set();
+  ruleDeliveries = [];
+  turnExistingEntries = undefined;
+  acceptingQueue = true;
+  queueReceipts.clear();
+  toolStarted = false;
+  fallbackIndex = 0;
+  actualModel = undefined;
   let terminal;
   try {
     if (initialError) fail(initialError);
@@ -816,8 +1770,25 @@ async function handle(request) {
     applyConfiguredThinkingLevel(runtime.session);
     applyRetryBudget();
     await nativeUi.projectTodos(runtime.session.sessionManager);
+    await advisor.start(context.advisor, context.runtimeToken, request.id);
     let command;
     let compaction;
+    if (request.navigateBeforeEntryId !== undefined) {
+      const entry = runtime.session.sessionManager.getEntry(
+        request.navigateBeforeEntryId,
+      );
+      if (entry?.type !== "message" || entry.message.role !== "user")
+        fail("PI_SDK_ENTRY_NOT_FOUND");
+      // Pi treats a user target as its parent, including null/root. Never summarize.
+      const navigation = await runtime.session.navigateTree(entry.id, {
+        summarize: false,
+      });
+      if (navigation.cancelled || navigation.aborted)
+        fail("PI_SDK_NAVIGATION_CANCELLED");
+    }
+    turnExistingEntries = new Set(
+      runtime.session.sessionManager.getEntries().map((entry) => entry.id),
+    );
     if (request.type === "compact") {
       command = "compact";
       compaction = await compact(runtime.session, request.customInstructions);
@@ -860,8 +1831,13 @@ async function handle(request) {
     do {
       current = runtime.session;
       await current.waitForIdle();
+      await queueOperation;
+      await queueContinuation;
     } while (current !== runtime.session);
+    await Promise.all(ruleDeliveries);
     if (aborted) fail("PI_SDK_ABORTED");
+    const handoffSummary = await contextMaintenance.settle();
+    if (handoffSummary) texts.push(handoffSummary);
     if (turnError) fail(turnError);
     if (modelFailed)
       fail(
@@ -884,8 +1860,13 @@ async function handle(request) {
       result: {
         text,
         commands: commands(),
+        queue: queueState(),
+        ...advisor.result,
         ...(usage ? { usage } : {}),
+        ...(sessionEntries() ? { sessionEntries: sessionEntries() } : {}),
+        ...(actualModel ? { actualModel } : {}),
         ...contextBreakdownResult(runtime.session),
+        streamRuleTriggers: ruleTriggers,
         ...(command
           ? { commandResult: { command, text, status: "completed" } }
           : {}),
@@ -894,6 +1875,7 @@ async function handle(request) {
     };
   } catch (error) {
     try {
+      await cancelChildren();
       nativeUi.cancel();
       if (runtime) await runtime.session.abort();
     } catch {
@@ -908,7 +1890,8 @@ async function handle(request) {
       runtime &&
       (code === "PI_SDK_MODEL_FAILED" ||
         code === "PI_SDK_ABORTED" ||
-        code === "PI_SDK_UI_FAILED")
+        code === "PI_SDK_UI_FAILED" ||
+        code === "PI_STREAM_RULE_DELIVERY_FAILED")
     )
       try {
         persist();
@@ -920,16 +1903,38 @@ async function handle(request) {
       code,
       reason: code === "PI_SDK_MODEL_FAILED" ? error.reason : undefined,
       // Tokens already spent on a failed turn still count toward the budget.
-      result: usage ? { usage } : undefined,
+      result:
+        usage || ruleTriggers.length || sessionEntries()
+          ? {
+              ...(usage ? { usage } : {}),
+              ...advisor.result,
+              ...(actualModel ? { actualModel } : {}),
+              ...(ruleTriggers.length
+                ? { streamRuleTriggers: ruleTriggers }
+                : {}),
+              ...(sessionEntries() ? { sessionEntries: sessionEntries() } : {}),
+            }
+          : undefined,
     };
   } finally {
+    acceptingQueue = false;
+    await queueOperation;
+    if (queuedInputs.length) {
+      runtime?.session.clearQueue();
+      queuedInputs = [];
+      emitQueue();
+    }
+    await advisor.finish();
     nativeUi.cancel();
+    contextMaintenance.clear();
     await nativeUi.drain();
     context = undefined;
     toolMap = new Map();
     promptInvocation = undefined;
     delete process.env.TOOLPLANE_RUNTIME_TOKEN;
-    await modelRuntime.removeRuntimeApiKey("toolplane").catch(() => {});
+    for (const provider of runtimeProviders)
+      await modelRuntime.removeRuntimeApiKey(provider).catch(() => {});
+    runtimeProviders = new Set(["toolplane"]);
     active = undefined;
     respond(terminal.success, terminal.result, terminal.code, terminal.reason);
   }
@@ -954,6 +1959,7 @@ input.on("close", () => {
   void (async () => {
     nativeUi.cancel();
     await nativeUi.drain();
+    await cancelChildren();
     await runtime?.session.abort();
     await runtime?.dispose();
   })().finally(() => process.exit());

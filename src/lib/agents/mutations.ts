@@ -1,3 +1,4 @@
+import type { ToolApprovalPolicy } from "./tool-approval-policy";
 import "server-only";
 import type { ReasoningLevel } from "./constants";
 import { selectNewSessionRevision } from "@/lib/agents/evolution/rollout-selection";
@@ -22,10 +23,11 @@ import {
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
   normalizeDisabledBuiltinTools,
+  normalizeOptionalBuiltinTools,
   type ImplementedAgentRuntimeKind,
 } from "@/lib/agents/runtime-kind";
 import {
-  DEFAULT_SANDBOX_IMAGE,
+  getDefaultSandboxImage,
   sandboxVolumeName,
 } from "@/lib/sandboxes/runtime";
 import {
@@ -45,6 +47,22 @@ import { isExecutableAgentRuntimeKind } from "./runtime-kind";
 import { preparePiRuntime } from "./pi-runtime";
 import { parseOmpConfigSnapshot } from "./omp-config-server";
 import { isOmpInstructionPath } from "./omp-config";
+import { AgentAdvisorSchema, type AgentAdvisor } from "./revision-types";
+
+async function validateAdvisor(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  advisor: AgentAdvisor | null | undefined,
+) {
+  if (!advisor) return;
+  const parsed = AgentAdvisorSchema.safeParse(advisor);
+  if (!parsed.success)
+    throw new AgentConfigurationError("AGENT_ADVISOR_INVALID");
+  const provider = await lockProvider(tx, workspaceId, advisor.providerId);
+  if (!provider?.models.includes(advisor.model))
+    throw new AgentConfigurationError("AGENT_ADVISOR_INVALID");
+  assertRuntimeProviderFormat("pi-sdk", provider.format);
+}
 
 function assertNativeAgent(runtimeKind: string, retiredAt: Date | null): void {
   if (!isExecutableAgentRuntimeKind(runtimeKind) || retiredAt !== null) {
@@ -172,7 +190,7 @@ async function createDedicatedSandboxRecords(
   workspaceId: string,
   agent: { id: string; name: string },
   sandboxSlug: string,
-  image = DEFAULT_SANDBOX_IMAGE,
+  image = getDefaultSandboxImage(),
 ) {
   const deployment = await tx.deployment.create({
     data: {
@@ -229,6 +247,9 @@ export async function createAgentRecords(
       name,
       slug,
       runtimeKind: runtime,
+      optionalBuiltinTools: [],
+      contextFiles: true,
+      secretObfuscation: true,
     },
   });
   const templateSlug =
@@ -324,6 +345,8 @@ export async function cloneAgent(
           disabledBuiltinTools: true,
           maxSteps: true,
           reasoningEffort: true,
+          streamRules: true,
+          toolApproval: true,
           sandboxes: {
             where: { isDefault: true },
             select: { sandbox: { select: { image: true } } },
@@ -358,6 +381,10 @@ export async function cloneAgent(
           ),
           maxSteps: source.maxSteps,
           reasoningEffort: source.reasoningEffort,
+          ...(source.streamRules != null
+            ? { streamRules: source.streamRules as Prisma.InputJsonValue }
+            : {}),
+          ...(source.toolApproval ? { toolApproval: source.toolApproval } : {}),
         },
       });
       if (deployments.length) {
@@ -513,11 +540,16 @@ export type AgentConfig = {
   name: string;
   description?: string | null;
   systemPrompt: string | null;
+  contextFiles?: boolean;
   providerId: string | null;
   model: string | null;
   disabledBuiltinTools?: string[];
+  optionalBuiltinTools?: string[];
   maxSteps: number;
   reasoningEffort?: ReasoningLevel | null;
+  toolApproval?: ToolApprovalPolicy;
+  secretObfuscation?: boolean;
+  advisor?: AgentAdvisor | null;
   piPackages?: Array<{ marketInstallId: string; releaseId?: string }>;
 };
 
@@ -539,6 +571,37 @@ export class AgentConfigurationError extends Error {
     super(message);
     this.name = "AgentConfigurationError";
   }
+}
+
+function validatedOptionalBuiltinTools(tools: readonly string[] | undefined) {
+  try {
+    return normalizeOptionalBuiltinTools(tools);
+  } catch {
+    throw new AgentConfigurationError("OPTIONAL_BUILTIN_TOOLS_INVALID");
+  }
+}
+
+/** Save draft authority only; publishing still requires the normal revision review. */
+export async function updateAgentOptionalBuiltinTools(
+  workspaceId: string,
+  agentId: string,
+  tools: readonly string[],
+) {
+  const optionalBuiltinTools = validatedOptionalBuiltinTools(tools);
+  return withAgentDraftLease(agentId, () =>
+    db.$transaction(async (tx) => {
+      const agent = await tx.agent.findFirst({
+        where: { id: agentId, workspaceId },
+        select: { runtimeKind: true, retiredAt: true },
+      });
+      if (!agent) return null;
+      assertNativeAgent(agent.runtimeKind, agent.retiredAt);
+      return tx.agent.update({
+        where: { id: agentId },
+        data: { optionalBuiltinTools },
+      });
+    }),
+  );
 }
 
 async function validateAndWritePiPackages(
@@ -927,6 +990,7 @@ export async function createConfiguredAgent(
           );
         }
       }
+      await validateAdvisor(tx, workspaceId, cfg.advisor);
 
       // Interactive transactions use one pg connection; keep these awaits
       // sequential so the adapter never issues overlapping client.query calls.
@@ -969,14 +1033,21 @@ export async function createConfiguredAgent(
           name: cleanName,
           description: cfg.description?.trim() || null,
           systemPrompt: cfg.systemPrompt,
+          contextFiles: cfg.contextFiles ?? true,
           providerId: cfg.providerId,
           model: cfg.providerId ? cfg.model : null,
           disabledBuiltinTools: normalizeDisabledBuiltinTools(
             runtime,
             cfg.disabledBuiltinTools,
           ),
+          optionalBuiltinTools: validatedOptionalBuiltinTools(
+            cfg.optionalBuiltinTools,
+          ),
           maxSteps: cfg.maxSteps,
           reasoningEffort: cfg.reasoningEffort ?? null,
+          toolApproval: cfg.toolApproval ?? { mode: "off" },
+          secretObfuscation: cfg.secretObfuscation ?? true,
+          ...(cfg.advisor ? { advisor: cfg.advisor } : {}),
         },
       });
       await tx.agentServer.createMany({
@@ -1054,6 +1125,7 @@ export async function updateAgent(
         cfg.providerId,
         cfg.model,
       );
+      await validateAdvisor(tx, workspaceId, cfg.advisor);
       await tx.agent.updateMany({
         where: { id: agentId, workspaceId },
         data: {
@@ -1062,6 +1134,9 @@ export async function updateAgent(
             ? {}
             : { description: cfg.description?.trim() || null }),
           systemPrompt: cfg.systemPrompt,
+          ...(cfg.contextFiles !== undefined
+            ? { contextFiles: cfg.contextFiles }
+            : {}),
           providerId,
           model: providerId ? cfg.model : null,
           ...(cfg.disabledBuiltinTools === undefined
@@ -1072,9 +1147,25 @@ export async function updateAgent(
                   cfg.disabledBuiltinTools,
                 ),
               }),
+          ...(cfg.optionalBuiltinTools === undefined
+            ? {}
+            : {
+                optionalBuiltinTools: validatedOptionalBuiltinTools(
+                  cfg.optionalBuiltinTools,
+                ),
+              }),
           maxSteps: cfg.maxSteps,
           ...(cfg.reasoningEffort !== undefined
             ? { reasoningEffort: cfg.reasoningEffort }
+            : {}),
+          ...(cfg.toolApproval !== undefined
+            ? { toolApproval: cfg.toolApproval }
+            : {}),
+          ...(cfg.secretObfuscation === undefined
+            ? {}
+            : { secretObfuscation: cfg.secretObfuscation }),
+          ...(cfg.advisor !== undefined
+            ? { advisor: cfg.advisor ?? Prisma.DbNull }
             : {}),
         },
       });

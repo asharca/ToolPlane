@@ -12,6 +12,8 @@ import {
   toolOutputText,
 } from "../ConversationMessage";
 import { ToolResult } from "@/components/agents/tool-result";
+import { ConversationToolDiff } from "../ConversationToolDiff";
+import { ConversationToolOutput } from "../ConversationToolOutput";
 
 export const SubagentConversationScope = createContext<{
   slug: string;
@@ -105,6 +107,9 @@ export const SubagentActivitySchema = z.object({
   toolName: z.string().optional(),
   input: z.unknown().optional(),
   output: z.unknown().optional(),
+  patch: z.string().optional(),
+  truncated: z.boolean().optional(),
+  firstChangedLine: z.number().int().positive().optional(),
   isError: z.boolean().optional(),
   childTaskId: z.string().optional(),
 });
@@ -183,12 +188,18 @@ export function SubagentActivity({ value }: { value: unknown }) {
                 ""}
             </ToolPayload>
           ) : null}
-          {activity.output !== undefined ? (
-            <ToolPayload label={t("result")} language="text">
-              {toolOutputText(activity.output) ??
-                JSON.stringify(activity.output, null, 2) ??
-                ""}
-            </ToolPayload>
+          {activity.patch ? (
+            <ConversationToolDiff
+              patch={activity.patch}
+              truncated={activity.truncated}
+              firstChangedLine={activity.firstChangedLine}
+            />
+          ) : null}
+          {activity.output !== undefined && (!activity.patch || failed) ? (
+            <ConversationToolOutput
+              value={activity.output}
+              label={t("result")}
+            />
           ) : null}
         </ToolResult>
       )}

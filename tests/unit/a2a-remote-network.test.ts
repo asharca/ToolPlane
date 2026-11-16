@@ -11,6 +11,7 @@ import {
   REMOTE_RESPONSE_BYTES,
   fetchRemoteFile,
   remoteFileUrl,
+  fetchPublicWebText,
 } from "@/lib/a2a/remote-network";
 import { REMOTE_CARD, REMOTE_RPC, remoteTask } from "../fixtures/a2a-remote";
 import type { A2ALogBinding } from "@/lib/observability/a2a-log";
@@ -143,6 +144,96 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 describe("remote HTTPS egress boundary", () => {
+  it.each([
+    "http://127.0.0.1/private",
+    "https://10.1.2.3/private",
+    "http://169.254.169.254/latest/meta-data",
+    "http://[::1]/private",
+    "http://[::ffff:127.0.0.1]/private",
+  ])("rejects private web_fetch target %s before connecting", async (url) => {
+    await expect(fetchPublicWebText(url)).rejects.toMatchObject({
+      reason: "WEB_FETCH_NETWORK_BLOCKED",
+    });
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+
+  it("rejects a web redirect to a private IP before the next connection", async () => {
+    status = 302;
+    headers = { location: "http://127.0.0.1/admin" };
+    await expect(
+      fetchPublicWebText("https://public.example/page"),
+    ).rejects.toMatchObject({ reason: "WEB_FETCH_NETWORK_BLOCKED" });
+    expect(mocks.request).toHaveBeenCalledOnce();
+  });
+
+  it("revalidates redirected DNS and rejects mixed public/private answers", async () => {
+    status = 307;
+    headers = { location: "https://rebound.example/page" };
+    mocks.lookup
+      .mockResolvedValueOnce([{ address: "93.184.216.34", family: 4 }])
+      .mockResolvedValueOnce([
+        { address: "93.184.216.34", family: 4 },
+        { address: "192.168.1.1", family: 4 },
+      ]);
+    await expect(
+      fetchPublicWebText("https://public.example/page"),
+    ).rejects.toMatchObject({ reason: "WEB_FETCH_NETWORK_BLOCKED" });
+    expect(mocks.request).toHaveBeenCalledOnce();
+  });
+
+  it("pins public web DNS and never forwards credentials, cookies or proxy configuration", async () => {
+    headers = { "content-type": "text/plain; charset=utf-8" };
+    body = "readable public page";
+    const result = await fetchPublicWebText("http://public.example/page?q=one");
+    expect(result).toMatchObject({
+      url: "http://public.example/page?q=one",
+      text: body,
+      bytes: Buffer.byteLength(body),
+    });
+    const callback = vi.fn();
+    (
+      options.lookup as (
+        host: string,
+        flags: { all: boolean },
+        done: typeof callback,
+      ) => void
+    )("public.example", { all: false }, callback);
+    expect(callback).toHaveBeenCalledWith(null, "93.184.216.34", 4);
+    expect(options).toMatchObject({ agent: false });
+    expect(options.headers).not.toHaveProperty("authorization");
+    expect(options.headers).not.toHaveProperty("cookie");
+  });
+
+  it("bounds web responses and rejects non-text media types", async () => {
+    headers = { "content-type": "application/pdf" };
+    await expect(
+      fetchPublicWebText("https://public.example/page"),
+    ).rejects.toMatchObject({ reason: "WEB_FETCH_UNSUPPORTED_CONTENT" });
+    headers = {
+      "content-type": "text/plain",
+      "content-length": String(1024 * 1024 + 1),
+    };
+    await expect(
+      fetchPublicWebText("https://public.example/page"),
+    ).rejects.toMatchObject({ reason: "WEB_FETCH_RESPONSE_TOO_LARGE" });
+    headers = { "content-type": "text/plain" };
+    body = "x".repeat(1024 * 1024 + 1);
+    await expect(
+      fetchPublicWebText("https://public.example/page"),
+    ).rejects.toMatchObject({ reason: "WEB_FETCH_RESPONSE_TOO_LARGE" });
+  });
+
+  it.each([
+    "file:///etc/passwd",
+    "ftp://public.example/page",
+    "https://user:secret@public.example/page",
+  ])("rejects unsupported web URL %s", async (url) => {
+    await expect(fetchPublicWebText(url)).rejects.toMatchObject({
+      reason: "WEB_FETCH_INVALID_URL",
+    });
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+
   it("permits configured plaintext without changing exact-origin approval, DNS pinning, or default denial", async () => {
     const policy = {
       allowHttp: true,

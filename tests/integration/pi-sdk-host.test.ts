@@ -5,6 +5,7 @@ import type { ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter, once } from "node:events";
+import { watch } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -12,6 +13,7 @@ import {
   readdir,
   rm,
   writeFile,
+  symlink,
 } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -19,7 +21,12 @@ import { join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { PI_SDK_VERSION, PI_SDK_VERSIONS } from "@/lib/agents/pi-version";
+import {
+  AgentSecretObfuscator,
+  restoreModelResponse,
+} from "@/lib/agents/secret-obfuscation";
 import {
   buildPiMcpConfig,
   nativePiMcpToolName,
@@ -43,6 +50,12 @@ import {
 import { executionOutputResponse } from "@/lib/agents/execution/live-output-stream";
 
 const RESULT_FILE_BYTES = 10 * 1024 * 1024;
+const TaskSourceSchema = z.object({
+  subagentId: z.string(),
+  subagentName: z.string(),
+  parentToolCallId: z.string(),
+  depth: z.number(),
+});
 type SdkState = {
   sessionId: string;
   sessionFile: string;
@@ -56,17 +69,48 @@ type SdkResponse = {
     text: string;
     commands: Array<{ name: string }>;
     commandResult?: { command: string; text: string; status: string };
+    sessionEntries?: {
+      userEntryId: string;
+      userParentEntryId: string | null;
+      leafEntryId: string;
+    };
+    fork?: {
+      forked: boolean;
+      entryId: string;
+      contextOnly: boolean;
+      filesRewound: boolean;
+      externalEffectsRewound: boolean;
+    };
     state: SdkState;
+    disposition?: "queued" | "handled" | "cleared";
+    queue?: {
+      messages: Array<{ id: string; mode: string; text: string }>;
+      pendingMessageCount: number;
+    };
+    actualModel?: { providerId: string; model: string };
+    usage?: {
+      inputTokens?: number;
+      outputTokens?: number;
+      actualModel?: { providerId: string; model: string };
+      modelUsage?: Array<{
+        providerId: string;
+        model: string;
+        inputTokens: number;
+      }>;
+    };
   };
   error?: { code: string };
 };
 type RequestContext = {
   runtimeToken: string;
   uiUrl?: string;
+  toolApprovalBridge?: boolean;
   mcpConfig: { servers: unknown[] };
   model: Record<string, unknown>;
   reasoningEffort?: string;
   modelRetries?: number;
+  fallbackModels?: Array<Record<string, unknown>>;
+  roleModels?: { compaction?: Record<string, unknown> };
 };
 const children = new Set<ChildProcess>();
 const cleanups: Array<() => Promise<void>> = [];
@@ -109,24 +153,26 @@ function emptyStream(response: ServerResponse) {
     `data: ${JSON.stringify({ error: { message: "empty_stream", type: "upstream_error" } })}\n\n`,
   );
 }
-async function setup() {
+async function setup(workspaceSubdirectory = "") {
   const root = await mkdtemp(join(tmpdir(), "pi-sdk-host-"));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
-  const workspace = join(root, "workspace"),
+  const workspace = join(root, "workspace", workspaceSubdirectory),
     agentDir = join(root, "private"),
     sessionsDir = join(root, "sessions");
   // Mirror the Agent-wide HOME contract without reading or writing the runner's home.
   const home = join(root, "home");
   const requestEvents = new EventEmitter();
   await Promise.all(
-    [workspace, agentDir, sessionsDir].map((path) => mkdir(path)),
+    [workspace, agentDir, sessionsDir].map((path) =>
+      mkdir(path, { recursive: true }),
+    ),
   );
   const requests: Array<{
     authorization?: string;
     path?: string;
     body: {
       model: string;
-      messages: Array<{ role: string }>;
+      messages: Array<{ role: string; content?: unknown }>;
       tools?: Array<{ function: { name: string } }>;
     };
   }> = [];
@@ -138,6 +184,8 @@ async function setup() {
     failUiPoll: false,
     failTodoProjection: false,
     todoQuota: false,
+    approvalStatus: "allowed",
+    approvalExpired: false,
     toolArgs: "{}",
     completionText: "SDK_COMPLETE",
     promptTokens: 20,
@@ -146,6 +194,13 @@ async function setup() {
       | ((response: ServerResponse) => Promise<void>)
       | undefined,
     mcpSchema: { type: "object", properties: {} } as Record<string, unknown>,
+    secretObfuscator: undefined as AgentSecretObfuscator | undefined,
+    modelResponse: undefined as
+      | undefined
+      | ((
+          body: (typeof requests)[number]["body"],
+          response: ServerResponse,
+        ) => void),
   };
   const mcpRequests: Array<{
     authorization?: string;
@@ -167,6 +222,25 @@ async function setup() {
       let raw = "";
       for await (const chunk of request) raw += String(chunk);
       const body = JSON.parse(raw);
+      if (
+        /^\/api\/v1\/agent-runtime\/tasks\/[^/]+\/tool-approvals$/.test(
+          request.url ?? "",
+        )
+      ) {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            status: behavior.approvalStatus,
+            allowed:
+              body.action === "consume" &&
+              behavior.approvalStatus === "allowed",
+            expiresAt: new Date(
+              Date.now() + (behavior.approvalExpired ? -1 : 120_000),
+            ).toISOString(),
+          }),
+        );
+        return;
+      }
       if (
         /^\/api\/v1\/agent-runtime\/tasks\/[^/]+\/ui$/.test(request.url ?? "")
       ) {
@@ -278,12 +352,51 @@ async function setup() {
         }
         return;
       }
+      if (
+        request.url === "/secret-gateway/v1/chat/completions" &&
+        behavior.secretObfuscator
+      ) {
+        const upstream = await fetch(
+          `http://${request.headers.host}/v1/chat/completions`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(
+              behavior.secretObfuscator.redactRequest(body, "openai"),
+            ),
+          },
+        );
+        const restored = restoreModelResponse(
+          upstream,
+          behavior.secretObfuscator,
+        );
+        response.writeHead(
+          restored.status,
+          Object.fromEntries(restored.headers),
+        );
+        const reader = assertDefined(restored.body).getReader();
+        try {
+          while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            response.write(next.value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        response.end();
+        return;
+      }
       requests.push({
         authorization: request.headers.authorization,
         path: request.url,
         body,
       });
       requestEvents.emit("request");
+      if (behavior.modelResponse) {
+        behavior.modelResponse(body, response);
+        return;
+      }
       if (behavior.pause) return;
       if (behavior.streamCompletion) {
         await behavior.streamCompletion(response);
@@ -474,13 +587,17 @@ export default function(pi) {
       type: string,
       message?: string,
       current: RequestContext = context,
+      extra: Record<string, unknown> = {},
     ) {
       const id = randomUUID();
-      const result = new Promise<SdkResponse>((done, reject) =>
-        pending.set(id, { resolve: done, reject }),
-      );
+      const {
+        promise: result,
+        resolve,
+        reject,
+      } = Promise.withResolvers<SdkResponse>();
+      pending.set(id, { resolve, reject });
       assertDefined(child.stdin).write(
-        `${JSON.stringify({ id, type, message, context: current })}\n`,
+        `${JSON.stringify({ id, type, message, context: current, ...extra })}\n`,
       );
       return result;
     }
@@ -516,6 +633,945 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 describe("official Pi SDK headless session host", () => {
+  it.each([true, false, undefined])(
+    "loads only bounded project instruction files when contextFiles=%s",
+    async (contextFiles) => {
+      const f = await setup("project");
+      const project = f.workspace;
+      const workspaceRoot = join(f.root, "workspace");
+      const otherSession = join(f.root, "other-session");
+      await mkdir(otherSession);
+      await Promise.all([
+        writeFile(join(project, "AGENTS.md"), "SESSION_INSTRUCTION_MARKER"),
+        writeFile(
+          join(workspaceRoot, "CLAUDE.md"),
+          "WORKSPACE_INSTRUCTION_MARKER",
+        ),
+        writeFile(
+          join(f.config.agentDir, "AGENTS.md"),
+          "AGENT_INSTRUCTION_MARKER",
+        ),
+        writeFile(join(f.root, "AGENTS.md"), "OUTSIDE_ROOT_INSTRUCTION_MARKER"),
+        writeFile(
+          join(otherSession, "AGENTS.md"),
+          "OTHER_SESSION_PRIVATE_MARKER",
+        ),
+      ]);
+      await symlink(
+        join(otherSession, "AGENTS.md"),
+        join(project, "AGENTS.override.md"),
+      );
+      const host = await f.launch({
+        contextFiles,
+        cwd: project,
+        workspaceRoot,
+      });
+      const response = await host.request("prompt", "Use increment");
+      expect(response.success).toBe(true);
+      const systemMessages = JSON.stringify(
+        f.requests[0]?.body.messages.filter(
+          (message) => message.role === "system",
+        ),
+      );
+      for (const marker of [
+        "SESSION_INSTRUCTION_MARKER",
+        "WORKSPACE_INSTRUCTION_MARKER",
+        "AGENT_INSTRUCTION_MARKER",
+      ]) {
+        if (contextFiles === true) expect(systemMessages).toContain(marker);
+        else expect(systemMessages).not.toContain(marker);
+      }
+      expect(systemMessages).not.toContain("OUTSIDE_ROOT_INSTRUCTION_MARKER");
+      expect(systemMessages).not.toContain("OTHER_SESSION_PRIVATE_MARKER");
+      await host.stop();
+    },
+    60000,
+  );
+  it("blocks native bash side effects while succeeding and persisting the rule event", async () => {
+    const f = await setup();
+    f.behavior.tool = "bash";
+    f.behavior.toolArgs = JSON.stringify({
+      command: "printf forbidden > blocked.txt",
+    });
+    const host = await f.launch({
+      defaultTools: ["bash"],
+      streamRules: [
+        {
+          id: "no-write",
+          name: "No shell writes",
+          target: "tool_call",
+          toolName: "bash",
+          pattern: "blocked\\.txt",
+          action: "block",
+          message: "Do not write blocked.txt.",
+        },
+      ],
+    });
+    for (let turn = 0; turn < 2; turn++) {
+      const result = await host.request("prompt", "Run the shell command");
+      expect(result.success, JSON.stringify(result)).toBe(true);
+      expect(result.result?.text).toContain("SDK_COMPLETE");
+      await expect(
+        readFile(join(f.workspace, "blocked.txt")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }
+    const triggers = host.events.filter(
+      (event) => event.type === "stream_rule_triggered",
+    );
+    expect(triggers).toHaveLength(2);
+    expect(triggers[0]).toMatchObject({
+      trigger: {
+        ruleId: "no-write",
+        target: "tool_call",
+        action: "block",
+        toolName: "bash",
+        toolCallId: "count-call",
+      },
+    });
+    const failedTools = host.events.filter(
+      (event) => event.type === "tool_execution_end" && event.isError,
+    );
+    expect(failedTools).toHaveLength(2);
+    expect(JSON.stringify(failedTools)).toContain("Do not write blocked.txt.");
+    const saved = JSON.parse(await readFile(f.config.statePath, "utf8"));
+    expect(saved.sessionPersisted).toBe(true);
+    expect(await readFile(saved.sessionFile, "utf8")).toContain(
+      "toolplane.stream-rule",
+    );
+  }, 60000);
+
+  it("matches text across stream chunks and injects one reminder per rule per prompt", async () => {
+    const f = await setup();
+    let requests = 0;
+    f.behavior.tool = "";
+    const textEvents = new EventEmitter();
+    f.behavior.streamCompletion = async (response) => {
+      if (requests++ > 0) {
+        completion(response, { content: "Corrected response" }, "stop");
+        return;
+      }
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      for (const [index, content] of [
+        "CROSS_",
+        "CHUNK",
+        " CROSS_CHUNK",
+      ].entries()) {
+        const received = once(textEvents, "delta");
+        response.write(
+          `data: ${JSON.stringify({ id: "rules", object: "chat.completion.chunk", created: 1, model: "controlled", choices: [{ index: 0, delta: { ...(index === 0 ? { role: "assistant" } : {}), content }, finish_reason: null }] })}\n\n`,
+        );
+        await received;
+      }
+      response.end(
+        `data: ${JSON.stringify({ id: "rules", object: "chat.completion.chunk", created: 1, model: "controlled", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
+      );
+    };
+    const host = await f.launch(
+      {
+        streamRules: [
+          {
+            id: "text-reminder",
+            name: "Text reminder",
+            target: "assistant_text",
+            pattern: "CROSS_CHUNK",
+            action: "remind",
+            message: "Replace the flagged phrase.",
+          },
+        ],
+      },
+      (event) => {
+        const update = event.assistantMessageEvent;
+        if (
+          event.type === "message_update" &&
+          update &&
+          typeof update === "object" &&
+          "type" in update &&
+          update.type === "text_delta"
+        )
+          textEvents.emit("delta");
+      },
+    );
+    const result = await host.request("prompt", "Answer now");
+    expect(result.success, JSON.stringify(result)).toBe(true);
+    expect(
+      host.events.filter((event) => event.type === "stream_rule_triggered"),
+    ).toHaveLength(1);
+    expect(f.requests.length).toBeGreaterThan(1);
+    expect(JSON.stringify(f.requests.at(-1)?.body.messages)).toContain(
+      "Replace the flagged phrase.",
+    );
+  }, 60000);
+
+  it("allows a matching tool reminder and delivers its message to the model", async () => {
+    const f = await setup();
+    const host = await f.launch({
+      streamRules: [
+        {
+          id: "counter-reminder",
+          name: "Counter reminder",
+          target: "tool_call",
+          toolName: "increment",
+          pattern: "^\\{",
+          action: "remind",
+          message: "Report the actual counter value.",
+        },
+      ],
+    });
+    const result = await host.request("prompt", "Increment the counter");
+    expect(result.success, JSON.stringify(result)).toBe(true);
+    expect(
+      Number(await readFile(join(f.workspace, "count.txt"), "utf8")),
+    ).toBeGreaterThan(0);
+    expect(
+      host.events.filter((event) => event.type === "stream_rule_triggered"),
+    ).toHaveLength(1);
+    expect(JSON.stringify(f.requests.at(-1)?.body.messages)).toContain(
+      "Report the actual counter value.",
+    );
+  }, 60000);
+  it("navigates before an edited user turn without summarizing discarded context or rewinding files", async () => {
+    const f = await setup();
+    const host = await f.launch();
+    f.behavior.completionText = "KEPT_ASSISTANT";
+    const kept = await host.request("prompt", "KEPT_USER");
+    expect(kept.success).toBe(true);
+    f.behavior.completionText = "DISCARDED_ASSISTANT";
+    const discarded = await host.request("prompt", "DISCARDED_USER");
+    const target = assertDefined(
+      assertDefined(discarded.result).sessionEntries,
+    );
+    expect(target.userEntryId).not.toBe(
+      assertDefined(assertDefined(kept.result).sessionEntries).userEntryId,
+    );
+    expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("2");
+    f.behavior.tool = "";
+    f.behavior.completionText = "EDITED_ASSISTANT";
+    const edited = await host.request("prompt", "EDITED_USER", f.context, {
+      navigateBeforeEntryId: target.userEntryId,
+    });
+    expect(edited.success).toBe(true);
+    const context = JSON.stringify(f.requests.at(-1)?.body);
+    expect(context).toContain("KEPT_USER");
+    expect(context).toContain("KEPT_ASSISTANT");
+    expect(context).toContain("EDITED_USER");
+    expect(context).not.toContain("DISCARDED_USER");
+    expect(context).not.toContain("DISCARDED_ASSISTANT");
+    expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("2");
+    const persisted = await readFile(
+      assertDefined(edited.result).state.sessionFile,
+      "utf8",
+    );
+    expect(persisted).toContain("DISCARDED_USER");
+    const retryTarget = assertDefined(
+      assertDefined(edited.result).sessionEntries,
+    ).userEntryId;
+    const retried = await host.request("prompt", "EDITED_USER", f.context, {
+      navigateBeforeEntryId: retryTarget,
+    });
+    expect(retried.success).toBe(true);
+    expect(
+      f.requests
+        .at(-1)
+        ?.body.messages.filter((message) => message.role === "user"),
+    ).toHaveLength(2);
+    const before = f.requests.length;
+    expect(
+      await host.request("prompt", "never sent", f.context, {
+        navigateBeforeEntryId: "missing-entry",
+      }),
+    ).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_ENTRY_NOT_FOUND" },
+    });
+    expect(f.requests).toHaveLength(before);
+  }, 60_000);
+
+  it("forks a user-only native tree durably into a separate session and continues only that prefix", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    const host = await f.launch();
+    const first = await host.request("prompt", "BRANCH_PREFIX");
+    await host.request("prompt", "EXCLUDED_BRANCH_SUFFIX");
+    const sourceFile = assertDefined(first.result).state.sessionFile;
+    const sourceBefore = await readFile(sourceFile, "utf8");
+    const targetRoot = `${f.root}-fork`;
+    cleanups.push(() => rm(targetRoot, { recursive: true, force: true }));
+    const target = {
+      workspaceRoot: targetRoot,
+      cwd: join(targetRoot, "workspace"),
+      sessionsDir: join(targetRoot, "sessions"),
+      statePath: join(targetRoot, "private", "state.json"),
+    };
+    await mkdir(join(targetRoot, "private"), { recursive: true });
+    const fork = await host.request("fork", undefined, f.context, {
+      entryId: assertDefined(assertDefined(first.result).sessionEntries)
+        .userEntryId,
+      target,
+    });
+    expect(fork).toMatchObject({
+      success: true,
+      result: {
+        fork: {
+          forked: true,
+          contextOnly: true,
+          filesRewound: false,
+          externalEffectsRewound: false,
+        },
+      },
+    });
+    expect(await readFile(sourceFile, "utf8")).toBe(sourceBefore);
+    const state = JSON.parse(await readFile(target.statePath, "utf8"));
+    expect(state).toMatchObject({
+      sessionPersisted: true,
+      agentRevisionId: "revision-one",
+    });
+    const branchFile = await readFile(state.sessionFile, "utf8");
+    expect(branchFile).toContain("BRANCH_PREFIX");
+    expect(branchFile).not.toContain("EXCLUDED_BRANCH_SUFFIX");
+    const branch = await f.launch({
+      ...target,
+      agentDir: join(targetRoot, "private"),
+      historyRequired: true,
+      resources: { extensions: [], skills: [], prompts: [], themes: [] },
+    });
+    expect(
+      (await branch.request("prompt", "BRANCH_CONTINUATION")).success,
+    ).toBe(true);
+    expect(JSON.stringify(f.requests.at(-1)?.body)).toContain("BRANCH_PREFIX");
+    expect(JSON.stringify(f.requests.at(-1)?.body)).not.toContain(
+      "EXCLUDED_BRANCH_SUFFIX",
+    );
+  }, 60_000);
+
+  it("injects steering only after the running native tool and changes the next model request", async () => {
+    const f = await setup();
+    const toolStarted = Promise.withResolvers<void>();
+    f.behavior.streamCompletion = async (response) => {
+      if (f.requests.length === 1) {
+        completion(
+          response,
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: "steer-tool",
+                type: "function",
+                function: {
+                  name: "bash",
+                  arguments: JSON.stringify({
+                    command:
+                      "while [ ! -f release-tool ]; do sleep 0.01; done; printf TOOL_FINISHED",
+                  }),
+                },
+              },
+            ],
+          },
+          "tool_calls",
+        );
+      } else {
+        const steered = JSON.stringify(
+          f.requests.at(-1)?.body.messages,
+        ).includes("STEER_NEW_DIRECTION");
+        completion(
+          response,
+          { content: steered ? "STEER_APPLIED" : "OLD_DIRECTION" },
+          "stop",
+        );
+      }
+    };
+    const host = await f.launch({ defaultTools: ["bash"] }, (event) => {
+      if (event.type === "tool_execution_start") toolStarted.resolve();
+    });
+    const run = host.request("prompt", "Run the waiting tool, then answer");
+    await toolStarted.promise;
+    const queued = await host.request("steer", "STEER_NEW_DIRECTION");
+    expect(queued).toMatchObject({
+      success: true,
+      result: {
+        disposition: "queued",
+        queue: {
+          pendingMessageCount: 1,
+          messages: [{ mode: "steer", text: "STEER_NEW_DIRECTION" }],
+        },
+      },
+    });
+    expect(
+      host.events.some((event) => event.type === "queued_message_consumed"),
+    ).toBe(false);
+    await writeFile(join(f.workspace, "release-tool"), "release");
+    const result = await run;
+    expect(result).toMatchObject({
+      success: true,
+      result: { text: "STEER_APPLIED" },
+    });
+    const toolEnd = host.events.findIndex(
+      (event) => event.type === "tool_execution_end",
+    );
+    const consumed = host.events.findIndex(
+      (event) => event.type === "queued_message_consumed",
+    );
+    expect(consumed).toBeGreaterThan(toolEnd);
+    expect(host.events[consumed]).toMatchObject({
+      message: { mode: "steer", text: "STEER_NEW_DIRECTION" },
+    });
+    expect(f.requests).toHaveLength(2);
+    expect(host.events).toContainEqual({
+      type: "message_queue",
+      queue: { messages: [], pendingMessageCount: 0 },
+    });
+    await host.stop();
+  }, 60_000);
+
+  it("runs follow-up after the assistant finishes and records actual consumption, not acceptance", async () => {
+    const f = await setup();
+    const firstRequest = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    f.behavior.streamCompletion = async (response) => {
+      if (f.requests.length === 1) {
+        firstRequest.resolve();
+        await release.promise;
+        completion(response, { content: "FIRST_TURN_FINISHED" }, "stop");
+      } else {
+        const followed = JSON.stringify(
+          f.requests.at(-1)?.body.messages,
+        ).includes("FOLLOW_UP_NOW");
+        completion(
+          response,
+          { content: followed ? "FOLLOW_UP_EXECUTED" : "MISSING_FOLLOW_UP" },
+          "stop",
+        );
+      }
+    };
+    const host = await f.launch();
+    expect(await host.request("steer", "idle")).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_QUEUE_NOT_RUNNING" },
+    });
+    const run = host.request("prompt", "Answer the first turn");
+    await firstRequest.promise;
+    expect(
+      await host.request("steer", "DISCARD_BEFORE_DELIVERY"),
+    ).toMatchObject({ success: true });
+    expect(await host.request("clear_queue")).toMatchObject({
+      success: true,
+      result: {
+        disposition: "cleared",
+        queue: { pendingMessageCount: 0, messages: [] },
+      },
+    });
+    const identity = {
+      messageId: "durable-follow-up",
+      deduplicate: true as const,
+    };
+    expect(
+      await host.request("follow_up", "FOLLOW_UP_NOW", f.context, identity),
+    ).toMatchObject({
+      success: true,
+      result: { disposition: "queued", queue: { pendingMessageCount: 1 } },
+    });
+    expect(
+      await host.request("follow_up", "FOLLOW_UP_NOW", f.context, identity),
+    ).toMatchObject({
+      success: true,
+      result: { disposition: "queued", queue: { pendingMessageCount: 1 } },
+    });
+    expect(
+      host.events.some((event) => event.type === "queued_message_consumed"),
+    ).toBe(false);
+    release.resolve();
+    const result = await run;
+    expect(result).toMatchObject({
+      success: true,
+      result: { text: "FOLLOW_UP_EXECUTED" },
+    });
+    expect(f.requests).toHaveLength(2);
+    expect(
+      host.events.filter((event) => event.type === "queued_message_consumed"),
+    ).toEqual([
+      expect.objectContaining({
+        assistantText: "FIRST_TURN_FINISHED",
+        message: expect.objectContaining({
+          mode: "follow_up",
+          text: "FOLLOW_UP_NOW",
+        }),
+      }),
+    ]);
+    const transcript = await readFile(
+      assertDefined(result.result).state.sessionFile,
+      "utf8",
+    );
+    expect(transcript.indexOf("FIRST_TURN_FINISHED")).toBeLessThan(
+      transcript.indexOf("FOLLOW_UP_NOW"),
+    );
+    expect(transcript.indexOf("FOLLOW_UP_NOW")).toBeLessThan(
+      transcript.indexOf("FOLLOW_UP_EXECUTED"),
+    );
+    await host.stop();
+  }, 60_000);
+  it("hides registered credentials from the provider while native bash receives real restored arguments", async () => {
+    const f = await setup();
+    const value = "fixture-registered-environment-secret";
+    f.behavior.secretObfuscator = new AgentSecretObfuscator({
+      SERVICE_TOKEN: value,
+    });
+    const placeholder = f.behavior.secretObfuscator.redact(value);
+    f.behavior.tool = "bash";
+    f.behavior.toolArgs = JSON.stringify({
+      command: `printf '%s' '${placeholder}' | tee secret-result.txt`,
+    });
+    f.behavior.completionText = `Used ${placeholder}`;
+    const model = {
+      ...f.config.model,
+      baseUrl: f.config.model.baseUrl.replace("/v1", "/secret-gateway/v1"),
+    };
+    const host = await f.launch({ defaultTools: ["bash"], model });
+    const result = await host.request(
+      "prompt",
+      `Use the requested tool with ${value}`,
+      { ...f.context, model },
+    );
+    expect(result.success).toBe(true);
+    expect(await readFile(join(f.workspace, "secret-result.txt"), "utf8")).toBe(
+      value,
+    );
+    expect(f.requests.length).toBeGreaterThanOrEqual(2);
+    // Includes the user's first prompt, restored assistant tool replay, and bash
+    // stdout in the second request. None may expose plaintext to the provider.
+    for (const request of f.requests) {
+      expect(JSON.stringify(request.body)).not.toContain(value);
+      expect(JSON.stringify(request.body)).toContain(placeholder);
+    }
+    await host.stop();
+  }, 60000);
+  it("runs two independent child SDK sessions concurrently with inherited authority and source-scoped results", async () => {
+    const f = await setup();
+    const waiting: ServerResponse[] = [];
+    f.behavior.modelResponse = (body, response) => {
+      const hasTask = body.tools?.some((tool) => tool.function.name === "task");
+      if (hasTask) {
+        if (body.messages.at(-1)?.role === "tool")
+          completion(response, { content: "TASK_PARENT_COMPLETE" }, "stop");
+        else
+          completion(
+            response,
+            {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "task-batch",
+                  type: "function",
+                  function: {
+                    name: "task",
+                    arguments: JSON.stringify({
+                      context: "SHARED_BACKGROUND",
+                      tasks: [
+                        {
+                          id: "alpha",
+                          description: "Alpha",
+                          prompt: "CHILD_ALPHA",
+                        },
+                        {
+                          id: "beta",
+                          description: "Beta",
+                          prompt: "CHILD_BETA",
+                        },
+                      ],
+                    }),
+                  },
+                },
+              ],
+            },
+            "tool_calls",
+          );
+        return;
+      }
+      // Pi extension tools are additive to defaultTools; inherit the actual parent loadout.
+      const parentTools = assertDefined(f.requests[0]?.body.tools)
+        .map((tool) => tool.function.name)
+        .filter((name) => name !== "task")
+        .sort();
+      expect(body.tools?.map((tool) => tool.function.name).sort()).toEqual(
+        parentTools,
+      );
+      expect(JSON.stringify(body.messages)).toContain("SHARED_BACKGROUND");
+      if (body.messages.at(-1)?.role === "tool") {
+        completion(response, { content: "CHILD_RESULT_1" }, "stop");
+        return;
+      }
+      waiting.push(response);
+      // A serial implementation never reaches this barrier and cannot complete.
+      if (waiting.length === 2)
+        waiting.forEach((child) => {
+          completion(
+            child,
+            {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "increment-child",
+                  type: "function",
+                  function: { name: "increment", arguments: "{}" },
+                },
+              ],
+            },
+            "tool_calls",
+          );
+        });
+    };
+    const host = await f.launch({
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/task.mjs"),
+      ],
+      defaultTools: ["task", "increment"],
+      nativeSubagentPolicy: { maxConcurrency: 2, maxDepth: 1 },
+    });
+    const result = await host.request("prompt", "Dispatch the children");
+    expect(result).toMatchObject({
+      success: true,
+      result: {
+        text: "TASK_PARENT_COMPLETE",
+        usage: { inputTokens: 120, outputTokens: 30 },
+      },
+    });
+    const taskEnd = host.events.find(
+      (event) =>
+        event.type === "tool_execution_end" &&
+        event.toolCallId === "task-batch",
+    );
+    expect(taskEnd).toMatchObject({
+      isError: false,
+      result: {
+        details: {
+          status: "completed",
+          results: [
+            {
+              id: "alpha",
+              status: "completed",
+              text: expect.stringMatching(/^CHILD_RESULT_[01]$/),
+            },
+            {
+              id: "beta",
+              status: "completed",
+              text: expect.stringMatching(/^CHILD_RESULT_[01]$/),
+            },
+          ],
+        },
+      },
+    });
+    const childEvents = host.events.filter((event) => event.source);
+    const sources = childEvents.map((event) =>
+      TaskSourceSchema.parse(event.source),
+    );
+    expect(new Set(sources.map((source) => source.subagentId)).size).toBe(2);
+    const increments = childEvents.filter(
+      (event) =>
+        event.type === "tool_execution_end" && event.toolName === "increment",
+    );
+    expect(increments).toHaveLength(2);
+    for (const event of increments)
+      expect(event.result).toMatchObject({ details: { count: 1 } });
+    const liveId = randomUUID();
+    startTaskOutput(liveId);
+    for (const event of childEvents)
+      expect(event.source).toMatchObject({
+        parentToolCallId: "task-batch",
+        depth: 1,
+      });
+    for (const event of childEvents) {
+      const parsed = parsePiStreamLine(JSON.stringify(event));
+      expect(parsed?.delta).toBeUndefined();
+      for (const activity of parsed?.activities ?? [])
+        expect(activity.source).toMatchObject(
+          TaskSourceSchema.parse(event.source),
+        );
+      for (const activity of parsed?.activities ?? [])
+        publishTaskActivity(liveId, activity);
+    }
+    const liveTools = assertDefined(taskOutput(liveId)).activities.filter(
+      (activity) => activity.toolName === "increment",
+    );
+    expect(liveTools).toHaveLength(2);
+    expect(liveTools.every((activity) => activity.status === "completed")).toBe(
+      true,
+    );
+    finishTaskOutput(liveId, "completed");
+    const childDirs = await readdir(join(f.workspace, ".toolplane-subagents"));
+    expect(childDirs).toHaveLength(2);
+    for (const directory of childDirs) {
+      const files = await readdir(
+        join(f.workspace, ".toolplane-subagents", directory),
+      );
+      const transcript = await readFile(
+        join(
+          f.workspace,
+          ".toolplane-subagents",
+          directory,
+          assertDefined(files.find((file) => file.endsWith(".jsonl"))),
+        ),
+        "utf8",
+      );
+      expect(JSON.parse(transcript.split("\n")[0]).cwd).toBe(f.workspace);
+    }
+    expect(
+      f.requests.every(
+        (request) => request.authorization === "Bearer test-runtime-first",
+      ),
+    ).toBe(true);
+    await host.stop();
+  }, 60000);
+
+  it.each([false, true])(
+    "isolates a failed child and cascades parent abort (abort=%s)",
+    async (abort) => {
+      const f = await setup();
+      const ready = Promise.withResolvers<void>();
+      let childRequests = 0;
+      f.behavior.modelResponse = (body, response) => {
+        if (body.tools?.some((tool) => tool.function.name === "task")) {
+          if (body.messages.at(-1)?.role === "tool") {
+            completion(response, { content: "PARENT_RECOVERED" }, "stop");
+            return;
+          }
+          completion(
+            response,
+            {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "task-batch",
+                  type: "function",
+                  function: {
+                    name: "task",
+                    arguments: JSON.stringify({
+                      tasks: [
+                        { id: "one", description: "One", prompt: "One child" },
+                        { id: "two", description: "Two", prompt: "Two child" },
+                      ],
+                    }),
+                  },
+                },
+              ],
+            },
+            "tool_calls",
+          );
+        } else {
+          childRequests++;
+          if (childRequests === 2) ready.resolve();
+          if (abort) return;
+          if (childRequests === 1) {
+            response.writeHead(503);
+            response.end("private-provider-secret");
+          } else completion(response, { content: "SURVIVING_CHILD" }, "stop");
+        }
+      };
+      const host = await f.launch({
+        optionalBuiltinExtensions: [
+          resolve("scripts/pi-optional-tools/task.mjs"),
+        ],
+        defaultTools: ["task"],
+        nativeSubagentPolicy: { maxConcurrency: 2, maxDepth: 1 },
+      });
+      const pending = host.request("prompt", "Dispatch children");
+      await ready.promise;
+      if (abort)
+        expect(await host.request("abort")).toMatchObject({ success: true });
+      const result = await pending;
+      expect(result).toMatchObject(
+        abort
+          ? { success: false, error: { code: "PI_SDK_ABORTED" } }
+          : { success: true, result: { text: "PARENT_RECOVERED" } },
+      );
+      const ended = host.events.filter(
+        (event) => event.type === "tool_execution_end" && event.source,
+      );
+      expect(ended).toHaveLength(2);
+      const statuses = ended.map(
+        (event) => z.object({ status: z.string() }).parse(event.result).status,
+      );
+      expect(statuses.sort()).toEqual(
+        abort ? ["cancelled", "cancelled"] : ["completed", "failed"],
+      );
+      if (!abort)
+        expect(
+          host.events.find(
+            (event) =>
+              event.type === "tool_execution_end" &&
+              event.toolCallId === "task-batch",
+          ),
+        ).toMatchObject({
+          isError: true,
+          result: { details: { status: "partial_failure" } },
+        });
+      expect(JSON.stringify(host.events)).not.toContain(
+        "private-provider-secret",
+      );
+      await host.stop();
+    },
+    60000,
+  );
+  it("preserves bounded JPEG tool content through SDK events, live output and saved history without Chromium", async () => {
+    const f = await setup();
+    // Valid one-pixel JPEG with a legal comment segment larger than the old
+    // text-output cutoff. This tests transport, not browser rendering.
+    const pixel = Buffer.from(
+      "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAABv/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AJIAxFX/2Q==",
+      "base64",
+    );
+    const comment = Buffer.alloc(24_004, 0x5a);
+    comment.writeUInt16BE(0xfffe, 0);
+    comment.writeUInt16BE(comment.length - 2, 2);
+    const jpeg = Buffer.concat([
+      pixel.subarray(0, 2),
+      comment,
+      pixel.subarray(2),
+    ]);
+    expect(jpeg.length).toBeLessThanOrEqual(150 * 1024);
+    const result = {
+      content: [
+        {
+          type: "image",
+          mimeType: "image/jpeg",
+          data: jpeg.toString("base64"),
+        },
+      ],
+      details: { width: 1, height: 1, bytes: jpeg.length },
+    };
+    expect(JSON.stringify(result).length).toBeGreaterThan(20_000);
+    const extension = join(f.workspace, "image-fixture.mjs");
+    await writeFile(
+      extension,
+      `export default pi=>pi.registerTool({name:'browser',label:'Image fixture',description:'Return a bounded JPEG transport fixture',parameters:{type:'object',properties:{}},async execute(){return ${JSON.stringify(result)};}});`,
+    );
+    const events: Array<Record<string, unknown>> = [];
+    const taskId = `image-transport-${randomUUID()}`;
+    startTaskOutput(taskId);
+    f.behavior.tool = "browser";
+    const host = await f.launch(
+      {
+        optionalBuiltinExtensions: [extension],
+        defaultTools: ["browser"],
+      },
+      (event) => {
+        events.push(event);
+        for (const activity of parsePiStreamLine(JSON.stringify(event))
+          ?.activities ?? [])
+          publishTaskActivity(taskId, activity);
+      },
+    );
+    try {
+      const response = await host.request(
+        "prompt",
+        "Return the JPEG transport fixture",
+      );
+      expect(response.success).toBe(true);
+      const event = events.find(
+        (entry) =>
+          entry.type === "tool_execution_end" && entry.toolName === "browser",
+      );
+      expect(event).toMatchObject({ isError: false, result });
+      const activity = taskOutput(taskId)?.activities.findLast(
+        (entry) => entry.type === "tool" && entry.toolName === "browser",
+      );
+      expect(activity?.output).toEqual(result);
+      const history = (
+        await readFile(assertDefined(response.result).state.sessionFile, "utf8")
+      )
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      const saved = history.find(
+        (entry) =>
+          entry.type === "message" &&
+          entry.message?.role === "toolResult" &&
+          entry.message.toolName === "browser",
+      );
+      expect(saved?.message.content).toEqual(result.content);
+      expect(saved?.message.details).toEqual(result.details);
+    } finally {
+      finishTaskOutput(taskId, "completed");
+      await host.stop();
+    }
+  }, 60_000);
+
+  it.skipIf(!process.env.TOOLPLANE_CHROMIUM_PATH)(
+    "preserves real browser screenshot images through native SDK events, live output and saved history",
+    async () => {
+      const f = await setup();
+      const html = join(f.workspace, "browser.html");
+      await writeFile(
+        html,
+        `<!doctype html><canvas width="400" height="300"></canvas><script>const c=document.querySelector('canvas').getContext('2d');const d=c.createImageData(400,300);let n=17;for(let i=0;i<d.data.length;i+=4){for(let j=0;j<3;j++){n=(n*1664525+1013904223)>>>0;d.data[i+j]=n>>>24;}d.data[i+3]=255;}c.putImageData(d,0,0);</script>`,
+      );
+      const events: Array<Record<string, unknown>> = [];
+      const taskId = `browser-image-${randomUUID()}`;
+      startTaskOutput(taskId);
+      f.behavior.tool = "browser";
+      f.behavior.toolArgs = JSON.stringify({
+        action: "open",
+        url: `file://${html}`,
+      });
+      const host = await f.launch(
+        {
+          optionalBuiltinExtensions: [
+            resolve("scripts/pi-optional-tools/browser.mjs"),
+          ],
+          defaultTools: ["browser"],
+          browserNetwork: "isolated",
+        },
+        (event) => {
+          events.push(event);
+          for (const activity of parsePiStreamLine(JSON.stringify(event))
+            ?.activities ?? [])
+            publishTaskActivity(taskId, activity);
+        },
+      );
+      expect((await host.request("prompt", "Open local HTML")).success).toBe(
+        true,
+      );
+      events.length = 0;
+      f.behavior.toolArgs = JSON.stringify({ action: "screenshot" });
+      const response = await host.request("prompt", "Capture screenshot");
+      expect(response.success).toBe(true);
+      const imageEvent = events.find(
+        (event) =>
+          event.type === "tool_execution_end" && event.toolName === "browser",
+      );
+      expect(imageEvent).toMatchObject({
+        isError: false,
+        result: {
+          content: [
+            {
+              type: "image",
+              mimeType: "image/jpeg",
+              data: expect.stringMatching(/^\/9j\//),
+            },
+          ],
+        },
+      });
+      const serialized = JSON.stringify(imageEvent?.result);
+      expect(serialized.length).toBeGreaterThan(20_000);
+      expect(serialized.length).toBeLessThan(206_000);
+      const imageActivity = taskOutput(taskId)?.activities.findLast(
+        (activity) =>
+          activity.type === "tool" && activity.toolName === "browser",
+      );
+      expect(imageActivity?.output).toEqual(imageEvent?.result);
+      expect(
+        await readFile(
+          assertDefined(response.result).state.sessionFile,
+          "utf8",
+        ),
+      ).toContain('"mimeType":"image/jpeg"');
+      f.behavior.toolArgs = JSON.stringify({ action: "close" });
+      expect((await host.request("prompt", "Close browser")).success).toBe(
+        true,
+      );
+      finishTaskOutput(taskId, "completed");
+      await host.stop();
+    },
+    60_000,
+  );
+
   it("keeps Python imports from changing skill files across continued native turns", async () => {
     const f = await setup();
     const skill = join(f.workspace, "python-skill");
@@ -910,10 +1966,30 @@ describe("official Pi SDK headless session host", () => {
     const compacted = await host.request(
       "prompt",
       "/compact retain the native compaction marker",
+      {
+        ...f.context,
+        roleModels: {
+          compaction: {
+            ...f.config.model,
+            provider: "toolplane-summary",
+            id: "summary",
+            toolplaneProviderId: "summary",
+            baseUrl: f.config.model.baseUrl.replace("/v1", "/summary/v1"),
+          },
+        },
+      },
     );
     expect(compacted.success).toBe(true);
     const result = assertDefined(compacted.result);
     expect(result.text).toContain("NATIVE_SUMMARY_FROM_PROVIDER");
+    expect(result.actualModel).toEqual({
+      providerId: "summary",
+      model: "summary",
+    });
+    expect(f.requests.at(-1)).toMatchObject({
+      path: "/summary/v1/chat/completions",
+      body: { model: "summary" },
+    });
     expect(result.commandResult).toEqual({
       command: "compact",
       text: result.text,
@@ -938,6 +2014,7 @@ describe("official Pi SDK headless session host", () => {
       "Continue the compacted session",
     );
     expect(continued.success).toBe(true);
+    expect(f.requests.at(-1)?.body.model).toBe("controlled");
     expect(assertDefined(continued.result).state).toMatchObject({
       sessionId: original.sessionId,
       sessionFile: original.sessionFile,
@@ -1075,6 +2152,401 @@ describe("official Pi SDK headless session host", () => {
       success: false,
     });
     expect(f.requests).toEqual([]);
+  }, 60000);
+  it("loads an explicitly enabled optional extension through the native SDK", async () => {
+    const f = await setup();
+    // Reuse the real counter extension, but load it via the optional-host config path.
+    const host = await f.launch({
+      resources: { ...f.config.resources, extensions: [] },
+      optionalBuiltinExtensions: [f.extension],
+      defaultTools: ["increment"],
+    });
+    expect(await host.request("prompt", "Use increment")).toMatchObject({
+      success: true,
+    });
+    expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("1");
+    await host.stop();
+  }, 60000);
+  it("emits unified edit patches independently of the bounded tool output", async () => {
+    const f = await setup();
+    await writeFile(join(f.workspace, "edit.txt"), "before\n");
+    f.behavior.tool = "edit";
+    f.behavior.toolArgs = JSON.stringify({
+      path: "edit.txt",
+      edits: [{ oldText: "before", newText: "after" }],
+    });
+    const host = await f.launch({ defaultTools: ["edit"] });
+    expect((await host.request("prompt", "Edit the file")).success).toBe(true);
+    expect(await readFile(join(f.workspace, "edit.txt"), "utf8")).toBe(
+      "after\n",
+    );
+    expect(host.events).toContainEqual(
+      expect.objectContaining({
+        type: "tool_execution_end",
+        toolName: "edit",
+        truncated: false,
+        patch: expect.stringMatching(/@@[\s\S]*-before[\s\S]*\+after/),
+        firstChangedLine: 1,
+      }),
+    );
+    f.behavior.toolArgs = JSON.stringify({
+      path: "edit.txt",
+      edits: [
+        {
+          oldText: "after",
+          newText: `${f.context.runtimeToken}\n${"变".repeat(30_000)}`,
+        },
+      ],
+    });
+    expect((await host.request("prompt", "Make a large edit")).success).toBe(
+      true,
+    );
+    const last = host.events
+      .filter((event) => event.type === "tool_execution_end")
+      .at(-1);
+    expect(last).toMatchObject({ toolName: "edit", truncated: true });
+    expect(Buffer.byteLength(String(last?.patch))).toBeLessThanOrEqual(65_536);
+    expect(String(last?.patch)).toContain("[REDACTED]");
+    expect(String(last?.patch)).not.toContain(f.context.runtimeToken);
+    expect(String(last?.patch)).not.toContain("\uFFFD");
+  }, 60000);
+  it.each(["python", "javascript"] as const)(
+    "retains %s eval variables across turns, interrupts timeouts and resets explicitly",
+    async (language) => {
+      const f = await setup();
+      f.behavior.tool = "eval";
+      const host = await f.launch({
+        optionalBuiltinExtensions: [
+          resolve("scripts/pi-optional-tools/eval.mjs"),
+        ],
+        defaultTools: ["eval"],
+      });
+      const cell = async (code: string, options = {}) => {
+        f.behavior.toolArgs = JSON.stringify({ language, code, ...options });
+        const response = await host.request("prompt", "Execute this eval cell");
+        // A failed cell must stay a tool result, not fail or lose the native turn.
+        expect(response.success, JSON.stringify(response)).toBe(true);
+        const event = host.events.findLast(
+          (event) =>
+            event.type === "tool_execution_end" && event.toolName === "eval",
+        );
+        expect(event).toBeDefined();
+        return event;
+      };
+      expect(
+        await cell(
+          language === "python"
+            ? "counter = 41\nprint('initialized')"
+            : "let counter = 41; console.log('initialized')",
+        ),
+      ).toMatchObject({
+        isError: false,
+        result: { details: { language, output: "initialized\n" } },
+      });
+      expect(
+        await cell(
+          language === "python"
+            ? "counter += 1\ncounter"
+            : "counter += 1; counter",
+        ),
+      ).toMatchObject({
+        result: { details: { output: "42\n" } },
+      });
+      expect(
+        await cell(
+          language === "python" ? "while True: pass" : "while (true) {}",
+          { timeoutSeconds: 1 },
+        ),
+      ).toMatchObject({
+        isError: true,
+        result: { details: { reason: "EVAL_TIMEOUT" } },
+      });
+      const recovered = await cell("counter");
+      expect(recovered, JSON.stringify(recovered)).toMatchObject({
+        isError: false,
+        result: { details: { output: "42\n" } },
+      });
+      expect(
+        await cell(
+          language === "python" ? "'counter' in globals()" : "typeof counter",
+          { reset: true },
+        ),
+      ).toMatchObject({
+        isError: false,
+        result: {
+          details: {
+            stateReset: true,
+            output: language === "python" ? "False\n" : "undefined\n",
+          },
+        },
+      });
+      await host.stop();
+    },
+    60000,
+  );
+
+  it("discloses eval state loss after a host restart without losing the native session", async () => {
+    const f = await setup();
+    const options = {
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/eval.mjs"),
+      ],
+      defaultTools: ["eval"],
+    };
+    f.behavior.tool = "eval";
+    f.behavior.toolArgs = JSON.stringify({
+      language: "javascript",
+      code: "let retained = 7",
+    });
+    const first = await f.launch(options);
+    const initial = await first.request("prompt", "Initialize eval state");
+    expect(initial.success).toBe(true);
+    await first.stop();
+    f.behavior.toolArgs = JSON.stringify({
+      language: "javascript",
+      code: "typeof retained",
+    });
+    const resumed = await f.launch({ ...options, historyRequired: true });
+    const result = await resumed.request(
+      "prompt",
+      "Continue after restarting host",
+    );
+    expect(result).toMatchObject({
+      success: true,
+      result: {
+        state: { sessionId: assertDefined(initial.result).state.sessionId },
+      },
+    });
+    expect(resumed.events).toContainEqual(
+      expect.objectContaining({
+        type: "tool_execution_end",
+        toolName: "eval",
+        isError: false,
+        result: expect.objectContaining({
+          details: expect.objectContaining({
+            stateReset: true,
+            notice: expect.any(String),
+            output: "undefined\n",
+          }),
+        }),
+      }),
+    );
+    await resumed.stop();
+  }, 60000);
+
+  it("restarts an uninterruptible Python eval cell and explicitly reports lost state", async () => {
+    const f = await setup();
+    f.behavior.tool = "eval";
+    f.behavior.toolArgs = JSON.stringify({
+      language: "python",
+      code: "import signal\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\nwhile True: pass",
+      timeoutSeconds: 1,
+    });
+    const host = await f.launch({
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/eval.mjs"),
+      ],
+      defaultTools: ["eval"],
+    });
+    expect(
+      (await host.request("prompt", "Interrupt a noncooperative cell")).success,
+    ).toBe(true);
+    expect(host.events).toContainEqual(
+      expect.objectContaining({
+        type: "tool_execution_end",
+        toolName: "eval",
+        isError: true,
+        result: expect.objectContaining({
+          details: expect.objectContaining({
+            reason: "EVAL_TIMEOUT",
+            stateReset: true,
+            notice: expect.any(String),
+          }),
+        }),
+      }),
+    );
+    f.behavior.toolArgs = JSON.stringify({ language: "python", code: "6 * 7" });
+    expect(
+      (await host.request("prompt", "Use the replacement kernel")).success,
+    ).toBe(true);
+    expect(
+      host.events.findLast((event) => event.type === "tool_execution_end"),
+    ).toMatchObject({
+      isError: false,
+      result: {
+        details: {
+          output: "42\n",
+          stateReset: true,
+          notice: expect.any(String),
+        },
+      },
+    });
+    await host.stop();
+  }, 60000);
+
+  it("bounds retained eval output while draining both standard output streams", async () => {
+    const f = await setup();
+    f.behavior.tool = "eval";
+    f.behavior.toolArgs = JSON.stringify({
+      language: "python",
+      code: "import sys\nprint('x' * 100000)\nprint('stderr', file=sys.stderr)\n42",
+    });
+    const host = await f.launch({
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/eval.mjs"),
+      ],
+      defaultTools: ["eval"],
+    });
+    const result = await host.request("prompt", "Bound a large cell output");
+    expect(result.success).toBe(true);
+    const entries = (
+      await readFile(assertDefined(result.result).state.sessionFile, "utf8")
+    )
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    const message = entries.findLast(
+      (entry) =>
+        entry.type === "message" &&
+        entry.message.role === "toolResult" &&
+        entry.message.toolName === "eval",
+    ).message;
+    expect(message.isError).toBe(false);
+    expect(message.details.truncated).toBe(true);
+    expect(Buffer.byteLength(message.details.output)).toBeLessThanOrEqual(
+      50 * 1024,
+    );
+    await host.stop();
+  }, 60000);
+
+  it("cascades native abort into the Python cell and retains the interrupted kernel", async () => {
+    const f = await setup();
+    f.behavior.tool = "eval";
+    f.behavior.toolArgs = JSON.stringify({
+      language: "python",
+      code: "from pathlib import Path\nretained = 42\nPath('eval-started').write_text('ready')\nwhile True: pass",
+    });
+    const host = await f.launch({
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/eval.mjs"),
+      ],
+      defaultTools: ["eval"],
+    });
+    const watcher = watch(f.workspace);
+    cleanups.push(async () => {
+      watcher.close();
+    });
+    const started = once(watcher, "change");
+    const turn = host.request("prompt", "Abort this running cell");
+    await started;
+    watcher.close();
+    expect((await host.request("abort")).success).toBe(true);
+    expect(await turn).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_ABORTED" },
+    });
+    f.behavior.toolArgs = JSON.stringify({
+      language: "python",
+      code: "retained",
+    });
+    expect((await host.request("prompt", "Continue after abort")).success).toBe(
+      true,
+    );
+    expect(
+      host.events.findLast((event) => event.type === "tool_execution_end"),
+    ).toMatchObject({
+      isError: false,
+      result: { details: { output: "42\n" } },
+    });
+    await host.stop();
+  }, 60000);
+
+  it("returns a fixed failed tool result when the sandbox has no python3", async () => {
+    const f = await setup();
+    const environmentExtension = join(f.workspace, "without-python.mjs");
+    await writeFile(
+      environmentExtension,
+      `export default pi => { pi.on('session_start', () => { process.env.PATH = ${JSON.stringify(join(f.root, "no-executables"))}; }); };`,
+    );
+    f.behavior.tool = "eval";
+    f.behavior.toolArgs = JSON.stringify({ language: "python", code: "42" });
+    const host = await f.launch({
+      resources: { ...f.config.resources, extensions: [environmentExtension] },
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/eval.mjs"),
+      ],
+      defaultTools: ["eval"],
+    });
+    expect(
+      (await host.request("prompt", "Use unavailable Python")).success,
+    ).toBe(true);
+    expect(
+      host.events.findLast((event) => event.type === "tool_execution_end"),
+    ).toMatchObject({
+      isError: true,
+      result: { details: { reason: "EVAL_PYTHON_UNAVAILABLE" } },
+    });
+    await host.stop();
+  }, 60000);
+  it("debugs a real Node program through the optional native SDK tool and releases it at agent end", async () => {
+    const f = await setup();
+    const program = join(f.workspace, "debug-fixture.cjs");
+    await writeFile(
+      program,
+      "const value = 40;\nconst answer = value + 2;\nconsole.log(answer);\n",
+    );
+    const actions = [
+      { action: "launch", program, language: "node" },
+      { action: "set_breakpoints", file: program, lines: [3] },
+      { action: "continue" },
+      { action: "evaluate", expr: "answer" },
+      { action: "continue" },
+    ];
+    let next = 0;
+    f.behavior.streamCompletion = async (response) => {
+      const action = actions[next++];
+      if (action)
+        completion(
+          response,
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: `debug-${next}`,
+                type: "function",
+                function: { name: "debug", arguments: JSON.stringify(action) },
+              },
+            ],
+          },
+          "tool_calls",
+        );
+      else completion(response, { content: "DEBUG_COMPLETE" }, "stop");
+    };
+    const host = await f.launch({
+      resources: { ...f.config.resources, extensions: [] },
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/debug.mjs"),
+      ],
+      defaultTools: ["debug"],
+    });
+    const response = await host.request("prompt", "Debug the program");
+    expect(response).toMatchObject({
+      success: true,
+      result: { text: "DEBUG_COMPLETE" },
+    });
+    const results = host.events.filter(
+      (event) =>
+        event.type === "tool_execution_end" && event.toolName === "debug",
+    );
+    expect(results).toHaveLength(actions.length);
+    expect(results.some((event) => event.isError)).toBe(false);
+    const history = await readFile(
+      assertDefined(response.result).state.sessionFile,
+      "utf8",
+    );
+    expect(history).toContain('\\"value\\":\\"42\\"');
+    expect(history).toContain('\\"state\\":\\"terminated\\"');
+    await host.stop();
   }, 60000);
   it("runs real tools, preserves custom branch state on restart and isolates stdout", async () => {
     const f = await setup(),
@@ -1468,6 +2940,56 @@ describe("official Pi SDK headless session host", () => {
     );
     expect(f.requests).toHaveLength(2);
   }, 60000);
+  it.each(["denied", "expired"])(
+    "keeps a real native turn successful after %s tool approval",
+    async (status) => {
+      const f = await setup();
+      f.behavior.approvalStatus = status === "expired" ? "pending" : "denied";
+      f.behavior.approvalExpired = status === "expired";
+      const host = await f.launch();
+      const result = await host.request("prompt", "Use increment", {
+        ...f.context,
+        toolApprovalBridge: true,
+      });
+      expect(result).toMatchObject({
+        success: true,
+        result: { state: { sessionPersisted: true }, text: "SDK_COMPLETE" },
+      });
+      await expect(
+        readFile(join(f.workspace, "count.txt"), "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      expect(JSON.stringify(f.requests.at(-1)?.body.messages)).toContain(
+        "TOOL_APPROVAL_DENIED: Tool execution was not approved.",
+      );
+      expect(host.events).toContainEqual(
+        expect.objectContaining({
+          type: "tool_execution_end",
+          toolName: "increment",
+          isError: true,
+        }),
+      );
+    },
+    60000,
+  );
+  it("executes an approved native call once with the captured parameters", async () => {
+    const f = await setup();
+    const host = await f.launch();
+    expect(
+      await host.request("prompt", "Use increment", {
+        ...f.context,
+        toolApprovalBridge: true,
+      }),
+    ).toMatchObject({ success: true });
+    expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("1");
+    expect(host.events).toContainEqual(
+      expect.objectContaining({
+        type: "tool_execution_end",
+        toolName: "increment",
+        isError: false,
+      }),
+    );
+  }, 60000);
+
   it("keeps the turn alive after a failed tool call, retains reload failure, and rejects outside dynamic resource paths", async () => {
     const f = await setup();
     f.behavior.tool = "fail_tool";
@@ -1914,6 +3436,24 @@ describe("official Pi SDK headless session host", () => {
       error: { code: "PI_SDK_MODEL_FAILED", reason: "HTTP_503" },
     });
     expect(JSON.stringify(unavailable)).not.toContain("upstream-secret");
+    f.behavior.streamCompletion = async (response) => {
+      response.writeHead(500, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          error: {
+            type: "api_error",
+            code: "TOOLPLANE_MODEL_GATEWAY_FAILED",
+            message: "TOOLPLANE_MODEL_GATEWAY_FAILED",
+          },
+        }),
+      );
+    };
+    expect(
+      await host.request("prompt", "Gateway internal failure"),
+    ).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "GATEWAY_ERROR" },
+    });
     const closed = createServer();
     await once(closed.listen(0, "127.0.0.1"), "listening");
     const { port } = closed.address() as { port: number };
@@ -1969,5 +3509,348 @@ describe("official Pi SDK headless session host", () => {
       error: { code: "PI_SDK_MODEL_FAILED", reason: "EMPTY_STREAM" },
     });
     expect(f.requests).toHaveLength(5);
+  }, 60000);
+  it("exhausts same-model retries before switching gateways without duplicating the prompt, then resets next turn", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    f.behavior.streamCompletion = async (response) => {
+      if (f.requests.at(-1)?.body.model === "controlled") {
+        response.writeHead(503, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({ error: { message: "private upstream outage" } }),
+        );
+      } else completion(response, { content: "FALLBACK_RECOVERED" }, "stop");
+    };
+    const host = await f.launch();
+    const result = await host.request("prompt", "Use the fallback", {
+      ...f.context,
+      model: { ...f.config.model, toolplaneProviderId: "primary" },
+      modelRetries: 1,
+      fallbackModels: [
+        {
+          ...f.config.model,
+          provider: "toolplane-secondary",
+          id: "backup",
+          toolplaneProviderId: "secondary",
+          baseUrl: f.config.model.baseUrl.replace("/v1", "/secondary/v1"),
+        },
+      ],
+    });
+    expect(result).toMatchObject({
+      success: true,
+      result: {
+        text: "FALLBACK_RECOVERED",
+        actualModel: { providerId: "secondary", model: "backup" },
+        usage: {
+          actualModel: { providerId: "secondary", model: "backup" },
+          modelUsage: expect.arrayContaining([
+            expect.objectContaining({
+              providerId: "secondary",
+              model: "backup",
+              inputTokens: 20,
+            }),
+          ]),
+        },
+      },
+    });
+    expect(f.requests.map((request) => request.body.model)).toEqual([
+      "controlled",
+      "controlled",
+      "backup",
+    ]);
+    expect(f.requests.at(-1)?.path).toBe("/secondary/v1/chat/completions");
+    for (const request of f.requests)
+      expect(
+        request.body.messages.filter((message) => message.role === "user"),
+      ).toHaveLength(1);
+    f.behavior.streamCompletion = undefined;
+    expect(await host.request("prompt", "Next turn")).toMatchObject({
+      success: true,
+    });
+    expect(f.requests.at(-1)?.body.model).toBe("controlled");
+  }, 60000);
+  it("never switches models or replays a native tool after its execution starts", async () => {
+    const f = await setup();
+    f.behavior.streamCompletion = async (response) => {
+      if (f.requests.at(-1)?.body.messages.at(-1)?.role === "tool") {
+        response.writeHead(503, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "unavailable" } }));
+      } else
+        completion(
+          response,
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: "once",
+                type: "function",
+                function: { name: "increment", arguments: "{}" },
+              },
+            ],
+          },
+          "tool_calls",
+        );
+    };
+    const result = await (await f.launch()).request(
+      "prompt",
+      "Increment once",
+      { ...f.context, fallbackModels: [{ ...f.config.model, id: "backup" }] },
+    );
+    expect(result).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "HTTP_503" },
+    });
+    expect(f.requests.map((request) => request.body.model)).toEqual([
+      "controlled",
+      "controlled",
+    ]);
+    expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("1");
+  }, 60000);
+  it("does not use fallback for a non-retryable provider rejection", async () => {
+    const f = await setup();
+    f.behavior.streamCompletion = async (response) => {
+      response.writeHead(401);
+      response.end(JSON.stringify({ error: { message: "private rejection" } }));
+    };
+    const result = await (await f.launch()).request("prompt", "Rejected", {
+      ...f.context,
+      fallbackModels: [{ ...f.config.model, id: "backup" }],
+    });
+    expect(result).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "HTTP_401" },
+    });
+    expect(f.requests).toHaveLength(1);
+    expect(JSON.stringify(result)).not.toContain("private rejection");
+  }, 60000);
+
+  it("rewinds real native tool results out of the next model request while retaining the report and abandoned tree across resume", async () => {
+    const f = await setup();
+    const options = {
+      optionalBuiltinExtensions: ["checkpoint", "rewind", "context_notes"].map(
+        (name) => resolve(`scripts/pi-optional-tools/${name}.mjs`),
+      ),
+      defaultTools: ["checkpoint", "rewind", "context_notes", "bash"],
+    };
+    let host = await f.launch(options);
+    const invoke = async (name: string, args: Record<string, unknown>) => {
+      let sent = false;
+      f.behavior.streamCompletion = async (response) => {
+        if (sent)
+          return completion(
+            response,
+            { content: "CONTINUE_FROM_REPORT" },
+            "stop",
+          );
+        sent = true;
+        completion(
+          response,
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: randomUUID(),
+                type: "function",
+                function: { name, arguments: JSON.stringify(args) },
+              },
+            ],
+          },
+          "tool_calls",
+        );
+      };
+      const result = await host.request("prompt", `Use ${name}`);
+      expect(
+        result,
+        JSON.stringify({ result, output: host.output() }),
+      ).toMatchObject({ success: true });
+      return result;
+    };
+    await invoke("context_notes", {
+      action: "add",
+      text: "CHECKPOINT_BRANCH_NOTE",
+    });
+    await invoke("checkpoint", { goal: "Explore and report" });
+    await invoke("bash", { command: "printf 'ABANDONED_NATIVE_RESULT_ONE'" });
+    await invoke("bash", { command: "printf 'ABANDONED_NATIVE_RESULT_TWO'" });
+    await invoke("context_notes", {
+      action: "add",
+      text: "ABANDONED_BRANCH_NOTE",
+    });
+    await host.stop();
+    host = await f.launch({ ...options, historyRequired: true });
+    const report = "RETAINED_FINDINGS: exploration established the safe path.";
+    const rewound = await invoke("rewind", { report });
+    const nextProviderContext = JSON.stringify(
+      f.requests.at(-1)?.body.messages,
+    );
+    expect(nextProviderContext).toContain(report);
+    expect(nextProviderContext).not.toContain("ABANDONED_NATIVE_RESULT_ONE");
+    expect(nextProviderContext).not.toContain("ABANDONED_NATIVE_RESULT_TWO");
+    expect(nextProviderContext).toContain("CHECKPOINT_BRANCH_NOTE");
+    expect(nextProviderContext).not.toContain("ABANDONED_BRANCH_NOTE");
+    expect(host.events).toContainEqual(
+      expect.objectContaining({
+        type: "context_maintenance",
+        marker: expect.objectContaining({ kind: "rewind", report }),
+      }),
+    );
+    const journal = await readFile(
+      assertDefined(rewound.result).state.sessionFile,
+      "utf8",
+    );
+    expect(journal).toContain("ABANDONED_NATIVE_RESULT_ONE");
+    expect(journal).toContain("ABANDONED_NATIVE_RESULT_TWO");
+    expect(journal).toContain('"type":"branch_summary"');
+    await host.stop();
+    host = await f.launch({ ...options, historyRequired: true });
+    f.behavior.streamCompletion = async (response) =>
+      completion(response, { content: "RESUMED_REPORT" }, "stop");
+    expect(await host.request("prompt", "Continue after rewind")).toMatchObject(
+      { success: true },
+    );
+    const resumedContext = JSON.stringify(f.requests.at(-1)?.body.messages);
+    expect(resumedContext).toContain(report);
+    expect(resumedContext).not.toContain("ABANDONED_NATIVE_RESULT_ONE");
+    expect(resumedContext).not.toContain("ABANDONED_NATIVE_RESULT_TWO");
+    expect(resumedContext).toContain("CHECKPOINT_BRANCH_NOTE");
+    expect(resumedContext).not.toContain("ABANDONED_BRANCH_NOTE");
+    await host.stop();
+  }, 60000);
+
+  it("generates a handoff with the admitted model, commits compaction, and preserves branch notes through compaction and resume", async () => {
+    const f = await setup();
+    const options = {
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/context_notes.mjs"),
+      ],
+      defaultTools: ["context_notes"],
+    };
+    let host = await f.launch(options);
+    const note = "PERSISTENT_BRANCH_NOTE";
+    const invoke = async (args: Record<string, unknown>) => {
+      let sent = false;
+      f.behavior.streamCompletion = async (response) => {
+        if (sent)
+          return completion(response, { content: "NOTES_DONE" }, "stop");
+        sent = true;
+        completion(
+          response,
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: randomUUID(),
+                type: "function",
+                function: {
+                  name: "context_notes",
+                  arguments: JSON.stringify(args),
+                },
+              },
+            ],
+          },
+          "tool_calls",
+        );
+      };
+      const result = await host.request("prompt", "Maintain branch notebook");
+      expect(
+        result,
+        JSON.stringify({ result, output: host.output() }),
+      ).toMatchObject({ success: true });
+      return result;
+    };
+    const added = await invoke({ action: "add", text: note });
+    const sessionFile = assertDefined(added.result).state.sessionFile;
+    const entries = (await readFile(sessionFile, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const noteId = entries.find(
+      (entry) => entry.customType === "toolplane.context-notes",
+    ).data.notes[0].id;
+    for (let turn = 1; turn <= 4; turn++) {
+      f.behavior.streamCompletion = async (response) =>
+        completion(response, { content: `ROUND_${turn}` }, "stop");
+      expect(
+        await host.request("prompt", `Recent round ${turn}`),
+      ).toMatchObject({ success: true });
+    }
+    const document =
+      "## Goal\nContinue safely\n## Completed\nExploration\n## In progress\nImplementation\n## Key files\nworker.ts\n## Next steps\nFinish the change";
+    f.behavior.streamCompletion = async (response) =>
+      completion(response, { content: document }, "stop");
+    const requestsBefore = f.requests.length;
+    const handedOff = await host.request(
+      "prompt",
+      "/handoff focus on remaining work",
+    );
+    expect(
+      handedOff,
+      JSON.stringify({ handedOff, output: host.output() }),
+    ).toMatchObject({
+      success: true,
+      result: {
+        text: document,
+        commandResult: { command: "handoff", status: "completed" },
+      },
+    });
+    expect(f.requests).toHaveLength(requestsBefore + 1);
+    expect(f.requests.at(-1)?.body.model).toBe(f.config.model.id);
+    expect(JSON.stringify(f.requests.at(-1)?.body.messages)).toContain(
+      "focus on remaining work",
+    );
+    expect(host.events).toContainEqual(
+      expect.objectContaining({
+        type: "context_maintenance",
+        marker: expect.objectContaining({ kind: "handoff", summary: document }),
+      }),
+    );
+    const compacted = (await readFile(sessionFile, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const compaction = compacted.findLast(
+      (entry) => entry.type === "compaction",
+    );
+    expect(compaction).toMatchObject({
+      summary: document,
+      details: { method: "handoff" },
+    });
+    expect(
+      compacted.find((entry) => entry.id === compaction.firstKeptEntryId)
+        .message.content,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ text: "Recent round 2" }),
+      ]),
+    );
+    await host.stop();
+    host = await f.launch({ ...options, historyRequired: true });
+    await invoke({ action: "list" });
+    expect(JSON.stringify(f.requests.at(-1)?.body.messages)).toContain(note);
+    expect(JSON.stringify(f.requests.at(-1)?.body.messages)).toContain(
+      "Recent round 4",
+    );
+    await invoke({ action: "remove", id: noteId });
+    const removed = host.events
+      .filter((event) => event.type === "tool_execution_end")
+      .at(-1);
+    expect(removed).toMatchObject({
+      isError: false,
+      result: { details: { notes: [] } },
+    });
+    await invoke({ action: "add", text: "x".repeat(17000) });
+    expect(
+      host.events.filter((event) => event.type === "tool_execution_end").at(-1),
+    ).toMatchObject({ isError: true });
+    const afterLimit = (await readFile(sessionFile, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(
+      afterLimit.findLast(
+        (entry) => entry.customType === "toolplane.context-notes",
+      ).data.notes,
+    ).toEqual([]);
+    await host.stop();
   }, 60000);
 });

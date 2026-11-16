@@ -91,6 +91,87 @@ export type AgentRuntimeBuiltinToolGroup = {
   tools: readonly string[];
 };
 
+export type AgentOptionalBuiltinTool = {
+  /** Stable native tool name; never accept module paths from revision data. */
+  name: string;
+  category: AgentRuntimeBuiltinToolCategory;
+  implementation: "sandbox-extension" | "platform";
+};
+
+/** Register only implemented, trusted tools. Optional tools are always opt-in. */
+export const AGENT_OPTIONAL_BUILTIN_TOOLS: readonly AgentOptionalBuiltinTool[] =
+  [
+    { name: "web_search", category: "search", implementation: "platform" },
+    { name: "web_fetch", category: "search", implementation: "platform" },
+    { name: "memory_retain", category: "context", implementation: "platform" },
+    { name: "memory_recall", category: "context", implementation: "platform" },
+    { name: "memory_forget", category: "context", implementation: "platform" },
+    { name: "eval", category: "shell", implementation: "sandbox-extension" },
+    {
+      name: "task",
+      category: "orchestration",
+      implementation: "sandbox-extension",
+    },
+    {
+      name: "checkpoint",
+      category: "context",
+      implementation: "sandbox-extension",
+    },
+    {
+      name: "rewind",
+      category: "context",
+      implementation: "sandbox-extension",
+    },
+    {
+      name: "context_notes",
+      category: "context",
+      implementation: "sandbox-extension",
+    },
+    { name: "lsp", category: "search", implementation: "sandbox-extension" },
+    { name: "debug", category: "shell", implementation: "sandbox-extension" },
+    {
+      name: "browser",
+      category: "browser",
+      implementation: "sandbox-extension",
+    },
+  ];
+
+export function agentOptionalBuiltinTools(value: unknown) {
+  return isExecutableAgentRuntimeKind(value)
+    ? AGENT_OPTIONAL_BUILTIN_TOOLS
+    : [];
+}
+
+export function agentOptionalBuiltinTool(name: string) {
+  return AGENT_OPTIONAL_BUILTIN_TOOLS.find((tool) => tool.name === name);
+}
+
+/** Reject rather than silently discard unknown authority requested by a caller. */
+export function normalizeOptionalBuiltinTools(
+  tools: readonly string[] | undefined,
+): string[] {
+  if (
+    tools !== undefined &&
+    (!Array.isArray(tools) ||
+      tools.length > 1_000 ||
+      tools.some(
+        (name) => typeof name !== "string" || !agentOptionalBuiltinTool(name),
+      ))
+  )
+    throw new Error("OPTIONAL_BUILTIN_TOOLS_INVALID");
+  return [...new Set(tools ?? [])].sort();
+}
+
+export function agentOptionalBuiltinToolOptions(
+  runtimeKind: unknown,
+  enabled: readonly string[] = [],
+) {
+  return agentOptionalBuiltinTools(runtimeKind).map((tool) => ({
+    ...tool,
+    enabled: enabled.includes(tool.name),
+  }));
+}
+
 const AGENT_RUNTIME_BUILTIN_TOOL_GROUPS: Record<
   AgentRuntimeKind,
   readonly AgentRuntimeBuiltinToolGroup[]

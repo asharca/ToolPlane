@@ -1,0 +1,1 @@
+ALTER TABLE "Agent" ADD COLUMN "optionalBuiltinTools" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

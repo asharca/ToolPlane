@@ -179,6 +179,7 @@ model DailySnapshot {
 }
 
 model Workspace {
+  agentMemories AgentMemory[]
   agentEnvironmentCredentials AgentEnvironmentCredential[]
   subagentDefinitions WorkspaceSubagent[]
   remoteA2AAgents RemoteA2AAgent[]
@@ -583,6 +584,7 @@ model ProviderModel {
 }
 
 model Agent {
+  memories AgentMemory[]
   evolutionRecords AgentEvolutionRecord[]
   evolutionSettings AgentEvolutionSettings?
   monthlyBudgetMicros BigInt?
@@ -611,6 +613,7 @@ model Agent {
   pinned                  Boolean                  @default(false)
   slug                    String
   systemPrompt            String?
+  contextFiles            Boolean                  @default(false)
   providerId              String?
   provider                ModelProvider?           @relation(fields: [providerId], references: [id], onDelete: SetNull)
   model                   String?
@@ -618,8 +621,13 @@ model Agent {
   ompConfig               Json?
   capabilityImport Json?
   disabledBuiltinTools    String[]                 @default([])
+  optionalBuiltinTools    String[]                 @default([])
   maxSteps                Int                      @default(100)
   reasoningEffort         String?
+  streamRules             Json?
+  toolApproval            Json?
+  secretObfuscation       Boolean                  @default(true)
+  advisor                 Json?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
   servers                 AgentServer[]
@@ -642,6 +650,22 @@ model Agent {
   @@unique([id, workspaceId])
 }
 
+model AgentMemory {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId String
+  agent Agent @relation(fields: [agentId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  content String @db.VarChar(2000)
+  // Provenance snapshots survive deletion of the original conversation/task.
+  conversationId String?
+  taskId String?
+  creatorType String
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId, agentId, createdAt, id])
+}
+
 model AgentUsage {
   id String @id @default(cuid())
   workspaceId String
@@ -660,6 +684,9 @@ model AgentUsage {
   cacheWriteTokens Int
   costMicros BigInt
   succeeded Boolean
+  // Gateway observations are provisional until terminal SDK usage reconciles them.
+  meteringCompleted Boolean @default(true)
+  budgetWarning Json?
   createdAt DateTime @default(now())
   @@index([agentId, createdAt])
   @@index([workspaceId, createdAt])
@@ -1183,6 +1210,9 @@ model Conversation {
   sandboxId             String?
   sandbox               Sandbox?                 @relation(fields: [sandboxId], references: [id], onDelete: Restrict)
   title                 String?
+  // Provenance only; source history remains append-only even if its conversation is removed.
+  branchedFromConversationId String?
+  branchedFromMessageId String?
   // No relation: deleted triggers retain their classified run history.
   triggerId             String?
   // Some runtimes keep their own state outside this database. These aliases
@@ -1216,6 +1246,14 @@ model Message {
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role           String
   parts          Json
+  // Exact Pi tree identity; null on legacy messages is intentionally not reconstructed.
+  piEntryId      String?
+  piParentEntryId String?
+  piTurnLeafId   String?
+  // Trusted navigation instruction on a replacement user turn, never accepted from clients.
+  piRewindEntryId String?
+  supersededAt   DateTime?
+  supersededById String?
   textCharacters Int          @default(0)
   // Public API conversations assign a monotonically increasing sequence so a
   // user/assistant turn stays deterministic even when DB timestamps tie.
@@ -1224,6 +1262,7 @@ model Message {
 
   @@index([conversationId, createdAt])
   @@index([conversationId, sequence])
+  @@index([conversationId, supersededAt])
 }
 
 // Chat is deliberately isolated from Agent/Work. It can bind only a model,
@@ -1624,6 +1663,7 @@ model A2AContext {
 
 model A2ATask {
   files               A2ATaskFile[]
+  toolApprovals AgentToolApproval[]
   remoteFilesStatus   String            @default("ready")
   remoteObservedState Int?
   entryReceipts A2AEntryReceipt[]
@@ -1676,6 +1716,33 @@ model A2ATask {
   @@index([deadlineAt])
 }
 
+
+model AgentToolApproval {
+  id String @id @default(uuid())
+  taskId String
+  task A2ATask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  workspaceId String
+  agentId String
+  conversationId String?
+  lease String
+  toolCallId String
+  toolName String
+  argumentHash String
+  argumentSummary String
+  entryKind String
+  channelId String?
+  channelSource Json?
+  shortCode String @unique
+  status String @default("pending")
+  expiresAt DateTime
+  decidedAt DateTime?
+  decidedBy String?
+  consumedAt DateTime?
+  createdAt DateTime @default(now())
+  @@unique([taskId, lease, toolCallId])
+  @@index([taskId, lease, status, expiresAt])
+  @@index([conversationId, status])
+}
 // File identity is stable; source contains only an encrypted transfer descriptor.
 // Download capabilities are generated on authorized egress and are never stored here.
 model A2ATaskFile {

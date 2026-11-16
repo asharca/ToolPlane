@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/motion/button";
 import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
+import { notify } from "@/components/dashboard/Toaster";
 import { AgentMessageFeedback } from "./AgentMessageFeedback";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -37,6 +38,13 @@ import {
   conversationUserBubbleClassName,
 } from "@/components/dashboard/ConversationMessage";
 import { ConversationFilePreview } from "@/components/dashboard/ConversationComposer";
+import {
+  AgentMessageQueueView,
+  useAgentMessageQueue,
+  type QueueMode,
+} from "@/components/dashboard/AgentMessageQueue";
+import { useLiveTaskOutput } from "@/components/dashboard/work/useLiveTaskOutput";
+import { LiveOutputView } from "@/components/dashboard/work/LiveOutputView";
 import { ConversationContentBlocks } from "@/components/dashboard/ConversationContentBlocks";
 import { CopyButton } from "@/components/dashboard/CopyButton";
 
@@ -93,6 +101,11 @@ import {
 import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
 import { SubagentActivity, SubagentActivitySchema } from "./SubagentActivity";
 import { HookActivity, HookActivitySchema } from "./HookActivity";
+import { AdvisorSuggestionsCard } from "./AdvisorSuggestionsCard";
+import {
+  ADVISOR_SUGGESTIONS_PART,
+  AdvisorSuggestionsSchema,
+} from "@/lib/agents/advisor";
 
 const MAX_ATTACHMENTS = 5;
 
@@ -676,6 +689,7 @@ export function AgentConversation({
   const [composerText, setComposerText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const submissionInFlight = useRef(false);
+  const submittedHistoryLength = useRef(initialMessages.length);
   const {
     attachments,
     addAttachment,
@@ -731,6 +745,11 @@ export function AgentConversation({
     transport,
     resume: serverManaged,
     messages: initialMessages,
+    onData: (part) => {
+      const data = part as { type: string; data: unknown };
+      if (data.type === "data-agent-message-queue")
+        messageQueue.observe(data.data);
+    },
     onFinish: () => {
       void onConversationChanged?.();
     },
@@ -770,10 +789,72 @@ export function AgentConversation({
     submitError || chat.error?.message || "",
   );
   const busy = chatBusy || commandBusy || submitting;
+  const nativeLive = useLiveTaskOutput({
+    url:
+      !serverManaged && runtimeKind === "pi-sdk" && activeConversationId
+        ? `/api/v1/agents/${encodeURIComponent(agentId)}/conversations/${encodeURIComponent(activeConversationId)}/events`
+        : null,
+    onSnapshot: (output) =>
+      messageQueue.observe(
+        output?.messageQueue ?? { messages: [], pendingMessageCount: 0 },
+      ),
+    onTranscriptChange: () => {
+      void onConversationChanged?.();
+    },
+    onSettled: () => {
+      void onConversationChanged?.();
+    },
+    onRevoked: () => {
+      void onConversationChanged?.();
+    },
+  });
+  const nativeRunning =
+    !serverManaged &&
+    runtimeKind === "pi-sdk" &&
+    (chatBusy || Boolean(nativeLive.output?.active));
+  const messageQueue = useAgentMessageQueue({
+    agentId,
+    conversationId: activeConversationId,
+    active: nativeRunning,
+    onRefresh: () => {
+      void onConversationChanged?.();
+    },
+  });
+  const queueT = useTranslations("console.messageQueue");
+  const nativeOutput = nativeLive.output;
+  const nativeOutputPersisted = Boolean(
+    nativeOutput &&
+      !nativeOutput.active &&
+      initialMessages.some((message) =>
+        message.parts.some((part) => {
+          const data = part as {
+            type: string;
+            data?: { taskId?: string; startedAt?: number };
+          };
+          return (
+            data.type === "data-agent-task" &&
+            data.data?.taskId === nativeOutput.taskId &&
+            (nativeOutput.startedAt === undefined ||
+              data.data?.startedAt === nativeOutput.startedAt)
+          );
+        }),
+      ),
+  );
+  const transcriptMessages = useMemo(() => {
+    if (!nativeOutput) return chat.messages;
+    const optimisticUser =
+      chatBusy && initialMessages.length <= submittedHistoryLength.current
+        ? chat.messages.findLast((message) => message.role === "user")
+        : undefined;
+    return optimisticUser &&
+      !initialMessages.some((message) => message.id === optimisticUser.id)
+      ? [...initialMessages, optimisticUser]
+      : initialMessages;
+  }, [nativeOutput, chat.messages, chatBusy, initialMessages]);
   useEffect(() => {
-    onBusyChange?.(busy);
+    onBusyChange?.(busy || nativeRunning);
     return () => onBusyChange?.(false);
-  }, [busy, onBusyChange]);
+  }, [busy, nativeRunning, onBusyChange]);
   const contextUsage = useMemo(
     () =>
       resolveContextUsage(chat.messages, {
@@ -791,18 +872,42 @@ export function AgentConversation({
     ],
   );
 
+  const persistedMessageIds = useMemo(
+    () => new Set(initialMessages.map((message) => message.id)),
+    [initialMessages],
+  );
   const { displayMessages, sourceMessagesById } = useMemo(() => {
     const sources = new Map<string, AgentUIMessage>();
-    const messages = chat.messages.flatMap((message) => {
+    const existingIds = new Set(
+      transcriptMessages.map((message) => message.id),
+    );
+    // Persisted advisor records arrive via Work refresh, independently of the main stream.
+    const advisories = initialMessages.filter(
+      (message) =>
+        !existingIds.has(message.id) &&
+        message.parts.some((part) => part.type === ADVISOR_SUGGESTIONS_PART),
+    );
+    const insertionIndex =
+      chatBusy && transcriptMessages.at(-1)?.role === "assistant"
+        ? transcriptMessages.length - 1
+        : transcriptMessages.length;
+    const combined = advisories.length
+      ? [
+          ...transcriptMessages.slice(0, insertionIndex),
+          ...advisories,
+          ...transcriptMessages.slice(insertionIndex),
+        ]
+      : transcriptMessages;
+    const messages = combined.flatMap((message) => {
       const expanded = expandAssistantMessages([message]);
       for (const displayed of expanded) sources.set(displayed.id, message);
       return expanded;
     });
     return { displayMessages: messages, sourceMessagesById: sources };
-  }, [chat.messages]);
+  }, [transcriptMessages, chatBusy, initialMessages]);
   const renderedActivityIds = useMemo(
     () =>
-      chat.messages.flatMap((message) =>
+      transcriptMessages.flatMap((message) =>
         message.parts.flatMap((part) =>
           (part.type === "data-subagent-activity" ||
             part.type === "data-hook-activity") &&
@@ -812,7 +917,7 @@ export function AgentConversation({
             : [],
         ),
       ),
-    [chat.messages],
+    [transcriptMessages],
   );
   const runtimeCommands = useMemo(
     () =>
@@ -1002,7 +1107,12 @@ export function AgentConversation({
   );
 
   const composerDisabled =
-    branchBusy || commandBusy || creatingConversation || uploadingAttachments;
+    branchBusy ||
+    commandBusy ||
+    creatingConversation ||
+    uploadingAttachments ||
+    messageQueue.forbidden ||
+    nativeLive.connection === "revoked";
   const attachmentsEnabled =
     (serverManaged || isExecutableAgentRuntimeKind(runtimeKind)) &&
     (supportsAttachments ?? Boolean(attachmentUploadUrl));
@@ -1017,7 +1127,7 @@ export function AgentConversation({
   const [editText, setEditText] = useState("");
   const [belowEditorElement, setBelowEditorElement] =
     useState<HTMLDivElement | null>(null);
-  const blocked = !ready || composerDisabled || busy;
+  const blocked = !ready || composerDisabled || busy || nativeRunning;
   const runAction = async (action: () => void | Promise<void>) => {
     try {
       await action();
@@ -1027,13 +1137,34 @@ export function AgentConversation({
       );
     }
   };
+  const submitQueuedDraft = async (mode: QueueMode) => {
+    if (
+      !ready ||
+      composerDisabled ||
+      messageQueue.pending ||
+      !composerText.trim()
+    )
+      return;
+    if (attachments.length) {
+      notify(queueT("textOnly"), { severity: "error" });
+      return;
+    }
+    const text = composerText;
+    if (await messageQueue.send(mode, text))
+      setComposerText((current) => (current === text ? "" : current));
+  };
   const submitDraft = async () => {
     if (
-      blocked ||
+      !ready ||
+      composerDisabled ||
+      submitting ||
+      (busy && !messageQueue.fallback) ||
       submissionInFlight.current ||
+      messageQueue.pending ||
       (!composerText.trim() && !attachments.length)
     )
       return;
+    submittedHistoryLength.current = initialMessages.length;
     const snapshot: DraftSnapshot = {
       text: composerText,
       attachments: takeAttachments(),
@@ -1114,7 +1245,7 @@ export function AgentConversation({
           url={`/api/v1/agents/${agentId}/conversations/${activeConversationId}/revision`}
           fromVersion={agentRevisionVersion}
           targetVersion={currentRevisionVersion}
-          disabled={busy || branchBusy}
+          disabled={busy || nativeRunning || branchBusy}
           onUpgraded={() => {
             router.refresh();
             void onConversationChanged?.();
@@ -1123,7 +1254,7 @@ export function AgentConversation({
       ) : null}
       <MessageScroller
         label={agentName}
-        busy={chatBusy}
+        busy={chatBusy || nativeRunning}
         followOutput={followingOutput}
         onFollowChange={setFollowingOutput}
         navigation="rail"
@@ -1154,8 +1285,18 @@ export function AgentConversation({
                 typeof turnModelData.model === "string"
                   ? turnModelData.model
                   : null;
+              const advisorOnly =
+                sourceMessage.parts.some(
+                  (part) => part.type === ADVISOR_SUGGESTIONS_PART,
+                ) &&
+                sourceMessage.parts.every(
+                  (part) =>
+                    part.type === ADVISOR_SUGGESTIONS_PART ||
+                    (part.type === "text" && !part.text),
+                );
               const streaming =
                 message.role === "assistant" &&
+                !advisorOnly &&
                 chat.status === "streaming" &&
                 messageIndex === displayMessages.length - 1;
               const text = message.parts
@@ -1248,8 +1389,17 @@ export function AgentConversation({
                       processDataTypes={[
                         "data-subagent-activity",
                         "data-hook-activity",
+                        ADVISOR_SUGGESTIONS_PART,
                       ]}
                       renderDataStep={(step) => {
+                        if (step.type === ADVISOR_SUGGESTIONS_PART) {
+                          const parsed = AdvisorSuggestionsSchema.safeParse(
+                            step.data,
+                          );
+                          return parsed.success ? (
+                            <AdvisorSuggestionsCard advisory={parsed.data} />
+                          ) : null;
+                        }
                         if (step.type === "data-hook-activity") {
                           const hook = HookActivitySchema.safeParse(step.data);
                           return hook.success ? (
@@ -1309,11 +1459,12 @@ export function AgentConversation({
                   ) : from === "assistant" ? (
                     <>
                       {messageBody}
-                      {!streaming ? (
+                      {!streaming && !advisorOnly ? (
                         <MessageFooter
                           className={`gap-0.5 ${actionVisibility}`}
                         >
-                          {activeConversationId ? (
+                          {activeConversationId &&
+                          persistedMessageIds.has(sourceMessage.id) ? (
                             <AgentMessageFeedback
                               agentId={agentId}
                               conversationId={activeConversationId}
@@ -1433,6 +1584,9 @@ export function AgentConversation({
         {chat.status === "submitted" ? (
           <MessageTyping label={work("preparingReply")} />
         ) : null}
+        {nativeOutput && !nativeOutputPersisted ? (
+          <LiveOutputView output={nativeOutput} showQueue={false} />
+        ) : null}
       </MessageScroller>
       <div
         className={`${conversationComposerDockClassName} ${!displayMessages.length ? "mb-auto" : ""}`}
@@ -1468,6 +1622,11 @@ export function AgentConversation({
             ) : null}
           </div>
         ) : null}
+        <AgentMessageQueueView
+          queue={messageQueue.queue}
+          onClear={() => void messageQueue.clear()}
+          disabled={!ready || messageQueue.pending || messageQueue.forbidden}
+        />
         {/* biome-ignore lint/a11y/noStaticElementInteractions: Non-focusable drop zone wraps the accessible composer; keyboard attachments use its upload control. */}
         <div
           data-ui="chat.composer"
@@ -1513,9 +1672,19 @@ export function AgentConversation({
             }
             value={composerText}
             onValueChange={setComposerText}
-            onSubmit={() => void submitDraft()}
+            onSubmit={() =>
+              nativeRunning && !messageQueue.fallback
+                ? void submitQueuedDraft("steer")
+                : void submitDraft()
+            }
+            onRunningSubmit={
+              nativeRunning && !messageQueue.fallback
+                ? (mode) => void submitQueuedDraft(mode)
+                : undefined
+            }
+            queuePending={messageQueue.pending}
             disabled={!ready || composerDisabled}
-            loading={busy}
+            loading={(busy || nativeRunning) && !messageQueue.fallback}
             onStop={chatBusy ? () => void stop() : undefined}
             aria-label={t("messageThisAgent")}
             placeholder={t("messageThisAgent")}

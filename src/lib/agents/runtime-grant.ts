@@ -27,6 +27,8 @@ export async function resolveAgentRuntimeGrant(
   mcpToolPolicy: PiPackageMcpToolPolicy;
   runtimeKind: "pi-sdk";
   model: string | null;
+  secretObfuscation: boolean;
+  advisor?: { providerId: string; model: string };
   /** Attached sandbox ID → tools allowed by both the pinned revision and the live attachment. */
   externalSandboxTools: Record<string, SandboxMcpTool[]>;
 } | null> {
@@ -202,14 +204,39 @@ export async function resolveAgentRuntimeGrant(
         token.agentId,
         revision.config.environment.credentialReferences,
       );
-      if (modelTarget && modelTarget.providerId !== token.providerId)
-        return null;
-      if (
-        token.modelOverride &&
-        modelTarget &&
-        token.modelOverride.model !== modelTarget.model
-      )
-        return null;
+      if (modelTarget) {
+        const primary = token.modelOverride ?? {
+          providerId: token.providerId,
+          model: revision.config.model,
+        };
+        const targets = [
+          ...(revision.config.fallbackModels ?? []),
+          ...Object.values(revision.config.roleModels ?? {}).filter(
+            (target) => target !== undefined,
+          ),
+        ];
+        const isPrimary =
+          modelTarget.providerId === primary.providerId &&
+          modelTarget.model === primary.model;
+        const isAdvisor =
+          modelTarget.providerId === revision.config.advisor?.providerId &&
+          modelTarget.model === revision.config.advisor?.model;
+        const isSelected =
+          revision.config.modelProviderIds.includes(modelTarget.providerId) &&
+          targets.some(
+            (target) =>
+              target.providerId === modelTarget.providerId &&
+              target.model === modelTarget.model,
+          );
+        if (!isPrimary && !isSelected && !isAdvisor) return null;
+        if (!isPrimary)
+          await resolveAgentModelOverride(
+            token.workspaceId,
+            modelTarget,
+            revision.config.runtimeKind,
+            tx,
+          );
+      }
       if (conversationId && token.modelOverride) {
         const session = await tx.conversation.findFirst({
           where: {
@@ -262,6 +289,15 @@ export async function resolveAgentRuntimeGrant(
         mcpToolPolicy,
         externalSandboxTools: externalTools,
         runtimeKind: revision.config.runtimeKind,
+        secretObfuscation: revision.config.secretObfuscation === true,
+        ...(revision.config.advisor
+          ? {
+              advisor: {
+                providerId: revision.config.advisor.providerId,
+                model: revision.config.advisor.model,
+              },
+            }
+          : {}),
         model:
           modelTarget?.model ??
           token.modelOverride?.model ??

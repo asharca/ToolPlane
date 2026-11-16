@@ -2,6 +2,7 @@ import "server-only";
 
 import type { AssistantMessageEvent, ToolCall } from "@earendil-works/pi-ai";
 import type { SandboxRuntimeActivity } from "./sandbox-runtime";
+import type { AgentMessageQueue } from "./execution/message-queue";
 type ChildRuntimeActivity = SandboxRuntimeActivity & {
   source: NonNullable<SandboxRuntimeActivity["source"]>;
   text?: string;
@@ -23,9 +24,15 @@ type AgentUiChunk =
     }
   | { type: "tool-output-available"; toolCallId: string; output: unknown }
   | { type: "tool-output-error"; toolCallId: string; errorText: string }
-  | { type: "data-subagent-activity"; id: string; data: ChildRuntimeActivity };
+  | { type: "data-subagent-activity"; id: string; data: ChildRuntimeActivity }
+  | { type: "data-agent-message-queue"; id: string; data: AgentMessageQueue };
 
 type AgentUiWriter = { write(chunk: AgentUiChunk): void };
+type NativeUiWriter = {
+  write(
+    chunk: Exclude<AgentUiChunk, { type: "data-agent-message-queue" }>,
+  ): void;
+};
 
 function errorText(value: unknown): string {
   if (value instanceof Error) return value.message;
@@ -38,7 +45,7 @@ function errorText(value: unknown): string {
 }
 
 export function createNativeUiStreamBridge(
-  writer: AgentUiWriter,
+  writer: NativeUiWriter,
   prefix: string,
 ) {
   const textIds = new Map<number, string>();
@@ -143,6 +150,13 @@ export function createSandboxUiStreamBridge(
   }
 
   return {
+    onMessageQueue(queue: AgentMessageQueue) {
+      writer.write({
+        type: "data-agent-message-queue",
+        id: `${prefix}-queue`,
+        data: queue,
+      });
+    },
     onTextDelta(delta: string) {
       endReasoning();
       if (!textId) {

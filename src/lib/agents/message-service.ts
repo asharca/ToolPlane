@@ -1,4 +1,5 @@
 import "server-only";
+import { channelToolApprovalReply } from "./execution/tool-approvals";
 import { createHash, randomUUID } from "node:crypto";
 import type { UIMessage } from "ai";
 import { z } from "zod";
@@ -28,6 +29,7 @@ import {
   agentEntryRuntimeParts,
 } from "./execution/entries";
 import type { NormalizedMessagingSource } from "./messaging";
+import { appendBudgetWarningText } from "./budget-warning";
 import type { AgentForRun } from "./queries";
 import { getAgent, getAgentForRequest } from "./queries";
 import { createConversation } from "./mutations";
@@ -216,6 +218,30 @@ export async function runAgentChannelMessage(params: {
       },
     };
   }
+  const approvalReply = await channelToolApprovalReply({
+    connectionId: channel.id,
+    workspaceId: params.workspaceId,
+    agentId: params.agentId,
+    source: event.source,
+    text: body.message,
+    roleIds: body.metadata?.roleIds,
+  });
+  if (approvalReply !== null)
+    return {
+      status: 200,
+      body: {
+        agentId: params.agentId,
+        conversationId: "",
+        delivery: "message",
+        message: approvalReply,
+        rawMessage: approvalReply,
+        sessionKey: "",
+        source: event.source,
+        platform: channel.platform,
+        externalUserId: event.source.userId ?? null,
+        channelId: event.source.chatId ?? null,
+      },
+    };
   // A command's receipt commits with its mutation, before hosted reply delivery.
   if (params.inboundPersisted && params.inboundDedupeKey) {
     const inbound = await db.agentChannelInboundEvent.findFirst({
@@ -704,7 +730,11 @@ export async function runAgentChannelMessage(params: {
               actorId: channel.a2aActorId,
               line: `/${enteredName}${args ? ` ${args}` : ""}`,
               signal: params.signal,
-              entry: { kind: "channel", channelId: channel.id },
+              entry: {
+                kind: "channel",
+                channelId: channel.id,
+                channelSource: event.source,
+              },
               messageId: event.source.messageId,
             });
             message =
@@ -981,6 +1011,7 @@ async function runLoadedAgentMessage(params: {
           : "chat",
       sourceId: conversation.id,
       channelId: params.connectionId,
+      channelSource: params.connectionId ? event.source : undefined,
       workspaceId: agent.workspaceId,
       agentId: agent.id,
       actorId: params.actorId,
@@ -999,19 +1030,39 @@ async function runLoadedAgentMessage(params: {
       onUiRequired: (path) =>
         params.onUiRequired?.(`Pi 扩展需要你的输入，请打开会话：${path}`),
     });
-    const replyText = agentEntryResult(result.task, result.path);
+    const replyText = await appendBudgetWarningText(
+      agentEntryResult(result.task, result.path),
+      {
+        workspaceId: agent.workspaceId,
+        agentId: agent.id,
+        taskId: result.task.id,
+      },
+    );
     const runtimeParts = agentEntryRuntimeParts(result.task);
     params.signal?.throwIfAborted();
+    const previous = await db.message.findFirst({
+      where: { conversationId: conversation.id },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      select: { createdAt: true },
+    });
     await db.message.create({
       data: {
         id: assistantMessageId,
         conversationId: conversation.id,
         role: "assistant",
+        createdAt: new Date(
+          Math.max(Date.now(), (previous?.createdAt.getTime() ?? 0) + 1),
+        ),
         parts: [{ type: "text", text: replyText }, ...runtimeParts],
       },
     });
     notifyTaskOutput(result.task.id);
-    return response(conversation.id, replyText);
+    return response(
+      conversation.id,
+      params.connectionId
+        ? agentEntryResult(result.task, result.path, true)
+        : replyText,
+    );
   } catch (error) {
     const failureCode =
       error instanceof Error
@@ -1044,11 +1095,19 @@ async function runLoadedAgentMessage(params: {
         if (replay.success)
           startedAt = replay.data.metadata.toolplaneLiveOutput.startedAt;
       }
+      const previous = await db.message.findFirst({
+        where: { conversationId: persistedConversationId },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { createdAt: true },
+      });
       await db.message.create({
         data: {
           id: assistantMessageId,
           conversationId: persistedConversationId,
           role: "assistant",
+          createdAt: new Date(
+            Math.max(Date.now(), (previous?.createdAt.getTime() ?? 0) + 1),
+          ),
           parts: [
             ...(persistedTaskId
               ? [

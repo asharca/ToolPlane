@@ -1,4 +1,5 @@
 "use server";
+import { ToolApprovalPolicySchema } from "./tool-approval-policy";
 
 import type {
   ModelCost,
@@ -80,7 +81,11 @@ import { safeRelativePath } from "@/lib/auth/safe-redirect";
 import { db } from "@/lib/db";
 import { McpPinningError } from "@/lib/process/mcp-pinning";
 import { deleteManagedAgent } from "@/lib/agents/deletion";
-import { AgentEnvironmentSnapshotSchema } from "./revision-types";
+import {
+  AgentAdvisorSchema,
+  AgentEnvironmentSnapshotSchema,
+  OptionalBuiltinToolsSchema,
+} from "./revision-types";
 import {
   captureAgentRevisionConfig,
   prepareAgentRevisionMcpDeployments,
@@ -192,6 +197,17 @@ function agentMaxSteps(formData: FormData): number {
     : AGENT_STEP_BOUNDS.default;
 }
 
+function agentAdvisor(formData: FormData) {
+  const value = formData.get("advisor");
+  if (value === null) return undefined;
+  if (value === "" || value === "null") return null;
+  try {
+    return AgentAdvisorSchema.parse(JSON.parse(String(value)));
+  } catch {
+    throw new AgentConfigurationError("AGENT_ADVISOR_INVALID");
+  }
+}
+
 function agentReasoningEffort(formData: FormData) {
   const value = formData.get("reasoningEffort") ?? "";
   if (value === "" || value === "default") return null;
@@ -199,6 +215,24 @@ function agentReasoningEffort(formData: FormData) {
   if (!parsed.success)
     throw new AgentConfigurationError("Invalid reasoning effort.");
   return parsed.data;
+}
+
+function agentContextFiles(formData: FormData): boolean | undefined {
+  const value = formData.get("contextFiles");
+  if (value === null) return undefined;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new AgentConfigurationError("Invalid context files setting.");
+}
+
+function agentSecretObfuscation(formData: FormData): boolean | undefined {
+  if (!formData.has("secretObfuscation")) return undefined;
+  const value = z
+    .enum(["true", "false"])
+    .safeParse(formData.get("secretObfuscation"));
+  if (!value.success)
+    throw new AgentConfigurationError("Invalid secret obfuscation setting.");
+  return value.data === "true";
 }
 
 const piPackagesFormSchema = z
@@ -226,6 +260,19 @@ function piPackagesFromForm(formData: FormData): AgentConfig["piPackages"] {
     return piPackagesFormSchema.parse(JSON.parse(raw));
   } catch {
     throw new AgentConfigurationError("pi_packages_invalid");
+  }
+}
+
+function optionalBuiltinToolsFromForm(
+  formData: FormData,
+): AgentConfig["optionalBuiltinTools"] {
+  if (!formData.has("optionalBuiltinTools")) return undefined;
+  const raw = formData.get("optionalBuiltinTools");
+  try {
+    if (typeof raw !== "string" || raw.length > 16_000) throw new Error();
+    return OptionalBuiltinToolsSchema.parse(JSON.parse(raw));
+  } catch {
+    throw new AgentConfigurationError("OPTIONAL_BUILTIN_TOOLS_INVALID");
   }
 }
 
@@ -729,8 +776,17 @@ export async function createAgentAction(
         disabledBuiltinTools: formData
           .getAll("disabledBuiltinTool")
           .map(String),
+        optionalBuiltinTools: optionalBuiltinToolsFromForm(formData) ?? [],
         maxSteps: agentMaxSteps(formData),
         reasoningEffort: agentReasoningEffort(formData),
+        contextFiles: agentContextFiles(formData) ?? true,
+        toolApproval: formData.has("toolApproval")
+          ? ToolApprovalPolicySchema.parse(
+              JSON.parse(String(formData.get("toolApproval"))),
+            )
+          : undefined,
+        secretObfuscation: agentSecretObfuscation(formData),
+        advisor: agentAdvisor(formData),
         piPackages: piPackagesFromForm(formData),
       },
       {
@@ -974,8 +1030,17 @@ export async function updateAgentAction(
         disabledBuiltinTools: formData
           .getAll("disabledBuiltinTool")
           .map(String),
+        optionalBuiltinTools: optionalBuiltinToolsFromForm(formData),
         maxSteps,
         reasoningEffort: agentReasoningEffort(formData),
+        contextFiles: agentContextFiles(formData),
+        toolApproval: formData.has("toolApproval")
+          ? ToolApprovalPolicySchema.parse(
+              JSON.parse(String(formData.get("toolApproval"))),
+            )
+          : undefined,
+        secretObfuscation: agentSecretObfuscation(formData),
+        advisor: agentAdvisor(formData),
         piPackages: piPackagesFromForm(formData),
       });
       await setAgentTools(ctx.ws.id, agentId, {
@@ -1095,6 +1160,17 @@ export async function publishAgentRevisionAction(formData: FormData) {
       config: JSON.parse(String(formData.get("config") ?? "")),
     });
   } catch (error) {
+    if (error instanceof AgentRevisionError) {
+      switch (error.code) {
+        case "AGENT_FALLBACK_MODELS_INVALID":
+        case "AGENT_ROLE_MODELS_INVALID":
+        case "AGENT_MODEL_UNAVAILABLE":
+        case "AGENT_PROVIDER_REVOKED":
+        case "AGENT_REVISION_CONFIG_INVALID":
+        case "AGENT_REVISION_CONFLICT":
+          return { error: error.code, conflict: null };
+      }
+    }
     if (error instanceof Error && error.message === "PI_CAPABILITY_CONFLICT") {
       const detail = error.cause instanceof Error ? error.cause.message : "";
       const conflict = /^(skill|tool|command):(.{1,200})$/.exec(detail);

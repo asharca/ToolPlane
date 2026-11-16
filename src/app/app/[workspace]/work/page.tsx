@@ -49,6 +49,7 @@ function serializeMessages(
   return messages.map((message) => ({
     id: message.id,
     role: message.role,
+    piEntryId: message.piEntryId,
     createdAt: message.createdAt.toISOString(),
     parts: message.parts as Array<{
       type: string;
@@ -295,6 +296,8 @@ export default async function WorkspaceWorkPage({
           agentId: conversation.agentId,
           title: conversation.title,
           triggerId: conversation.triggerId,
+          readOnly: conversation.readOnly,
+          exportable: !conversation.publicApiConversation,
           source: parseMessagingSessionTitle(conversation.title),
         }))}
         agents={agents.map((agent) => {

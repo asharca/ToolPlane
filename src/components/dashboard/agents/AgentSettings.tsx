@@ -17,12 +17,17 @@ import type { AgentPluginCatalogOption } from "@/components/dashboard/agents/Age
 import type { PluginBindingDeployment } from "@/lib/plugins/binding-deployments";
 import type { AgentChannelConnectionClientView } from "@/lib/agents/channel-connection-client";
 import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
-import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
+import {
+  isExecutableAgentRuntimeKind,
+  type AgentOptionalBuiltinTool,
+} from "@/lib/agents/runtime-kind";
+import type { ToolApprovalPolicy } from "@/lib/agents/tool-approval-policy";
 import type { ReasoningLevel } from "@/lib/agents/constants";
 import { AgentTriggersPanel } from "./AgentTriggersPanel";
 import { AgentUsagePanel } from "../AgentUsagePanel";
 import { AgentClonePanel } from "./AgentClonePanel";
 import { AgentEvolutionPanel } from "./AgentEvolutionPanel";
+import { AgentMemoriesPanel } from "./AgentMemoriesPanel";
 
 const AgentMessagingPanel = dynamic(() =>
   import("@/components/dashboard/agents/AgentMessagingPanel").then(
@@ -48,10 +53,16 @@ type SettingsData = {
   description?: string;
   runtimeKind: string;
   systemPrompt: string;
+  contextFiles: boolean;
   disabledBuiltinTools?: string[];
+  optionalBuiltinTools: string[];
+  optionalBuiltinToolOptions: readonly AgentOptionalBuiltinTool[];
   providerId: string | null;
   model: string | null;
   reasoningEffort: ReasoningLevel | null;
+  toolApproval?: ToolApprovalPolicy;
+  secretObfuscation: boolean;
+  advisor?: AgentRevisionConfig["advisor"] | null;
   maxSteps: number;
   providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
@@ -80,6 +91,7 @@ type SettingsTab =
   | "a2a"
   | "changelog"
   | "evolution"
+  | "memories"
   | "triggers"
   | "usage"
   | "clone";
@@ -89,6 +101,8 @@ const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
   "general",
   "instructions",
   "builtInTools",
+  "streamRules",
+  "toolApproval",
   "mcp",
   "skills",
   "piPackages",
@@ -120,6 +134,7 @@ function resolveSettingsTab({
     requested === "a2a" ||
     requested === "changelog" ||
     requested === "evolution" ||
+    requested === "memories" ||
     requested === "triggers" ||
     requested === "usage"
   )
@@ -167,12 +182,18 @@ export function AgentSettings({
     [],
   );
 
+  const approvalT = useTranslations("console.toolApproval");
   const navigationItems: Array<{ id: SettingsTab; label: string }> = [
     { id: "general", label: t("basic") },
     { id: "instructions", label: t("instructions") },
     { id: "sandboxes", label: t("sandboxes") },
     { id: "advanced", label: t("advanced") },
     { id: "builtInTools", label: t("builtInTools") },
+    ...(supportsChannelSettings
+      ? [{ id: "streamRules" as const, label: t("streamRules.title") }]
+      : []),
+    { id: "toolApproval", label: approvalT("title") },
+    { id: "memories", label: t("memories") },
     { id: "mcp", label: t("mcp") },
     { id: "skills", label: t("skills") },
     { id: "piPackages", label: t("piPackages") },
@@ -231,10 +252,16 @@ export function AgentSettings({
                 name={settings.name}
                 description={settings.description}
                 systemPrompt={settings.systemPrompt}
+                contextFiles={settings.contextFiles}
                 disabledBuiltinTools={settings.disabledBuiltinTools}
+                optionalBuiltinTools={settings.optionalBuiltinTools}
+                optionalBuiltinToolOptions={settings.optionalBuiltinToolOptions}
                 providerId={settings.providerId}
                 model={settings.model}
                 reasoningEffort={settings.reasoningEffort}
+                toolApproval={settings.toolApproval}
+                secretObfuscation={settings.secretObfuscation}
+                advisor={settings.advisor}
                 maxSteps={settings.maxSteps}
                 providers={settings.providers}
                 deployments={settings.deployments}
@@ -263,6 +290,14 @@ export function AgentSettings({
                   key={agentId}
                   agentId={agentId}
                   currentRevisionId={settings.publishedRevision?.id ?? null}
+                />
+              </div>
+            ) : settingsTab === "memories" ? (
+              <div className="h-full min-w-0 overflow-y-auto">
+                <AgentMemoriesPanel
+                  key={`${slug}:${agentId}:memories`}
+                  slug={slug}
+                  agentId={agentId}
                 />
               </div>
             ) : settingsTab === "triggers" ? (

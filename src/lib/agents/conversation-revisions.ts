@@ -196,13 +196,41 @@ export function diffAgentRevisions(
     b = to.config;
   const fields: Array<[RevisionChangedField, unknown, unknown]> = [
     ["systemPrompt", a.systemPrompt, b.systemPrompt],
+    ["contextFiles", a.contextFiles ?? false, b.contextFiles ?? false],
     [
       "model",
-      [a.providerId, a.model, a.modelProviderIds, a.nativeRoleModels ?? []],
-      [b.providerId, b.model, b.modelProviderIds, b.nativeRoleModels ?? []],
+      [
+        a.providerId,
+        a.model,
+        a.modelProviderIds,
+        a.nativeRoleModels ?? [],
+        a.fallbackModels ?? [],
+        a.roleModels ?? {},
+        a.advisor ?? null,
+      ],
+      [
+        b.providerId,
+        b.model,
+        b.modelProviderIds,
+        b.nativeRoleModels ?? [],
+        b.fallbackModels ?? [],
+        b.roleModels ?? {},
+        b.advisor ?? null,
+      ],
     ],
     ["maxSteps", a.maxSteps, b.maxSteps],
     ["reasoningEffort", a.reasoningEffort ?? null, b.reasoningEffort ?? null],
+    ["streamRules", a.streamRules ?? [], b.streamRules ?? []],
+    [
+      "toolApproval",
+      a.runtimeKind === "pi-sdk" ? (a.toolApproval ?? { mode: "off" }) : null,
+      b.runtimeKind === "pi-sdk" ? (b.toolApproval ?? { mode: "off" }) : null,
+    ],
+    [
+      "secretObfuscation",
+      a.secretObfuscation ?? false,
+      b.secretObfuscation ?? false,
+    ],
     ["packages", a.packages, b.packages],
     ["knowledge", a.knowledgeBaseIds, b.knowledgeBaseIds],
     [
@@ -219,18 +247,26 @@ export function diffAgentRevisions(
       ],
     ],
     ["externalSandboxes", a.externalSandboxes, b.externalSandboxes],
-    ["builtinTools", a.disabledBuiltinTools, b.disabledBuiltinTools],
+    [
+      "builtinTools",
+      [a.disabledBuiltinTools, a.optionalBuiltinTools ?? []],
+      [b.disabledBuiltinTools, b.optionalBuiltinTools ?? []],
+    ],
     [
       "a2a",
       [
         a.a2a,
         a.subagentMode ?? "platform",
-        a.subagentMode === "native" ? a.nativeSubagentPolicy : null,
+        a.subagentMode === "native" || a.optionalBuiltinTools?.includes("task")
+          ? a.nativeSubagentPolicy
+          : null,
       ],
       [
         b.a2a,
         b.subagentMode ?? "platform",
-        b.subagentMode === "native" ? b.nativeSubagentPolicy : null,
+        b.subagentMode === "native" || b.optionalBuiltinTools?.includes("task")
+          ? b.nativeSubagentPolicy
+          : null,
       ],
     ],
   ];
@@ -247,6 +283,9 @@ export function diffAgentRevisions(
       revisionGrantsNewPermissions(mcp) ||
       agentPermissionAdditions(a, b).some(
         (addition) => addition.kind === "delegation",
+      ) ||
+      (b.optionalBuiltinTools ?? []).some(
+        (name) => !(a.optionalBuiltinTools ?? []).includes(name),
       ) ||
       (b.runtimeKind === "omp" &&
         (a.runtimeKind !== "omp" ||

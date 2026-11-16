@@ -5,7 +5,9 @@ import type {
   LiveTaskOutput,
   LiveTaskSnapshotEvent,
   LiveTaskSettledEvent,
+  ToolApprovalDataPart,
 } from "@/lib/agents/execution/live-output-types";
+import { ToolApprovalDataPartsSchema } from "./ToolApprovalRequest";
 
 export type LiveOutputConnection =
   | "connecting"
@@ -18,6 +20,7 @@ export type LiveOutputConnection =
 type StreamState = {
   scope: string | null;
   output: LiveTaskOutput | null;
+  dataParts: ToolApprovalDataPart[] | null;
   connection: LiveOutputConnection;
 };
 
@@ -29,20 +32,29 @@ export function useLiveTaskOutput({
   paused = false,
   onSettled,
   onRevoked,
+  onSnapshot,
+  onTranscriptChange,
 }: {
   url: string | null;
   paused?: boolean;
   onSettled?: (taskId: string) => void;
   onRevoked?: () => void;
+  onSnapshot?: (output: LiveTaskOutput | null) => void;
+  onTranscriptChange?: () => void;
 }) {
   const [state, setState] = useState<StreamState>({
     scope: url,
     output: null,
+    dataParts: null,
     connection: "connecting",
   });
   const settled = useEffectEvent((taskId: string) => onSettled?.(taskId));
   const revoked = useEffectEvent(() => onRevoked?.());
   const deniedScope = useRef<string | null>(null);
+  const snapshot = useEffectEvent((output: LiveTaskOutput | null) =>
+    onSnapshot?.(output),
+  );
+  const transcriptChanged = useEffectEvent(() => onTranscriptChange?.());
 
   useEffect(() => {
     let alive = true;
@@ -51,17 +63,19 @@ export function useLiveTaskOutput({
     let reconnectTimer: number | undefined;
     let watchdog: number | undefined;
     let failures = 0;
+    let previousOutput: LiveTaskOutput | null = null;
     const update = (patch: Partial<StreamState>) => {
       if (!alive) return;
       setState((previous) => ({
         scope: url,
         output: previous.scope === url ? previous.output : null,
+        dataParts: previous.scope === url ? previous.dataParts : null,
         connection: "connecting",
         ...patch,
       }));
     };
     if (url && deniedScope.current === url) {
-      update({ output: null, connection: "revoked" });
+      update({ output: null, dataParts: null, connection: "revoked" });
       return () => {
         alive = false;
       };
@@ -76,7 +90,7 @@ export function useLiveTaskOutput({
     const deny = () => {
       denied = true;
       deniedScope.current = url;
-      update({ output: null, connection: "revoked" });
+      update({ output: null, dataParts: null, connection: "revoked" });
       controller?.abort();
       revoked();
     };
@@ -104,8 +118,30 @@ export function useLiveTaskOutput({
           throw new Error("Invalid live output snapshot");
         }
         failures = 0;
+        const next = value.output;
+        if (
+          next &&
+          (next.taskId !== previousOutput?.taskId ||
+            next.startedAt !== previousOutput?.startedAt ||
+            (previousOutput &&
+              (!next.text.startsWith(previousOutput.text) ||
+                next.activities.length < previousOutput.activities.length ||
+                previousOutput.messageQueue?.messages.some(
+                  (message) =>
+                    !next.messageQueue?.messages.some(
+                      (item) => item.id === message.id,
+                    ),
+                ))))
+        ) {
+          transcriptChanged();
+        }
+        previousOutput = next;
+        snapshot(next);
         // Every event is authoritative, including a null snapshot after reconnect.
-        update({ output: value.output, connection: "live" });
+        const dataParts = ToolApprovalDataPartsSchema.parse(
+          value.dataParts ?? [],
+        );
+        update({ output: value.output, dataParts, connection: "live" });
       } else if (event === "settled") {
         const value = JSON.parse(data.join("\n")) as LiveTaskSettledEvent;
         if (typeof value.taskId === "string") settled(value.taskId);
@@ -203,5 +239,10 @@ export function useLiveTaskOutput({
             ? ("paused" as const)
             : state.connection,
       }
-    : { scope: url, output: null, connection: "connecting" as const };
+    : {
+        scope: url,
+        output: null,
+        dataParts: null,
+        connection: "connecting" as const,
+      };
 }

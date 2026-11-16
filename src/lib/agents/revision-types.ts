@@ -1,6 +1,7 @@
 import type { Sandbox } from "@prisma/client";
 import type { SkillBundleFile } from "@/lib/skills/bundle";
 import { z } from "zod";
+import { StreamRulesSchema } from "./stream-rules";
 import { AGENT_STEP_BOUNDS, REASONING_LEVELS } from "./constants";
 import { OMP_VERSION, OmpConfigSnapshotSchema } from "./omp-config";
 import {
@@ -11,9 +12,18 @@ import {
   EXTERNAL_SANDBOX_ACCESS,
   MAX_EXTERNAL_SANDBOXES,
 } from "@/lib/sandboxes/external";
+import { agentOptionalBuiltinTool } from "./runtime-kind";
 
+import { ToolApprovalPolicySchema } from "./tool-approval-policy";
 const reference = z.string().trim().min(1).max(240);
 const references = z.array(reference).max(1_000);
+export const OptionalBuiltinToolsSchema = references.refine(
+  (names) => names.every((name) => Boolean(agentOptionalBuiltinTool(name))),
+  { message: "OPTIONAL_BUILTIN_TOOLS_INVALID" },
+);
+const revisionModel = z
+  .object({ providerId: reference, model: reference })
+  .strict();
 const checksum = z.string().regex(/^[a-f0-9]{64}$/);
 
 // Reuse the serializable Sandbox model subset, never its arbitrary config JSON
@@ -150,6 +160,16 @@ export const NativeSubagentPolicySchema = z
   })
   .strict();
 
+export const AgentAdvisorSchema = z
+  .object({
+    providerId: reference,
+    model: reference,
+    cadence: z.enum(["each_tool_batch", "final"]),
+    minSeverity: z.enum(["info", "warning", "critical"]),
+  })
+  .strict();
+export type AgentAdvisor = z.infer<typeof AgentAdvisorSchema>;
+
 // Resource identifiers and credential references only. Runtime materialization
 // resolves live grants and secrets separately; it must never persist their values.
 const PiRevisionConfigSchema = z
@@ -157,16 +177,32 @@ const PiRevisionConfigSchema = z
     schemaVersion: z.literal(1),
     runtimeKind: z.literal("pi-sdk"),
     systemPrompt: z.string().max(50_000).nullable(),
+    contextFiles: z.boolean().optional(),
     providerId: reference.nullable(),
     model: reference.nullable(),
     modelProviderIds: references,
+    fallbackModels: z.array(revisionModel).max(3).optional(),
+    roleModels: z
+      .object({
+        compaction: revisionModel.optional(),
+        title: revisionModel.optional(),
+      })
+      .strict()
+      .optional(),
     reasoningEffort: z.enum(REASONING_LEVELS).optional(),
+    streamRules: StreamRulesSchema.optional(),
+    toolApproval: ToolApprovalPolicySchema.optional(),
+    // No defaults: historical revision JSON and checksums remain unchanged.
+    secretObfuscation: z.boolean().optional(),
+    advisor: AgentAdvisorSchema.optional(),
     maxSteps: z
       .number()
       .int()
       .min(AGENT_STEP_BOUNDS.min)
       .max(AGENT_STEP_BOUNDS.max),
     disabledBuiltinTools: references,
+    // No default: historical JSON and its checksum must remain unchanged.
+    optionalBuiltinTools: OptionalBuiltinToolsSchema.optional(),
     sandboxTemplateId: reference.nullable(),
     environment: PiEnvironmentSnapshotSchema,
     // Attachment and maximum access only; live attachments narrow it at use.
@@ -247,6 +283,33 @@ export const AgentRevisionConfigSchema = z
     }).strict(),
   ])
   .superRefine((config, ctx) => {
+    for (const [index, target] of (config.fallbackModels ?? []).entries()) {
+      if (!config.modelProviderIds.includes(target.providerId))
+        ctx.addIssue({
+          code: "custom",
+          message: "AGENT_FALLBACK_MODELS_INVALID",
+          path: ["fallbackModels", index, "providerId"],
+        });
+    }
+    for (const [role, target] of Object.entries(config.roleModels ?? {})) {
+      if (target && !config.modelProviderIds.includes(target.providerId))
+        ctx.addIssue({
+          code: "custom",
+          message: "AGENT_ROLE_MODELS_INVALID",
+          path: ["roleModels", role, "providerId"],
+        });
+    }
+    if (
+      config.advisor &&
+      config.advisor.providerId !== config.providerId &&
+      !config.modelProviderIds.includes(config.advisor.providerId)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["advisor", "providerId"],
+        message: "Advisor provider must belong to this revision.",
+      });
+    }
     // "native" enables OMP's in-sandbox task tool alongside any platform delegation.
     if (config.subagentMode !== "native") return;
     if (!config.nativeSubagentPolicy || config.subagents?.length) {

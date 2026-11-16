@@ -15,7 +15,7 @@ import { StreamingResponse } from "@/components/agents/streaming-response";
 import { CodeBlock } from "@/components/agents/code-block";
 import type { AgentCodeLanguage } from "@/components/agents/agent-code";
 import { Bot } from "lucide-react";
-import { useTranslations } from "next-intl";
+import { useFormatter, useTranslations } from "next-intl";
 import { CopyButton } from "@/components/dashboard/CopyButton";
 import {
   Message,
@@ -30,6 +30,47 @@ import {
   type AgentActivityProps,
 } from "@/components/agents/agent-activity";
 import { ToolResultOutput } from "@/components/agents/tool-result";
+import type { BudgetWarning } from "@/lib/agents/budget-warning";
+import {
+  Alert,
+  AlertAction,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
+} from "@/components/motion/alert";
+import { ButtonLink } from "@/components/motion/button/base";
+import { AnimatedBadge } from "@/components/motion/animated-badge";
+import type { StreamRuleTrigger } from "@/lib/agents/stream-rules";
+
+export function StreamRuleNotice({ trigger }: { trigger: StreamRuleTrigger }) {
+  const t = useTranslations("console.agents.streamRules");
+  return (
+    <section
+      aria-label={t("triggered")}
+      className="space-y-2 rounded-lg border border-border px-3 py-2 text-sm"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="break-words font-medium">{trigger.name}</span>
+        <AnimatedBadge
+          status={trigger.action === "block" ? "warning" : "neutral"}
+          size="sm"
+        >
+          {t(`triggerActions.${trigger.action}`)}
+        </AnimatedBadge>
+        {trigger.toolName ? (
+          <span
+            className="break-all font-mono text-xs text-muted-foreground"
+            title={trigger.toolCallId}
+          >
+            {trigger.toolName}
+          </span>
+        ) : null}
+      </div>
+      <p className="whitespace-pre-wrap break-words">{trigger.message}</p>
+    </section>
+  );
+}
 
 export const conversationUserBubbleClassName =
   "w-auto max-w-[85%] sm:max-w-[80%] [&>div]:max-w-none [&>div]:rounded-3xl [&>div]:px-4 [&>div]:py-2.5";
@@ -131,7 +172,9 @@ export function ToolPayload({
 }) {
   return (
     <div className="space-y-1">
-      <div className="text-xs text-muted-foreground">{label}</div>
+      {label ? (
+        <div className="text-xs text-muted-foreground">{label}</div>
+      ) : null}
       <div className="max-h-80 overflow-auto overscroll-contain rounded-lg [scrollbar-width:thin] [scrollbar-color:color-mix(in_srgb,var(--foreground)_25%,transparent)_transparent]">
         <ToolResultOutput language={language}>{children}</ToolResultOutput>
       </div>
@@ -169,6 +212,108 @@ export function ConversationMessageShell({
       </MessageContent>
     </Message>
   );
+}
+
+export function parseConversationBudgetWarning(
+  value: unknown,
+): BudgetWarning | undefined {
+  if (!value || typeof value !== "object") return;
+  const warning = value as Partial<BudgetWarning>;
+  if (
+    typeof warning.taskId !== "string" ||
+    !warning.taskId ||
+    typeof warning.agentId !== "string" ||
+    !warning.agentId ||
+    typeof warning.month !== "string" ||
+    !/^\d{4}-\d{2}$/.test(warning.month) ||
+    typeof warning.spentMicros !== "string" ||
+    !/^\d+$/.test(warning.spentMicros) ||
+    typeof warning.monthlyBudgetMicros !== "string" ||
+    !/^\d+$/.test(warning.monthlyBudgetMicros) ||
+    warning.currency !== "USD" ||
+    warning.unit !== "micros"
+  )
+    return;
+  return warning as BudgetWarning;
+}
+
+/** Read raw parts before process normalization, keeping advisory state outside tools. */
+export function ConversationBudgetWarnings({
+  parts,
+  workspaceSlug,
+  live = false,
+}: {
+  parts: readonly { type: string; data?: unknown }[];
+  workspaceSlug: string;
+  live?: boolean;
+}) {
+  const warnings = new Map<string, BudgetWarning>();
+  for (const part of parts) {
+    if (part.type !== "data-budget-warning") continue;
+    const warning = parseConversationBudgetWarning(part.data);
+    if (warning && !warnings.has(warning.taskId))
+      warnings.set(warning.taskId, warning);
+  }
+  if (!warnings.size) return null;
+  return (
+    <ConversationBudgetWarningList
+      warnings={Array.from(warnings.values())}
+      workspaceSlug={workspaceSlug}
+      live={live}
+    />
+  );
+}
+
+function ConversationBudgetWarningList({
+  warnings,
+  workspaceSlug,
+  live,
+}: {
+  warnings: readonly BudgetWarning[];
+  workspaceSlug: string;
+  live: boolean;
+}) {
+  const t = useTranslations("console.agentUsage");
+  const format = useFormatter();
+  const currency = (micros: string) =>
+    format.number(Number(micros) / 1_000_000, {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 6,
+    });
+  return warnings.map((warning) => (
+    <Alert
+      key={warning.taskId}
+      variant="warning"
+      role="status"
+      aria-live={live ? "polite" : "off"}
+      data-ui="work-budget-warning"
+    >
+      <AlertIcon />
+      <AlertContent>
+        <AlertTitle>{t("turnBudgetWarningTitle")}</AlertTitle>
+        <AlertDescription>
+          <p>
+            {t("turnBudgetWarningUsage", {
+              spent: currency(warning.spentMicros),
+              budget: currency(warning.monthlyBudgetMicros),
+            })}
+          </p>
+          <p>{t("turnBudgetWarning")}</p>
+        </AlertDescription>
+        <AlertAction>
+          <ButtonLink
+            variant="outline"
+            size="sm"
+            className="h-auto whitespace-normal text-left"
+            href={`/app/${encodeURIComponent(workspaceSlug)}/agents/${encodeURIComponent(warning.agentId)}?settings=usage`}
+          >
+            {t("viewBudgetSettings")}
+          </ButtonLink>
+        </AlertAction>
+      </AlertContent>
+    </Alert>
+  ));
 }
 
 const MermaidAssistantMarkdown = lazy(

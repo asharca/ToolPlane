@@ -11,10 +11,18 @@ import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import { resolveAgentModelOverride } from "@/lib/agents/turn-model";
 import { resolvePinnedAgent } from "@/lib/agents/revisions";
 import { parseAgentChatBody } from "@/lib/agents/chat-body";
-import { TaskState } from "@a2a-js/sdk";
+import { Artifact, TaskState } from "@a2a-js/sdk";
 import { submitAgentEntry } from "@/lib/agents/execution/entries";
 import { claimTask, finishTask } from "@/lib/a2a/store";
-import { recordAgentTaskUsage } from "@/lib/agents/usage";
+import {
+  recordAgentModelUsage,
+  recordAgentTaskUsage,
+} from "@/lib/agents/usage";
+import {
+  taskBudgetWarning,
+  appendBudgetWarningText,
+} from "@/lib/agents/budget-warning";
+import { ModelResponseUsage } from "@/lib/agents/model-response-usage";
 import {
   handleAgentAutomation,
   handleTriggerWebhook,
@@ -74,6 +82,14 @@ beforeAll(async () => {
     },
   });
   providerId = provider.id;
+  await db.providerModel.create({
+    data: {
+      providerId,
+      modelId: "original",
+      name: "Original",
+      cost: { input: 1 },
+    },
+  });
 });
 afterAll(async () => {
   if (workspaceId) {
@@ -183,6 +199,239 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
       submitAgentEntry({ ...input, messageId: randomUUID() }, () => {}),
     ).rejects.toThrow("AGENT_BUDGET_EXCEEDED");
   });
+  it("includes advisor tokens in Agent totals and prices each model independently", async () => {
+    const { agent, conversation } = await fixture();
+    const reviewer = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Review ${randomUUID()}`,
+        format: "openai",
+        baseUrl: "https://review.test.invalid",
+        apiKey: "fixture",
+        models: ["review"],
+      },
+    });
+    await db.providerModel.upsert({
+      where: { providerId_modelId: { providerId, modelId: "original" } },
+      create: {
+        providerId,
+        modelId: "original",
+        name: "Primary",
+        cost: { input: 1, output: 2 },
+      },
+      update: { cost: { input: 1, output: 2 } },
+    });
+    await db.providerModel.create({
+      data: {
+        providerId: reviewer.id,
+        modelId: "review",
+        name: "Reviewer",
+        cost: { input: 10, output: 20 },
+      },
+    });
+    const admitted = await submitAgentEntry(
+      {
+        kind: "chat",
+        sourceId: conversation.id,
+        workspaceId,
+        agentId: agent.id,
+        actorId: userId,
+        messageId: randomUUID(),
+        text: "review accounting",
+      },
+      () => {},
+    );
+    const claimed = await claimTask(admitted.row.id);
+    if (!claimed?.leaseToken) throw new Error("Missing task lease");
+    await finishTask(
+      claimed.id,
+      claimed.leaseToken,
+      TaskState.TASK_STATE_FAILED,
+      "PI_SDK_MODEL_FAILED",
+    );
+    const metering = {
+      providerId,
+      model: "original",
+      usage: {
+        inputTokens: 150,
+        outputTokens: 15,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        modelUsage: [
+          {
+            providerId,
+            model: "original",
+            inputTokens: 100,
+            outputTokens: 10,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
+          {
+            providerId: reviewer.id,
+            model: "review",
+            inputTokens: 50,
+            outputTokens: 5,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
+        ],
+      },
+    };
+    await recordAgentTaskUsage(claimed, metering);
+    await recordAgentTaskUsage(claimed, metering);
+    expect(await db.agentUsage.count({ where: { taskId: claimed.id } })).toBe(
+      1,
+    );
+    expect(
+      await db.agentUsage.findUniqueOrThrow({ where: { taskId: claimed.id } }),
+    ).toMatchObject({
+      inputTokens: 150,
+      outputTokens: 15,
+      costMicros: BigInt(720),
+      succeeded: false,
+    });
+  });
+
+  it.each([120_000, 220_000])(
+    "warns once without failing the turn and reconciles terminal usage to %i input tokens",
+    async (finalInput) => {
+      const { agent, conversation } = await fixture();
+      await db.agent.update({
+        where: { id: agent.id },
+        data: { monthlyBudgetMicros: BigInt(1_000_000) },
+      });
+      await db.agentUsage.create({
+        data: {
+          workspaceId,
+          agentId: agent.id,
+          conversationId: conversation.id,
+          taskId: randomUUID(),
+          entryKind: "chat",
+          inputTokens: 900_000,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          costMicros: BigInt(900_000),
+          succeeded: true,
+        },
+      });
+      const input = {
+        kind: "chat" as const,
+        sourceId: conversation.id,
+        workspaceId,
+        agentId: agent.id,
+        actorId: userId,
+        messageId: randomUUID(),
+        text: "finish this turn",
+      };
+      const admitted = await submitAgentEntry(input, () => {});
+      const claimed = await claimTask(admitted.row.id);
+      if (!claimed?.leaseToken) throw new Error("Missing task lease");
+      const scope = { workspaceId, agentId: agent.id, taskId: claimed.id };
+      const token = {
+        workspaceId,
+        agentId: agent.id,
+        providerId,
+        a2aTaskId: claimed.id,
+        a2aLeaseToken: claimed.leaseToken,
+      };
+      for (let request = 0; request < 3; request++) {
+        // Exercise the same chunked provider usage observer as the model gateway.
+        const observer = new ModelResponseUsage(true);
+        const bytes = new TextEncoder().encode(
+          `data: ${JSON.stringify({
+            usage: { prompt_tokens: 70_000, completion_tokens: 0 },
+          })}\n\ndata: [DONE]\n\n`,
+        );
+        observer.push(bytes.slice(0, 17));
+        observer.push(bytes.slice(17));
+        const usage = observer.finish();
+        if (!usage) throw new Error("Missing provider usage");
+        await recordAgentModelUsage(token, {
+          usage,
+          model: "original",
+          providerId,
+        });
+        expect(
+          (await db.a2ATask.findUniqueOrThrow({ where: { id: claimed.id } }))
+            .state,
+        ).toBe(TaskState.TASK_STATE_WORKING);
+        if (!request) expect(await taskBudgetWarning(scope)).toBeUndefined();
+      }
+      expect(await taskBudgetWarning(scope)).toMatchObject({
+        taskId: claimed.id,
+        agentId: agent.id,
+        spentMicros: "1040000",
+        monthlyBudgetMicros: "1000000",
+        currency: "USD",
+        unit: "micros",
+      });
+      const usage = {
+        inputTokens: finalInput,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      };
+      await finishTask(
+        claimed.id,
+        claimed.leaseToken,
+        TaskState.TASK_STATE_COMPLETED,
+        undefined,
+        Artifact.fromJSON({
+          artifactId: randomUUID(),
+          parts: [{ text: "Finished successfully." }],
+          metadata: {
+            toolplanePiSdk: {
+              commands: [],
+              usage,
+              model: { providerId, model: "original" },
+            },
+          },
+        }),
+      );
+      await recordAgentTaskUsage(claimed);
+      await recordAgentTaskUsage(claimed);
+      // A late gateway completion cannot add a second bill after reconciliation.
+      await recordAgentModelUsage(token, {
+        usage,
+        model: "original",
+        providerId,
+      });
+      expect(
+        (await db.a2ATask.findUniqueOrThrow({ where: { id: claimed.id } }))
+          .state,
+      ).toBe(TaskState.TASK_STATE_COMPLETED);
+      expect(
+        await db.agentUsage.findUniqueOrThrow({
+          where: { taskId: claimed.id },
+        }),
+      ).toMatchObject({
+        ...usage,
+        costMicros: BigInt(finalInput),
+        succeeded: true,
+        meteringCompleted: true,
+      });
+      expect(await db.agentUsage.count({ where: { taskId: claimed.id } })).toBe(
+        1,
+      );
+      expect(
+        await db.logEvent.count({
+          where: {
+            workspaceId,
+            agentId: agent.id,
+            taskId: claimed.id,
+            eventName: "agent.budget.exceeded",
+          },
+        }),
+      ).toBe(1);
+      expect(
+        await appendBudgetWarningText("Finished successfully.", scope),
+      ).toContain("Finished successfully.\n\n");
+      await expect(
+        submitAgentEntry({ ...input, messageId: randomUUID() }, () => {}),
+      ).rejects.toThrow("AGENT_BUDGET_EXCEEDED");
+    },
+  );
 
   it("denies foreign workspace reads and rejects webhook user, toolkit and wrong secrets", async () => {
     const { agent, conversation } = await fixture();

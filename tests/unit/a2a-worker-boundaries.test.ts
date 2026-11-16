@@ -66,7 +66,10 @@ vi.mock("@/lib/db", () => ({
     $transaction: vi.fn(async (operation) =>
       operation({
         $queryRaw: vi.fn(async () => []),
-        agentUsage: { createMany: vi.fn(async () => ({ count: 1 })) },
+        agentUsage: {
+          findUnique: vi.fn(async () => null),
+          upsert: vi.fn(async ({ create }) => create),
+        },
         agent: {
           findUniqueOrThrow: vi.fn(async () => ({ monthlyBudgetMicros: null })),
         },
@@ -449,6 +452,10 @@ describe("A2A worker admission and recovery boundaries", () => {
     [
       new Error("PI_SDK_MODEL_FAILED: HTTP_503"),
       "PI_SDK_MODEL_FAILED: HTTP_503",
+    ],
+    [
+      new Error("PI_SDK_MODEL_FAILED: GATEWAY_ERROR"),
+      "PI_SDK_MODEL_FAILED: GATEWAY_ERROR",
     ],
   ])("preserves bounded native failure code %s", async (error, code) => {
     const row = task("local", "pi-harness", true);

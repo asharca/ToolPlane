@@ -3,13 +3,431 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { once } from "node:events";
+import { createServer as createHttpServer } from "node:http";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:http";
 import { promisify } from "node:util";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { stopNativeSessionHosts } from "../../scripts/native-runtime-stop.mjs";
+import {
+  createAdvisor,
+  ADVISOR_REVIEW_TIMEOUT_MS,
+} from "../../scripts/pi-sdk-advisor.mjs";
+
+it.each(["deadline", "cancel"] as const)(
+  "releases a nonresponsive advisor on %s",
+  async (mode) => {
+    vi.useFakeTimers();
+    try {
+      const events: Array<Record<string, unknown>> = [];
+      const messages: Array<{ role: string; content: string }> = [];
+      let stopped = false;
+      let requestSignal: AbortSignal | undefined;
+      const session = {
+        messages,
+        systemPrompt: "Review the task",
+        steer: vi.fn(),
+        followUp: vi.fn(),
+      };
+      const advisor = createAdvisor({
+        modelRuntime: {
+          registerProvider: vi.fn(),
+          setRuntimeApiKey: vi.fn(),
+          removeRuntimeApiKey: vi.fn(async () => {}),
+          completeSimple: vi.fn(
+            (
+              _model: unknown,
+              _context: unknown,
+              options: { signal: AbortSignal },
+            ) => {
+              requestSignal = options.signal;
+              // Exercise a provider that ignores cancellation and never resolves.
+              return Promise.withResolvers().promise;
+            },
+          ),
+        },
+        emit: (event: Record<string, unknown>) => events.push(event),
+        onUsage: vi.fn(),
+        getSession: () => session,
+        isAborted: () => stopped,
+        getFailureReason: () => "PROVIDER_ERROR",
+      });
+      await advisor.start(
+        { model: {}, cadence: "final", minSeverity: "info" },
+        "token",
+        "request",
+      );
+      messages.push({ role: "user", content: "Complete the task" });
+      const review = advisor.review({
+        message: { stopReason: "stop" },
+        toolResults: [],
+      });
+      if (mode === "deadline")
+        await vi.advanceTimersByTimeAsync(ADVISOR_REVIEW_TIMEOUT_MS);
+      else {
+        stopped = true;
+        advisor.cancel();
+      }
+      await review;
+      expect(requestSignal?.aborted).toBe(true);
+      expect(session.followUp).not.toHaveBeenCalled();
+      if (mode === "deadline")
+        expect(events).toEqual([
+          {
+            type: "advisor_error",
+            code: "ADVISOR_REVIEW_FAILED",
+            reason: "TIMEOUT",
+            durationMs: ADVISOR_REVIEW_TIMEOUT_MS,
+          },
+        ]);
+      else expect(events).toEqual([]);
+      await advisor.finish();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each([
+  "each_tool_batch",
+  "final",
+  "wrapped",
+  "prose",
+  "invalid",
+  "http-error",
+  "truncated",
+  "truncated-json",
+] as const)(
+  "reviews through the real SDK and broker without blocking the main turn (%s)",
+  async (mode) => {
+    const dir = await mkdtemp(join(tmpdir(), "toolplane-advisor-"));
+    const driver = join(process.cwd(), "scripts/native-runtime-session.mjs");
+    const host = join(process.cwd(), "scripts/pi-sdk-session.mjs");
+    const statePath = join(dir, "state.json");
+    const socketPath = `/tmp/toolplane-runtime-${createHash("sha256").update(statePath).digest("hex").slice(0, 32)}.sock`;
+    const configPath = join(dir, "config.json");
+    const inputPath = join(dir, "request.json");
+    const extension = join(dir, "counter.mjs");
+    const requests: Array<{
+      model: string;
+      messages: unknown[];
+      reasoning_effort?: string;
+      max_completion_tokens?: number;
+    }> = [];
+    let mainCalls = 0;
+    const gateway = createHttpServer((req, res) => {
+      void (async () => {
+        let raw = "";
+        for await (const chunk of req) raw += String(chunk);
+        const body = JSON.parse(raw);
+        requests.push(body);
+        expect(req.headers.authorization).toBe("Bearer advisor-test-token");
+        const review = body.model === "reviewer";
+        if (review && mode === "http-error") {
+          res.writeHead(503, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: { message: "private-provider-diagnostic" },
+            }),
+          );
+          return;
+        }
+        if (!review) mainCalls++;
+        const tool = !review && mode === "each_tool_batch" && mainCalls === 1;
+        let content = review
+          ? mode === "invalid"
+            ? "not JSON"
+            : JSON.stringify([
+                { severity: "info", message: "Cosmetic detail" },
+                {
+                  severity: "warning",
+                  message: "Check the tool result before finishing",
+                },
+                {
+                  severity: "critical",
+                  message: "Verify the missing requirement",
+                },
+              ])
+          : mainCalls > 1
+            ? "MAIN_CONTINUES"
+            : "MAIN_COMPLETE";
+        if (review && mode === "wrapped")
+          content = `<think>Ignore this reasoning: [{"severity":"critical","message":"REASONING_ONLY"}]</think>\nHere are the findings:\n\`\`\`json\n${content}\n\`\`\`\nReview complete.`;
+        if (review && mode === "prose")
+          content = `Not JSON: [invalid] then findings: ${content} Done.`;
+        if (review && mode === "truncated")
+          content = "<think>Unfinished internal reasoning";
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        const delta = tool
+          ? {
+              role: "assistant",
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "counter-1",
+                  type: "function",
+                  function: { name: "increment", arguments: "{}" },
+                },
+              ],
+            }
+          : {
+              role: "assistant",
+              content,
+              ...(review ? { reasoning_content: "REASONING_ONLY" } : {}),
+            };
+        for (const chunk of [
+          { choices: [{ index: 0, delta, finish_reason: null }] },
+          {
+            choices: [
+              {
+                index: 0,
+                delta: {},
+                finish_reason: tool
+                  ? "tool_calls"
+                  : review && mode.startsWith("truncated")
+                    ? "length"
+                    : "stop",
+              },
+            ],
+            usage: {
+              prompt_tokens: 20,
+              completion_tokens: 5,
+              total_tokens: 25,
+            },
+          },
+        ])
+          res.write(
+            `data: ${JSON.stringify({ id: "fixed", object: "chat.completion.chunk", created: 1, model: body.model, ...chunk })}\n\n`,
+          );
+        res.end("data: [DONE]\n\n");
+      })().catch(() => {
+        res.writeHead(500);
+        res.end();
+      });
+    });
+    const listening = Promise.withResolvers<void>();
+    gateway.listen(0, "127.0.0.1", listening.resolve);
+    await listening.promise;
+    let daemon: ChildProcess | undefined;
+    try {
+      const address = gateway.address();
+      if (!address || typeof address === "string")
+        throw new Error("No gateway address");
+      const home = join(dir, "home");
+      const env = {
+        ...process.env,
+        HOME: home,
+        XDG_CONFIG_HOME: join(home, ".config"),
+        XDG_DATA_HOME: join(home, ".local/share"),
+        XDG_CACHE_HOME: join(home, ".cache"),
+        XDG_STATE_HOME: join(home, ".local/state"),
+        PI_OFFLINE: "1",
+        PI_TELEMETRY: "0",
+        NODE_CHANNEL_FD: undefined,
+        NODE_CHANNEL_SERIALIZATION_MODE: undefined,
+      };
+      await mkdir(join(dir, "sessions"));
+      await mkdir(join(dir, "private"));
+      await writeFile(
+        extension,
+        `export default pi => { pi.registerTool({name:'increment',label:'Counter',description:'Count',parameters:{type:'object',properties:{}},async execute(){return {content:[{type:'text',text:'COUNTER_OK'}],details:{count:1}};}}); };`,
+      );
+      await writeFile(
+        join(dir, "mcp.mjs"),
+        "export async function createPiMcpTools(){return [];}",
+      );
+      const model = {
+        id: "primary",
+        toolplaneProviderId: "primary-provider",
+        name: "Primary",
+        provider: "toolplane",
+        api: "openai-completions",
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        reasoning: false,
+        input: ["text"],
+        contextWindow: 32768,
+        maxTokens: 16384,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      };
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          sdkVersion: "1.5.2",
+          compatibleSdkVersions: ["1.5.2"],
+          packageRoot: process.cwd(),
+          cwd: dir,
+          workspaceRoot: dir,
+          sharedDir: join(dir, "shared"),
+          agentDir: join(dir, "private"),
+          sessionsDir: join(dir, "sessions"),
+          statePath,
+          packageSetChecksum: "empty",
+          agentRevisionId: "pinned",
+          model,
+          systemPrompt: "Verify results before finishing.",
+          defaultTools: [],
+          excludeTools: [],
+          packages: [],
+          resources: {
+            extensions: [extension],
+            skills: [],
+            prompts: [],
+            themes: [],
+          },
+          packageVerifierPath: join(
+            process.cwd(),
+            "scripts/pi-sdk-package-files.mjs",
+          ),
+          mcpFactoryPath: join(dir, "mcp.mjs"),
+          hostOnlyCommands: [],
+        }),
+      );
+      await writeFile(
+        inputPath,
+        JSON.stringify({
+          kind: "pi-sdk",
+          binary: process.execPath,
+          args: [host, configPath],
+          cwd: dir,
+          statePath,
+          signature: "advisor",
+          message: "Complete this task",
+          context: {
+            runtimeToken: "advisor-test-token",
+            model,
+            mcpConfig: { servers: [] },
+            advisor: {
+              providerId: "review-provider",
+              model: {
+                ...model,
+                id: "reviewer",
+                toolplaneProviderId: "review-provider",
+                provider: "toolplane-advisor",
+                reasoning: true,
+              },
+              cadence: mode === "each_tool_batch" ? mode : "final",
+              minSeverity: "warning",
+            },
+          },
+        }),
+      );
+      daemon = spawn(process.execPath, [driver, inputPath, "serve"], {
+        env,
+        stdio: "ignore",
+      });
+      await expect
+        .poll(() => existsSync(socketPath), { timeout: 10000 })
+        .toBe(true);
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [driver, inputPath],
+        { env, timeout: 20000 },
+      );
+      const events = stdout
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const result = events.find(
+        (event) => event.type === "toolplane_sdk_response",
+      );
+      expect(result.success).toBe(true);
+      expect(result.result.usage.modelUsage).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            providerId: "primary-provider",
+            model: "primary",
+          }),
+          expect.objectContaining({
+            providerId: "review-provider",
+            model: "reviewer",
+          }),
+        ]),
+      );
+      expect(
+        requests.filter((request) => request.model === "reviewer"),
+      ).toHaveLength(1);
+      expect(
+        requests.find((request) => request.model === "reviewer")
+          ?.reasoning_effort,
+      ).toBe("minimal");
+      expect(
+        requests.find((request) => request.model === "reviewer")
+          ?.max_completion_tokens,
+      ).toBe(8192);
+      if (
+        mode === "invalid" ||
+        mode === "http-error" ||
+        mode.startsWith("truncated")
+      ) {
+        expect(mainCalls).toBe(1);
+        expect(result.result.text).toContain("MAIN_COMPLETE");
+        expect(
+          events.find((event) => event.type === "advisor_error"),
+        ).toMatchObject({
+          code: "ADVISOR_REVIEW_FAILED",
+          reason:
+            mode === "invalid"
+              ? "INVALID_OUTPUT"
+              : mode === "http-error"
+                ? "HTTP_503"
+                : "OUTPUT_TRUNCATED",
+        });
+        expect(JSON.stringify(events)).not.toContain(
+          "private-provider-diagnostic",
+        );
+        expect(result.result.advisories).toBeUndefined();
+      } else {
+        expect(mainCalls).toBe(2);
+        expect(result.result.text).toContain("MAIN_CONTINUES");
+        const advice = events.find(
+          (event) => event.type === "advisor_suggestions",
+        ).advisory;
+        expect(
+          advice.suggestions.map((note: { severity: string }) => note.severity),
+        ).toEqual(["critical", "warning"]);
+        expect(result.result.advisories).toEqual([advice]);
+        expect(
+          JSON.stringify(
+            requests.filter((request) => request.model === "primary").at(-1)
+              ?.messages,
+          ),
+        ).toContain("Verify the missing requirement");
+        expect(JSON.stringify(advice)).not.toContain("REASONING_ONLY");
+      }
+      // Invalid JSON consumes tokens; an HTTP rejection carries Pi's zero-token usage.
+      if (mode === "http-error") {
+        expect(result.result.advisorUsage).toMatchObject({
+          inputTokens: 0,
+          outputTokens: 0,
+        });
+        expect(result.result.usage.inputTokens).toBe(20);
+      } else {
+        expect(result.result.advisorUsage).toMatchObject({
+          inputTokens: 20,
+          outputTokens: 5,
+        });
+        expect(result.result.usage.inputTokens).toBe(
+          mode === "invalid" || mode.startsWith("truncated") ? 40 : 60,
+        );
+      }
+    } finally {
+      if (daemon && daemon.exitCode === null && daemon.signalCode === null) {
+        const stopped = once(daemon, "exit");
+        daemon.kill("SIGTERM");
+        await stopped;
+      }
+      gateway.closeAllConnections();
+      const closed = Promise.withResolvers<void>();
+      gateway.close(() => closed.resolve());
+      await closed.promise;
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+  60000,
+);
 
 it("stops only one conversation's resident SDK host while preserving its sibling and saved native state", async () => {
   const root = await mkdtemp(join(tmpdir(), "toolplane-session-stop-"));
@@ -122,7 +540,15 @@ it("stops only one conversation's resident SDK host while preserving its sibling
     await expect
       .poll(() => existsSync(socketPath), { timeout: 10000 })
       .toBe(true);
-    const request = async () => {
+    const request = async (patch?: Record<string, unknown>) => {
+      if (patch)
+        await writeFile(
+          inputPath,
+          JSON.stringify({
+            ...JSON.parse(await readFile(inputPath, "utf8")),
+            ...patch,
+          }),
+        );
       const { stdout } = await promisify(execFile)(
         process.execPath,
         [driver, inputPath],
@@ -145,6 +571,49 @@ it("stops only one conversation's resident SDK host while preserving its sibling
       success: true,
       result: { text: expect.stringContaining("count=1") },
     });
+    // Even a real failed model turn establishes native user identity. Both the
+    // failure metadata and fork acknowledgement must survive broker allowlists.
+    const failed = await first.request({
+      command: null,
+      message: "BROKER_NATIVE_USER",
+    });
+    expect(failed).toMatchObject({
+      success: false,
+      result: {
+        sessionEntries: {
+          userEntryId: expect.any(String),
+          leafEntryId: expect.any(String),
+        },
+      },
+    });
+    const destination = join(root, "branched");
+    const forked = await first.request({
+      type: "fork",
+      entryId: failed.result.sessionEntries.userEntryId,
+      target: {
+        workspaceRoot: destination,
+        cwd: join(destination, "workspace"),
+        sessionsDir: join(destination, "sessions"),
+        statePath: join(destination, "sessions", "state.json"),
+      },
+    });
+    expect(forked).toMatchObject({
+      success: true,
+      result: {
+        fork: {
+          forked: true,
+          entryId: failed.result.sessionEntries.userEntryId,
+          contextOnly: true,
+          filesRewound: false,
+          externalEffectsRewound: false,
+        },
+      },
+    });
+    expect(
+      JSON.parse(
+        await readFile(join(destination, "sessions", "state.json"), "utf8"),
+      ),
+    ).toMatchObject({ sessionPersisted: true, agentRevisionId: "pinned" });
     const stopped = once(first.daemon, "exit");
     await stopNativeSessionHosts(first.stateRoot);
     await stopped;
@@ -201,7 +670,7 @@ it("settles real SDK commands without agent_end, rotates context, and kills disc
   await writeFile(
     extension,
     `
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, writeSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 export default function(pi) {
   let count = 0;
@@ -209,7 +678,15 @@ export default function(pi) {
     count++;
     pi.sendMessage({ customType: 'daemon-test', content: 'count=' + count, display: true });
     console.log('untrusted stdout must not become protocol');
+    // Exercise the broker's non-terminal event lane; state remains host-private.
+    writeFileSync(3, JSON.stringify({ type: 'context_maintenance', marker: {
+      kind: 'rewind', at: '2026-11-15T00:00:00.000Z', checkpointId: 'checkpoint-node',
+      entryId: 'report-node', report: 'Retained investigation report'
+    } }) + '\\n');
     writeFileSync(${JSON.stringify(join(dir, "context"))}, process.env.TOOLPLANE_RUNTIME_TOKEN);
+    // Exercise the broker's raw tool-event path, distinct from response results.
+    writeSync(3, JSON.stringify({ type: 'tool_execution_end', toolCallId: 'edit-patch', toolName: 'edit', patch: '--- a/file\\n+++ b/file\\n@@ -1 +1 @@\\n-old\\n+new\\n', truncated: true, firstChangedLine: 1 }) + '\\n');
+    writeFileSync(3, JSON.stringify({ type: 'tool_execution_end', toolCallId: 'child-call', toolName: 'bash', isError: false, result: 'CHILD_OK', source: { subagentId: 'local-child', subagentName: 'Local child', parentToolCallId: 'task-batch', depth: 1, untrustedExtra: 'discard' } }) + '\\n');
   }});
   pi.registerCommand('Wait', { handler: async () => {
     const child = spawn(process.execPath, ['-e', 'process.stdin.resume()'], { stdio: ['pipe', 'ignore', 'ignore'] });
@@ -237,6 +714,7 @@ export default function(pi) {
         name: "Test",
         api: "openai-completions",
         provider: "toolplane",
+        toolplaneProviderId: "primary",
         baseUrl: "http://127.0.0.1:1/v1",
         reasoning: false,
         input: ["text"],
@@ -264,6 +742,7 @@ export default function(pi) {
   );
   const job = {
     kind: "pi-sdk",
+    runId: "broker-queue-regression",
     binary: process.execPath,
     args: [host, configPath],
     sdkConfigPath: configPath,
@@ -278,6 +757,7 @@ export default function(pi) {
       mcpConfig: { servers: [] },
       model: JSON.parse(await readFile(configPath, "utf8")).model,
       modelRetries: 0,
+      fallbackModels: [] as Array<Record<string, unknown>>,
     },
   };
   await writeFile(inputPath, JSON.stringify(job));
@@ -327,6 +807,7 @@ export default function(pi) {
           text: expect.stringContaining("count=1"),
           status: "completed",
         },
+        streamRuleTriggers: [],
         // Without a model response the total is Pi's estimate; the broker must keep it.
         contextBreakdown: {
           usedTokens: expect.any(Number),
@@ -336,10 +817,44 @@ export default function(pi) {
             messages: expect.any(Number),
           }),
         },
+        queue: { messages: [], pendingMessageCount: 0 },
       },
     });
     expect(response[0].result).not.toHaveProperty("state");
+    expect(first).toContainEqual(
+      expect.objectContaining({
+        type: "tool_execution_end",
+        toolCallId: "edit-patch",
+        toolName: "edit",
+        patch: "--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new\n",
+        truncated: true,
+        firstChangedLine: 1,
+      }),
+    );
+    expect(first.find((event) => event.toolCallId === "child-call")).toEqual({
+      type: "tool_execution_end",
+      toolCallId: "child-call",
+      toolName: "bash",
+      isError: false,
+      result: "CHILD_OK",
+      source: {
+        subagentId: "local-child",
+        subagentName: "Local child",
+        parentToolCallId: "task-batch",
+        depth: 1,
+      },
+    });
     expect(JSON.stringify(first)).not.toContain("untrusted stdout");
+    expect(first).toContainEqual({
+      type: "context_maintenance",
+      marker: {
+        kind: "rewind",
+        at: "2026-11-15T00:00:00.000Z",
+        checkpointId: "checkpoint-node",
+        entryId: "report-node",
+        report: "Retained investigation report",
+      },
+    });
     expect(first.some((event) => event.type === "agent_end")).toBe(false);
     const sdkState = JSON.parse(await readFile(statePath, "utf8"));
     expect(sdkState).toMatchObject({
@@ -388,6 +903,38 @@ export default function(pi) {
     socket.write(`${JSON.stringify({ ...job, command: "/Wait" })}\n`);
     await until(() => existsSync(started));
     const descendantPid = Number(await readFile(started, "utf8"));
+    const control = (runId: string) => {
+      const { promise, resolve, reject } =
+        Promise.withResolvers<Record<string, unknown>>();
+      const client = createConnection(socketPath);
+      let output = "";
+      client.once("connect", () =>
+        client.write(
+          `${JSON.stringify({
+            ...job,
+            runId,
+            control: { type: "clear_queue" },
+          })}\n`,
+        ),
+      );
+      client.on("data", (chunk) => {
+        output += chunk;
+      });
+      client.once("error", reject);
+      client.once("end", () => resolve(JSON.parse(output.trim())));
+      return promise;
+    };
+    expect(await control("different-round")).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_QUEUE_NOT_RUNNING" },
+    });
+    expect(await control(job.runId)).toMatchObject({
+      success: true,
+      result: {
+        disposition: "cleared",
+        queue: { messages: [], pendingMessageCount: 0 },
+      },
+    });
     // A second socket must not attach to an already-running SDK request.
     const busy = await run();
     expect(busy).toEqual([
@@ -456,7 +1003,254 @@ export default function(pi) {
     ).toMatchObject({
       success: false,
       error: { code: "PI_SDK_MODEL_FAILED", reason: "UNREACHABLE RETRIED_1" },
+      result: {
+        actualModel: { providerId: "primary", model: "test" },
+        usage: { actualModel: { providerId: "primary", model: "test" } },
+      },
     });
+    const beforeRuleRestart = once(daemon, "exit");
+    daemon.kill("SIGTERM");
+    await beforeRuleRestart;
+    await rm(statePath);
+    const gateway = createServer((request, response) => {
+      void (async () => {
+        let raw = "";
+        for await (const chunk of request) raw += String(chunk);
+        const body = JSON.parse(raw);
+        const afterTool = body.messages.at(-1)?.role === "tool";
+        const delta = afterTool
+          ? { content: "BLOCKED_BUT_SUCCEEDED" }
+          : {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "broker-block",
+                  type: "function",
+                  function: {
+                    name: "bash",
+                    arguments: JSON.stringify({
+                      command: `printf forbidden > ${JSON.stringify(join(dir, "blocked-by-rule"))}`,
+                    }),
+                  },
+                },
+              ],
+            };
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        for (const chunk of [
+          {
+            choices: [
+              {
+                index: 0,
+                delta: { role: "assistant", ...delta },
+                finish_reason: null,
+              },
+            ],
+          },
+          {
+            choices: [
+              {
+                index: 0,
+                delta: {},
+                finish_reason: afterTool ? "stop" : "tool_calls",
+              },
+            ],
+            usage: {
+              prompt_tokens: 20,
+              completion_tokens: 5,
+              total_tokens: 25,
+            },
+          },
+        ])
+          response.write(
+            `data: ${JSON.stringify({ id: "broker-rules", object: "chat.completion.chunk", created: 1, model: "test", ...chunk })}\n\n`,
+          );
+        response.end("data: [DONE]\n\n");
+      })().catch(() => {
+        response.writeHead(500);
+        response.end();
+      });
+    });
+    gateway.listen(0, "127.0.0.1");
+    await once(gateway, "listening");
+    try {
+      const address = gateway.address();
+      if (!address || typeof address === "string")
+        throw new Error("Missing gateway address");
+      const rule = {
+        id: "broker-shell",
+        name: "Broker shell rule",
+        target: "tool_call",
+        toolName: "bash",
+        pattern: "blocked-by-rule",
+        action: "block",
+        message: "Shell write blocked by stream rule.",
+      };
+      const hostConfig = JSON.parse(await readFile(configPath, "utf8"));
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          ...hostConfig,
+          defaultTools: ["bash"],
+          streamRules: [rule],
+        }),
+      );
+      job.context.model = {
+        ...job.context.model,
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      };
+      job.context.modelRetries = 0;
+      job.message = "Call bash";
+      daemon = spawn(process.execPath, [driver, inputPath, "serve"], {
+        stdio: "ignore",
+        env: environment,
+      });
+      await until(() => existsSync(socketPath));
+      const events = await run();
+      expect(
+        events.find((event) => event.type === "stream_rule_triggered"),
+      ).toMatchObject({
+        trigger: {
+          ruleId: rule.id,
+          action: "block",
+          toolName: "bash",
+          toolCallId: "broker-block",
+          message: rule.message,
+        },
+      });
+      expect(
+        events.find((event) => event.type === "toolplane_sdk_response"),
+      ).toMatchObject({
+        success: true,
+        result: {
+          text: "BLOCKED_BUT_SUCCEEDED",
+          streamRuleTriggers: [
+            expect.objectContaining({ ruleId: rule.id, action: "block" }),
+          ],
+        },
+      });
+      expect(existsSync(join(dir, "blocked-by-rule"))).toBe(false);
+    } finally {
+      gateway.closeAllConnections();
+      gateway.close();
+      await once(gateway, "close");
+    }
+    {
+      // Exercise real HTTP requests, Pi continuation and the broker whitelist together.
+      const attempts: string[] = [];
+      const gateway = createServer((request, response) => {
+        void (async () => {
+          let raw = "";
+          for await (const chunk of request) raw += String(chunk);
+          const input = JSON.parse(raw);
+          attempts.push(input.model);
+          if (input.model === "primary") {
+            response.writeHead(503, { "content-type": "application/json" });
+            response.end(
+              JSON.stringify({ error: { message: "private upstream outage" } }),
+            );
+            return;
+          }
+          response.writeHead(200, { "content-type": "text/event-stream" });
+          response.write(
+            `data: ${JSON.stringify({ id: "fallback", object: "chat.completion.chunk", created: 1, model: "backup", choices: [{ index: 0, delta: { role: "assistant", content: "BROKER_FALLBACK_OK" }, finish_reason: null }] })}\n\n`,
+          );
+          response.write(
+            `data: ${JSON.stringify({ id: "fallback", object: "chat.completion.chunk", created: 1, model: "backup", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })}\n\n`,
+          );
+          response.end("data: [DONE]\n\n");
+        })().catch(() => {
+          response.writeHead(500);
+          response.end();
+        });
+      });
+      await once(gateway.listen(0, "127.0.0.1"), "listening");
+      try {
+        const address = gateway.address();
+        if (!address || typeof address === "string")
+          throw new Error("Missing gateway address");
+        job.context.modelRetries = 1;
+        job.message = "Recover through the broker";
+        job.context.model = {
+          ...job.context.model,
+          id: "primary",
+          baseUrl: `http://127.0.0.1:${address.port}/primary/v1`,
+        };
+        job.context.fallbackModels = [
+          {
+            ...job.context.model,
+            provider: "toolplane-backup",
+            id: "backup",
+            toolplaneProviderId: "secondary",
+            baseUrl: `http://127.0.0.1:${address.port}/backup/v1`,
+          },
+        ];
+        const recovered = await run();
+        expect(attempts).toEqual(["primary", "primary", "backup"]);
+        expect(
+          recovered.find((event) => event.type === "toolplane_sdk_response"),
+        ).toMatchObject({
+          success: true,
+          result: {
+            text: "BROKER_FALLBACK_OK",
+            actualModel: { providerId: "secondary", model: "backup" },
+            usage: {
+              actualModel: { providerId: "secondary", model: "backup" },
+              modelUsage: expect.arrayContaining([
+                expect.objectContaining({
+                  providerId: "secondary",
+                  model: "backup",
+                  inputTokens: 10,
+                }),
+              ]),
+            },
+          },
+        });
+      } finally {
+        gateway.closeAllConnections();
+        const closed = Promise.withResolvers<void>();
+        gateway.close(() => closed.resolve());
+        await closed.promise;
+      }
+    }
+    {
+      job.context.fallbackModels = [];
+      const gateway = createHttpServer((request, response) => {
+        request.resume();
+        response.writeHead(500, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            error: {
+              type: "api_error",
+              code: "TOOLPLANE_MODEL_GATEWAY_FAILED",
+              message: "TOOLPLANE_MODEL_GATEWAY_FAILED",
+            },
+          }),
+        );
+      });
+      await once(gateway.listen(0, "127.0.0.1"), "listening");
+      try {
+        const address = gateway.address();
+        if (!address || typeof address === "string")
+          throw new Error("Missing gateway fixture address");
+        job.context.model = {
+          ...job.context.model,
+          baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        };
+        job.context.modelRetries = 0;
+        const failed = await run();
+        expect(
+          failed.find((event) => event.type === "toolplane_sdk_response"),
+        ).toMatchObject({
+          success: false,
+          error: { code: "PI_SDK_MODEL_FAILED", reason: "GATEWAY_ERROR" },
+        });
+      } finally {
+        gateway.closeAllConnections();
+        const closed = Promise.withResolvers<void>();
+        gateway.close(() => closed.resolve());
+        await closed.promise;
+      }
+    }
   } finally {
     // Ask the daemon to stop its detached host process group before removing files.
     if (daemon.exitCode === null && daemon.signalCode === null) {

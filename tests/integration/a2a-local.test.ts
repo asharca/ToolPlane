@@ -1,6 +1,33 @@
 // @vitest-environment node
 import { assertDefined } from "../assert-defined";
+import {
+  runtimeToolApproval,
+  decideToolApproval,
+  pendingToolApprovals,
+  channelToolApprovalReply,
+  toolArgumentHash,
+} from "@/lib/agents/execution/tool-approvals";
+import {
+  toolApprovalDecision,
+  type ToolApprovalPolicy,
+} from "@/lib/agents/tool-approval-policy";
+import { handleConversationToolApprovals } from "@/lib/agents/execution/tool-approval-http";
+import * as channelRuntime from "@/lib/agents/channel-runtime";
+import { encryptSecretRecord } from "@/lib/security/secrets";
+vi.mock("next-intl/server", () => ({
+  getTranslations: async () => (key: string) => key,
+}));
 import { createHash, randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { createInterface } from "node:readline";
+import { Readable } from "node:stream";
+import { POST as runtimeToolsPost } from "@/app/api/v1/agent-runtime/tasks/[taskId]/tools/route";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 import { emptyOmpConfig } from "@/lib/agents/omp-config";
@@ -99,7 +126,16 @@ import {
 } from "@/lib/agents/runtime-access";
 import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
 import { assertLocalRuntimeToken } from "@/lib/a2a/local-runtime";
-import { handleRuntimeTools } from "@/lib/agents/execution/runtime-tools";
+import {
+  handleRuntimeTools,
+  optionalBuiltinPlatformHandlers,
+} from "@/lib/agents/execution/runtime-tools";
+import {
+  AGENT_OPTIONAL_BUILTIN_TOOLS,
+  type AgentOptionalBuiltinTool,
+} from "@/lib/agents/runtime-kind";
+import { piOptionalPlatformTools } from "@/lib/agents/execution/runtime-tool-catalog";
+import { z } from "zod";
 import { executeLocalMcpTool } from "@/lib/a2a/local-mcp-tools";
 import { withSandboxExecutionLease } from "@/lib/agents/sandbox-execution-gate";
 import { isAgentRuntimeGrantCurrent } from "@/lib/agents/runtime-grant";
@@ -400,6 +436,7 @@ beforeEach(async () => {
     where: { workspaceId: ws },
     data: {
       a2aInternalEnabled: false,
+      toolApproval: { mode: "off" },
       subagentMode: "platform",
       nativeSubagentMaxConcurrency: 4,
       nativeSubagentMaxDepth: 3,
@@ -2744,11 +2781,14 @@ describe("unified native ingress mappings", () => {
     agentId: agents[0],
     slug: "local-test",
   });
-  async function entry(kind: "chat" | "control" | "work" | "channel" = "chat") {
+  async function entry(
+    kind: "chat" | "control" | "work" | "channel" = "chat",
+    revisionId = grant.agentRevisionId,
+  ) {
     const conversation = await db.conversation.create({
       data: {
         agentId: agents[0],
-        agentRevisionId: grant.agentRevisionId,
+        agentRevisionId: revisionId,
         legacyRevisionUnresolved: false,
         title: "Existing conversation",
         messages: {
@@ -2797,7 +2837,7 @@ describe("unified native ingress mappings", () => {
           data: {
             workspaceId: ws,
             agentId: agents[0],
-            agentRevisionId: grant.agentRevisionId,
+            agentRevisionId: revisionId,
             legacyRevisionUnresolved: false,
             sandboxId: sandboxes[0],
             conversationId: conversation.id,
@@ -2823,6 +2863,346 @@ describe("unified native ingress mappings", () => {
       text: "New task only",
     };
   }
+  async function approvalPolicy(policy: ToolApprovalPolicy) {
+    await db.$transaction(async (tx) => {
+      const current = await requireAgentRevision(
+        tx,
+        agents[0],
+        grant.agentRevisionId,
+      );
+      const owner = await tx.agent.findUniqueOrThrow({
+        where: { id: agents[0] },
+      });
+      const revision = await tx.agentRevision.create({
+        data: {
+          agentId: agents[0],
+          version: owner.currentRevisionVersion + 1,
+          config: {
+            ...current.config,
+            toolApproval: policy,
+          } as Prisma.InputJsonValue,
+        },
+      });
+      await tx.agent.update({
+        where: { id: agents[0] },
+        data: { currentRevisionVersion: revision.version },
+      });
+    });
+    grant = await createLocalRootGrant(ws, agents[0], user);
+  }
+  it("classifies builtins conservatively and gives explicit tool overrides priority", () => {
+    for (const tool of ["read", "grep", "find", "ls"])
+      expect(toolApprovalDecision({ mode: "write" }, tool)).toBe("allow");
+    for (const tool of ["edit", "write", "bash", "mcp_custom", "todo"])
+      expect(toolApprovalDecision({ mode: "write" }, tool)).toBe("ask");
+    expect(toolApprovalDecision({ mode: "exec" }, "write")).toBe("allow");
+    expect(toolApprovalDecision({ mode: "exec" }, "bash")).toBe("ask");
+    expect(
+      toolApprovalDecision(
+        { mode: "off", overrides: { read: "deny" } },
+        "read",
+      ),
+    ).toBe("deny");
+    expect(
+      toolApprovalDecision(
+        { mode: "all", overrides: { bash: "allow" } },
+        "bash",
+      ),
+    ).toBe("allow");
+    expect(toolApprovalDecision(undefined, "toString")).toBe("allow");
+    expect(toolArgumentHash("bash", { a: 1, b: 2 })).toBe(
+      toolArgumentHash("bash", { b: 2, a: 1 }),
+    );
+  });
+  it("binds approvals to parameters, consumes them once, expires them and rejects old leases", async () => {
+    await approvalPolicy({ mode: "all" });
+    const input = await entry("chat");
+    const accepted = await submitAgentEntry(input, vi.fn());
+    const running = assertDefined(await claimTask(accepted.row.id));
+    const token = await runtimeToken(running);
+    const call = {
+      toolCallId: "approval-one",
+      toolName: "bash",
+      arguments: { command: "echo approved" },
+    };
+    expect(
+      await runtimeToolApproval(token, { action: "request", ...call }),
+    ).toMatchObject({ status: "pending" });
+    const [card] = await pendingToolApprovals(running.id, running.leaseToken);
+    const id = assertDefined(card).id;
+    await expect(
+      decideToolApproval({
+        id,
+        decision: "approve",
+        workspaceId: randomUUID(),
+        agentId: agents[0],
+        actorId: user,
+      }),
+    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    await decideToolApproval({
+      id,
+      decision: "approve",
+      workspaceId: ws,
+      agentId: agents[0],
+      actorId: user,
+    });
+    expect(
+      await runtimeToolApproval(token, { action: "consume", ...call }),
+    ).toMatchObject({ allowed: true });
+    expect(
+      await runtimeToolApproval(token, { action: "consume", ...call }),
+    ).toMatchObject({ allowed: false });
+    const changed = { ...call, toolCallId: "changed" };
+    await runtimeToolApproval(token, { action: "request", ...changed });
+    const changedRow = await db.agentToolApproval.findUniqueOrThrow({
+      where: {
+        taskId_lease_toolCallId: {
+          taskId: running.id,
+          lease: assertDefined(running.leaseToken),
+          toolCallId: changed.toolCallId,
+        },
+      },
+    });
+    await decideToolApproval({
+      id: changedRow.id,
+      decision: "approve",
+      workspaceId: ws,
+      agentId: agents[0],
+      actorId: user,
+    });
+    expect(
+      await runtimeToolApproval(token, {
+        action: "consume",
+        ...changed,
+        arguments: { command: "different" },
+      }),
+    ).toMatchObject({ allowed: false });
+    const expired = { ...call, toolCallId: "expired" };
+    await runtimeToolApproval(token, { action: "request", ...expired });
+    await db.agentToolApproval.updateMany({
+      where: { taskId: running.id, toolCallId: "expired" },
+      data: { expiresAt: new Date(0) },
+    });
+    expect(
+      await runtimeToolApproval(token, { action: "consume", ...expired }),
+    ).toMatchObject({ allowed: false });
+    await db.a2ATask.update({
+      where: { id: running.id },
+      data: { leaseToken: randomUUID() },
+    });
+    await expect(
+      runtimeToolApproval(token, {
+        action: "request",
+        ...call,
+        toolCallId: "old-lease",
+      }),
+    ).rejects.toBeInstanceOf(TaskNotFoundError);
+  });
+  it("lets A2A bypass even deny overrides and audits more than 32 automatic calls", async () => {
+    await approvalPolicy({ mode: "all", overrides: { bash: "deny" } });
+    const running = await root();
+    const token = await runtimeToken(running);
+    for (let index = 0; index < 40; index++) {
+      const call = {
+        toolCallId: `automatic-${index}`,
+        toolName: "bash",
+        arguments: { command: "true" },
+      };
+      expect(
+        await runtimeToolApproval(token, { action: "request", ...call }),
+      ).toMatchObject({ status: "allowed" });
+      expect(
+        await runtimeToolApproval(token, { action: "consume", ...call }),
+      ).toMatchObject({ allowed: true });
+    }
+    expect(
+      await db.logEvent.count({
+        where: {
+          taskId: running.id,
+          eventName: "agent.tool_approval",
+          attributes: {
+            path: ["data", "decision"],
+            equals: "unattended_allow",
+          },
+        },
+      }),
+    ).toBe(40);
+  });
+  it("counts only current unexpired unconsumed human approvals toward pending capacity", async () => {
+    await approvalPolicy({ mode: "all" });
+    const input = await entry("chat");
+    const running = assertDefined(
+      await claimTask((await submitAgentEntry(input, vi.fn())).row.id),
+    );
+    const token = await runtimeToken(running);
+    const call = {
+      toolCallId: "",
+      toolName: "bash",
+      arguments: { command: "true" },
+    };
+    for (let index = 0; index < 33; index++) {
+      call.toolCallId = `consumed-${index}`;
+      await runtimeToolApproval(token, { action: "request", ...call });
+      const card = assertDefined(
+        (await pendingToolApprovals(running.id, running.leaseToken))[0],
+      );
+      await decideToolApproval({
+        id: card.id,
+        decision: "approve",
+        workspaceId: ws,
+        agentId: agents[0],
+        actorId: user,
+      });
+      expect(
+        await runtimeToolApproval(token, { action: "consume", ...call }),
+      ).toMatchObject({ allowed: true });
+    }
+    for (let index = 0; index < 32; index++)
+      expect(
+        await runtimeToolApproval(token, {
+          action: "request",
+          ...call,
+          toolCallId: `pending-${index}`,
+        }),
+      ).toMatchObject({ status: "pending" });
+    expect(
+      await runtimeToolApproval(token, {
+        action: "request",
+        ...call,
+        toolCallId: "overflow",
+      }),
+    ).toMatchObject({ status: "denied" });
+    await db.agentToolApproval.updateMany({
+      where: { taskId: running.id, toolCallId: "pending-0" },
+      data: { expiresAt: new Date(0) },
+    });
+    expect(
+      await runtimeToolApproval(token, {
+        action: "request",
+        ...call,
+        toolCallId: "after-expiry",
+      }),
+    ).toMatchObject({ status: "pending" });
+  }, 30000);
+
+  it("authorizes console decisions by workspace membership and conversation ownership", async () => {
+    await approvalPolicy({ mode: "all" });
+    const input = await entry("chat");
+    const running = assertDefined(
+      await claimTask((await submitAgentEntry(input, vi.fn())).row.id),
+    );
+    const token = await runtimeToken(running);
+    await runtimeToolApproval(token, {
+      action: "request",
+      toolCallId: "console",
+      toolName: "bash",
+      arguments: {},
+    });
+    const card = assertDefined(
+      (await pendingToolApprovals(running.id, running.leaseToken))[0],
+    );
+    const req = () =>
+      new Request("http://localhost:3000/approve", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://localhost:3000",
+        },
+        body: JSON.stringify({ id: card.id, decision: "approve" }),
+      });
+    expect(
+      (await handleConversationToolApprovals(req(), agents[0], input.sourceId))
+        .status,
+    ).toBe(401);
+    await createSession(user, 0);
+    expect(
+      (await handleConversationToolApprovals(req(), agents[1], input.sourceId))
+        .status,
+    ).toBe(404);
+    expect(
+      (await handleConversationToolApprovals(req(), agents[0], randomUUID()))
+        .status,
+    ).toBe(404);
+    expect(
+      (await handleConversationToolApprovals(req(), agents[0], input.sourceId))
+        .status,
+    ).toBe(200);
+  });
+  it("rejects unauthorized channel senders and consumes only the original authorized sender's short code", async () => {
+    await approvalPolicy({ mode: "all" });
+    const input = await entry("channel");
+    const connectionId = assertDefined(input.channelId);
+    await db.agentChannelConnection.update({
+      where: { id: connectionId },
+      data: {
+        senderPolicyVersion: 2,
+        adminUserIds: ["authorized"],
+        credentials: encryptSecretRecord({}),
+      },
+    });
+    const source = {
+      platform: "weixin",
+      chatType: "dm" as const,
+      chatId: "chat",
+      userId: "authorized",
+    };
+    const running = assertDefined(
+      await claimTask(
+        (await submitAgentEntry({ ...input, channelSource: source }, vi.fn()))
+          .row.id,
+      ),
+    );
+    const token = await runtimeToken(running);
+    const delivery = vi
+      .spyOn(channelRuntime, "sendChannelApprovalNotice")
+      .mockResolvedValue(true);
+    try {
+      await runtimeToolApproval(token, {
+        action: "request",
+        toolCallId: "channel",
+        toolName: "bash",
+        arguments: { command: "true" },
+      });
+      const card = assertDefined(
+        (await pendingToolApprovals(running.id, running.leaseToken))[0],
+      );
+      const reply = {
+        connectionId,
+        workspaceId: ws,
+        agentId: agents[0],
+        source,
+        text: `/approve ${card.shortCode}`,
+      };
+      expect(
+        await channelToolApprovalReply({
+          ...reply,
+          source: { ...source, userId: "intruder" },
+        }),
+      ).toBe("channelInvalid");
+      expect(
+        await pendingToolApprovals(running.id, running.leaseToken),
+      ).toHaveLength(1);
+      expect(
+        await channelToolApprovalReply({
+          ...reply,
+          source: { ...source, threadId: "wrong-thread" },
+        }),
+      ).toBe("channelInvalid");
+      expect(await channelToolApprovalReply(reply)).toBe("channelRecorded");
+      expect(await channelToolApprovalReply(reply)).toBe("channelInvalid");
+      expect(
+        await runtimeToolApproval(token, {
+          action: "consume",
+          toolCallId: "channel",
+          toolName: "bash",
+          arguments: { command: "true" },
+        }),
+      ).toMatchObject({ allowed: true });
+    } finally {
+      delivery.mockRestore();
+    }
+  });
+
   it.each(["chat", "work"] as const)(
     "keeps existing and new %s entries on the published provider after an unapplied draft provider change",
     async (kind) => {
@@ -3742,6 +4122,306 @@ describe("unified native ingress mappings", () => {
     ).resolves.toMatchObject({ version: revision.version });
   });
 
+  it("starts task-only Work through the real runtime-tools route and dispatches local SDK children without MCP or A2A grants", async () => {
+    await db.agent.update({
+      where: { id: agents[0] },
+      data: {
+        optionalBuiltinTools: ["task"],
+        a2aInboundEnabled: false,
+        a2aOutboundEnabled: false,
+        a2aPolicy: { schemaVersion: 1, targets: [] },
+      },
+    });
+    const published = await publishFixtureAgentRevision(ws, agents[0]);
+    const input = await entry("work", published.id);
+    const parent = assertDefined(
+      await claimTask((await submitAgentEntry(input, vi.fn())).row.id),
+    );
+    const payload = await runtimeToken(parent);
+    expect(payload.deploymentIds).toEqual([]);
+    const revision = await requireAgentRevision(db, agents[0], published.id);
+    expect(revision.config.optionalBuiltinTools).toEqual(["task"]);
+    expect(revision.config.mcpGrants).toEqual([]);
+    expect(revision.config.a2a.outboundEnabled).toBe(false);
+    const signed = await createAgentRuntimeToken(payload);
+    const directory = await mkdtemp(join(tmpdir(), "task-work-route-"));
+    const routeStatuses: number[] = [];
+    const routeErrors: unknown[] = [];
+    const childResponses: ServerResponse[] = [];
+    const modelTools: string[][] = [];
+    const gateway = createServer((request, response) => {
+      void (async () => {
+        let raw = "";
+        for await (const chunk of request) raw += String(chunk);
+        if (request.url === `/api/v1/agent-runtime/tasks/${parent.id}/tools`) {
+          const result = await runtimeToolsPost(
+            new Request(`http://localhost${request.url}`, {
+              method: "POST",
+              body: raw,
+              headers: {
+                authorization: request.headers.authorization ?? "",
+                "content-type": "application/json",
+                accept: "application/json, text/event-stream",
+              },
+            }),
+            { params: Promise.resolve({ taskId: parent.id }) },
+          );
+          routeStatuses.push(result.status);
+          response.writeHead(result.status, Object.fromEntries(result.headers));
+          response.end(await result.text());
+          return;
+        }
+        expect(request.headers.authorization).toBe(`Bearer ${signed}`);
+        const body = z
+          .object({
+            messages: z.array(z.object({ role: z.string() })),
+            tools: z
+              .array(z.object({ function: z.object({ name: z.string() }) }))
+              .optional(),
+          })
+          .parse(JSON.parse(raw));
+        const names = body.tools?.map((tool) => tool.function.name) ?? [];
+        modelTools.push(names);
+        const complete = (
+          target: ServerResponse,
+          delta: Record<string, unknown>,
+          finish: string,
+        ) => {
+          target.writeHead(200, { "content-type": "text/event-stream" });
+          for (const chunk of [
+            {
+              choices: [
+                {
+                  index: 0,
+                  delta: { role: "assistant", ...delta },
+                  finish_reason: null,
+                },
+              ],
+            },
+            {
+              choices: [{ index: 0, delta: {}, finish_reason: finish }],
+              usage: {
+                prompt_tokens: 20,
+                completion_tokens: 5,
+                total_tokens: 25,
+              },
+            },
+          ])
+            target.write(
+              `data: ${JSON.stringify({ id: "controlled", object: "chat.completion.chunk", created: 1, model: "controlled", ...chunk })}\n\n`,
+            );
+          target.end("data: [DONE]\n\n");
+        };
+        if (names.includes("task")) {
+          if (body.messages.at(-1)?.role === "tool")
+            complete(response, { content: "TASK_ONLY_WORK_OK" }, "stop");
+          else
+            complete(
+              response,
+              {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: "local-task-batch",
+                    type: "function",
+                    function: {
+                      name: "task",
+                      arguments: JSON.stringify({
+                        tasks: [
+                          {
+                            id: "one",
+                            description: "One",
+                            prompt: "Return ONE",
+                          },
+                          {
+                            id: "two",
+                            description: "Two",
+                            prompt: "Return TWO",
+                          },
+                        ],
+                      }),
+                    },
+                  },
+                ],
+              },
+              "tool_calls",
+            );
+        } else {
+          childResponses.push(response);
+          if (childResponses.length === 2)
+            childResponses.forEach((child, index) => {
+              complete(child, { content: `CHILD_${index}` }, "stop");
+            });
+        }
+      })().catch((error) => {
+        routeErrors.push(error);
+        response.writeHead(500);
+        response.end();
+      });
+    });
+    const listening = once(gateway, "listening");
+    gateway.listen(0, "127.0.0.1");
+    await listening;
+    const address = gateway.address();
+    if (!address || typeof address === "string")
+      throw new Error("Missing gateway address");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const workspace = join(directory, "workspace");
+    const agentDir = join(directory, "private");
+    const home = join(directory, "home");
+    await Promise.all([workspace, agentDir].map((path) => mkdir(path)));
+    const configPath = join(directory, "config.json");
+    const factoryPath = join(directory, "mcp.mjs");
+    const { piMcpExtensionSource, buildPiMcpConfig } = await vi.importActual<
+      typeof AgentSandboxRuntime
+    >("@/lib/agents/sandbox-runtime");
+    await writeFile(factoryPath, piMcpExtensionSource({ eventFd: 3 }));
+    const model = {
+      id: "controlled",
+      name: "Controlled",
+      api: "openai-completions",
+      provider: "toolplane",
+      baseUrl: `${origin}/v1`,
+      reasoning: false,
+      input: ["text"],
+      contextWindow: 128000,
+      maxTokens: 4096,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        sdkVersion: "1.5.2",
+        compatibleSdkVersions: ["1.5.2"],
+        packageRoot: resolve("."),
+        cwd: workspace,
+        workspaceRoot: directory,
+        sharedDir: join(directory, "shared"),
+        agentDir,
+        sessionsDir: join(directory, "sessions"),
+        statePath: join(agentDir, "state.json"),
+        packageSetChecksum: "task-only",
+        agentRevisionId: revision.id,
+        model,
+        systemPrompt: "Complete assigned work.",
+        defaultTools: ["task"],
+        optionalBuiltinExtensions: [
+          resolve("scripts/pi-optional-tools/task.mjs"),
+        ],
+        nativeSubagentPolicy: { maxConcurrency: 2, maxDepth: 1 },
+        resources: { extensions: [], skills: [], prompts: [], themes: [] },
+        packages: [],
+        packageVerifierPath: resolve("scripts/pi-sdk-package-files.mjs"),
+        mcpFactoryPath: factoryPath,
+      }),
+    );
+    const host = spawn(
+      process.execPath,
+      [resolve("scripts/pi-sdk-session.mjs"), configPath],
+      {
+        stdio: ["pipe", "ignore", "ignore", "pipe"],
+        env: {
+          ...process.env,
+          HOME: home,
+          XDG_CONFIG_HOME: join(home, ".config"),
+          XDG_DATA_HOME: join(home, ".local/share"),
+          XDG_CACHE_HOME: join(home, ".cache"),
+          XDG_STATE_HOME: join(home, ".local/state"),
+          PI_OFFLINE: "1",
+          PI_TELEMETRY: "0",
+          NODE_CHANNEL_FD: undefined,
+          NODE_CHANNEL_SERIALIZATION_MODE: undefined,
+        },
+      },
+    );
+    const events: Record<string, unknown>[] = [];
+    try {
+      const stream = host.stdio[3];
+      if (!(stream instanceof Readable)) throw new Error("Missing event pipe");
+      const settled = Promise.withResolvers<Record<string, unknown>>();
+      createInterface({ input: stream }).on("line", (line) => {
+        const event = z.record(z.string(), z.unknown()).parse(JSON.parse(line));
+        events.push(event);
+        if (event.type === "toolplane_sdk_response") settled.resolve(event);
+      });
+      host.once("error", settled.reject);
+      host.once("exit", () =>
+        settled.reject(new Error("SDK exited before response")),
+      );
+      assertDefined(host.stdin).write(
+        `${JSON.stringify({
+          id: randomUUID(),
+          type: "prompt",
+          message: "Dispatch two children",
+          context: {
+            runtimeToken: signed,
+            model,
+            mcpConfig: JSON.parse(
+              buildPiMcpConfig(
+                [
+                  {
+                    deploymentId: "toolplane-runtime",
+                    url: `${origin}/api/v1/agent-runtime/tasks/${parent.id}/tools`,
+                  },
+                ],
+                10 * 1024 * 1024,
+              ),
+            ),
+          },
+        })}\n`,
+      );
+      const result = await settled.promise;
+      expect(routeErrors).toEqual([]);
+      expect(routeStatuses).toEqual([200]);
+      expect(result).toMatchObject({
+        success: true,
+        result: {
+          text: "TASK_ONLY_WORK_OK",
+          usage: { inputTokens: 80, outputTokens: 20 },
+        },
+      });
+      expect(childResponses).toHaveLength(2);
+      expect(
+        modelTools.every(
+          (names) => !names.some((name) => name.includes("pi_a2a_")),
+        ),
+      ).toBe(true);
+      expect(
+        events.find(
+          (event) =>
+            event.type === "tool_execution_end" &&
+            event.toolCallId === "local-task-batch",
+        ),
+      ).toMatchObject({
+        isError: false,
+        result: {
+          details: {
+            status: "completed",
+            results: [
+              { id: "one", status: "completed" },
+              { id: "two", status: "completed" },
+            ],
+          },
+        },
+      });
+    } finally {
+      if (host.exitCode === null && host.signalCode === null) {
+        const exited = once(host, "exit");
+        host.kill("SIGKILL");
+        await exited;
+      }
+      gateway.closeAllConnections();
+      const closed = once(gateway, "close");
+      gateway.close();
+      await closed;
+      await rm(directory, { recursive: true, force: true });
+      await db.agent.update({
+        where: { id: agents[0] },
+        data: { optionalBuiltinTools: [] },
+      });
+    }
+  }, 60000);
+
   it("does not inject platform delegation tools into Work without pinned outbound grants", async () => {
     await db.agent.update({
       where: { id: agents[0] },
@@ -3796,6 +4476,326 @@ describe("unified native ingress mappings", () => {
       ).toBe(0);
     } finally {
       await client.close();
+    }
+  });
+
+  it("persists optional memory tools immediately within one Agent and forgets without touching peers", async () => {
+    const names = ["memory_retain", "memory_recall", "memory_forget"];
+    await db.agent.update({
+      where: { id: agents[0] },
+      data: { optionalBuiltinTools: names },
+    });
+    await publishFixtureAgentRevision(ws, agents[0]);
+    grant = await createLocalRootGrant(ws, agents[0], user);
+    const parent = await root();
+    const signed = await createAgentRuntimeToken(await runtimeToken(parent));
+    const client = new Client({ name: "memory-tools", version: "1" });
+    const sentinel = `memory-${randomUUID()}`;
+    const peer = await db.agentMemory.create({
+      data: {
+        workspaceId: ws,
+        agentId: agents[1],
+        content: sentinel,
+        creatorType: "user",
+      },
+    });
+    try {
+      await client.connect(
+        new StreamableHTTPClientTransport(
+          new URL("https://toolplane.test/runtime-tools"),
+          {
+            requestInit: { headers: { authorization: `Bearer ${signed}` } },
+            fetch: async (input, init) => {
+              const req = new Request(input, init);
+              return req.method === "POST"
+                ? handleRuntimeTools(req, parent.id)
+                : new Response(null, { status: 405 });
+            },
+          },
+        ),
+      );
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(
+        expect.arrayContaining(names),
+      );
+      expect(
+        (
+          await client.callTool({
+            name: "memory_retain",
+            arguments: { content: sentinel },
+          })
+        ).isError,
+      ).toBe(false);
+      const memory = await db.agentMemory.findFirstOrThrow({
+        where: { workspaceId: ws, agentId: agents[0], content: sentinel },
+      });
+      expect(memory).toMatchObject({ creatorType: "tool", taskId: parent.id });
+      const recalled = await client.callTool({
+        name: "memory_recall",
+        arguments: { query: sentinel },
+      });
+      expect(recalled.isError).toBe(false);
+      expect(JSON.stringify(recalled.content)).toContain(memory.id);
+      expect(JSON.stringify(recalled.content)).toContain(
+        "UNTRUSTED HISTORICAL MEMORIES",
+      );
+      expect(JSON.stringify(recalled.content)).not.toContain(peer.id);
+      expect(
+        (
+          await client.callTool({
+            name: "memory_forget",
+            arguments: { id: peer.id },
+          })
+        ).isError,
+      ).toBe(true);
+      expect(
+        (
+          await client.callTool({
+            name: "memory_forget",
+            arguments: { id: memory.id },
+          })
+        ).isError,
+      ).toBe(false);
+      expect(
+        JSON.stringify(
+          (
+            await client.callTool({
+              name: "memory_recall",
+              arguments: { query: sentinel },
+            })
+          ).content,
+        ),
+      ).not.toContain(memory.id);
+      const rejected = await client.callTool({
+        name: "memory_retain",
+        arguments: { content: `sk-${"a".repeat(24)}` },
+      });
+      expect(rejected.isError).toBe(true);
+      expect(JSON.stringify(rejected.content)).toContain(
+        "AGENT_MEMORY_SECRET_DETECTED",
+      );
+      await db.agent.update({
+        where: { id: agents[0] },
+        data: { optionalBuiltinTools: [] },
+      });
+      expect(
+        (
+          await client.callTool({
+            name: "memory_retain",
+            arguments: { content: sentinel },
+          })
+        ).isError,
+      ).toBe(true);
+      expect(await db.agentMemory.count({ where: { id: peer.id } })).toBe(1);
+    } finally {
+      await client.close();
+      await db.agentMemory.deleteMany({
+        where: { workspaceId: ws, content: sentinel },
+      });
+      await db.agent.update({
+        where: { id: agents[0] },
+        data: { optionalBuiltinTools: [] },
+      });
+    }
+  });
+
+  it("authorizes optional platform tools by the pinned revision and live opt-in", async () => {
+    // Test-only trusted registration; no example tool is shipped in the product catalog.
+    const name = "test_optional_task_count";
+    const registry = AGENT_OPTIONAL_BUILTIN_TOOLS as AgentOptionalBuiltinTool[];
+    const catalog = piOptionalPlatformTools as Array<
+      (typeof piOptionalPlatformTools)[number]
+    >;
+    const handlers = optionalBuiltinPlatformHandlers as Record<
+      string,
+      (typeof optionalBuiltinPlatformHandlers)[string]
+    >;
+    registry.push({ name, category: "context", implementation: "platform" });
+    catalog.push({
+      name,
+      description: "Count this task's real persisted row",
+      schema: z.object({}).strict(),
+    });
+    let executions = 0;
+    handlers[name] = async (token) => {
+      executions++;
+      return {
+        count: await db.a2ATask.count({ where: { id: token.a2aTaskId } }),
+      };
+    };
+    const client = new Client({
+      name: "optional-tool-authorization",
+      version: "1",
+    });
+    try {
+      const parent = await root();
+      const signed = await createAgentRuntimeToken(await runtimeToken(parent));
+      const transport = new StreamableHTTPClientTransport(
+        new URL("https://toolplane.test/runtime-tools"),
+        {
+          requestInit: { headers: { authorization: `Bearer ${signed}` } },
+          fetch: async (input, init) => {
+            const req = new Request(input, init);
+            return req.method === "POST"
+              ? handleRuntimeTools(req, parent.id)
+              : new Response(null, { status: 405 });
+          },
+        },
+      );
+      await client.connect(transport);
+      expect(
+        (await client.listTools()).tools.some((tool) => tool.name === name),
+      ).toBe(false);
+      expect((await client.callTool({ name, arguments: {} })).isError).toBe(
+        true,
+      );
+      for (const tool of ["web_search", "web_fetch"]) {
+        const denied = await client.callTool({
+          name: tool,
+          arguments:
+            tool === "web_search"
+              ? { query: "current news" }
+              : { url: "https://example.com" },
+        });
+        expect(denied).toMatchObject({
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: expect.stringContaining(
+                '"reason":"OPTIONAL_BUILTIN_TOOL_FORBIDDEN"',
+              ),
+            },
+          ],
+        });
+      }
+      await db.agent.update({
+        where: { id: agents[0] },
+        data: { optionalBuiltinTools: [name, "web_search", "web_fetch"] },
+      });
+      // A live draft addition cannot widen the already-pinned root.
+      expect((await client.callTool({ name, arguments: {} })).isError).toBe(
+        true,
+      );
+      expect(executions).toBe(0);
+      await client.close();
+      await finishTask(
+        parent.id,
+        assertDefined(parent.leaseToken),
+        TaskState.TASK_STATE_COMPLETED,
+      );
+
+      await publishFixtureAgentRevision(ws, agents[0]);
+      grant = await createLocalRootGrant(ws, agents[0], user);
+      const enabled = await root();
+      const enabledSigned = await createAgentRuntimeToken(
+        await runtimeToken(enabled),
+      );
+      const enabledClient = new Client({
+        name: "enabled-optional-tool",
+        version: "1",
+      });
+      try {
+        await enabledClient.connect(
+          new StreamableHTTPClientTransport(
+            new URL("https://toolplane.test/runtime-tools"),
+            {
+              requestInit: {
+                headers: { authorization: `Bearer ${enabledSigned}` },
+              },
+              fetch: async (input, init) => {
+                const req = new Request(input, init);
+                return req.method === "POST"
+                  ? handleRuntimeTools(req, enabled.id)
+                  : new Response(null, { status: 405 });
+              },
+            },
+          ),
+        );
+        expect(
+          (await enabledClient.listTools()).tools.some(
+            (tool) => tool.name === name,
+          ),
+        ).toBe(true);
+        expect(
+          await enabledClient.callTool({ name, arguments: {} }),
+        ).toMatchObject({ isError: false });
+        expect(executions).toBe(1);
+        expect(
+          await enabledClient.callTool({
+            name: "web_fetch",
+            arguments: { url: "http://127.0.0.1/admin" },
+          }),
+        ).toMatchObject({
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: expect.stringContaining(
+                '"reason":"WEB_FETCH_NETWORK_BLOCKED"',
+              ),
+            },
+          ],
+        });
+        expect(
+          await enabledClient.callTool({
+            name: "web_search",
+            arguments: { query: "test", limit: 11 },
+          }),
+        ).toMatchObject({
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: expect.stringContaining(
+                '"reason":"WEB_TOOL_INVALID_ARGUMENTS"',
+              ),
+            },
+          ],
+        });
+        await db.agent.update({
+          where: { id: agents[0] },
+          data: { optionalBuiltinTools: [] },
+        });
+        expect(
+          (await enabledClient.callTool({ name, arguments: {} })).isError,
+        ).toBe(true);
+        expect(executions).toBe(1);
+        expect(
+          await enabledClient.callTool({
+            name: "web_fetch",
+            arguments: { url: "https://example.com" },
+          }),
+        ).toMatchObject({
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: expect.stringContaining(
+                '"reason":"OPTIONAL_BUILTIN_TOOL_FORBIDDEN"',
+              ),
+            },
+          ],
+        });
+      } finally {
+        await enabledClient.close();
+      }
+    } finally {
+      await client.close();
+      await db.agent.update({
+        where: { id: agents[0] },
+        data: { optionalBuiltinTools: [] },
+      });
+      // Leave the published default parseable after removing test-only registration.
+      await publishFixtureAgentRevision(ws, agents[0]);
+      delete handlers[name];
+      catalog.splice(
+        catalog.findIndex((tool) => tool.name === name),
+        1,
+      );
+      registry.splice(
+        registry.findIndex((tool) => tool.name === name),
+        1,
+      );
     }
   });
 

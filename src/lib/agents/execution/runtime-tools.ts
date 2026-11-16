@@ -21,11 +21,49 @@ import {
 import { assertLocalRuntimeToken } from "@/lib/a2a/local-runtime";
 import { LOCAL_LIMITS } from "@/lib/a2a/local-policy";
 import { Rpc } from "@/lib/a2a/validation";
-import { piRuntimeCatalog } from "./runtime-tool-catalog";
+import {
+  piRuntimeCatalog,
+  piOptionalPlatformTools,
+} from "./runtime-tool-catalog";
 import { A2AHttpError } from "@/lib/a2a/principal";
 import { requireAgentRevision } from "@/lib/agents/revisions";
 import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
 import { publishLocalArtifact } from "@/lib/a2a/local-artifacts";
+import { agentOptionalBuiltinTool } from "../runtime-kind";
+import { isWebTool, WebToolError } from "./web-tool-errors";
+import { AgentMemoryError } from "../memory-inputs";
+import { executeAgentMemoryTool } from "../memories";
+
+/** Trusted platform dispatch; implementations must validate arguments and preserve task authority. */
+// Registry-selected optional plugins stay lazy: static loading initializes the session-MCP
+// search subsystem for artifact-only task requests, which do not require it.
+export const optionalBuiltinPlatformHandlers: Readonly<
+  Record<
+    string,
+    (
+      token: AgentRuntimeTokenPayload,
+      raw: unknown,
+      signal: AbortSignal,
+    ) => Promise<unknown>
+  >
+> = {
+  web_search: async (token, raw, signal) => {
+    const { executeWebTool } = await import("./web-tools");
+    return executeWebTool(token, "web_search", raw, signal);
+  },
+  web_fetch: async (token, raw, signal) => {
+    const { executeWebTool } = await import("./web-tools");
+    return executeWebTool(token, "web_fetch", raw, signal);
+  },
+  memory_retain: (token, raw, signal) =>
+    executeAgentMemoryTool(token, "memory_retain", raw, signal),
+  memory_recall: (token, raw, signal) =>
+    executeAgentMemoryTool(token, "memory_recall", raw, signal),
+  memory_forget: (token, raw, signal) =>
+    executeAgentMemoryTool(token, "memory_forget", raw, signal),
+};
+
+const optionalBuiltinDeniedMessage = "Optional built-in tool is not enabled.";
 
 const requests = new Map<string, { until: number; count: number }>();
 function admit(id: string) {
@@ -119,7 +157,10 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
     );
     // Catalog positions participate in immutable native tool names. Revocation
     // narrows calls, never renumbers the pinned revision's remaining tools.
-    const tools = piRuntimeCatalog(revision.config.a2a.outboundEnabled);
+    const tools = piRuntimeCatalog(
+      revision.config.a2a.outboundEnabled,
+      revision.config.optionalBuiltinTools,
+    );
     const server = new Server(
       { name: "toolplane-agent-runtime", version: "1.0.0" },
       { capabilities: { tools: {} } },
@@ -135,6 +176,13 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
       const known = tools.some((tool) => tool.name === request.params.name);
       const toolName = known ? request.params.name : "unknown";
       const args = request.params.arguments ?? {};
+      // Rejected retention input can itself contain a credential. Never log
+      // memory payloads (including recall output) into observability storage.
+      const memoryTool = [
+        "memory_retain",
+        "memory_recall",
+        "memory_forget",
+      ].includes(toolName);
       const { row, grant } = authority;
       const binding = known
         ? {
@@ -146,6 +194,8 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
           }
         : undefined;
       try {
+        if (!known && agentOptionalBuiltinTool(request.params.name))
+          throw new A2AHttpError(403, optionalBuiltinDeniedMessage);
         if (!known) throw new Error("Unknown runtime tool");
         const result = await executeRuntimeTool(
           token,
@@ -181,8 +231,9 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
           toolName,
           outcome: a2aTaskOutcome(state),
           durationMs: performance.now() - started,
-          request: args,
-          response,
+          ...(!isWebTool(request.params.name) && !memoryTool
+            ? { request: args, response }
+            : {}),
           responseKind: "json",
           responseComplete: true,
           secrets: credential ? [credential] : undefined,
@@ -190,16 +241,34 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
         return response;
       } catch (error) {
         const rpc = toJsonRpcError(error);
+        const optionalDenied =
+          error instanceof A2AHttpError &&
+          error.status === 403 &&
+          error.message === optionalBuiltinDeniedMessage;
+        const webFailure = error instanceof WebToolError ? error : undefined;
+        const memoryError = error instanceof AgentMemoryError ? error : null;
         const response = {
           content: [
             {
               type: "text" as const,
               text: JSON.stringify({
                 code: rpc.code,
-                message:
-                  rpc.code === -32603
-                    ? "Agent runtime tool operation failed."
-                    : rpc.message,
+                message: webFailure
+                  ? webFailure.message
+                  : memoryError
+                    ? memoryError.message
+                    : optionalDenied
+                      ? optionalBuiltinDeniedMessage
+                      : rpc.code === -32603
+                        ? "Agent runtime tool operation failed."
+                        : rpc.message,
+                ...(webFailure
+                  ? { reason: webFailure.reason }
+                  : memoryError
+                    ? { reason: memoryError.reason }
+                    : optionalDenied
+                      ? { reason: "OPTIONAL_BUILTIN_TOOL_FORBIDDEN" }
+                      : {}),
               }),
             },
           ],
@@ -220,7 +289,9 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
           toolName,
           outcome: denied ? "denied" : "error",
           durationMs: performance.now() - started,
-          ...(!denied && known ? { request: args, response } : {}),
+          ...(!denied && known && !isWebTool(request.params.name) && !memoryTool
+            ? { request: args, response }
+            : {}),
           responseKind: "json",
           responseComplete: true,
           secrets: credential ? [credential] : undefined,
@@ -254,6 +325,42 @@ async function executeRuntimeTool(
   // Recheck the execution lease after MCP admission and before dispatch.
   const { row, grant } = await assertLocalRuntimeToken(token);
   if (!row.leaseToken) throw new Error("Runtime task lease unavailable.");
+  const optional = agentOptionalBuiltinTool(name);
+  if (optional) {
+    const revision = await requireAgentRevision(
+      db,
+      grant.agentId,
+      grant.agentRevisionId,
+    );
+    const live = await db.agent.findFirst({
+      where: {
+        id: grant.agentId,
+        workspaceId: grant.workspaceId,
+        retiredAt: null,
+      },
+      select: { optionalBuiltinTools: true },
+    });
+    if (
+      optional.implementation !== "platform" ||
+      !(revision.config.optionalBuiltinTools ?? []).includes(name) ||
+      !live?.optionalBuiltinTools.includes(name)
+    )
+      throw new A2AHttpError(403, optionalBuiltinDeniedMessage);
+    const handler = optionalBuiltinPlatformHandlers[name];
+    if (!handler)
+      throw new Error("Optional built-in tool implementation unavailable.");
+    const definition = piOptionalPlatformTools.find(
+      (tool) => tool.name === name,
+    );
+    if (!definition)
+      throw new Error("Optional built-in tool definition unavailable.");
+    const parsed = definition.schema.safeParse(raw);
+    if (!parsed.success) {
+      if (isWebTool(name)) throw new WebToolError("WEB_TOOL_INVALID_ARGUMENTS");
+      throw parsed.error;
+    }
+    return handler(token, parsed.data, signal);
+  }
   if (name === "a2a_publish_artifact")
     return publishLocalArtifact(row.id, row.leaseToken, raw);
   if (

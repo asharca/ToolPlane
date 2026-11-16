@@ -10,12 +10,14 @@ import {
 import { observeWorkspaceStreamRevocation } from "@/lib/workspace/access-stream";
 import { subscribeTaskOutput, taskOutput } from "./live-output";
 import type { LiveTaskOutput } from "./live-output-types";
+import type { ToolApprovalCard } from "./tool-approvals";
 
 export type Observation = {
   workspaceId: string;
   userId: string;
   output: LiveTaskOutput | null;
   settled: boolean;
+  toolApprovals?: ToolApprovalCard[];
 };
 /** Snapshots coalesce before serialization; downstream has one queued frame and
  * at most one pending snapshot/settlement. A slow or disconnected reader cannot
@@ -86,7 +88,14 @@ export function executionOutputResponse(
               if (live) current = { ...current, output: live };
             }
             controller.enqueue(
-              encodeSseEvent("snapshot", { output: current.output }),
+              encodeSseEvent("snapshot", {
+                output: current.output,
+                dataParts: (current.toolApprovals ?? []).map((card) => ({
+                  type: "data-tool-approval",
+                  id: card.id,
+                  data: card,
+                })),
+              }),
             );
           } else if (pendingSettled) {
             const taskId = pendingSettled;

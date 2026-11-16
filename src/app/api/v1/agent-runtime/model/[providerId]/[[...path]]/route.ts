@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import {
   agentRuntimeTokenFromRequest,
   bindRuntimeLogContext,
@@ -16,7 +17,16 @@ import {
   handleAnthropicCountTokens,
   handleAnthropicMessages,
 } from "@/lib/agents/anthropic-gateway";
+import { resolveAgentEnvironmentCredentials } from "@/lib/agents/environment-credentials";
+import {
+  AgentSecretObfuscator,
+  restoreModelResponse,
+} from "@/lib/agents/secret-obfuscation";
+import { parseJson } from "@/lib/agents/public-api/body";
+import { ANTHROPIC_GATEWAY_MAX_BODY_BYTES } from "@/lib/agents/anthropic-gateway";
 import { db } from "@/lib/db";
+import { recordAgentModelUsage } from "@/lib/agents/usage";
+import { ModelResponseUsage } from "@/lib/agents/model-response-usage";
 
 export const runtime = "nodejs";
 
@@ -85,34 +95,13 @@ async function proxyProviderRequest(
   const { providerId, path = [] } = await params;
   const routePath = path.join("/");
   const grant = await resolveAgentRuntimeGrant(token);
-  if (!grant) {
+  if (!grant || !token.agentRevisionId) {
     return NextResponse.json(
       { error: "runtime grant is no longer valid" },
       { status: 403 },
     );
   }
-  if (providerId !== token.providerId)
-    return NextResponse.json(
-      { error: "provider is outside the runtime grant" },
-      { status: 403 },
-    );
 
-  const provider = await db.modelProvider.findFirst({
-    where: { id: providerId, workspaceId: token.workspaceId },
-    select: {
-      name: true,
-      format: true,
-      baseUrl: true,
-      apiKey: true,
-      models: true,
-    },
-  });
-  if (!provider)
-    return NextResponse.json({ error: "provider not found" }, { status: 404 });
-  bindRuntimeLogContext(token);
-  enrichLogContext({ secrets: [provider.apiKey] });
-
-  enrichLogContext({ providerId });
   const hasBody = req.method !== "GET" && req.method !== "HEAD";
   let model: string | undefined;
   let stream = false;
@@ -130,8 +119,92 @@ async function proxyProviderRequest(
         stream = metadata.stream === true;
       }
     } catch {
-      // Invalid/non-JSON input still belongs to the existing upstream validation path.
+      // Malformed model requests are denied below without reaching the upstream.
     }
+  }
+  // Extra providers are accessible only for the exact model pairs on this pin.
+  // Never authorize arbitrary endpoints or catalog models with the session token.
+  if (
+    (hasBody && !model && routePath !== "v1/messages/count_tokens") ||
+    (providerId !== token.providerId && !model) ||
+    (model && !(await resolveAgentRuntimeGrant(token, { providerId, model })))
+  )
+    return NextResponse.json(
+      { error: "model is outside the runtime grant" },
+      { status: 403 },
+    );
+  const provider = await db.modelProvider.findFirst({
+    where: { id: providerId, workspaceId: token.workspaceId },
+    select: {
+      name: true,
+      format: true,
+      baseUrl: true,
+      apiKey: true,
+      models: true,
+    },
+  });
+  if (!provider)
+    return NextResponse.json({ error: "provider not found" }, { status: 404 });
+  bindRuntimeLogContext(token);
+  enrichLogContext({ secrets: [provider.apiKey] });
+
+  enrichLogContext({ providerId });
+  let secrets: AgentSecretObfuscator | undefined;
+  if (grant.secretObfuscation) {
+    try {
+      secrets = new AgentSecretObfuscator(
+        await resolveAgentEnvironmentCredentials({
+          workspaceId: token.workspaceId,
+          agentId: token.agentId,
+          agentRevisionId: token.agentRevisionId,
+          conversationId: token.conversationId,
+          contextId: token.a2aContextId,
+        }),
+      );
+    } catch {
+      return NextResponse.json(
+        { error: "runtime credentials are no longer valid" },
+        { status: 403 },
+      );
+    }
+    if (hasBody && req.body) {
+      const parsed = await parseJson(
+        req,
+        z.unknown(),
+        ANTHROPIC_GATEWAY_MAX_BODY_BYTES,
+      );
+      if (!parsed.ok) {
+        return NextResponse.json(
+          {
+            error:
+              parsed.reason === "too_large"
+                ? "request body is too large"
+                : "invalid JSON request body",
+          },
+          { status: parsed.reason === "too_large" ? 413 : 400 },
+        );
+      }
+      const headers = new Headers(req.headers);
+      headers.delete("content-length");
+      req = new Request(req.url, {
+        method: req.method,
+        headers,
+        body: JSON.stringify(
+          secrets.redactRequest(
+            parsed.value,
+            provider.format === "anthropic" ||
+              /^v1\/messages(?:\/count_tokens)?$/.test(routePath)
+              ? "anthropic"
+              : provider.format === "openai-responses" ||
+                  /(?:^|\/)responses$/.test(routePath)
+                ? "openai-responses"
+                : "openai",
+          ),
+        ),
+        signal: req.signal,
+      });
+    }
+    if (model) model = secrets.redact(model);
   }
   const started = performance.now();
   const context = { ...getLogContext() };
@@ -178,6 +251,43 @@ async function proxyProviderRequest(
         headers,
       });
     }
+    const usageObserver = new ModelResponseUsage(
+      upstream.headers.get("content-type")?.includes("text/event-stream") ??
+        false,
+    );
+    let usageRecorded = false;
+    const meterUsage = async () => {
+      if (usageRecorded) return;
+      usageRecorded = true;
+      const usage = usageObserver.finish();
+      if (
+        !usage ||
+        !upstream.ok ||
+        !model ||
+        req.method !== "POST" ||
+        ![
+          "v1/messages",
+          "v1/chat/completions",
+          "v1/responses",
+          "chat/completions",
+          "responses",
+        ].includes(routePath)
+      )
+        return;
+      try {
+        await recordAgentModelUsage(token, { usage, model, providerId });
+      } catch (error) {
+        // Accounting is best-effort here; terminal SDK accounting reconciles it.
+        // A billing/notification failure must never break the provider stream.
+        await recordEvent({
+          ...context,
+          domain: "agent",
+          eventName: "agent.usage.observe_failed",
+          level: "warn",
+          error,
+        });
+      }
+    };
     const reader = upstream.body.getReader();
     const body = new ReadableStream<Uint8Array>({
       async pull(controller) {
@@ -185,35 +295,39 @@ async function proxyProviderRequest(
           const chunk = await reader.read();
           if (recorded) return;
           if (chunk.done) {
+            await meterUsage();
             finish(upstream.status);
             controller.close();
             reader.releaseLock();
           } else {
             firstByteMs ??= performance.now() - started;
+            usageObserver.push(chunk.value);
             controller.enqueue(chunk.value);
           }
         } catch (error) {
           if (recorded) return;
+          await meterUsage();
           finish(
             upstream.status,
-            error,
-            errorOutcome(error),
+            secrets ? new Error("Model stream failed.") : error,
+            secrets ? "error" : errorOutcome(error),
             "PROVIDER_STREAM_FAILED",
           );
-          controller.error(error);
+          controller.error(secrets ? new Error("Model stream failed.") : error);
           reader.releaseLock();
         }
       },
       async cancel(reason) {
         finish(
           upstream.status,
-          reason,
+          secrets ? new Error("Model request cancelled.") : reason,
           "cancelled",
           "PROVIDER_REQUEST_CANCELLED",
         );
         try {
           await reader.cancel(reason);
         } finally {
+          await meterUsage();
           reader.releaseLock();
         }
       },
@@ -229,11 +343,20 @@ async function proxyProviderRequest(
     if (routePath === "v1/messages") {
       try {
         return observeResponse(
-          await handleAnthropicMessages(req, gatewayProvider),
+          await handleAnthropicMessages(req, gatewayProvider, secrets).then(
+            (response) =>
+              secrets ? restoreModelResponse(response, secrets) : response,
+          ),
         );
       } catch (error) {
-        finish(502, error, errorOutcome(error), "PROVIDER_REQUEST_FAILED");
-        throw error;
+        const safeError = secrets ? new Error("Model request failed.") : error;
+        finish(
+          502,
+          safeError,
+          errorOutcome(safeError),
+          "PROVIDER_REQUEST_FAILED",
+        );
+        throw safeError;
       }
     }
     if (routePath === "v1/messages/count_tokens")
@@ -266,9 +389,15 @@ async function proxyProviderRequest(
 
   try {
     const upstream = await fetch(upstreamUrl, init);
-    return observeResponse(upstream, downstreamResponseHeaders(upstream));
+    const response = secrets
+      ? restoreModelResponse(upstream, secrets)
+      : upstream;
+    return observeResponse(response, downstreamResponseHeaders(response));
   } catch (error) {
-    finish(502, error, errorOutcome(error), "PROVIDER_UNREACHABLE");
+    const safeError = secrets
+      ? new Error("Model provider is unreachable.")
+      : error;
+    finish(502, safeError, errorOutcome(safeError), "PROVIDER_UNREACHABLE");
     return NextResponse.json(
       { error: "provider is unreachable" },
       { status: 502 },
@@ -278,7 +407,31 @@ async function proxyProviderRequest(
 
 const observedProviderRequest = withRequestLogging(
   "/api/v1/agent-runtime/model/[providerId]/[[...path]]",
-  proxyProviderRequest,
+  async (req, context: Parameters<typeof proxyProviderRequest>[1]) => {
+    try {
+      return await proxyProviderRequest(req, context);
+    } catch {
+      // Unexpected control-plane failures must not masquerade as provider HTTP
+      // errors, and their original exceptions can contain credential material.
+      void recordEvent({
+        domain: "runtime",
+        eventName: "model.gateway_failed",
+        errorCode: "MODEL_GATEWAY_FAILED",
+        httpStatus: 500,
+        outcome: "error",
+      });
+      return NextResponse.json(
+        {
+          error: {
+            type: "api_error",
+            code: "TOOLPLANE_MODEL_GATEWAY_FAILED",
+            message: "TOOLPLANE_MODEL_GATEWAY_FAILED",
+          },
+        },
+        { status: 500 },
+      );
+    }
+  },
 );
 export const GET = observedProviderRequest;
 export const HEAD = observedProviderRequest;

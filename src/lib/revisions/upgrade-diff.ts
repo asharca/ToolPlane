@@ -1,9 +1,13 @@
 /** Executable settings a revision upgrade can change, shared by Agents and Assistants. */
 export type RevisionChangedField =
   | "systemPrompt"
+  | "contextFiles"
   | "model"
   | "modelParameters"
   | "reasoningEffort"
+  | "streamRules"
+  | "toolApproval"
+  | "secretObfuscation"
   | "maxSteps"
   | "packages"
   | "knowledge"

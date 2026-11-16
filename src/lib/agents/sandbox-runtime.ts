@@ -1,13 +1,23 @@
 import "server-only";
+import {
+  StreamRuleTriggerSchema,
+  type StreamRule,
+  type StreamRuleTrigger,
+} from "./stream-rules";
 import { MCP_RESULT_TO_FILE_TOOL } from "./native-tools";
 import {
   serializeSandboxStep,
   withSandboxSessionLease,
 } from "./sandbox-execution-gate";
 import { findAgentConversationSandbox } from "./conversation-sandbox";
+import type { AgentConversationSandbox } from "./conversation-sandbox";
 import { PiRuntimeInterruptedError } from "./pi-harness";
 import { hasNativeConversationHistory } from "./conversation-context";
 import { parseRuntimeFailure, runtimeFailureText } from "./runtime-failure";
+import {
+  ContextMaintenanceSchema,
+  type ContextMaintenance,
+} from "./context-maintenance";
 import {
   assertRuntimeOwner,
   trackRuntimeOperation,
@@ -24,6 +34,9 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { db } from "@/lib/db";
 import { modelReasoningSupported } from "./model";
+import { AgentRevisionConfigSchema } from "./revision-types";
+import { resolveAgentModelOverride } from "./turn-model";
+import { runtimeModelProxyBase } from "./runtime-access";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import {
   parseContextBreakdown,
@@ -43,6 +56,8 @@ import { skillLabel } from "@/lib/workspace/skill-label";
 import {
   agentRuntimeBuiltinToolGroups,
   normalizeDisabledBuiltinTools,
+  agentOptionalBuiltinTool,
+  normalizeOptionalBuiltinTools,
 } from "./runtime-kind";
 import type { SkillForPrompt } from "./resolve";
 import {
@@ -58,6 +73,7 @@ import type { RuntimeCommandResult } from "./runtime-commands";
 import { z } from "zod";
 import type { ReasoningEffort } from "./constants";
 import { preparePiRuntime } from "./pi-runtime";
+import { prepareLspRuntime } from "./lsp-runtime";
 import {
   agentSessionWorkingDirectory,
   agentSessionWorkspaceRoot,
@@ -70,9 +86,24 @@ import {
 import {
   isSupportedPiVersion,
   PI_PACKAGE_CAPTURE_IMAGE,
+  PI_DEBUGPY_CAPTURE_IMAGE,
   PI_SDK_VERSION,
   PI_SDK_VERSIONS,
 } from "./pi-version";
+import {
+  AgentMessageQueueError,
+  registerAgentMessageQueue,
+  type AgentMessageQueue,
+  type QueuedAgentMessage,
+  type QueueControl,
+  type QueueResult,
+} from "./execution/message-queue";
+import {
+  AdvisorSuggestionsSchema,
+  ADVISOR_SUGGESTIONS_PART,
+  type AdvisorSuggestions,
+} from "./advisor";
+import { recordEvent } from "@/lib/observability/events";
 
 export const PI_SDK_RUNTIME = {
   specs: [
@@ -146,6 +177,12 @@ export type AgentPromptInvocation = {
   finalInput: string;
 };
 
+export type PiSessionEntries = {
+  userEntryId: string;
+  userParentEntryId: string | null;
+  leafEntryId: string;
+};
+
 export type RunSandboxAgentTurnOptions = {
   runtimeKind: "pi-sdk";
   workspaceId: string;
@@ -165,8 +202,11 @@ export type RunSandboxAgentTurnOptions = {
   runtimeAccessToken: string;
   nativeUiUrl?: string;
   systemPrompt?: string | null;
+  contextFiles?: boolean;
   piVersion?: string;
   disabledBuiltinTools?: readonly string[];
+  optionalBuiltinTools?: readonly string[];
+  nativeSubagentPolicy?: { maxConcurrency: number; maxDepth: number };
   messages: readonly SandboxRuntimeMessage[];
   skills?: readonly SkillForPrompt[];
   mcpServers?: readonly SandboxRuntimeMcpServer[];
@@ -181,7 +221,11 @@ export type RunSandboxAgentTurnOptions = {
   runtimeSessionId?: string;
   command?: string;
   historyRequired?: boolean;
+  navigateBeforeEntryId?: string;
+  onSessionEntries?: (entries: PiSessionEntries) => void | Promise<void>;
   reasoningEffort?: ReasoningEffort;
+  streamRules?: readonly StreamRule[];
+  onStreamRule?: (trigger: StreamRuleTrigger) => void | Promise<void>;
   signal?: AbortSignal;
   timeoutMs?: number;
   onTextDelta?: (text: string) => void | Promise<void>;
@@ -190,10 +234,18 @@ export type RunSandboxAgentTurnOptions = {
   onContextUsage?: (usage: ContextUsageSnapshot) => void | Promise<void>;
   onCommands?: (commands: RuntimeCommand[]) => void | Promise<void>;
   onUsage?: (usage: RuntimeUsage) => void | Promise<void>;
+  onAdvisorSuggestions?: (advisory: AdvisorSuggestions) => void | Promise<void>;
   onPromptInvocation?: (
     invocation: AgentPromptInvocation,
   ) => void | Promise<void>;
   onCommandResult?: (result: RuntimeCommandResult) => void | Promise<void>;
+  messageQueue?: Omit<QueueControl, "send">;
+  onMessageQueue?: (queue: AgentMessageQueue) => void | Promise<void>;
+  onQueuedMessage?: (
+    message: QueuedAgentMessage,
+    assistantText: string,
+  ) => void | Promise<void>;
+  onContextMaintenance?: (marker: ContextMaintenance) => void | Promise<void>;
 };
 
 export type SandboxRuntimeActivity = {
@@ -207,6 +259,9 @@ export type SandboxRuntimeActivity = {
   originalToolName?: string;
   input?: unknown;
   output?: unknown;
+  patch?: string;
+  truncated?: boolean;
+  firstChangedLine?: number;
   isError?: boolean;
   source?: {
     subagentId: string;
@@ -741,6 +796,7 @@ function resultToFileTool(fileTools, maxBytes) {
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(filename)) throw new Error('Invalid result filename.');
       writeSync(${options.eventFd ?? 1}, JSON.stringify({
         type: 'toolplane_mcp_origin',
+        source: globalThis[Symbol.for('toolplane.pi.host-context.v1')]?.getEventSource?.(),
         toolCallId,
         deploymentId: tool.server.deploymentId,
         originalToolName: tool.wireName,
@@ -823,6 +879,7 @@ export async function createPiMcpTools(config) {
         async execute(toolCallId, params, signal) {
           writeSync(${options.eventFd ?? 1}, JSON.stringify({
             type: 'toolplane_mcp_origin',
+            source: globalThis[Symbol.for('toolplane.pi.host-context.v1')]?.getEventSource?.(),
             toolCallId,
             deploymentId: server.deploymentId,
             originalToolName: wireName,
@@ -918,6 +975,14 @@ function piMessageResult(message: unknown): PiStreamLine | null {
   };
 }
 
+const PiEventSourceSchema = z.object({
+  subagentId: z.string().min(1).max(240),
+  subagentVersionId: z.string().min(1).max(240).optional(),
+  subagentName: z.string().max(240).optional(),
+  parentToolCallId: z.string().min(1).max(240).optional(),
+  depth: z.number().int().min(0).max(32).optional(),
+});
+
 export function parsePiStreamLine(line: string): PiStreamLine | null {
   let value: unknown;
   try {
@@ -927,6 +992,32 @@ export function parsePiStreamLine(line: string): PiStreamLine | null {
   }
   if (!value || typeof value !== "object") return null;
   const payload = value as Record<string, unknown>;
+  if (payload.source !== undefined) {
+    const source = PiEventSourceSchema.safeParse(payload.source);
+    if (!source.success) return null;
+    const parentEvent = { ...payload };
+    delete parentEvent.source;
+    const parsed = parsePiStreamLine(JSON.stringify(parentEvent));
+    if (!parsed) return null;
+    // A child's answer is activity, never an incremental part of the parent answer.
+    const activities =
+      parsed.activities ??
+      (parsed.delta
+        ? [
+            {
+              type: "reasoning" as const,
+              status: "running" as const,
+              delta: parsed.delta,
+            },
+          ]
+        : []);
+    return {
+      activities: activities.map((activity) => ({
+        ...activity,
+        source: source.data,
+      })),
+    };
+  }
   if (
     payload.type === "toolplane_mcp_origin" &&
     typeof payload.toolCallId === "string" &&
@@ -998,6 +1089,16 @@ export function parsePiStreamLine(line: string): PiStreamLine | null {
             ? { toolName: payload.toolName }
             : {}),
           output: payload.result,
+          ...(typeof payload.patch === "string"
+            ? {
+                patch: payload.patch,
+                truncated: payload.truncated === true,
+                ...(Number.isInteger(payload.firstChangedLine) &&
+                Number(payload.firstChangedLine) > 0
+                  ? { firstChangedLine: Number(payload.firstChangedLine) }
+                  : {}),
+              }
+            : {}),
           isError: payload.isError === true,
         },
       ],
@@ -1612,11 +1713,140 @@ export type PiSdkCapabilityInventory = {
   skills: string[];
 };
 
+/** Module names come exclusively from the trusted registry, never a user path. */
+async function piOptionalBuiltinExtensionSources(
+  names: readonly string[] | undefined,
+) {
+  const sources: { name: string; content: string }[] = [];
+  for (const name of normalizeOptionalBuiltinTools(names)) {
+    if (agentOptionalBuiltinTool(name)?.implementation !== "sandbox-extension")
+      continue;
+    if (!/^[a-z][a-z0-9_]*$/.test(name))
+      throw new Error("OPTIONAL_BUILTIN_TOOLS_INVALID");
+    sources.push({
+      name,
+      content: await readFile(
+        `${process.cwd()}/scripts/pi-optional-tools/${name}.mjs`,
+        "utf8",
+      ),
+    });
+  }
+  return sources;
+}
+
+let debugpyArtifact: Promise<string> | undefined;
+/** Separate dependency artifact: never changes or replaces an installed SDK. */
+function prepareDebugpyArtifact(): Promise<string> {
+  if (debugpyArtifact) return debugpyArtifact;
+  debugpyArtifact = trackRuntimeOperation(async () => {
+    assertRuntimeOwner(true);
+    const name = `toolplane-debugpy-export-${randomUUID()}`;
+    const signal = runtimeAbortSignal();
+    const command = (args: string[], stdin?: string, timeoutMs = 60_000) => {
+      assertRuntimeOwner(true);
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const child = execFile(
+        "docker",
+        args,
+        {
+          env: dockerEnv(),
+          signal,
+          timeout: timeoutMs,
+          maxBuffer: 16 * 1024 * 1024,
+        },
+        (error, stdout) =>
+          error
+            ? reject(new Error("DEBUG_DEPENDENCY_MISSING", { cause: error }))
+            : resolve(stdout),
+      );
+      child.stdin?.end(stdin);
+      return promise;
+    };
+    let created = false;
+    try {
+      // Provision the separately versioned companion image on old daemons too.
+      // Only the daemon pulls; the subsequent export container remains offline.
+      const present = await command([
+        "image",
+        "ls",
+        "--quiet",
+        "--no-trunc",
+        PI_DEBUGPY_CAPTURE_IMAGE,
+      ]);
+      if (!present.trim())
+        await command(["pull", PI_DEBUGPY_CAPTURE_IMAGE], undefined, 300_000);
+      const imageId = (
+        await command([
+          "image",
+          "inspect",
+          PI_DEBUGPY_CAPTURE_IMAGE,
+          "--format",
+          "{{.Id}}",
+        ])
+      ).trim();
+      if (!/^sha256:[a-f0-9]{64}$/.test(imageId))
+        throw new Error("DEBUG_DEPENDENCY_MISSING");
+      const source = await readFile(
+        `${process.cwd()}/scripts/pi-debugpy-export.mjs`,
+        "utf8",
+      );
+      await command([
+        "create",
+        "--name",
+        name,
+        "-i",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--memory",
+        "256m",
+        "--pids-limit",
+        "32",
+        "--entrypoint",
+        "node",
+        imageId,
+        "--input-type=module",
+        "-",
+      ]);
+      created = true;
+      const raw = await command(
+        ["start", "-ai", name],
+        `${source}\nprocess.stdout.write(JSON.stringify(await exportDebugpy()));`,
+      );
+      const artifact = z
+        .object({
+          sha256: z.string().regex(/^[a-f0-9]{64}$/),
+          data: z.string().max(12 * 1024 * 1024),
+        })
+        .strict()
+        .parse(JSON.parse(raw));
+      const bytes = Buffer.from(artifact.data, "base64");
+      if (
+        bytes.toString("base64") !== artifact.data ||
+        createHash("sha256").update(bytes).digest("hex") !== artifact.sha256
+      )
+        throw new Error("DEBUG_DEPENDENCY_MISSING");
+      return JSON.stringify(artifact);
+    } finally {
+      if (created) await runDockerOnce(["rm", "-f", name]);
+    }
+  }).catch((error: unknown) => {
+    debugpyArtifact = undefined;
+    throw error;
+  });
+  return debugpyArtifact;
+}
+
 /** Executes native factories only inside the credential-free, offline capture image. */
 export async function preflightPiSdkCapabilities(input: {
   piPackages?: RunSandboxAgentTurnOptions["piPackages"];
   skills?: readonly SkillForPrompt[];
   toolNames?: readonly string[];
+  optionalBuiltinTools?: readonly string[];
   signal?: AbortSignal;
 }): Promise<PiSdkCapabilityInventory> {
   return trackRuntimeOperation(async () => {
@@ -1628,6 +1858,7 @@ export async function preflightPiSdkCapabilities(input: {
         : ownerSignal
       : input.signal;
     const name = `toolplane-pi-preflight-${randomUUID()}`;
+    if (input.optionalBuiltinTools?.includes("lsp")) await prepareLspRuntime();
     const directory = await mkdtemp(`${tmpdir()}/toolplane-pi-preflight-`);
     const command = (args: string[], stdin?: string) =>
       new Promise<string>((resolve, reject) => {
@@ -1661,6 +1892,25 @@ export async function preflightPiSdkCapabilities(input: {
           `${directory}/${source}`,
           await readFile(`${process.cwd()}/scripts/${source}`),
           { mode: 0o444 },
+        );
+      }
+      const optionalBuiltinExtensions = [];
+      for (const { name, content } of await piOptionalBuiltinExtensionSources(
+        input.optionalBuiltinTools,
+      )) {
+        const path = `${directory}/optional-${name}.mjs`;
+        await writeFile(path, content, { mode: 0o444 });
+        if (name === "debug") {
+          const artifact = await waitForSandboxRuntimeInstall(
+            prepareDebugpyArtifact(),
+            signal,
+          );
+          await writeFile(`${directory}/debugpy.artifact.json`, artifact, {
+            mode: 0o444,
+          });
+        }
+        optionalBuiltinExtensions.push(
+          `/opt/toolplane-preflight/optional-${name}.mjs`,
         );
       }
       await command([
@@ -1702,6 +1952,7 @@ export async function preflightPiSdkCapabilities(input: {
           skills: buildSandboxSkillBundles(input.skills ?? []),
           toolNames: input.toolNames ?? [],
           hostCommands: HOST_ONLY_COMMAND_NAMES,
+          optionalBuiltinExtensions,
         }),
       );
       const result: unknown = JSON.parse(output);
@@ -1966,6 +2217,124 @@ async function assertAssignedDockerSandbox(
   return { deploymentId: link.sandbox.deploymentId };
 }
 
+/** Source and target have already been authorized and provisioned by the Work service. */
+export async function forkWorkPiSession(input: {
+  workspaceId: string;
+  agentId: string;
+  source: AgentConversationSandbox;
+  target: AgentConversationSandbox;
+  sourceConversationId: string;
+  targetConversationId: string;
+  entryId: string;
+  workingDirectory?: string;
+  signal?: AbortSignal;
+}) {
+  assertRuntimeOwner();
+  const source = await findAgentConversationSandbox({
+    workspaceId: input.workspaceId,
+    agentId: input.agentId,
+    conversationId: input.sourceConversationId,
+  });
+  const target = await findAgentConversationSandbox({
+    workspaceId: input.workspaceId,
+    agentId: input.agentId,
+    conversationId: input.targetConversationId,
+  });
+  if (
+    !source ||
+    !target ||
+    source.sandboxId !== target.sandboxId ||
+    source.workspaceRoot !== input.source.workspaceRoot ||
+    target.workspaceRoot !== input.target.workspaceRoot
+  )
+    throw new Error("PI_SDK_SESSION_SCOPE");
+  return withSandboxSessionLease(
+    source.sandboxId,
+    input.sourceConversationId,
+    async () => {
+      const root = sandboxRuntimeStateRoot(
+        "pi-sdk",
+        input.agentId,
+        source.workspaceRoot,
+      );
+      const targetRoot = sandboxRuntimeStateRoot(
+        "pi-sdk",
+        input.agentId,
+        target.workspaceRoot,
+      );
+      const hostPath = `${root}/host/tree-${randomUUID()}.mjs`;
+      const container = sandboxContainerName(source.sandboxId);
+      const request = {
+        id: randomUUID(),
+        type: "fork",
+        entryId: input.entryId,
+        target: {
+          workspaceRoot: target.workspaceRoot,
+          cwd: agentSessionWorkingDirectory(
+            { conversationId: input.targetConversationId },
+            input.workingDirectory,
+          ),
+          sessionsDir: `${targetRoot}/sessions/${input.targetConversationId}`,
+          statePath: `${targetRoot}/sessions/${input.targetConversationId}.json`,
+        },
+      };
+      try {
+        await writeSandboxFile(
+          container,
+          hostPath,
+          await readFile(`${process.cwd()}/scripts/pi-sdk-session.mjs`, "utf8"),
+        );
+        const output = await runTrackedDockerExec({
+          container,
+          workdir: source.workspaceRoot,
+          executable: "node",
+          args: [
+            SANDBOX_NODE_FLAG,
+            "--input-type=module",
+            "-e",
+            `
+          import { spawn } from 'node:child_process';
+          const child = spawn(process.execPath, [${JSON.stringify(SANDBOX_NODE_FLAG)}, ${JSON.stringify(hostPath)}, ${JSON.stringify(`${root}/host/${input.sourceConversationId}.json`)}], { stdio: ['pipe', 'ignore', 'ignore', 'pipe'] });
+          let buffer = '', replied = false;
+          child.stdio[3].on('data', chunk => {
+            buffer += chunk;
+            for (;;) {
+              const end = buffer.indexOf('\\n');
+              if (end < 0) break;
+              const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
+              const event = JSON.parse(line);
+              if (event.type === 'toolplane_sdk_response' && event.id === ${JSON.stringify(request.id)}) {
+                replied = true; process.stdout.write(JSON.stringify(event)); child.stdin.end();
+              }
+            }
+          });
+          child.on('error', () => process.exitCode = 1);
+          child.on('exit', () => { if (!replied) process.exitCode = 1; });
+          child.stdin.write(${JSON.stringify(`${JSON.stringify(request)}\n`)});
+        `,
+          ],
+          env: {
+            ...sandboxAgentHomeEnvironment(),
+            PI_OFFLINE: "1",
+            PI_TELEMETRY: "0",
+          },
+          signal: input.signal,
+          timeoutMs: 30_000,
+        });
+        const response = JSON.parse(output);
+        if (response.success !== true || response.result?.fork?.forked !== true)
+          throw new Error(
+            /^PI_[A-Z_]+$/.test(response.error?.code ?? "")
+              ? response.error.code
+              : "PI_SDK_FORK_FAILED",
+          );
+      } finally {
+        await removeSandboxFiles(container, [hostPath]);
+      }
+    },
+  );
+}
+
 /** Caller holds the sandbox execution lease; no other conversation/container is stopped. */
 export async function stopAgentSessionRuntime(input: {
   workspaceId: string;
@@ -2090,6 +2459,21 @@ async function reportActivities(
             ]),
           }
         : {}),
+      ...(enriched.patch === undefined
+        ? {}
+        : (() => {
+            const patch = redact(enriched.patch, [options.runtimeAccessToken]);
+            const bytes = Buffer.from(patch);
+            return {
+              patch:
+                bytes.length > 65_536
+                  ? new TextDecoder().decode(bytes.subarray(0, 65_536), {
+                      stream: true,
+                    })
+                  : patch,
+              truncated: enriched.truncated === true || bytes.length > 65_536,
+            };
+          })()),
       ...(enriched.input === undefined
         ? {}
         : {
@@ -2186,6 +2570,7 @@ async function runNativeSessionExec(
     mcpConfig: unknown;
     hostSourceChecksum: string;
     model: unknown;
+    advisor?: unknown;
   },
   preparation: SandboxTurnPreparation,
 ) {
@@ -2194,6 +2579,7 @@ async function runNativeSessionExec(
   const temporaryRoot = `${workspaceRoot}/.toolplane/runtime-tmp`;
   const driverPath = `${temporaryRoot}/${id}-session.mjs`;
   const inputPath = `${temporaryRoot}/${id}-session.json`;
+  let unregisterQueue: (() => void) | undefined;
   try {
     const brokerSource = await readFile(
       `${process.cwd()}/scripts/native-runtime-session.mjs`,
@@ -2204,55 +2590,109 @@ async function runNativeSessionExec(
       where: { id: options.workspaceId },
       select: { modelRetryAttempts: true },
     });
+    const revision = options.agentRevisionId
+      ? await db.agentRevision.findFirst({
+          where: {
+            id: options.agentRevisionId,
+            agentId: options.agentId,
+            agent: { workspaceId: options.workspaceId },
+          },
+          select: { config: true },
+        })
+      : null;
+    const routing = revision
+      ? AgentRevisionConfigSchema.parse(revision.config)
+      : null;
+    const descriptor = async (target: {
+      providerId: string;
+      model: string;
+    }) => {
+      const selected = await resolveAgentModelOverride(
+        options.workspaceId,
+        target,
+        "pi-sdk",
+      );
+      const definition = JSON.parse(
+        buildPiModelsConfig({
+          provider: selected.provider,
+          modelId: selected.model,
+          modelProxyBase: runtimeModelProxyBase(selected.provider.id),
+        }),
+      ).providers.toolplane;
+      return {
+        ...definition.models[0],
+        provider: `toolplane-${selected.provider.id}`,
+        api: definition.api,
+        baseUrl: definition.baseUrl,
+        toolplaneProviderId: selected.provider.id,
+      };
+    };
+    const fallbackModels = await Promise.all(
+      (routing?.fallbackModels ?? []).map(descriptor),
+    );
+    const compactionModel = routing?.roleModels?.compaction
+      ? await descriptor(routing.roleModels.compaction)
+      : undefined;
+    const job = {
+      runId: id,
+      kind: "pi-sdk",
+      binary: exec.executable,
+      args: exec.args,
+      cwd: exec.workdir,
+      statePath: `${sandboxRuntimeStateRoot("pi-sdk", options.agentId, workspaceRoot)}/sessions/${options.runtimeSessionId}.json`,
+      signature: createHash("sha256")
+        .update(
+          JSON.stringify({
+            binary: exec.executable,
+            args: exec.args,
+            sdkVersion: PI_SDK_VERSION,
+            // Reload resident hosts when the trusted adapter or path contract changes.
+            hostProtocol: "session-workspaces-v1",
+            hostSourceChecksum: sdk.hostSourceChecksum,
+            brokerSourceChecksum: createHash("sha256")
+              .update(brokerSource)
+              .digest("hex"),
+            packageSetChecksum: sdk.packageSetChecksum,
+            agentRevisionId: options.agentRevisionId,
+            optionalBuiltinTools: options.optionalBuiltinTools ?? [],
+            nativeSubagentPolicy: options.nativeSubagentPolicy,
+            nativeUi: Boolean(options.nativeUiUrl),
+            workdir: exec.workdir,
+            system: options.systemPrompt,
+            skills: options.skills,
+            streamRules: options.streamRules,
+          }),
+        )
+        .digest("hex"),
+      command: options.command,
+      navigateBeforeEntryId: options.navigateBeforeEntryId,
+      message: buildSandboxTranscript(
+        options.messages.slice(-1),
+        workspaceRoot !== "/workspace" &&
+          (options.conversationId || options.a2aContextId)
+          ? options
+          : undefined,
+      ),
+      context: {
+        runtimeToken: options.runtimeAccessToken,
+        uiUrl: options.nativeUiUrl,
+        toolApprovalBridge: Boolean(
+          options.nativeUiUrl?.includes("/agent-runtime/tasks/"),
+        ),
+        mcpConfig: sdk.mcpConfig,
+        model: sdk.model,
+        advisor: sdk.advisor,
+        fallbackModels,
+        roleModels: compactionModel
+          ? { compaction: compactionModel }
+          : undefined,
+        reasoningEffort: options.reasoningEffort,
+        modelRetries: retrySetting?.modelRetryAttempts ?? 0,
+      },
+    };
     preparation.files.push(
       { path: driverPath, content: brokerSource },
-      {
-        path: inputPath,
-        content: JSON.stringify({
-          kind: "pi-sdk",
-          binary: exec.executable,
-          args: exec.args,
-          cwd: exec.workdir,
-          statePath: `${sandboxRuntimeStateRoot("pi-sdk", options.agentId, workspaceRoot)}/sessions/${options.runtimeSessionId}.json`,
-          signature: createHash("sha256")
-            .update(
-              JSON.stringify({
-                binary: exec.executable,
-                args: exec.args,
-                sdkVersion: PI_SDK_VERSION,
-                // Reload resident hosts when the trusted adapter or path contract changes.
-                hostProtocol: "session-workspaces-v1",
-                hostSourceChecksum: sdk.hostSourceChecksum,
-                brokerSourceChecksum: createHash("sha256")
-                  .update(brokerSource)
-                  .digest("hex"),
-                packageSetChecksum: sdk.packageSetChecksum,
-                agentRevisionId: options.agentRevisionId,
-                nativeUi: Boolean(options.nativeUiUrl),
-                workdir: exec.workdir,
-                system: options.systemPrompt,
-                skills: options.skills,
-              }),
-            )
-            .digest("hex"),
-          command: options.command,
-          message: buildSandboxTranscript(
-            options.messages.slice(-1),
-            workspaceRoot !== "/workspace" &&
-              (options.conversationId || options.a2aContextId)
-              ? options
-              : undefined,
-          ),
-          context: {
-            runtimeToken: options.runtimeAccessToken,
-            uiUrl: options.nativeUiUrl,
-            mcpConfig: sdk.mcpConfig,
-            model: sdk.model,
-            reasoningEffort: options.reasoningEffort,
-            modelRetries: retrySetting?.modelRetryAttempts ?? 0,
-          },
-        }),
-      },
+      { path: inputPath, content: JSON.stringify(job) },
     );
     // Sessions of one sandbox share the runtime directory. Verify and install
     // one turn at a time: a second concurrent installer finds the runtime
@@ -2292,6 +2732,91 @@ async function runNativeSessionExec(
       },
     );
     await waitForSandboxRuntimeInstall(prepared, options.signal);
+    const queueControl = options.messageQueue;
+    if (queueControl) {
+      let pending = Promise.resolve();
+      const accepted = new Map<string, QueueResult>();
+      unregisterQueue = registerAgentMessageQueue({
+        ...queueControl,
+        send: (message) => {
+          const operation = pending.then(async () => {
+            await queueControl.authorize();
+            const receipt = message ? accepted.get(message.id) : undefined;
+            if (receipt) return receipt;
+            const output = await runTrackedDockerExec({
+              container: exec.container,
+              workdir: exec.workdir,
+              executable: "node",
+              args: [
+                SANDBOX_NODE_FLAG,
+                "-e",
+                `
+                const {createConnection} = require('node:net');
+                const {createHash} = require('node:crypto');
+                const job = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+                const path = '/tmp/toolplane-runtime-' + createHash('sha256').update(job.statePath).digest('hex').slice(0,32) + '.sock';
+                const socket = createConnection(path);
+                let connected = false;
+                socket.on('connect', () => { connected = true; socket.write(JSON.stringify(job) + '\\n'); });
+                socket.on('data', chunk => process.stdout.write(chunk));
+                socket.on('error', () => {
+                  const code = connected ? 'PI_SDK_RUNTIME_FAILED' : 'PI_SDK_QUEUE_NOT_RUNNING';
+                  process.stdout.write(JSON.stringify({success:false,error:{code}}) + '\\n');
+                });
+              `,
+              ],
+              stdin: JSON.stringify({
+                kind: job.kind,
+                signature: job.signature,
+                statePath: job.statePath,
+                cwd: job.cwd,
+                runId: id,
+                control: message
+                  ? {
+                      type: message.mode,
+                      message: message.text,
+                      messageId: message.id,
+                      deduplicate: message.deduplicate,
+                    }
+                  : { type: "clear_queue" },
+              }),
+              timeoutMs: 15_000,
+              maxStdoutBytes: 4 * 1024 * 1024,
+              signal: options.signal,
+            }).catch(() => {
+              throw new AgentMessageQueueError("AGENT_QUEUE_FAILED", 502);
+            });
+            const response = JSON.parse(output.trim());
+            if (!response.success)
+              throw new AgentMessageQueueError(
+                response.error?.code === "PI_SDK_QUEUE_INVALID"
+                  ? "AGENT_QUEUE_INVALID"
+                  : response.error?.code === "PI_SDK_QUEUE_FULL"
+                    ? "AGENT_QUEUE_FULL"
+                    : response.error?.code === "PI_SDK_QUEUE_NOT_RUNNING"
+                      ? "AGENT_QUEUE_NOT_RUNNING"
+                      : "AGENT_QUEUE_FAILED",
+                response.error?.code === "PI_SDK_QUEUE_INVALID"
+                  ? 400
+                  : response.error?.code === "PI_SDK_QUEUE_FULL"
+                    ? 429
+                    : response.error?.code === "PI_SDK_QUEUE_NOT_RUNNING"
+                      ? 409
+                      : 502,
+              );
+            const result = response.result as QueueResult;
+            if (message?.deduplicate) accepted.set(message.id, result);
+            else if (!message) accepted.clear();
+            return result;
+          });
+          pending = operation.then(
+            () => {},
+            () => {},
+          );
+          return operation;
+        },
+      });
+    }
     return await runTrackedDockerExec({
       ...exec,
       executable: "node",
@@ -2299,6 +2824,7 @@ async function runNativeSessionExec(
       stdin: undefined,
     });
   } finally {
+    unregisterQueue?.();
     await removeSandboxFiles(exec.container, [driverPath, inputPath]);
   }
 }
@@ -2383,6 +2909,35 @@ export async function readLegacyPiSdkPackageReferences(input: {
   const refs: unknown = JSON.parse(output);
   return recoverPiSdkPackageReferences(refs);
 }
+/** Read-only export runs beside an active turn, never through the model/broker queue. */
+export async function runSandboxSessionExport(input: {
+  sandboxId: string;
+  stateRoot: string;
+  runtimeSessionId: string;
+  jsonl?: string;
+  signal?: AbortSignal;
+}): Promise<string> {
+  assertRuntimeOwner();
+  const source = await readFile(
+    posix.join(process.cwd(), "scripts/pi-sdk-session-export.mjs"),
+    "utf8",
+  );
+  return runTrackedDockerExec({
+    container: sandboxContainerName(input.sandboxId),
+    workdir: "/tmp",
+    executable: "node",
+    args: [SANDBOX_NODE_FLAG, "--input-type=module", "-"],
+    stdin: `${source}\nawait exportSession(${JSON.stringify({
+      stateRoot: input.stateRoot,
+      runtimeSessionId: safeSegment(input.runtimeSessionId, "runtime session"),
+      packageRoot: PI_SDK_RUNTIME.directory,
+      ...(input.jsonl === undefined ? {} : { jsonl: input.jsonl }),
+    })});\n`,
+    signal: input.signal,
+    timeoutMs: 30_000,
+    maxStdoutBytes: 12 * 1024 * 1024,
+  });
+}
 
 async function runPiSdk(
   options: RunSandboxAgentTurnOptions,
@@ -2445,6 +3000,47 @@ async function runPiSdk(
     .digest("hex");
   const hostSources = createHash("sha256");
   const hostFiles: { path: string; content: string }[] = [];
+  const lspRuntime = options.optionalBuiltinTools?.includes("lsp")
+    ? await waitForSandboxRuntimeInstall(prepareLspRuntime(), options.signal)
+    : undefined;
+  if (lspRuntime) {
+    hostSources.update(lspRuntime.sha256).update(lspRuntime.installer);
+    await waitForSandboxRuntimeInstall(
+      serializeSandboxStep(`lsp:${container}`, async () => {
+        const ready = await runTrackedDockerExec({
+          container,
+          workdir: "/workspace",
+          executable: "node",
+          args: [
+            "--input-type=module",
+            "-e",
+            `${lspRuntime.installer}\nprocess.stdout.write(await verifyLspArtifact(process.argv[1]) ? 'ready' : 'missing');`,
+            lspRuntime.sha256,
+          ],
+          signal: options.signal,
+          timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
+        });
+        if (ready === "ready") return;
+        await runTrackedDockerExec({
+          container,
+          workdir: "/workspace",
+          executable: "node",
+          args: [
+            "--input-type=module",
+            "-e",
+            `${lspRuntime.installer}\nawait installLspArtifact(process.argv[1]);`,
+            lspRuntime.sha256,
+          ],
+          stdinFile: lspRuntime.path,
+          signal: options.signal,
+          timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS,
+        });
+      }),
+      options.signal,
+    ).catch(() => {
+      throw new Error("PI_LSP_ARTIFACT_INVALID");
+    });
+  }
   for (const [path, source] of [
     [hostPath, "pi-sdk-session.mjs"],
     [verifierPath, "pi-sdk-package-files.mjs"],
@@ -2452,11 +3048,13 @@ async function runPiSdk(
     [`${privateRoot}/pi-sdk-capabilities.mjs`, "pi-sdk-capabilities.mjs"],
     [`${privateRoot}/pi-sdk-ui.mjs`, "pi-sdk-ui.mjs"],
     [`${privateRoot}/pi-desktop-tools.mjs`, "pi-desktop-tools.mjs"],
+    [`${privateRoot}/pi-sdk-context.mjs`, "pi-sdk-context.mjs"],
     [`${privateRoot}/native-session-paths.mjs`, "native-session-paths.mjs"],
     [
       `${privateRoot}/pi-sdk-native-resources.mjs`,
       "pi-sdk-native-resources.mjs",
     ],
+    [`${privateRoot}/pi-sdk-advisor.mjs`, "pi-sdk-advisor.mjs"],
     // Imported relative to pi-mcp.mjs by mcp_result_to_file.
     [`${privateRoot}/a2a-sandbox-files.mjs`, "a2a-sandbox-files.mjs"],
   ]) {
@@ -2466,6 +3064,37 @@ async function runPiSdk(
     );
     hostSources.update(source).update(content);
     hostFiles.push({ path, content });
+  }
+  const browserNetwork = options.optionalBuiltinTools?.includes("browser")
+    ? ((
+        await db.sandbox.findFirst({
+          where: { id: options.sandboxId, workspaceId: options.workspaceId },
+          select: { network: true },
+        })
+      )?.network ?? "none")
+    : "none";
+  hostSources.update(`browser-network:${browserNetwork}`);
+  const optionalBuiltinExtensions: string[] = [];
+  for (const { name, content } of await piOptionalBuiltinExtensionSources(
+    options.optionalBuiltinTools,
+  )) {
+    // The existing materializer accepts trusted files under stateRoot/host;
+    // keep modules there rather than adding arbitrary revision-selected roots.
+    const path = `${privateRoot}/optional-${name}.mjs`;
+    hostSources.update(name).update(content);
+    hostFiles.push({ path, content });
+    optionalBuiltinExtensions.push(path);
+    if (name === "debug") {
+      const artifact = await waitForSandboxRuntimeInstall(
+        prepareDebugpyArtifact(),
+        options.signal,
+      );
+      hostSources.update("debugpy-artifact").update(artifact);
+      hostFiles.push({
+        path: `${privateRoot}/debugpy.artifact.json`,
+        content: artifact,
+      });
+    }
   }
   const factorySource = piMcpExtensionSource({ eventFd: 3, workspaceRoot });
   hostSources.update(factorySource);
@@ -2491,9 +3120,128 @@ async function runPiSdk(
       ? { reasoning: true }
       : {}),
     provider: "toolplane",
+    toolplaneProviderId: options.provider.id,
     api: models.api,
     baseUrl: models.baseUrl,
     contextWindow: options.contextWindow,
+  };
+  let advisor:
+    | {
+        providerId: string;
+        cadence: "each_tool_batch" | "final";
+        minSeverity: "info" | "warning" | "critical";
+        model: Record<string, unknown>;
+      }
+    | undefined;
+  if (options.agentRevisionId) {
+    try {
+      const revision = await db.agentRevision.findFirst({
+        where: {
+          id: options.agentRevisionId,
+          agentId: options.agentId,
+          agent: { workspaceId: options.workspaceId },
+        },
+        select: { config: true },
+      });
+      const selected =
+        revision && AgentRevisionConfigSchema.parse(revision.config).advisor;
+      if (selected) {
+        const provider = await db.modelProvider.findFirst({
+          where: {
+            id: selected.providerId,
+            workspaceId: options.workspaceId,
+          },
+          include: { modelRecords: { where: { modelId: selected.model } } },
+        });
+        if (
+          !provider?.apiKey.trim() ||
+          !provider.models.includes(selected.model)
+        )
+          throw new Error("ADVISOR_MODEL_UNAVAILABLE");
+        const modelConfig = JSON.parse(
+          buildPiModelsConfig({
+            provider,
+            modelId: selected.model,
+            modelProxyBase: runtimeModelProxyBase(provider.id),
+          }),
+        ).providers.toolplane;
+        advisor = {
+          ...selected,
+          model: {
+            ...modelConfig.models[0],
+            id: selected.model,
+            toolplaneProviderId: selected.providerId,
+            reasoning: modelReasoningSupported(
+              provider,
+              selected.model,
+              provider.modelRecords[0],
+            ),
+            provider: "toolplane-advisor",
+            api: modelConfig.api,
+            baseUrl: modelConfig.baseUrl,
+          },
+        };
+      }
+    } catch {
+      void recordEvent({
+        domain: "agent",
+        eventName: "agent.advisor.failed",
+        outcome: "error",
+        agentId: options.agentId,
+        errorCode: "ADVISOR_MODEL_UNAVAILABLE",
+      });
+    }
+  }
+  const reportedAdvisories = new Set<string>();
+  const reportAdvisor = async (value: unknown) => {
+    const parsed = AdvisorSuggestionsSchema.safeParse(value);
+    if (
+      !advisor ||
+      !parsed.success ||
+      reportedAdvisories.has(parsed.data.id) ||
+      parsed.data.providerId !== advisor.providerId ||
+      parsed.data.model !== advisor.model.id ||
+      parsed.data.cadence !== advisor.cadence
+    )
+      return;
+    reportedAdvisories.add(parsed.data.id);
+    const advisory = {
+      ...parsed.data,
+      suggestions: parsed.data.suggestions.map((note) => ({
+        ...note,
+        message: redact(note.message, [options.runtimeAccessToken]),
+      })),
+    };
+    try {
+      if (options.conversationId) {
+        const conversation = await db.conversation.findFirst({
+          where: {
+            id: options.conversationId,
+            agentId: options.agentId,
+            agent: { workspaceId: options.workspaceId },
+          },
+          select: { id: true },
+        });
+        if (conversation)
+          await db.message.create({
+            data: {
+              conversationId: conversation.id,
+              role: "assistant",
+              textCharacters: 0,
+              parts: [{ type: ADVISOR_SUGGESTIONS_PART, data: advisory }],
+            },
+          });
+      }
+      await options.onAdvisorSuggestions?.(advisory);
+    } catch {
+      void recordEvent({
+        domain: "agent",
+        eventName: "agent.advisor.failed",
+        outcome: "error",
+        agentId: options.agentId,
+        errorCode: "ADVISOR_PERSIST_FAILED",
+      });
+    }
   };
   const excludeTools = normalizeDisabledBuiltinTools(
     "pi-sdk",
@@ -2506,6 +3254,7 @@ async function runPiSdk(
       // Sessions saved by these pins resume on sdkVersion and are rewritten as it.
       compatibleSdkVersions: PI_SDK_VERSIONS,
       packageRoot: PI_SDK_RUNTIME.directory,
+      lspPackageRoot: lspRuntime?.directory,
       cwd: workdir,
       workspaceRoot,
       sharedDir: "/workspace/shared",
@@ -2519,12 +3268,24 @@ async function runPiSdk(
           hasNativeConversationHistory(options.messages),
       ),
       reasoningEffort: options.reasoningEffort,
+      streamRules: options.streamRules,
       model: sessionModel,
       systemPrompt: options.systemPrompt?.trim() ?? "",
+      contextFiles: options.contextFiles === true,
       excludeTools,
-      defaultTools: agentRuntimeBuiltinToolGroups("pi-sdk")
-        .flatMap((group) => group.tools)
-        .filter((name) => !excludeTools.includes(name)),
+      defaultTools: [
+        ...agentRuntimeBuiltinToolGroups("pi-sdk")
+          .flatMap((group) => group.tools)
+          .filter((name) => !excludeTools.includes(name)),
+        ...normalizeOptionalBuiltinTools(options.optionalBuiltinTools).filter(
+          (name) =>
+            agentOptionalBuiltinTool(name)?.implementation ===
+            "sandbox-extension",
+        ),
+      ],
+      optionalBuiltinExtensions,
+      nativeSubagentPolicy: options.nativeSubagentPolicy,
+      browserNetwork,
       resources,
       packages: packages.map(({ manifest: _manifest, ...item }) => item),
       packageVerifierPath: verifierPath,
@@ -2544,6 +3305,39 @@ async function runPiSdk(
   const consume = async (line: string) => {
     const event = JSON.parse(line);
     await observeStage?.(event);
+    if (event.type === "message_queue") {
+      await options.onMessageQueue?.(event.queue as AgentMessageQueue);
+      return;
+    }
+    if (event.type === "queued_message_consumed") {
+      await options.onQueuedMessage?.(
+        event.message as QueuedAgentMessage,
+        redact(String(event.assistantText ?? ""), [options.runtimeAccessToken]),
+      );
+      streamed = "";
+      return;
+    }
+    if (event.type === "advisor_suggestions") {
+      await reportAdvisor(event.advisory);
+      return;
+    }
+    if (event.type === "advisor_error") {
+      void recordEvent({
+        domain: "agent",
+        eventName: "agent.advisor.failed",
+        outcome: "error",
+        agentId: options.agentId,
+        errorCode: `ADVISOR_${
+          /^(TIMEOUT|OUTPUT_TRUNCATED|INVALID_OUTPUT|HTTP_[1-5]\d\d|UNREACHABLE|EMPTY_STREAM|STREAM_INCOMPLETE|CONTENT_FILTER|PROVIDER_ERROR)$/.test(
+            String(event.reason),
+          )
+            ? event.reason
+            : "PROVIDER_ERROR"
+        }`,
+        attributes: { durationMs: event.durationMs },
+      });
+      return;
+    }
     if (event.type === "toolplane_mcp_unavailable") {
       const server = mcpServers.find(
         (item) => item.deploymentId === event.deploymentId,
@@ -2557,16 +3351,53 @@ async function runPiSdk(
         };
       return;
     }
+    if (event.type === "stream_rule_triggered") {
+      const trigger = StreamRuleTriggerSchema.safeParse(event.trigger);
+      if (trigger.success) await options.onStreamRule?.(trigger.data);
+      return;
+    }
     if (event.type === "prompt_invocation") {
       await options.onPromptInvocation?.(
         event.invocation as AgentPromptInvocation,
       );
       return;
     }
+    if (event.type === "context_maintenance") {
+      const marker = ContextMaintenanceSchema.safeParse(event.marker);
+      if (marker.success) {
+        const safe =
+          marker.data.kind === "rewind"
+            ? {
+                ...marker.data,
+                report: redact(marker.data.report, [
+                  options.runtimeAccessToken,
+                ]),
+              }
+            : {
+                ...marker.data,
+                summary: redact(marker.data.summary, [
+                  options.runtimeAccessToken,
+                ]),
+              };
+        await options.onContextMaintenance?.(safe);
+      }
+      return;
+    }
     if (event.type === "toolplane_sdk_response") {
       terminal = true;
       const usage = parseRuntimeUsage(event.result?.usage);
       if (usage) await options.onUsage?.(usage);
+      const entries = event.result?.sessionEntries;
+      if (
+        entries &&
+        typeof entries.userEntryId === "string" &&
+        (entries.userParentEntryId === null ||
+          typeof entries.userParentEntryId === "string") &&
+        typeof entries.leafEntryId === "string"
+      )
+        await options.onSessionEntries?.(entries);
+      for (const advisory of event.result?.advisories ?? [])
+        await reportAdvisor(advisory);
       if (!event.success) {
         const failure = parseRuntimeFailure(
           `${String(event.error?.code ?? "")}: ${String(event.error?.reason ?? "")}`,
@@ -2657,6 +3488,7 @@ async function runPiSdk(
         ),
       ),
       model: sessionModel,
+      advisor,
     },
     {
       files: hostFiles,

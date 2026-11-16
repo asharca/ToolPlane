@@ -116,6 +116,7 @@ jobs:
       NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
       NEXT_TELEMETRY_DISABLED: 1
       TOOLPLANE_VERSION: ${{ github.sha }}
+      TOOLPLANE_LSP_TOOLS_IMAGE: toolplane-lsp-tools:ci
     steps:
       - uses: actions/checkout@v4
 
@@ -145,11 +146,39 @@ jobs:
 
       - name: Build Pi package capture sandbox
         if: inputs.full
-        run: docker build --target pi-package-capture -t toolplane-pi-package-capture:1.5.2 .
+        run: |
+          debug_image=$(node --input-type=module -e "import { PI_DEBUGPY_CAPTURE_IMAGE } from './src/lib/agents/pi-version.ts'; console.log(PI_DEBUGPY_CAPTURE_IMAGE)")
+          docker build --target pi-package-capture -t toolplane-pi-package-capture:1.5.2 -t "$debug_image" .
 
+      - name: Build optional LSP tools image
+        run: docker build --target lsp-tools -t "$TOOLPLANE_LSP_TOOLS_IMAGE" .
+
+      - name: Test offline LSP tools
+        if: matrix.shard == 1
+        env:
+          SANDBOX_DOCKER_SMOKE: 1
+        run: pnpm vitest run tests/integration/lsp-tools.live.test.ts
+
+
+      - name: Test offline debug dependency distribution
+        if: matrix.shard == 1
+        env:
+          SANDBOX_DOCKER_SMOKE: 1
+        run: pnpm vitest run tests/integration/pi-sdk-install.live.test.ts
 
       - name: Test core functionality
         run: pnpm test --shard=${{ matrix.shard }}/3
+
+      - name: Build production browser sandbox
+        if: matrix.shard == 1
+        run: docker build --target sandbox -t toolplane-sandbox:browser-ci .
+
+      - name: Test production browser sandbox lifecycle
+        if: matrix.shard == 1
+        env:
+          SANDBOX_DOCKER_SMOKE: 1
+          TOOLPLANE_BROWSER_TEST_IMAGE: toolplane-sandbox:browser-ci
+        run: pnpm exec vitest run tests/integration/agent-browser-image.live.test.ts
 
   runtime-build:
     if: github.event_name == 'workflow_dispatch' && inputs.full

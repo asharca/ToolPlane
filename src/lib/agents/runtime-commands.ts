@@ -57,11 +57,7 @@ export function runtimeCommands(
     ...new Map(
       [
         ...builtins.map((name) => ({ name })),
-        ...extra.filter(
-          (command) =>
-            !Object.hasOwn(HOST_ONLY, command.name) &&
-            !builtins.includes(command.name),
-        ),
+        ...extra.filter((command) => !Object.hasOwn(HOST_ONLY, command.name)),
       ].map((command) => [command.name, command]),
     ).values(),
   ];
@@ -102,22 +98,26 @@ export function sessionRuntimeCommands(
   return runtimeCommands(runtimeKind);
 }
 
-export type RuntimeUsage = {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  costUsd?: number;
-};
+const usageTokensSchema = z.object({
+  inputTokens: z.number().finite().nonnegative(),
+  outputTokens: z.number().finite().nonnegative(),
+  cacheReadTokens: z.number().finite().nonnegative(),
+  cacheWriteTokens: z.number().finite().nonnegative(),
+  costUsd: z.number().finite().nonnegative().optional(),
+});
+const usageModelSchema = z.object({
+  providerId: z.string().min(1),
+  model: z.string().min(1),
+});
+export const RuntimeUsageSchema = usageTokensSchema.extend({
+  actualModel: usageModelSchema.optional(),
+  modelUsage: z
+    .array(usageTokensSchema.extend(usageModelSchema.shape))
+    .max(16)
+    .optional(),
+});
+export type RuntimeUsage = z.infer<typeof RuntimeUsageSchema>;
 export function parseRuntimeUsage(value: unknown): RuntimeUsage | null {
-  const parsed = z
-    .object({
-      inputTokens: z.number().nonnegative(),
-      outputTokens: z.number().nonnegative(),
-      cacheReadTokens: z.number().nonnegative(),
-      cacheWriteTokens: z.number().nonnegative(),
-      costUsd: z.number().nonnegative().optional(),
-    })
-    .safeParse(value);
+  const parsed = RuntimeUsageSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }

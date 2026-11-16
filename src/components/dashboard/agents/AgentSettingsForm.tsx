@@ -4,6 +4,8 @@ import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
+  ArrowDown,
+  ArrowUp,
   Box,
   Cable,
   LoaderCircle,
@@ -13,6 +15,7 @@ import {
 } from "lucide-react";
 import { Button, ButtonLink } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
+import { Switch } from "@/components/motion/switch";
 import { FormSelect } from "@/components/ui/FormSelect";
 import { StatusBadge } from "../StatusBadge";
 import {
@@ -33,12 +36,19 @@ import {
   ModelPicker,
   ModelPickerTrigger,
   type ModelProviderOption,
+  type ModelSelection,
 } from "@/components/dashboard/models/ModelPicker";
 import {
   AgentResourceSelect,
   type AgentResourceOption,
 } from "./AgentResourceSelect";
 import { AgentBuiltInTools } from "./AgentBuiltInTools";
+import {
+  AgentStreamRulesEditor,
+  useStreamRulesDraft,
+} from "./AgentStreamRulesEditor";
+import { ToolApprovalSettings } from "./ToolApprovalSettings";
+import type { ToolApprovalPolicy } from "@/lib/agents/tool-approval-policy";
 import { SystemPromptEditor } from "../SystemPromptEditor";
 import type { AgentPluginCapabilityDiff } from "./AgentPluginSyncReview";
 import {
@@ -80,6 +90,7 @@ import {
 import {
   isExecutableAgentRuntimeKind,
   agentRuntimeSupportsProviderFormat,
+  type AgentOptionalBuiltinTool,
 } from "@/lib/agents/runtime-kind";
 import {
   SubagentResources,
@@ -95,6 +106,8 @@ export type AgentSettingsSection =
   | "general"
   | "instructions"
   | "builtInTools"
+  | "streamRules"
+  | "toolApproval"
   | "mcp"
   | "skills"
   | "piPackages"
@@ -150,10 +163,16 @@ type Props = {
   name: string;
   description?: string;
   systemPrompt: string;
+  contextFiles: boolean;
   disabledBuiltinTools?: string[];
+  optionalBuiltinTools: string[];
+  optionalBuiltinToolOptions: readonly AgentOptionalBuiltinTool[];
   providerId: string | null;
   model: string | null;
   reasoningEffort: ReasoningLevel | null;
+  toolApproval?: ToolApprovalPolicy;
+  secretObfuscation: boolean;
+  advisor?: AgentRevisionConfig["advisor"] | null;
   maxSteps: number;
   providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
@@ -201,6 +220,12 @@ export function AgentSettingsForm(props: Props) {
   } = props;
   const t = useTranslations("console.agents");
   const r = useTranslations("console.agents.revisions");
+  const streamRules = useStreamRulesDraft(
+    slug,
+    agentId,
+    runtimeKind === "pi-sdk",
+  );
+  const approvalT = useTranslations("console.toolApproval");
   const s = useTranslations("console.sandboxes");
   const diffT = useTranslations("console.revisionDiff");
   const router = useRouter();
@@ -212,14 +237,44 @@ export function AgentSettingsForm(props: Props) {
   const [name, setName] = useState(props.name);
   const [description, setDescription] = useState(props.description ?? "");
   const [prompt, setPrompt] = useState(props.systemPrompt);
+  const [contextFiles, setContextFiles] = useState(props.contextFiles);
   const [provider, setProvider] = useState(props.providerId ?? "");
   const [model, setModel] = useState(props.model ?? "");
+  const [fallbackModels, setFallbackModels] = useState(() =>
+    (publishedRevision?.config.fallbackModels ?? []).map((selection) => ({
+      id: crypto.randomUUID(),
+      selection,
+    })),
+  );
+  const [roleModels, setRoleModels] = useState<
+    NonNullable<AgentRevisionConfig["roleModels"]>
+  >(publishedRevision?.config.roleModels ?? {});
+  const modelProviders = providers
+    .filter((item) =>
+      agentRuntimeSupportsProviderFormat(runtimeKind, item.format),
+    )
+    .map((item) => ({
+      ...item,
+      models: item.models.filter((id) =>
+        /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(id),
+      ),
+    }));
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
     props.reasoningEffort ?? DEFAULT_REASONING_LEVEL,
   );
+  const [toolApproval, setToolApproval] = useState<ToolApprovalPolicy>(
+    props.toolApproval ?? { mode: "off" },
+  );
+  const [secretObfuscation, setSecretObfuscation] = useState(
+    props.secretObfuscation,
+  );
+  const [advisor, setAdvisor] = useState(props.advisor ?? null);
   const [steps, setSteps] = useState(String(props.maxSteps));
   const [disabledTools, setDisabledTools] = useState(
     new Set(props.disabledBuiltinTools ?? []),
+  );
+  const [enabledOptionalTools, setEnabledOptionalTools] = useState(
+    () => new Set(props.optionalBuiltinTools),
   );
   const [deploymentIds, setDeploymentIds] = useState(() =>
     selected(deployments),
@@ -276,6 +331,7 @@ export function AgentSettingsForm(props: Props) {
     config: AgentRevisionConfig;
     additions: AgentPermissionAddition[];
     diff: AgentRevisionDiff;
+    fallbackRows: Record<"before" | "after", typeof fallbackModels>;
   } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [pending, setPending] = useState(false);
@@ -285,9 +341,21 @@ export function AgentSettingsForm(props: Props) {
   const [appliedConfig, setAppliedConfig] = useState(
     publishedRevision?.config ?? null,
   );
+  const fallbackSelections = fallbackModels.map((item) => item.selection);
+  const fallbackModelsDirty =
+    JSON.stringify(fallbackSelections) !==
+    JSON.stringify(appliedConfig?.fallbackModels ?? []);
+  const roleModelDirty = (role: "compaction" | "title") =>
+    roleModels[role]?.providerId !==
+      appliedConfig?.roleModels?.[role]?.providerId ||
+    roleModels[role]?.model !== appliedConfig?.roleModels?.[role]?.model;
   const hasUnsavedChanges =
     dirty ||
     subagentsDirty ||
+    streamRules.dirty ||
+    fallbackModelsDirty ||
+    roleModelDirty("compaction") ||
+    roleModelDirty("title") ||
     environment !==
       (appliedConfig ? JSON.stringify(appliedConfig.environment, null, 2) : "");
   const sameSet = (left: Set<string>, right: Set<string>) =>
@@ -296,14 +364,24 @@ export function AgentSettingsForm(props: Props) {
     name: name !== props.name,
     description: description !== (props.description ?? ""),
     model:
-      provider !== (props.providerId ?? "") || model !== (props.model ?? ""),
+      provider !== (props.providerId ?? "") ||
+      model !== (props.model ?? "") ||
+      fallbackModelsDirty ||
+      roleModelDirty("compaction") ||
+      roleModelDirty("title"),
     reasoningEffort:
       reasoningEffort !== (props.reasoningEffort ?? DEFAULT_REASONING_LEVEL),
-    instructions: prompt !== props.systemPrompt,
-    builtInTools: !sameSet(
-      disabledTools,
-      new Set(props.disabledBuiltinTools ?? []),
-    ),
+    instructions:
+      prompt !== props.systemPrompt || contextFiles !== props.contextFiles,
+    streamRules: streamRules.dirty,
+    builtInTools:
+      !sameSet(disabledTools, new Set(props.disabledBuiltinTools ?? [])) ||
+      !sameSet(enabledOptionalTools, new Set(props.optionalBuiltinTools)),
+    toolApproval:
+      JSON.stringify(toolApproval) !==
+      JSON.stringify(props.toolApproval ?? { mode: "off" }),
+    secretObfuscation: secretObfuscation !== props.secretObfuscation,
+    advisor: JSON.stringify(advisor) !== JSON.stringify(props.advisor ?? null),
     mcp: !sameSet(deploymentIds, selected(deployments)),
     skills: !sameSet(skillIds, selected(skills)),
     sandboxes:
@@ -333,13 +411,17 @@ export function AgentSettingsForm(props: Props) {
     ...(fieldDirty.name ||
     fieldDirty.description ||
     fieldDirty.model ||
-    fieldDirty.reasoningEffort
+    fieldDirty.reasoningEffort ||
+    fieldDirty.secretObfuscation ||
+    fieldDirty.advisor
       ? ["general" as const]
       : []),
     ...(
       [
         "instructions",
         "builtInTools",
+        "streamRules",
+        "toolApproval",
         "mcp",
         "skills",
         "sandboxes",
@@ -366,6 +448,54 @@ export function AgentSettingsForm(props: Props) {
     setDirty(true);
     setReview(null);
     setMessage("");
+  }
+  function modelLabel(selection: ModelSelection | null | undefined) {
+    if (!selection) return t("modelRouting.usePrimary");
+    const providerName = providers.find(
+      (item) => item.id === selection.providerId,
+    )?.name;
+    return `${providerName ?? selection.providerId} / ${selection.model}`;
+  }
+  function modelPicker(
+    selection: ModelSelection | null,
+    label: string,
+    onSelect: (selection: ModelSelection) => void,
+    placeholder = label,
+  ) {
+    const available =
+      selection &&
+      modelProviders.some(
+        (item) =>
+          item.id === selection.providerId &&
+          item.models.includes(selection.model),
+      );
+    return (
+      <ModelPicker
+        className="flex min-w-0 flex-1"
+        providers={modelProviders}
+        value={available ? selection : null}
+        pending={pending}
+        onSelect={(next) => {
+          if (pending) return;
+          onSelect(next);
+          changed();
+        }}
+        trigger={
+          <ModelPickerTrigger
+            label={selection?.model ?? placeholder}
+            provider={
+              selection
+                ? (providers.find((item) => item.id === selection.providerId)
+                    ?.name ?? selection.providerId)
+                : undefined
+            }
+            placeholder={!selection}
+            disabled={pending}
+            aria-label={label}
+          />
+        }
+      />
+    );
   }
   function selectPlugin(
     listingId: string,
@@ -429,10 +559,13 @@ export function AgentSettingsForm(props: Props) {
     try {
       await operation();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
-      notify(failure instanceof Error ? failure.message : String(failure), {
-        severity: "error",
-      });
+      const code = failure instanceof Error ? failure.message : String(failure);
+      const text = t.has(`modelRouting.errors.${code}`)
+        ? t(`modelRouting.errors.${code}`)
+        : code;
+      if (code === "AGENT_REVISION_CONFLICT") setReview(null);
+      setError(text);
+      notify(text, { severity: "error" });
     } finally {
       setPending(false);
     }
@@ -445,15 +578,18 @@ export function AgentSettingsForm(props: Props) {
     data.set("expectedRevisionId", prepared.expectedRevisionId ?? "");
     data.set("config", JSON.stringify(prepared.config));
     const result = await publishAgentRevisionAction(data);
-    if ("error" in result)
+    if ("error" in result) {
+      if (result.error !== "PI_CAPABILITY_CONFLICT")
+        throw new Error(result.error);
       throw new Error(
-        result.conflict
+        "conflict" in result && result.conflict
           ? r("capabilityConflict", {
               kind: r(`capabilityKinds.${result.conflict.kind}`),
               name: result.conflict.name,
             })
           : r("capabilityConflictUnknown"),
       );
+    }
     setRevision(result.revisionId);
     setAppliedConfig(prepared.config);
     setReview(null);
@@ -465,8 +601,16 @@ export function AgentSettingsForm(props: Props) {
   async function save(data: FormData) {
     await perform(async () => {
       setReview(null);
+      await streamRules.save();
       const result = await updateAgentAction({}, data);
-      if (result.error) throw new Error(result.error);
+      if (result.error)
+        throw new Error(
+          result.error === "AGENT_ADVISOR_INVALID"
+            ? t("advisorInvalid")
+            : t.has(result.error)
+              ? t(result.error)
+              : result.error,
+        );
       if (subagentsDirty && subagentDraft) {
         const response = await fetch(
           `/api/v1/agents/${encodeURIComponent(agentId)}/subagents`,
@@ -503,6 +647,31 @@ export function AgentSettingsForm(props: Props) {
       // Never classify against a different tab's newly applied configuration.
       if ((prepared.expectedRevisionId ?? "") !== revision)
         throw new Error(r("stale"));
+      // Routing belongs to the reviewed revision, not the mutable Agent row.
+      if (fallbackModelsDirty)
+        prepared.config.fallbackModels = fallbackSelections;
+      if (roleModelDirty("compaction") || roleModelDirty("title"))
+        prepared.config.roleModels = roleModels;
+      const routingProviderIds = [
+        ...(prepared.config.fallbackModels ?? []).map(
+          (target) => target.providerId,
+        ),
+        ...Object.values(prepared.config.roleModels ?? {}).flatMap((target) =>
+          target ? [target.providerId] : [],
+        ),
+      ];
+      const selectedProviderIds = new Set([
+        prepared.config.providerId,
+        ...routingProviderIds,
+      ]);
+      prepared.config.modelProviderIds = [
+        ...new Set([
+          ...prepared.config.modelProviderIds.filter((id) =>
+            selectedProviderIds.has(id),
+          ),
+          ...routingProviderIds,
+        ]),
+      ];
       const additions = agentPermissionAdditions(
         appliedConfig,
         prepared.config,
@@ -514,12 +683,23 @@ export function AgentSettingsForm(props: Props) {
         router.refresh();
         return;
       }
-      setReview({ ...prepared, additions, diff });
+      setReview({
+        ...prepared,
+        additions,
+        diff,
+        fallbackRows: {
+          before: (appliedConfig?.fallbackModels ?? []).map((selection) => ({
+            id: crypto.randomUUID(),
+            selection,
+          })),
+          after: fallbackModels,
+        },
+      });
       setMessage("");
     });
   }
   async function apply() {
-    if (!review || dirty || subagentsDirty) return;
+    if (!review || dirty || subagentsDirty || streamRules.dirty) return;
     await perform(() => publish(review));
   }
   async function loadCredentials() {
@@ -531,6 +711,8 @@ export function AgentSettingsForm(props: Props) {
     ["general", t("basic")],
     ["instructions", t("instructions")],
     ["builtInTools", t("builtInTools")],
+    ["streamRules", t("streamRules.title")],
+    ["toolApproval", approvalT("title")],
     ["mcp", t("mcp")],
     ["skills", t("skills")],
     ["piPackages", t("piPackages")],
@@ -617,8 +799,28 @@ export function AgentSettingsForm(props: Props) {
               <input type="hidden" name="model" value={model} />
               <input
                 type="hidden"
+                name="contextFiles"
+                value={String(contextFiles)}
+              />
+              <input
+                type="hidden"
+                name="toolApproval"
+                value={JSON.stringify(toolApproval)}
+              />
+              <input
+                type="hidden"
+                name="advisor"
+                value={JSON.stringify(advisor)}
+              />
+              <input
+                type="hidden"
                 name="reasoningEffort"
                 value={reasoningEffort}
+              />
+              <input
+                type="hidden"
+                name="secretObfuscation"
+                value={String(secretObfuscation)}
               />
               <input
                 type="hidden"
@@ -701,6 +903,156 @@ export function AgentSettingsForm(props: Props) {
                       }
                     />
                   </DialogField>
+                  <DialogField
+                    label={t("modelRouting.fallbackModels")}
+                    dirty={fallbackModelsDirty}
+                  >
+                    <ol className="space-y-2">
+                      {fallbackModels.map((item, index) => (
+                        <li
+                          key={item.id}
+                          className="flex min-w-0 flex-wrap items-center gap-2"
+                        >
+                          <span
+                            className="w-4 text-xs tabular-nums text-muted-foreground"
+                            aria-hidden="true"
+                          >
+                            {index + 1}
+                          </span>
+                          {modelPicker(
+                            item.selection,
+                            t("modelRouting.fallbackPosition", {
+                              position: index + 1,
+                            }),
+                            (next) =>
+                              setFallbackModels((current) =>
+                                current.map((entry) =>
+                                  entry.id === item.id
+                                    ? { ...entry, selection: next }
+                                    : entry,
+                                ),
+                              ),
+                          )}
+                          <div className="flex shrink-0 items-center">
+                            {([-1, 1] as const).map((direction) => (
+                              <Button
+                                key={direction}
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                disabled={
+                                  pending ||
+                                  index + direction < 0 ||
+                                  index + direction >= fallbackModels.length
+                                }
+                                aria-label={t(
+                                  direction < 0
+                                    ? "modelRouting.moveUp"
+                                    : "modelRouting.moveDown",
+                                  { position: index + 1 },
+                                )}
+                                onClick={() => {
+                                  setFallbackModels((current) => {
+                                    const next = [...current];
+                                    [next[index], next[index + direction]] = [
+                                      next[index + direction],
+                                      next[index],
+                                    ];
+                                    return next;
+                                  });
+                                  changed();
+                                }}
+                              >
+                                {direction < 0 ? (
+                                  <ArrowUp
+                                    className="size-4"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <ArrowDown
+                                    className="size-4"
+                                    aria-hidden="true"
+                                  />
+                                )}
+                              </Button>
+                            ))}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              disabled={pending}
+                              aria-label={t("modelRouting.removeFallback", {
+                                position: index + 1,
+                              })}
+                              onClick={() => {
+                                setFallbackModels((current) =>
+                                  current.filter(
+                                    (_, position) => position !== index,
+                                  ),
+                                );
+                                changed();
+                              }}
+                            >
+                              <Trash2 className="size-4" aria-hidden="true" />
+                            </Button>
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                    {fallbackModels.length < 3
+                      ? modelPicker(
+                          null,
+                          t("modelRouting.addFallback"),
+                          (selection) => {
+                            const item = { id: crypto.randomUUID(), selection };
+                            setFallbackModels((current) =>
+                              current.length < 3 ? [...current, item] : current,
+                            );
+                          },
+                        )
+                      : null}
+                  </DialogField>
+                  {(["compaction", "title"] as const).map((role) => (
+                    <DialogField
+                      key={role}
+                      label={t(`modelRouting.${role}`)}
+                      dirty={roleModelDirty(role)}
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        {modelPicker(
+                          roleModels[role] ?? null,
+                          t(`modelRouting.${role}`),
+                          (next) =>
+                            setRoleModels((current) => ({
+                              ...current,
+                              [role]: next,
+                            })),
+                          t("modelRouting.usePrimary"),
+                        )}
+                        {roleModels[role] ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            disabled={pending}
+                            aria-label={t("modelRouting.clearRole", {
+                              role: t(`modelRouting.${role}`),
+                            })}
+                            onClick={() => {
+                              setRoleModels((current) => {
+                                const next = { ...current };
+                                delete next[role];
+                                return next;
+                              });
+                              changed();
+                            }}
+                          >
+                            <Trash2 className="size-4" aria-hidden="true" />
+                          </Button>
+                        ) : null}
+                      </div>
+                    </DialogField>
+                  ))}
                   {selectionSupportsReasoning(providers, {
                     providerId: provider,
                     model,
@@ -728,11 +1080,156 @@ export function AgentSettingsForm(props: Props) {
                       />
                     </DialogField>
                   )}
+                  <DialogField
+                    label={t("secretObfuscation")}
+                    dirty={fieldDirty.secretObfuscation}
+                  >
+                    <Switch
+                      checked={secretObfuscation}
+                      ariaLabel={t("secretObfuscation")}
+                      disabled={pending}
+                      onCheckedChange={(checked) => {
+                        setSecretObfuscation(checked);
+                        changed();
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t("secretObfuscationDescription")}
+                    </p>
+                  </DialogField>
+                  <DialogField label={t("advisor")} dirty={fieldDirty.advisor}>
+                    <Switch
+                      checked={advisor !== null}
+                      disabled={pending}
+                      label={t("advisorEnabled")}
+                      onCheckedChange={(enabled) => {
+                        setAdvisor(
+                          enabled
+                            ? {
+                                providerId: provider,
+                                model,
+                                cadence: "final",
+                                minSeverity: "warning",
+                              }
+                            : null,
+                        );
+                        changed();
+                      }}
+                    />
+                  </DialogField>
+                  {advisor ? (
+                    <div className="space-y-5">
+                      <DialogField label={t("advisorModel")}>
+                        <ModelPicker
+                          className="flex w-full"
+                          pending={pending}
+                          providers={providers.filter((item) =>
+                            agentRuntimeSupportsProviderFormat(
+                              runtimeKind,
+                              item.format,
+                            ),
+                          )}
+                          value={
+                            advisor.providerId && advisor.model ? advisor : null
+                          }
+                          onSelect={(selection) => {
+                            setAdvisor({ ...advisor, ...selection });
+                            changed();
+                          }}
+                          onConfigure={() =>
+                            window.location.assign(
+                              `/app/${encodeURIComponent(slug)}/providers`,
+                            )
+                          }
+                          trigger={
+                            <ModelPickerTrigger
+                              label={advisor.model || t("selectModel")}
+                              placeholder={!advisor.model}
+                              provider={
+                                providers.find(
+                                  (item) => item.id === advisor.providerId,
+                                )?.name
+                              }
+                              aria-label={t("advisorModel")}
+                              disabled={pending}
+                            />
+                          }
+                        />
+                      </DialogField>
+                      <DialogField
+                        label={t("advisorCadence")}
+                        htmlFor={`${formId}-advisor-cadence`}
+                      >
+                        <FormSelect
+                          id={`${formId}-advisor-cadence`}
+                          label={t("advisorCadence")}
+                          value={advisor.cadence}
+                          disabled={pending}
+                          options={[
+                            {
+                              value: "each_tool_batch",
+                              label: t("advisorEachToolBatch"),
+                            },
+                            { value: "final", label: t("advisorFinal") },
+                          ]}
+                          onValueChange={(value) => {
+                            if (
+                              value !== "each_tool_batch" &&
+                              value !== "final"
+                            )
+                              return;
+                            setAdvisor({ ...advisor, cadence: value });
+                            changed();
+                          }}
+                        />
+                      </DialogField>
+                      <DialogField
+                        label={t("advisorMinSeverity")}
+                        htmlFor={`${formId}-advisor-severity`}
+                      >
+                        <FormSelect
+                          id={`${formId}-advisor-severity`}
+                          label={t("advisorMinSeverity")}
+                          value={advisor.minSeverity}
+                          disabled={pending}
+                          options={[
+                            { value: "info", label: t("advisorInfo") },
+                            { value: "warning", label: t("advisorWarning") },
+                            { value: "critical", label: t("advisorCritical") },
+                          ]}
+                          onValueChange={(value) => {
+                            if (
+                              value !== "info" &&
+                              value !== "warning" &&
+                              value !== "critical"
+                            )
+                              return;
+                            setAdvisor({ ...advisor, minSeverity: value });
+                            changed();
+                          }}
+                        />
+                      </DialogField>
+                    </div>
+                  ) : null}
                 </section>
                 <section
                   hidden={active !== "instructions"}
                   className="flex flex-1 flex-col gap-6"
                 >
+                  <DialogField
+                    label={t("contextFiles")}
+                    dirty={contextFiles !== props.contextFiles}
+                  >
+                    <Switch
+                      checked={contextFiles}
+                      disabled={pending}
+                      ariaLabel={t("contextFiles")}
+                      onCheckedChange={(checked) => {
+                        setContextFiles(checked);
+                        changed();
+                      }}
+                    />
+                  </DialogField>
                   <SystemPromptEditor
                     workspaceId={workspaceId}
                     name={name}
@@ -749,6 +1246,13 @@ export function AgentSettingsForm(props: Props) {
                     dirty={prompt !== props.systemPrompt}
                   />
                 </section>
+                <section hidden={active !== "streamRules"}>
+                  <AgentStreamRulesEditor
+                    draft={streamRules}
+                    disabled={pending}
+                    onChange={changed}
+                  />
+                </section>
                 <section hidden={active !== "builtInTools"}>
                   <DialogField
                     label={t("builtInTools")}
@@ -761,8 +1265,26 @@ export function AgentSettingsForm(props: Props) {
                         setDisabledTools(next);
                         changed();
                       }}
+                      optionalToolOptions={props.optionalBuiltinToolOptions}
+                      enabledOptionalTools={enabledOptionalTools}
+                      onEnabledOptionalToolsChange={(next) => {
+                        setEnabledOptionalTools(next);
+                        changed();
+                      }}
+                      disabled={pending}
                     />
                   </DialogField>
+                </section>
+                <section hidden={active !== "toolApproval"}>
+                  <ToolApprovalSettings
+                    value={toolApproval}
+                    disabled={pending}
+                    dirty={fieldDirty.toolApproval}
+                    onChange={(value) => {
+                      setToolApproval(value);
+                      changed();
+                    }}
+                  />
                 </section>
                 <section hidden={active !== "mcp"}>
                   <DialogField label={t("mcp")} dirty={fieldDirty.mcp}>
@@ -1233,6 +1755,81 @@ export function AgentSettingsForm(props: Props) {
               <p className="text-sm text-muted-foreground">
                 {diffT("reviewHelp")}
               </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th scope="col" className="p-2">
+                        {t("model")}
+                      </th>
+                      <th scope="col" className="p-2">
+                        {t("modelRouting.before")}
+                      </th>
+                      <th scope="col" className="p-2">
+                        {t("modelRouting.after")}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <th scope="row" className="p-2 font-medium">
+                        {t("model")}
+                      </th>
+                      {[appliedConfig, review.config].map((config, index) => (
+                        <td
+                          key={index === 0 ? "before" : "after"}
+                          className="break-words p-2"
+                        >
+                          {config?.providerId && config.model
+                            ? modelLabel({
+                                providerId: config.providerId,
+                                model: config.model,
+                              })
+                            : t("none")}
+                        </td>
+                      ))}
+                    </tr>
+                    <tr>
+                      <th scope="row" className="p-2 align-top font-medium">
+                        {t("modelRouting.fallbackModels")}
+                      </th>
+                      {[appliedConfig, review.config].map((config, index) => (
+                        <td
+                          key={index === 0 ? "before" : "after"}
+                          className="break-words p-2 align-top"
+                        >
+                          {config?.fallbackModels?.length ? (
+                            <ol className="list-inside list-decimal space-y-1">
+                              {review.fallbackRows[
+                                index === 0 ? "before" : "after"
+                              ].map((item) => (
+                                <li key={item.id}>
+                                  {modelLabel(item.selection)}
+                                </li>
+                              ))}
+                            </ol>
+                          ) : (
+                            t("none")
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                    {(["compaction", "title"] as const).map((role) => (
+                      <tr key={role}>
+                        <th scope="row" className="p-2 font-medium">
+                          {t(`modelRouting.${role}`)}
+                        </th>
+                        <td className="break-words p-2">
+                          {modelLabel(appliedConfig?.roleModels?.[role])}
+                        </td>
+                        <td className="break-words p-2">
+                          {modelLabel(review.config.roleModels?.[role])}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               <RevisionFileDiff diff={review.diff} />
               {review.additions.length ? (
                 <p className="text-sm text-muted-foreground">
@@ -1346,7 +1943,7 @@ export function AgentSettingsForm(props: Props) {
             </Button>
             <Button
               type="button"
-              disabled={pending || dirty || subagentsDirty}
+              disabled={pending || dirty || subagentsDirty || streamRules.dirty}
               onClick={() => void apply()}
               className="gap-2"
             >
@@ -1363,7 +1960,10 @@ export function AgentSettingsForm(props: Props) {
           <Button
             form={formId}
             type="submit"
-            disabled={pending}
+            disabled={
+              pending ||
+              (active === "streamRules" && streamRules.rules === null)
+            }
             aria-busy={pending}
             className="min-w-24 gap-2 rounded-xl"
           >

@@ -7,6 +7,7 @@ import { appendAgentChannelLog } from "./channel-runtime-logs";
 import { runPersistedChannelCallback } from "./message-service";
 import { runtimeCanOperate } from "@/lib/runtime/ownership-state";
 import { logSystemEvent } from "@/lib/observability/system";
+import { queueRunningChannelMessages } from "./channel-message-queue";
 
 const LEASE_MS = 90_000;
 const MAX_ATTEMPTS = 3;
@@ -137,7 +138,10 @@ export async function processChannelInboundQueue(
 ) {
   const key = `${connectionId}:${queueKey}`;
   const pending = active.get(key);
-  if (pending) return pending;
+  if (pending) {
+    await queueRunningChannelMessages(connectionId, queueKey);
+    return pending;
+  }
   const operation = drain(connectionId, queueKey).finally(() =>
     active.delete(key),
   );

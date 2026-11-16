@@ -1,9 +1,12 @@
 import "server-only";
+import type { StreamRuleTrigger } from "@/lib/agents/stream-rules";
 import type {
   RunSandboxAgentTurnOptions,
   SandboxRuntimeActivity,
 } from "@/lib/agents/sandbox-runtime";
 import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
+import type { BudgetWarning } from "@/lib/agents/budget-warning";
+import type { AgentMessageQueue } from "@/lib/agents/execution/message-queue";
 
 type Registry = Map<string, AbortController>;
 
@@ -16,17 +19,24 @@ export type WorkRuntimeObserver = Pick<
   | "onCommands"
   | "onUsage"
   | "onCommandResult"
+  | "onStreamRule"
+  | "onQueuedMessage"
+  | "onMessageQueue"
+  | "onContextMaintenance"
 >;
 
 export type WorkOutputSnapshot = {
   text: string;
   activities: WorkOutputActivity[];
+  streamRuleTriggers?: StreamRuleTrigger[];
   active: boolean;
   done: boolean;
   executionStage?: AgentExecutionStage;
   startedAt?: number;
   runtimeKind?: string;
   modelName?: string;
+  budgetWarning?: BudgetWarning;
+  messageQueue?: AgentMessageQueue;
 };
 
 export type WorkOutputActivity = {
@@ -43,6 +53,9 @@ export type WorkOutputActivity = {
   durationMs?: number;
   input?: unknown;
   output?: unknown;
+  patch?: string;
+  truncated?: boolean;
+  firstChangedLine?: number;
   isError?: boolean;
   /** Length of the streamed reply text when this activity began. */
   textOffset?: number;
@@ -52,6 +65,16 @@ export type WorkOutputEvent =
   | { type: "start"; snapshot: WorkOutputSnapshot }
   | { type: "stage"; snapshot: WorkOutputSnapshot }
   | { type: "delta"; delta: string; snapshot: WorkOutputSnapshot }
+  | {
+      type: "data-budget-warning";
+      data: BudgetWarning;
+      snapshot: WorkOutputSnapshot;
+    }
+  | {
+      type: "stream_rule_triggered";
+      trigger: StreamRuleTrigger;
+      snapshot: WorkOutputSnapshot;
+    }
   | {
       type: "activity";
       activity: WorkOutputActivity;
@@ -118,6 +141,13 @@ function outputSnapshot(channel: WorkOutputChannel): WorkOutputSnapshot {
   return {
     text: channel.text,
     activities: channel.activities.map((activity) => ({ ...activity })),
+    ...(channel.streamRuleTriggers?.length
+      ? {
+          streamRuleTriggers: channel.streamRuleTriggers.map((trigger) => ({
+            ...trigger,
+          })),
+        }
+      : {}),
     active: channel.active,
     done: channel.done,
     ...(channel.executionStage
@@ -132,6 +162,8 @@ function outputSnapshot(channel: WorkOutputChannel): WorkOutputSnapshot {
     ...(channel.modelName === undefined
       ? {}
       : { modelName: channel.modelName }),
+    ...(channel.budgetWarning ? { budgetWarning: channel.budgetWarning } : {}),
+    ...(channel.messageQueue ? { messageQueue: channel.messageQueue } : {}),
   };
 }
 
@@ -157,6 +189,9 @@ export function startWorkOutput(
   channel.cleanup = undefined;
   channel.text = "";
   channel.activities = [];
+  channel.budgetWarning = undefined;
+  channel.streamRuleTriggers = [];
+  channel.messageQueue = { messages: [], pendingMessageCount: 0 };
   channel.active = true;
   channel.done = false;
   channel.executionStage = "queued";
@@ -175,6 +210,35 @@ export function publishWorkExecutionStage(
     return;
   channel.executionStage = stage;
   notifyOutput(channel, { type: "stage", snapshot: outputSnapshot(channel) });
+}
+export function publishWorkMessageQueue(
+  workSessionId: string,
+  queue: AgentMessageQueue,
+) {
+  const channel = outputChannel(workSessionId);
+  channel.messageQueue = queue;
+  notifyOutput(channel, { type: "stage", snapshot: outputSnapshot(channel) });
+}
+
+export function resetWorkMessageOutput(workSessionId: string) {
+  const channel = outputChannel(workSessionId);
+  channel.text = "";
+  channel.activities = [];
+  notifyOutput(channel, { type: "stage", snapshot: outputSnapshot(channel) });
+}
+
+export function publishWorkBudgetWarning(
+  workSessionId: string,
+  warning: BudgetWarning,
+) {
+  const channel = outputChannel(workSessionId);
+  if (!channel.active || channel.done || channel.budgetWarning) return;
+  channel.budgetWarning = warning;
+  notifyOutput(channel, {
+    type: "data-budget-warning",
+    data: warning,
+    snapshot: outputSnapshot(channel),
+  });
 }
 
 export function publishWorkActivity(
@@ -200,6 +264,22 @@ export function publishWorkActivity(
   });
 }
 
+export function publishWorkStreamRule(
+  workSessionId: string,
+  trigger: StreamRuleTrigger,
+) {
+  const channel = outputChannel(workSessionId);
+  if (!channel.active || channel.done) return;
+  channel.streamRuleTriggers ??= [];
+  if (channel.streamRuleTriggers.some((item) => item.id === trigger.id)) return;
+  channel.streamRuleTriggers.push(trigger);
+  notifyOutput(channel, {
+    type: "stream_rule_triggered",
+    trigger,
+    snapshot: outputSnapshot(channel),
+  });
+}
+
 export function publishWorkOutput(workSessionId: string, delta: string) {
   if (!delta) return;
   const channel = outputChannel(workSessionId);
@@ -221,6 +301,7 @@ export function finishWorkOutput(workSessionId: string) {
   channel.active = false;
   channel.done = true;
   channel.executionStage = undefined;
+  channel.messageQueue = { messages: [], pendingMessageCount: 0 };
   notifyOutput(channel, { type: "done", snapshot: outputSnapshot(channel) });
   // Keep a short replay window for clients that reconnect as the DB update settles.
   if (channel.cleanup) clearTimeout(channel.cleanup);

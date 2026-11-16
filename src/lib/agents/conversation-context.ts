@@ -19,7 +19,12 @@ export type ConversationCompaction = {
   completedAt: string;
 };
 
-export type ContextMessage = { id: string; role: string; parts: unknown };
+export type ContextMessage = {
+  id: string;
+  role: string;
+  parts: unknown;
+  supersededAt?: Date | string | null;
+};
 
 /** Admission failures have UI metadata but never established a native session. */
 export function hasNativeConversationHistory(
@@ -34,6 +39,7 @@ export function hasNativeConversationHistory(
         return part.status !== "failed" && part.status !== "cancelled";
       return (
         part.type !== "data-agent-turn-model" &&
+        part.type !== "data-advisor-suggestions" &&
         part.type !== "data-work-timing"
       );
     });
@@ -108,6 +114,7 @@ function isContextClear(message: ContextMessage) {
 export function activeConversationMessages(
   messages: readonly ContextMessage[],
 ): ContextMessage[] {
+  messages = messages.filter((message) => !message.supersededAt);
   const clear = messages.findLastIndex(isContextClear);
   const current = clear < 0 ? messages : messages.slice(clear + 1);
   const compaction = latestCompaction(current);

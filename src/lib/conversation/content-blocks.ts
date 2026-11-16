@@ -1,3 +1,14 @@
+import {
+  StreamRuleTriggerSchema,
+  STREAM_RULE_TRIGGER_PART,
+  type StreamRuleTrigger,
+} from "@/lib/agents/stream-rules";
+import {
+  CONTEXT_MAINTENANCE_PART,
+  ContextMaintenanceSchema,
+  type ContextMaintenance,
+} from "@/lib/agents/context-maintenance";
+
 export type ToolBlockStatus =
   | "running"
   | "awaiting"
@@ -15,6 +26,9 @@ export type ContentStep =
       status: ToolBlockStatus;
       input?: unknown;
       output?: unknown;
+      patch?: string;
+      truncated?: boolean;
+      firstChangedLine?: number;
       errorText?: string;
       durationMs?: number;
       /** Failed outside the model's view (e.g. a confirmed execution receipt). */
@@ -30,6 +44,8 @@ export type ContentStep =
 
 export type ContentBlock =
   | { kind: "text"; id: string; text: string; streaming: boolean }
+  | { kind: "stream-rule"; id: string; trigger: StreamRuleTrigger }
+  | { kind: "context-maintenance"; id: string; data: ContextMaintenance }
   | {
       kind: "process";
       id: string;
@@ -125,6 +141,8 @@ export function toContentBlocks(
   },
 ): ContentBlock[] {
   const blocks: ContentBlock[] = [];
+  const ruleTriggerIds = new Set<string>();
+  const maintenance: ContentBlock[] = [];
   const appendStep = (step: ContentStep, partIndex: number) => {
     const previous = blocks.at(-1);
     if (previous?.kind === "process") previous.steps.push(step);
@@ -139,6 +157,28 @@ export function toContentBlocks(
 
   parts.forEach((part, partIndex) => {
     const id = `${messageId}:part:${partIndex}`;
+    if (part.type === STREAM_RULE_TRIGGER_PART) {
+      const parsed = StreamRuleTriggerSchema.safeParse(part.data);
+      if (parsed.success && !ruleTriggerIds.has(parsed.data.id)) {
+        ruleTriggerIds.add(parsed.data.id);
+        blocks.push({
+          kind: "stream-rule",
+          id: `${messageId}:rule:${parsed.data.id}`,
+          trigger: parsed.data,
+        });
+      }
+      return;
+    }
+    if (part.type === CONTEXT_MAINTENANCE_PART) {
+      const parsed = ContextMaintenanceSchema.safeParse(part.data);
+      if (parsed.success)
+        maintenance.push({
+          kind: "context-maintenance",
+          id: `${messageId}:context:${parsed.data.kind}:${parsed.data.at}`,
+          data: parsed.data,
+        });
+      return;
+    }
     if (part.type === "text") {
       // Empty text slots still delimit process groups and retain their identity.
       blocks.push({
@@ -181,6 +221,15 @@ export function toContentBlocks(
               : toolStatus(part.state, options.streaming),
           input: part.input,
           output: part.output,
+          patch: typeof part.patch === "string" ? part.patch : undefined,
+          truncated:
+            typeof part.truncated === "boolean" ? part.truncated : undefined,
+          firstChangedLine:
+            typeof part.firstChangedLine === "number" &&
+            Number.isInteger(part.firstChangedLine) &&
+            part.firstChangedLine > 0
+              ? part.firstChangedLine
+              : undefined,
           durationMs:
             typeof part.durationMs === "number" ? part.durationMs : undefined,
           errorText:
@@ -226,6 +275,9 @@ export function toContentBlocks(
       });
     }
   });
+  // Runtime metadata precedes persisted text but follows streamed text. Keep
+  // committed context operations at the turn boundary in both projections.
+  blocks.push(...maintenance);
 
   blocks.forEach((block, index) => {
     const last = index === blocks.length - 1;
@@ -248,6 +300,8 @@ export function workContentParts(
   streaming: boolean,
 ): { type: string; [key: string]: unknown }[] {
   return parts.map((part) => {
+    if (part.type === STREAM_RULE_TRIGGER_PART) return part;
+    if (part.type === CONTEXT_MAINTENANCE_PART) return part;
     const reasoning = part.type === "reasoning";
     const status =
       !streaming && part.status === "running"
@@ -262,6 +316,7 @@ export function workContentParts(
       };
     if (part.type === "hook-activity" || part.type === "data-hook-activity")
       return { type: "data-hook-activity", data: part.data };
+    if (part.type === "data-advisor-suggestions") return part;
     if (reasoning)
       return { ...part, state: status === "running" ? "streaming" : "done" };
     if (part.type === "work-tool" || part.type === "tool")

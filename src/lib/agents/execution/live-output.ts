@@ -3,6 +3,7 @@ import type { SandboxRuntimeActivity } from "@/lib/agents/sandbox-runtime";
 import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
 import type { LiveTaskActivity, LiveTaskOutput } from "./live-output-types";
 import { redactText, sanitizeLog } from "@/lib/observability/redaction";
+import type { AgentMessageQueue } from "./message-queue";
 
 // Replay is process-local, like the leased worker. Durable terminal projections
 // are stored once in the task ledger, never once per token.
@@ -150,13 +151,69 @@ export function publishTaskStage(taskId: string, stage: AgentExecutionStage) {
   capture.output.executionStage = stage;
   notify(taskId);
 }
-function safeValue(value: unknown, secrets: readonly string[]) {
+export function publishTaskMessageQueue(
+  taskId: string,
+  queue: AgentMessageQueue,
+) {
+  const capture = captureFor(taskId);
+  if (!capture) return;
+  capture.output.messageQueue = {
+    pendingMessageCount: queue.pendingMessageCount,
+    messages: queue.messages.map((message) => ({
+      ...message,
+      text: redactText(message.text, capture.secrets),
+    })),
+  };
+  notify(taskId);
+}
+
+export function resetTaskMessageOutput(taskId: string) {
+  const capture = captureFor(taskId);
+  if (!capture) return;
+  capture.output.text = "";
+  capture.output.activities = [];
+  capture.reasoningId = undefined;
+  notify(taskId);
+}
+function safeValue(
+  value: unknown,
+  secrets: readonly string[],
+  toolName?: string,
+) {
   if (value === undefined) return undefined;
   const data = sanitizeLog(value, secrets).data;
   const text = JSON.stringify(data);
-  return text.length <= MAX_VALUE
+  // Keep only the browser's single, bounded JPEG image intact; ordinary logs
+  // and untrusted oversized tool values retain the existing 2 KiB budget.
+  const imageResult =
+    toolName === "browser" && text.length <= 206_000
+      ? typeof data === "string"
+        ? parseImageResult(data)
+        : data
+      : undefined;
+  const image =
+    imageResult && typeof imageResult === "object" && "content" in imageResult
+      ? imageResult.content
+      : undefined;
+  const part =
+    Array.isArray(image) && image.length === 1 ? image[0] : undefined;
+  const boundedImage =
+    part?.type === "image" &&
+    part.mimeType === "image/jpeg" &&
+    typeof part.data === "string" &&
+    part.data.length <= 204_800 &&
+    part.data.startsWith("/9j/") &&
+    /^[A-Za-z0-9+/]*={0,2}$/.test(part.data);
+  return boundedImage || text.length <= MAX_VALUE
     ? data
     : `${redactText(text.slice(0, MAX_VALUE - 1), secrets)}…`;
+}
+function parseImageResult(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
 }
 export function publishTaskActivity(
   taskId: string,
@@ -233,7 +290,9 @@ export function publishTaskActivity(
   } else {
     if (!activity.toolCallId) return;
     const toolCallId = activity.toolCallId.slice(0, 256);
-    const id = `tool:${toolCallId}`;
+    const id = source
+      ? `tool:${JSON.stringify([source.subagentId, toolCallId])}`
+      : `tool:${toolCallId}`;
     const previous = activities.find((item) => item.id === id);
     next = {
       ...previous,
@@ -254,7 +313,20 @@ export function publishTaskActivity(
         : { input: safeValue(activity.input, capture.secrets) }),
       ...(activity.output === undefined
         ? {}
-        : { output: safeValue(activity.output, capture.secrets) }),
+        : {
+            output: safeValue(
+              activity.output,
+              capture.secrets,
+              activity.toolName ?? previous?.toolName,
+            ),
+          }),
+      ...(activity.patch === undefined
+        ? {}
+        : {
+            patch: redactText(activity.patch, capture.secrets),
+            truncated: activity.truncated === true,
+            firstChangedLine: activity.firstChangedLine,
+          }),
       isError: activity.isError === true || activity.status === "failed",
     };
   }
@@ -282,6 +354,7 @@ export function finishTaskOutput(
   capture.output.active = false;
   capture.output.done = true;
   capture.output.executionStage = undefined;
+  capture.output.messageQueue = { messages: [], pendingMessageCount: 0 };
   for (const activity of capture.output.activities)
     if (activity.status === "running") activity.status = status;
   const runtime: LiveTaskActivity = {

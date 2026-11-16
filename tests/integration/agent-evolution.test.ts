@@ -265,6 +265,92 @@ it("persists feedback without crossing workspace, agent, role or private-source 
   );
   expect(await db.agentMessageFeedback.count({ where: { messageId } })).toBe(0);
 });
+it("keeps final response feedback separate from intervening advisor data messages", async () => {
+  auth.id = scope.actorId;
+  const conversation = await createConversation(
+    scope.workspaceId,
+    scope.agentId,
+  );
+  if (!conversation) throw new Error("Fixture conversation was not created");
+  await db.message.create({
+    data: {
+      conversationId: conversation.id,
+      role: "user",
+      parts: [{ type: "text", text: "Complete task" }],
+    },
+  });
+  const advisory = await db.message.create({
+    data: {
+      conversationId: conversation.id,
+      role: "assistant",
+      parts: [
+        {
+          type: "data-advisor-suggestions",
+          data: {
+            id: "review",
+            providerId: "provider",
+            model: "reviewer",
+            cadence: "final",
+            suggestions: [{ severity: "warning", message: "Check result" }],
+          },
+        },
+      ],
+    },
+  });
+  const final = await db.message.create({
+    data: {
+      conversationId: conversation.id,
+      role: "assistant",
+      parts: [{ type: "text", text: "Final verified result" }],
+    },
+  });
+  const getFinal = await handleMessageFeedback(
+    request("GET"),
+    scope.agentId,
+    conversation.id,
+    final.id,
+  );
+  expect(getFinal.status).toBe(200);
+  expect((await getFinal.json()).data).toBeNull();
+  expect(
+    (
+      await handleMessageFeedback(
+        request("PUT", { rating: "positive", comment: "Final result" }),
+        scope.agentId,
+        conversation.id,
+        final.id,
+      )
+    ).status,
+  ).toBe(200);
+  const readFinal = await handleMessageFeedback(
+    request("GET"),
+    scope.agentId,
+    conversation.id,
+    final.id,
+  );
+  expect((await readFinal.json()).data).toMatchObject({
+    messageId: final.id,
+    rating: "positive",
+    comment: "Final result",
+  });
+  for (const req of [
+    request("GET"),
+    request("PUT", { rating: "negative", comment: "Not a primary answer" }),
+  ])
+    expect(
+      (
+        await handleMessageFeedback(
+          req,
+          scope.agentId,
+          conversation.id,
+          advisory.id,
+        )
+      ).status,
+    ).toBe(404);
+  expect(
+    await db.agentMessageFeedback.count({ where: { messageId: advisory.id } }),
+  ).toBe(0);
+});
 it("only injects reviewed source-scoped memory and retains the actual turn snapshot", async () => {
   const memory = await createRecord(db, scope, "playbook", {
     scope: { kind: "conversation", conversationId },

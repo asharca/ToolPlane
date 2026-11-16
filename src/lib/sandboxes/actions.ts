@@ -22,6 +22,7 @@ import {
   assertDockerVolumeExists,
   copyDockerVolume,
   DockerVolumeCopyCleanupError,
+  getDefaultSandboxImage,
   removeDockerSandboxContainer,
   removeDockerSandboxRuntimeStrict,
   removeDockerVolumeCopyHelper,
@@ -339,6 +340,7 @@ export async function createSandboxAction(formData: FormData) {
         ? resolveSandboxImage(
             formData.get("imageChoice"),
             formData.get("customImage") ?? formData.get("image"),
+            getDefaultSandboxImage(),
           )
         : null;
     const connectorBundle =

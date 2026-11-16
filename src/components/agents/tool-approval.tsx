@@ -67,6 +67,11 @@ export interface ToolApprovalProps {
   onReopen?: () => void;
   expiredLabel?: ReactNode;
   reopenLabel?: ReactNode;
+  statusLabel?: ReactNode;
+  approveLabel?: ReactNode;
+  denyLabel?: ReactNode;
+  disabled?: boolean;
+  readOnly?: boolean;
   className?: string;
 }
 
@@ -139,6 +144,11 @@ export function ToolApproval({
   onReopen,
   expiredLabel,
   reopenLabel = "Reopen",
+  statusLabel,
+  approveLabel = "Allow once",
+  denyLabel = "Deny",
+  disabled = false,
+  readOnly = false,
   className,
 }: ToolApprovalProps) {
   const reduce = useReducedMotion() ?? false;
@@ -229,9 +239,10 @@ export function ToolApproval({
                 getStatusBadgeClass(status),
               )}
             >
-              {expired
-                ? (expiredLabel ?? getStatusCopy(status))
-                : getStatusCopy(status)}
+              {statusLabel ??
+                (expired
+                  ? (expiredLabel ?? getStatusCopy(status))
+                  : getStatusCopy(status))}
             </span>
           </div>
           {description ? (
@@ -283,7 +294,7 @@ export function ToolApproval({
       </AgentDisclosure>
 
       <AnimatePresence initial={false}>
-        {pending ? (
+        {pending && !readOnly ? (
           <motion.div
             initial={reduce ? { opacity: 0 } : { opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
@@ -294,16 +305,18 @@ export function ToolApproval({
             <motion.button
               type="button"
               onClick={onApprove}
+              disabled={disabled}
               whileTap={reduce ? undefined : { scale: 0.97 }}
               transition={SPRING_PRESS}
               className="rounded-lg bg-foreground px-3 py-1.5 text-xs font-medium text-background outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             >
-              Allow once
+              {approveLabel}
             </motion.button>
             {onAlwaysAllow ? (
               <motion.button
                 type="button"
                 onClick={onAlwaysAllow}
+                disabled={disabled}
                 whileTap={reduce ? undefined : { scale: 0.97 }}
                 transition={SPRING_PRESS}
                 className="rounded-lg border border-border/60 bg-background px-3 py-1.5 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
@@ -314,9 +327,10 @@ export function ToolApproval({
             <button
               type="button"
               onClick={onDeny}
+              disabled={disabled}
               className="rounded-lg px-3 py-1.5 text-xs font-medium text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             >
-              Deny
+              {denyLabel}
             </button>
           </motion.div>
         ) : expired && onReopen ? (

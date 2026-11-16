@@ -1,8 +1,16 @@
 "use client";
 
 import { useId, useRef, useState, type ReactNode } from "react";
-import { Bot, Brain, ChevronDown, Wrench, Zap } from "lucide-react";
-import { useTranslations } from "next-intl";
+import {
+  Bot,
+  Brain,
+  ChevronDown,
+  FileText,
+  Undo2,
+  Wrench,
+  Zap,
+} from "lucide-react";
+import { useFormatter, useTranslations } from "next-intl";
 import { AgentDisclosure } from "@/components/agents/agent-disclosure";
 import { ThinkingShimmer } from "@/components/agents/loading-states/thinking-shimmer";
 import { MessageTyping } from "@/components/agents/message";
@@ -10,13 +18,20 @@ import { ToolResult } from "@/components/agents/tool-result";
 import { ConversationFilePreview } from "@/components/dashboard/ConversationComposer";
 import {
   AssistantMarkdown,
+  StreamRuleNotice,
   ToolPayload,
-  toolOutputText,
   toolResultUnboundedHeight,
 } from "@/components/dashboard/ConversationMessage";
 import { CopyButton } from "@/components/dashboard/CopyButton";
+import { ConversationToolDiff } from "./ConversationToolDiff";
+import { ConversationToolOutput } from "@/components/dashboard/ConversationToolOutput";
 import { SubagentActivity } from "./agents/SubagentActivity";
 import { HookActivity, HookActivitySchema } from "./agents/HookActivity";
+import { AdvisorSuggestionsCard } from "./agents/AdvisorSuggestionsCard";
+import {
+  ADVISOR_SUGGESTIONS_PART,
+  AdvisorSuggestionsSchema,
+} from "@/lib/agents/advisor";
 import {
   contentProcessStatus,
   toContentBlocks,
@@ -143,14 +158,10 @@ function ConversationToolStep({ step }: { step: ToolStep }) {
       (step.status === "failed" && step.platformFailure === true),
   );
   const userToggle = useRef(false);
+  const hasPatch = typeof step.patch === "string" && step.patch.length > 0;
   // Collapsed steps skip payload formatting and code highlighting entirely.
   const input =
     !open || step.input === undefined ? undefined : formatPayload(step.input);
-  const plainOutput = open ? toolOutputText(step.output) : undefined;
-  const output =
-    !open || step.output === undefined
-      ? undefined
-      : (plainOutput ?? formatPayload(step.output));
   return (
     <div
       onClickCapture={() => {
@@ -201,18 +212,19 @@ function ConversationToolStep({ step }: { step: ToolStep }) {
                 {input}
               </ToolPayload>
             ) : null}
-            {output !== undefined ? (
-              <ToolPayload
-                label={
-                  <span className="flex items-center justify-between gap-2">
-                    <span>{t("toolOutput")}</span>
-                    <CopyButton text={output} label={common("copy")} iconOnly />
-                  </span>
-                }
-                language={plainOutput === undefined ? "json" : "text"}
-              >
-                {output}
-              </ToolPayload>
+            {step.patch ? (
+              <ConversationToolDiff
+                patch={step.patch}
+                truncated={step.truncated}
+                firstChangedLine={step.firstChangedLine}
+              />
+            ) : null}
+            {step.output !== undefined &&
+            (!hasPatch || step.status === "failed") ? (
+              <ConversationToolOutput
+                value={step.output}
+                label={t("toolOutput")}
+              />
             ) : null}
             {step.errorText ? (
               <p
@@ -272,6 +284,22 @@ function ConversationProcessBlock({
           : block.steps.every((step) => step.kind === "thinking")
             ? t("thought")
             : t("processed");
+  // Advisor-only messages are visible records, not a collapsed execution summary.
+  if (
+    block.steps.every(
+      (step) => step.kind === "data" && step.type === ADVISOR_SUGGESTIONS_PART,
+    )
+  ) {
+    return (
+      <div className="space-y-3">
+        {block.steps.map((step) =>
+          step.kind === "data" ? (
+            <div key={step.id}>{renderDataStep?.(step)}</div>
+          ) : null,
+        )}
+      </div>
+    );
+  }
   return (
     <div
       data-ui="conversation-process"
@@ -352,6 +380,76 @@ function ConversationProcessBlock({
   );
 }
 
+function ContextMaintenanceBlock({
+  block,
+}: {
+  block: Extract<ContentBlock, { kind: "context-maintenance" }>;
+}) {
+  const t = useTranslations("console.conversationOperations");
+  const format = useFormatter();
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const [visited, setVisited] = useState(false);
+  const rewind = block.data.kind === "rewind";
+  const Icon = rewind ? Undo2 : FileText;
+  return (
+    <div
+      data-ui="conversation.context-maintenance"
+      data-kind={block.data.kind}
+      className="min-w-0 border-y border-border py-2 text-xs text-muted-foreground"
+    >
+      <button
+        id={`${id}-trigger`}
+        type="button"
+        aria-expanded={open}
+        aria-controls={`${id}-content`}
+        onClick={() => {
+          setOpen((value) => !value);
+          setVisited(true);
+        }}
+        className="flex w-full min-w-0 flex-wrap items-center gap-2 rounded-md text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <Icon aria-hidden="true" className="size-3.5 shrink-0" />
+        <span>{t(rewind ? "contextRewound" : "contextHandedOff")}</span>
+        <time dateTime={block.data.at}>
+          {format.dateTime(new Date(block.data.at), {
+            dateStyle: "medium",
+            timeStyle: "short",
+          })}
+        </time>
+        <ChevronDown
+          aria-hidden="true"
+          className={cn(
+            "ml-auto size-3.5 shrink-0 transition-transform motion-reduce:transition-none",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+      <AgentDisclosure
+        id={`${id}-content`}
+        role="region"
+        aria-labelledby={`${id}-trigger ${id}-label`}
+        open={open}
+      >
+        <span id={`${id}-label`} className="sr-only">
+          {t(rewind ? "contextMaintenanceReport" : "contextMaintenanceSummary")}
+        </span>
+        {visited ? (
+          <div className="min-w-0 break-words pt-3 text-foreground">
+            <AssistantMarkdown
+              text={
+                block.data.kind === "rewind"
+                  ? block.data.report
+                  : block.data.summary
+              }
+            />
+          </div>
+        ) : null}
+      </AgentDisclosure>
+    </div>
+  );
+}
+
 /** One ordered display path for Assistant and Agent UI-message parts. */
 export function ConversationContentBlocks({
   messageId,
@@ -417,6 +515,8 @@ export function ConversationContentBlocks({
   return (
     <div className="w-full min-w-0 space-y-3">
       {blocks.map((block, index) => {
+        if (block.kind === "stream-rule")
+          return <StreamRuleNotice key={block.id} trigger={block.trigger} />;
         if (block.kind === "text")
           return block.text ? (
             <AssistantMarkdown
@@ -425,6 +525,8 @@ export function ConversationContentBlocks({
               streaming={block.streaming}
             />
           ) : null;
+        if (block.kind === "context-maintenance")
+          return <ContextMaintenanceBlock key={block.id} block={block} />;
         if (block.kind === "file")
           return (
             <ConversationFilePreview
@@ -466,8 +568,15 @@ export function WorkContentBlocks({
         "data-subagent-activity",
         "data-hook-activity",
         "data-work-runtime",
+        ADVISOR_SUGGESTIONS_PART,
       ]}
       renderDataStep={(step) => {
+        if (step.type === ADVISOR_SUGGESTIONS_PART) {
+          const parsed = AdvisorSuggestionsSchema.safeParse(step.data);
+          return parsed.success ? (
+            <AdvisorSuggestionsCard advisory={parsed.data} />
+          ) : null;
+        }
         if (step.type === "data-subagent-activity")
           return <SubagentActivity value={step.data} />;
         if (step.type === "data-hook-activity") {

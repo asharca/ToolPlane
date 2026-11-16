@@ -21,6 +21,7 @@ import {
 } from "react";
 import { useTranslations } from "next-intl";
 import {
+  Bot,
   Database,
   FileText,
   Folder,
@@ -45,6 +46,7 @@ import {
   type ComposerReference,
 } from "@/lib/work/composer-types";
 import type { RuntimeCommand } from "@/lib/agents/runtime-commands";
+import type { QueueMode } from "@/components/dashboard/AgentMessageQueue";
 
 const referenceIcon = {
   file: FileText,
@@ -52,6 +54,7 @@ const referenceIcon = {
   session: MessageSquare,
   resource: Database,
   skill: Sparkles,
+  agent: Bot,
 };
 const TOOLBAR_KEY = "toolplane.work.composer.toolbar";
 const TOOLBAR_EVENT = "toolplane:work-composer-toolbar";
@@ -92,6 +95,8 @@ export function WorkComposer({
   toolbarEnd,
   loading: running = false,
   onStop,
+  onRunningSubmit,
+  queuePending,
   commands = [],
 }: {
   agentId?: string;
@@ -115,6 +120,8 @@ export function WorkComposer({
   commands?: readonly RuntimeCommand[];
   loading?: boolean;
   onStop?: () => void;
+  onRunningSubmit?: (mode: QueueMode) => void;
+  queuePending?: boolean;
 }) {
   const t = useTranslations("console.workComposer");
   const agentsT = useTranslations("console.agents");
@@ -177,13 +184,23 @@ export function WorkComposer({
         body: JSON.stringify({
           kind: item.kind,
           id: item.id,
+          ...(item.kind === "agent" ? { targetKind: item.targetKind } : {}),
           ...(item.deploymentId ? { deploymentId: item.deploymentId } : {}),
           ...(sandboxId ? { sandboxId } : {}),
           ...(workSessionId ? { workSessionId } : {}),
           ...(conversationId ? { conversationId } : {}),
         }),
       });
-      if (!response.ok) throw new Error(t("referenceFailed"));
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(
+          body?.error === "WORK_AGENT_REFERENCE_FORBIDDEN"
+            ? t("agentReferenceForbidden")
+            : t("referenceFailed"),
+        );
+      }
       const reference = (await response.json()) as ComposerReference;
       const next = ComposerReferencesSchema.safeParse([
         ...references,
@@ -289,9 +306,13 @@ export function WorkComposer({
         if (!response.ok) throw new Error(loadFailed);
         const data = (await response.json()) as { items: ComposerItem[] };
         return data.items.map((item) => ({
-          id: `${item.kind}:${item.deploymentId ?? ""}:${item.id}`,
+          id: `${item.kind}:${item.targetKind ?? ""}:${item.deploymentId ?? ""}:${item.id}`,
           label: item.label,
           description: item.description,
+          hint:
+            item.kind === "agent"
+              ? t(item.targetKind === "remote" ? "remoteAgent" : "localAgent")
+              : undefined,
           icon: referenceIcon[item.kind],
           drill: item.kind === "folder",
           group:
@@ -299,12 +320,15 @@ export function WorkComposer({
               ? t("sessions")
               : item.kind === "file" || item.kind === "folder"
                 ? t("files")
-                : undefined,
+                : item.kind === "agent"
+                  ? t("agentReferences")
+                  : undefined,
           disabled: references.some(
             (ref) =>
               ref.kind === item.kind &&
               ref.id === item.id &&
-              ref.deploymentId === item.deploymentId,
+              ref.deploymentId === item.deploymentId &&
+              ref.targetKind === item.targetKind,
           ),
           data: item,
         }));
@@ -361,7 +385,7 @@ export function WorkComposer({
     setText: onDraftChange,
     textareaRef: inputRef,
     containerRef: formRef,
-    disabled: disabled || resolving,
+    disabled: disabled || resolving || running,
     rootItems,
     views,
     mentionView: endpoint ? "references" : undefined,
@@ -473,21 +497,39 @@ export function WorkComposer({
                   })}
                   {references.map((reference, index) => {
                     const Icon = referenceIcon[reference.kind];
+                    const targetLabel =
+                      reference.kind === "agent"
+                        ? t(
+                            reference.targetKind === "remote"
+                              ? "remoteAgent"
+                              : "localAgent",
+                          )
+                        : undefined;
                     return (
                       <div
-                        key={`${reference.kind}:${reference.deploymentId ?? ""}:${reference.id}`}
+                        key={`${reference.kind}:${reference.targetKind ?? ""}:${reference.deploymentId ?? ""}:${reference.id}`}
                         className="flex max-w-full items-center gap-2"
                       >
-                        <Icon className="size-4 text-muted-foreground" />
+                        <Icon
+                          aria-hidden="true"
+                          className="size-4 shrink-0 text-muted-foreground"
+                        />
                         <span className="truncate text-sm">
                           {reference.label}
                         </span>
+                        {targetLabel ? (
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            {targetLabel}
+                          </span>
+                        ) : null}
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
                           aria-label={t("removeReference", {
-                            name: reference.label,
+                            name: targetLabel
+                              ? `${reference.label} (${targetLabel})`
+                              : reference.label,
                           })}
                           onClick={() =>
                             onReferencesChange(
@@ -519,6 +561,8 @@ export function WorkComposer({
             disabled={disabled || resolving}
             loading={running}
             onStop={onStop}
+            onRunningSubmit={onRunningSubmit}
+            queuePending={queuePending}
             maxLength={20_000}
             onFocus={(event) => {
               inputRef.current = event.currentTarget;
@@ -538,7 +582,12 @@ export function WorkComposer({
                 event.keyCode !== 229
               ) {
                 event.preventDefault();
-                if (!resolving) event.currentTarget.form?.requestSubmit();
+                if (!resolving) {
+                  if (onRunningSubmit) {
+                    if (!disabled && !queuePending && draft.trim())
+                      onRunningSubmit(event.altKey ? "follow_up" : "steer");
+                  } else event.currentTarget.form?.requestSubmit();
+                }
               }
             }}
             onSelect={(event) =>
@@ -558,7 +607,7 @@ export function WorkComposer({
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                 <ComposerToolsButton
                   open={menu.open}
-                  disabled={disabled || resolving}
+                  disabled={disabled || resolving || running}
                   aria-label={agentsT("openComposerTools")}
                   title={agentsT("openComposerTools")}
                   onMouseDown={(event) => event.preventDefault()}
@@ -571,7 +620,9 @@ export function WorkComposer({
                       key={option.id}
                       type="button"
                       data-composer-shortcut={option.id}
-                      disabled={disabled || resolving || option.disabled}
+                      disabled={
+                        disabled || resolving || running || option.disabled
+                      }
                       aria-label={option.label}
                       title={option.label}
                       onClick={() => activateShortcut(option)}

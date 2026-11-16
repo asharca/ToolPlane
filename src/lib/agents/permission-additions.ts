@@ -47,6 +47,13 @@ export function agentPermissionAdditions(
     "builtin",
     tools.filter((tool) => !next.disabledBuiltinTools.includes(tool)),
   );
+  add(
+    "builtin",
+    "optionalBuiltinTools",
+    (next.optionalBuiltinTools ?? []).filter(
+      (tool) => !(previous?.optionalBuiltinTools ?? []).includes(tool),
+    ),
+  );
   for (const skill of next.skills) {
     const old = previous?.skills.find(
       (item) => item.installedSkillId === skill.installedSkillId,
@@ -96,9 +103,13 @@ export function agentPermissionAdditions(
         `${role.name}:${role.providerId}/${role.model}`,
       ]);
   }
-  if (next.subagentMode === "native") {
+  if (
+    next.subagentMode === "native" ||
+    next.optionalBuiltinTools?.includes("task")
+  ) {
     const prior =
-      previous?.subagentMode === "native"
+      previous?.subagentMode === "native" ||
+      previous?.optionalBuiltinTools?.includes("task")
         ? previous.nativeSubagentPolicy
         : undefined;
     const policy = next.nativeSubagentPolicy;

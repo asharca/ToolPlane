@@ -22,6 +22,7 @@ import {
   AgentEnvironmentSnapshotSchema,
   AgentA2APolicySchema,
   AgentSkillSnapshotSchema,
+  AgentAdvisorSchema,
 } from "./revision-types";
 import type {
   AgentRevisionConfig,
@@ -56,12 +57,27 @@ import {
 import { isExecutableAgentRuntimeKind } from "./runtime-kind";
 import { preparePiRuntime } from "./pi-runtime";
 import { resolveCapabilitySubagents } from "./subagents";
+import { resolveAgentModelOverride } from "./turn-model";
 
 export class AgentRevisionError extends Error {
   constructor(public readonly code: string) {
     super(code);
     this.name = "AgentRevisionError";
   }
+}
+function parsePublicationConfig(value: unknown): AgentRevisionConfig {
+  const parsed = AgentRevisionConfigSchema.safeParse(value);
+  if (!parsed.success) {
+    const field = parsed.error.issues[0]?.path[0];
+    throw new AgentRevisionError(
+      field === "fallbackModels"
+        ? "AGENT_FALLBACK_MODELS_INVALID"
+        : field === "roleModels"
+          ? "AGENT_ROLE_MODELS_INVALID"
+          : "AGENT_REVISION_CONFIG_INVALID",
+    );
+  }
+  return parsed.data;
 }
 
 /** Omission selects the published default. An explicit null is unresolved history. */
@@ -247,18 +263,54 @@ export async function captureAgentRevisionConfig(
   if (!frozenEnvironment)
     throw new AgentRevisionError("AGENT_ENVIRONMENT_REQUIRED");
   const packages = resolveAgentPiPackages(agent);
+  const advisor = agent.advisor
+    ? AgentAdvisorSchema.parse(agent.advisor)
+    : undefined;
+  let modelProviderIds = prior?.modelProviderIds ?? [];
+  // Replacing or disabling the advisor must not retain its exclusive grant.
+  // Shared fallback/role providers keep their existing authorization.
+  const previousAdvisorProviderId = prior?.advisor?.providerId;
+  if (
+    previousAdvisorProviderId &&
+    previousAdvisorProviderId !== advisor?.providerId &&
+    previousAdvisorProviderId !== agent.providerId &&
+    !prior?.fallbackModels?.some(
+      (target) => target.providerId === previousAdvisorProviderId,
+    ) &&
+    !Object.values(prior?.roleModels ?? {}).some(
+      (target) => target?.providerId === previousAdvisorProviderId,
+    )
+  ) {
+    modelProviderIds = modelProviderIds.filter(
+      (id) => id !== previousAdvisorProviderId,
+    );
+  }
+  if (advisor && !modelProviderIds.includes(advisor.providerId))
+    modelProviderIds = [...modelProviderIds, advisor.providerId];
   return AgentRevisionConfigSchema.parse({
     schemaVersion: 1,
     runtimeKind: agent.runtimeKind,
     systemPrompt: agent.systemPrompt,
+    contextFiles: agent.contextFiles,
     providerId: agent.providerId,
     model: agent.model,
-    modelProviderIds: [],
+    modelProviderIds,
+    ...(prior?.fallbackModels !== undefined
+      ? { fallbackModels: prior.fallbackModels }
+      : {}),
+    ...(prior?.roleModels !== undefined
+      ? { roleModels: prior.roleModels }
+      : {}),
+    ...(advisor ? { advisor } : {}),
     maxSteps: agent.maxSteps,
     ...(agent.reasoningEffort != null
       ? { reasoningEffort: agent.reasoningEffort }
       : {}),
+    ...(agent.streamRules != null ? { streamRules: agent.streamRules } : {}),
+    toolApproval: agent.toolApproval ?? { mode: "off" },
+    secretObfuscation: agent.secretObfuscation,
     disabledBuiltinTools: agent.disabledBuiltinTools,
+    optionalBuiltinTools: agent.optionalBuiltinTools,
     sandboxTemplateId: template?.id ?? null,
     environment: frozenEnvironment,
     externalSandboxes: agent.externalSandboxes.map(({ sandboxId, access }) => ({
@@ -338,6 +390,12 @@ async function validateRevisionAuthorization(
     include: captureInclude,
   });
   if (!agent) throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
+  if (
+    (config.optionalBuiltinTools ?? []).some(
+      (name) => !agent.optionalBuiltinTools.includes(name),
+    )
+  )
+    throw new AgentRevisionError("AGENT_GRANT_REVOKED");
   if ((config.subagentMode ?? "platform") !== agent.subagentMode)
     throw new AgentRevisionError("SUBAGENT_MODE_CONFLICT");
   if (
@@ -348,12 +406,59 @@ async function validateRevisionAuthorization(
       config.nativeSubagentPolicy.maxDepth > agent.nativeSubagentMaxDepth)
   )
     throw new AgentRevisionError("SUBAGENT_POLICY_REVOKED");
-  const providers = new Set([agent.providerId]);
-  if (
-    (config.providerId && !providers.has(config.providerId)) ||
-    config.modelProviderIds.some((id) => !providers.has(id))
-  )
+  if (config.providerId && config.providerId !== agent.providerId)
     throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
+  const targets = [
+    ...(config.fallbackModels ?? []),
+    ...Object.values(config.roleModels ?? {}).filter(
+      (target) => target !== undefined,
+    ),
+  ];
+  const selectedProviders = new Set([
+    agent.providerId,
+    ...targets.map((target) => target.providerId),
+    ...(agent.advisor
+      ? [AgentAdvisorSchema.parse(agent.advisor).providerId]
+      : []),
+  ]);
+  if (config.modelProviderIds.some((id) => !selectedProviders.has(id)))
+    throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
+  for (const target of targets) {
+    if (!config.modelProviderIds.includes(target.providerId))
+      throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
+    try {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(target.model))
+        throw new Error("invalid model gateway target");
+      const { provider } = await resolveAgentModelOverride(
+        workspaceId,
+        target,
+        config.runtimeKind,
+        tx,
+      );
+      const url = new URL(provider.baseUrl);
+      if (
+        !["http:", "https:"].includes(url.protocol) ||
+        url.username ||
+        url.password
+      )
+        throw new Error("invalid gateway");
+    } catch {
+      throw new AgentRevisionError("AGENT_MODEL_UNAVAILABLE");
+    }
+  }
+  if (config.advisor) {
+    const provider = await tx.modelProvider.findFirst({
+      where: {
+        id: config.advisor.providerId,
+        workspaceId,
+      },
+    });
+    if (
+      !provider?.apiKey.trim() ||
+      !provider.models.includes(config.advisor.model)
+    )
+      throw new AgentRevisionError("AGENT_PROVIDER_REVOKED");
+  }
   const skills = new Set(agent.skills.map((entry) => entry.installedSkillId));
   const knowledge = new Set(
     agent.knowledgeBases.map((entry) => entry.knowledgeBaseId),
@@ -552,7 +657,7 @@ export async function publishAgentRevisionInTransaction(
     : null;
   if ((current?.id ?? null) !== input.expectedRevisionId)
     throw new AgentRevisionError("AGENT_REVISION_CONFLICT");
-  const config = AgentRevisionConfigSchema.parse(input.config);
+  const config = parsePublicationConfig(input.config);
   if (config.subagents?.length)
     throw new AgentRevisionError("SUBAGENT_AUTHORING_RETIRED");
   if (!isExecutableAgentRuntimeKind(config.runtimeKind))
@@ -622,7 +727,10 @@ export async function publishAgentRevisionInTransaction(
         ),
       );
     nativeToolNames.push(
-      ...piRuntimeCatalog(config.a2a.outboundEnabled).map((tool, toolIndex) =>
+      ...piRuntimeCatalog(
+        config.a2a.outboundEnabled,
+        config.optionalBuiltinTools,
+      ).map((tool, toolIndex) =>
         nativePiMcpToolName(
           config.mcpGrants.length + config.externalSandboxes.length,
           toolIndex,
@@ -631,6 +739,7 @@ export async function publishAgentRevisionInTransaction(
       ),
     );
     await preflightPiSdkCapabilities({
+      optionalBuiltinTools: config.optionalBuiltinTools,
       piPackages: resolveAgentPiPackages({
         ...authorized,
         piPackages: authorized.piPackages.filter((binding) =>
@@ -866,7 +975,7 @@ export async function publishAgentRevision(
     input.config === undefined
       ? await captureAgentRevisionConfig(db, agentId, input.environment)
       : input.config;
-  const preparedConfig = AgentRevisionConfigSchema.parse(config);
+  const preparedConfig = parsePublicationConfig(config);
   if (!isExecutableAgentRuntimeKind(preparedConfig.runtimeKind))
     throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
   if (preparedConfig.runtimeKind === "pi-sdk") await preparePiRuntime();
@@ -1003,20 +1112,33 @@ export async function resolvePinnedAgent<
       revisionConfig: config,
       // Never inherit a draft mode into a pinned historical session.
       subagentMode: config.subagentMode,
-      nativeSubagentMaxConcurrency: config.nativeSubagentPolicy?.maxConcurrency,
-      nativeSubagentMaxDepth: config.nativeSubagentPolicy?.maxDepth,
+      nativeSubagentMaxConcurrency: Math.min(
+        config.nativeSubagentPolicy?.maxConcurrency ?? 1,
+        live.nativeSubagentMaxConcurrency,
+      ),
+      nativeSubagentMaxDepth: Math.min(
+        config.nativeSubagentPolicy?.maxDepth ?? 1,
+        live.nativeSubagentMaxDepth,
+      ),
       systemPrompt: config.systemPrompt,
+      contextFiles: config.contextFiles ?? false,
       providerId: config.providerId,
       provider,
       model: config.model,
       maxSteps: config.maxSteps,
       reasoningEffort: config.reasoningEffort ?? null,
+      toolApproval: config.toolApproval ?? { mode: "off" },
+      secretObfuscation: config.secretObfuscation ?? false,
+      advisor: config.advisor,
       disabledBuiltinTools: [
         ...new Set([
           ...config.disabledBuiltinTools,
           ...live.disabledBuiltinTools,
         ]),
       ],
+      optionalBuiltinTools: (config.optionalBuiltinTools ?? []).filter((name) =>
+        live.optionalBuiltinTools.includes(name),
+      ),
       servers: grants.map((grant) => ({ deploymentId: grant.deploymentId })),
       mcpToolPolicy: Object.fromEntries(
         grants.map((grant) => [grant.deploymentId, grant.allowedToolNames]),

@@ -29,6 +29,7 @@ import {
   deleteProviderModel,
   updateAgent,
   updateAgentModelSelection,
+  updateAgentOptionalBuiltinTools,
   setAgentTools,
   updateProvider,
   appendMessage,
@@ -173,6 +174,27 @@ async function createDockerSandbox(label: string) {
 }
 
 describe("agents mutations", () => {
+  it("defaults optional tools off and rejects unknown names without changing the draft", async () => {
+    const agent = await createAgent(workspaceId, "Optional tools draft");
+    expect(agent.optionalBuiltinTools).toEqual([]);
+    await expect(
+      updateAgentOptionalBuiltinTools(workspaceId, agent.id, [
+        "unregistered_optional_builtin",
+      ]),
+    ).rejects.toThrow("OPTIONAL_BUILTIN_TOOLS_INVALID");
+    expect(
+      await db.agent.findUniqueOrThrow({ where: { id: agent.id } }),
+    ).toMatchObject({
+      optionalBuiltinTools: [],
+      currentRevisionVersion: 0,
+    });
+    expect(
+      await updateAgentOptionalBuiltinTools("other-workspace", agent.id, []),
+    ).toBeNull();
+    expect(
+      await updateAgentOptionalBuiltinTools(workspaceId, agent.id, []),
+    ).toMatchObject({ optionalBuiltinTools: [] });
+  });
   it("creates an enabled Agent whose first conversation pins the selected configuration", async () => {
     // External Docker boundaries only; persistence, authorization, and pinning are real.
     vi.spyOn(sandboxRuntime, "resolveDockerImageDigest").mockResolvedValue(
@@ -259,6 +281,47 @@ describe("agents mutations", () => {
     },
   );
 
+  it("captures the saved obfuscation draft without rewriting an existing revision", async () => {
+    const agent = await createAgent(workspaceId, "Secret obfuscation draft");
+    expect(agent.secretObfuscation).toBe(true);
+    const revision = await seedPublishedRevision(agent.id);
+    expect(
+      AgentRevisionConfigSchema.parse(revision.config).secretObfuscation,
+    ).toBe(true);
+    await updateAgent(workspaceId, agent.id, {
+      name: agent.name,
+      providerId: null,
+      model: null,
+      systemPrompt: null,
+      maxSteps: agent.maxSteps,
+      secretObfuscation: false,
+    });
+    expect(
+      (await db.agent.findUniqueOrThrow({ where: { id: agent.id } }))
+        .secretObfuscation,
+    ).toBe(false);
+    expect(
+      (await captureAgentRevisionConfig(db, agent.id)).secretObfuscation,
+    ).toBe(false);
+    const unchanged = await db.agentRevision.findUniqueOrThrow({
+      where: { id: revision.id },
+    });
+    expect(
+      AgentRevisionConfigSchema.parse(unchanged.config).secretObfuscation,
+    ).toBe(true);
+    // An older client that does not send the setting must not reset the draft.
+    await updateAgent(workspaceId, agent.id, {
+      name: agent.name,
+      providerId: null,
+      model: null,
+      systemPrompt: null,
+      maxSteps: agent.maxSteps,
+    });
+    expect(
+      (await captureAgentRevisionConfig(db, agent.id)).secretObfuscation,
+    ).toBe(false);
+  });
+
   it("preserves the draft and creates no revision when Pi artifact publication preparation fails", async () => {
     const agent = await createAgent(
       workspaceId,
@@ -318,6 +381,7 @@ describe("agents mutations", () => {
       resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
       credentialReferences: [],
     });
+    expect(config.secretObfuscation).toBe(true);
     if (config.runtimeKind !== "pi-sdk") throw new Error("Expected Pi fixture");
     config.environment.piVersion = "0.87.1";
     const revision = await publishAgentRevision(workspaceId, agent.id, {
@@ -332,6 +396,10 @@ describe("agents mutations", () => {
     ).toMatchObject({
       piVersion: PI_SDK_VERSION,
     });
+    // Later draft captures preserve the explicit setting from the published pin.
+    expect(
+      (await captureAgentRevisionConfig(db, agent.id)).secretObfuscation,
+    ).toBe(true);
 
     config.environment.piVersion = "0.86.0";
     await expect(
@@ -343,6 +411,98 @@ describe("agents mutations", () => {
     expect(await db.agentRevision.count({ where: { agentId: agent.id } })).toBe(
       1,
     );
+  });
+
+  it("pins advisor settings without changing historical revisions and rejects foreign review providers", async () => {
+    const reviewer = await db.modelProvider.create({
+      data: {
+        workspaceId,
+        name: `Advisor ${Date.now()}`,
+        format: "openai",
+        baseUrl: "https://reviewer.test/v1",
+        apiKey: "fixture",
+        models: ["review"],
+      },
+    });
+    const advisor = {
+      providerId: reviewer.id,
+      model: "review",
+      cadence: "final" as const,
+      minSeverity: "warning" as const,
+    };
+    const agent = await createConfiguredAgent(
+      workspaceId,
+      {
+        name: "Advisor pin",
+        systemPrompt: null,
+        providerId,
+        model: "model-1",
+        maxSteps: 8,
+      },
+      { deploymentIds: [], installedSkillIds: [], toolkitIds: [] },
+      { runtime: "pi-sdk" },
+    );
+    const historical = await seedPublishedRevision(agent.id);
+    const historicalConfig = AgentRevisionConfigSchema.parse(historical.config);
+    expect(historicalConfig).not.toHaveProperty("advisor");
+    await updateAgent(workspaceId, agent.id, {
+      name: agent.name,
+      systemPrompt: null,
+      providerId,
+      model: "model-1",
+      maxSteps: 8,
+      advisor,
+    });
+    const published = await seedPublishedRevision(agent.id);
+    expect(AgentRevisionConfigSchema.parse(published.config)).toMatchObject({
+      advisor,
+      modelProviderIds: [reviewer.id],
+    });
+    expect(
+      (
+        await db.agentRevision.findUniqueOrThrow({
+          where: { id: historical.id },
+        })
+      ).config,
+    ).toEqual(historical.config);
+    expect(
+      AgentRevisionConfigSchema.safeParse({ ...historicalConfig, advisor })
+        .success,
+    ).toBe(false);
+    const foreign = await db.workspace.create({
+      data: {
+        name: "Foreign advisor",
+        ownerId: userId,
+        slug: `foreign-advisor-${Date.now()}`,
+      },
+    });
+    try {
+      const foreignProvider = await db.modelProvider.create({
+        data: {
+          workspaceId: foreign.id,
+          name: "Foreign",
+          format: "openai",
+          baseUrl: "https://foreign.test/v1",
+          apiKey: "fixture",
+          models: ["review"],
+        },
+      });
+      await expect(
+        updateAgent(workspaceId, agent.id, {
+          name: agent.name,
+          systemPrompt: null,
+          providerId,
+          model: "model-1",
+          maxSteps: 8,
+          advisor: { ...advisor, providerId: foreignProvider.id },
+        }),
+      ).rejects.toThrow("AGENT_ADVISOR_INVALID");
+      expect(
+        (await db.agent.findUniqueOrThrow({ where: { id: agent.id } })).advisor,
+      ).toEqual(advisor);
+    } finally {
+      await db.workspace.delete({ where: { id: foreign.id } });
+    }
   });
 
   it("rejects enabling a new Agent with another workspace's model provider", async () => {

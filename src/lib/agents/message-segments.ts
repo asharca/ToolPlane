@@ -1,5 +1,10 @@
 import type { UIMessage } from "ai";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
+import type { AdvisorSuggestions } from "@/lib/agents/advisor";
+import {
+  CONTEXT_MAINTENANCE_PART,
+  type ContextMaintenance,
+} from "@/lib/agents/context-maintenance";
 
 export type AssistantSegment = {
   id: string;
@@ -13,8 +18,10 @@ export type TurnMessages = {
 export type AgentUIData = {
   "assistant-messages": TurnMessages;
   "context-usage": ContextUsageSnapshot;
+  "context-maintenance": ContextMaintenance;
   model: { providerId: string; model: string };
   "agent-turn-model": { providerId: string; model: string };
+  "advisor-suggestions": AdvisorSuggestions;
   "subagent-activity": {
     type: "reasoning" | "tool";
     status: "running" | "completed" | "failed";
@@ -90,10 +97,16 @@ export function expandAssistantMessages(
           ? message.parts.filter(
               (part) =>
                 part.type === "data-subagent-activity" ||
-                part.type === "data-hook-activity",
+                part.type === "data-hook-activity" ||
+                part.type === "data-advisor-suggestions",
             )
           : []),
         { type: "text" as const, text: segment.text, state: "done" as const },
+        ...(index === segments.length - 1
+          ? message.parts.filter(
+              (part) => part.type === CONTEXT_MAINTENANCE_PART,
+            )
+          : []),
       ],
     }));
   });

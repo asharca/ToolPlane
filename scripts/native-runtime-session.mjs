@@ -74,6 +74,8 @@ async function request() {
 
 async function serve() {
   let child, active, sdkRequestId, idle;
+  let activeRunId;
+  const controls = new Map();
   let buffer = "",
     stopping = false;
   const send = (event) => active?.write(`${JSON.stringify(event)}\n`);
@@ -101,6 +103,35 @@ async function serve() {
       socket.removeAllListeners("data");
       try {
         const job = JSON.parse(requestBuffer.slice(0, newline));
+        if (job.control) {
+          if (
+            !active ||
+            !child ||
+            job.runId !== activeRunId ||
+            job.kind !== "pi-sdk" ||
+            job.signature !== input.signature ||
+            job.statePath !== input.statePath ||
+            job.cwd !== input.cwd
+          ) {
+            socket.end(
+              `${JSON.stringify({ type: "toolplane_sdk_response", success: false, error: { code: "PI_SDK_QUEUE_NOT_RUNNING", message: "PI_SDK_QUEUE_NOT_RUNNING" } })}\n`,
+            );
+            return;
+          }
+          if (
+            !["steer", "follow_up", "clear_queue"].includes(job.control.type)
+          ) {
+            socket.end(
+              `${JSON.stringify({ type: "toolplane_sdk_response", success: false, error: { code: "PI_SDK_QUEUE_INVALID", message: "PI_SDK_QUEUE_INVALID" } })}\n`,
+            );
+            return;
+          }
+          const id = randomUUID();
+          controls.set(id, socket);
+          socket.once("close", () => controls.delete(id));
+          child.stdin.write(`${JSON.stringify({ ...job.control, id })}\n`);
+          return;
+        }
         if (active) {
           socket.end(
             `${JSON.stringify({ type: "toolplane_sdk_response", success: false, error: { code: "PI_SDK_BUSY", message: "PI_SDK_BUSY" } })}\n`,
@@ -109,6 +140,7 @@ async function serve() {
         }
         active = socket;
         sdkRequestId = randomUUID();
+        activeRunId = job.runId;
         clearTimeout(idle);
         if (
           job.kind !== "pi-sdk" ||
@@ -123,7 +155,7 @@ async function serve() {
         if (!child) start();
         const args = job.command?.match(/^\/compact(?:\s+([\s\S]*))?$/);
         child.stdin.write(
-          `${JSON.stringify({ id: sdkRequestId, type: args ? "compact" : "prompt", ...(args ? { customInstructions: args[1] } : { message: job.command || job.message }), context: job.context })}\n`,
+          `${JSON.stringify({ id: sdkRequestId, type: job.type === "fork" ? "fork" : args ? "compact" : "prompt", ...(job.type === "fork" ? { entryId: job.entryId, target: job.target } : args ? { customInstructions: args[1] } : { message: job.command || job.message }), navigateBeforeEntryId: job.navigateBeforeEntryId, context: job.context })}\n`,
         );
       } catch {
         fail("PI_SDK_RUNTIME_FAILED");
@@ -171,30 +203,95 @@ async function serve() {
           return;
         }
         if (event.type !== "toolplane_sdk_response") {
-          if (active) send(event);
+          if (active) {
+            if (event.source) {
+              const source = event.source;
+              if (
+                typeof source.subagentId !== "string" ||
+                !source.subagentId ||
+                source.subagentId.length > 240
+              )
+                continue;
+              event.source = {
+                subagentId: source.subagentId,
+                ...(typeof source.subagentName === "string"
+                  ? { subagentName: source.subagentName.slice(0, 240) }
+                  : {}),
+                ...(typeof source.subagentVersionId === "string"
+                  ? {
+                      subagentVersionId: source.subagentVersionId.slice(0, 240),
+                    }
+                  : {}),
+                ...(typeof source.parentToolCallId === "string"
+                  ? { parentToolCallId: source.parentToolCallId.slice(0, 240) }
+                  : {}),
+                ...(Number.isInteger(source.depth) &&
+                source.depth >= 0 &&
+                source.depth <= 32
+                  ? { depth: source.depth }
+                  : {}),
+              };
+            }
+            send(event);
+          }
           continue;
         }
-        if (!active || event.id !== sdkRequestId) continue;
+        const controlSocket = controls.get(event.id);
+        if (!controlSocket && (!active || event.id !== sdkRequestId)) continue;
         const result = event.result && {
           text: event.result.text,
           commands: event.result.commands,
           ...(event.result.usage ? { usage: event.result.usage } : {}),
+          ...(event.result.sessionEntries
+            ? { sessionEntries: event.result.sessionEntries }
+            : {}),
+          ...(event.result.fork ? { fork: event.result.fork } : {}),
+          ...(event.result.actualModel
+            ? { actualModel: event.result.actualModel }
+            : {}),
+          ...(event.result.advisories
+            ? { advisories: event.result.advisories }
+            : {}),
+          ...(event.result.advisorUsage
+            ? { advisorUsage: event.result.advisorUsage }
+            : {}),
           ...(event.result.contextBreakdown
             ? { contextBreakdown: event.result.contextBreakdown }
+            : {}),
+          ...(event.result.streamRuleTriggers
+            ? { streamRuleTriggers: event.result.streamRuleTriggers }
             : {}),
           ...(event.result.commandResult
             ? { commandResult: event.result.commandResult }
             : {}),
+          ...(event.result.disposition
+            ? { disposition: event.result.disposition }
+            : {}),
+          ...(event.result.queue ? { queue: event.result.queue } : {}),
         };
         const code = /^PI_[A-Z0-9_]{1,80}$/.test(event.error?.code)
           ? event.error.code
           : "PI_SDK_RUNTIME_FAILED";
         const reason =
-          /^(HTTP_[1-5]\d\d|UNREACHABLE|TIMEOUT|EMPTY_STREAM|STREAM_INCOMPLETE|CONTENT_FILTER|PROVIDER_ERROR)( RETRIED_\d{1,2})?$/.test(
+          /^(HTTP_[1-5]\d\d|UNREACHABLE|TIMEOUT|EMPTY_STREAM|STREAM_INCOMPLETE|CONTENT_FILTER|PROVIDER_ERROR|GATEWAY_ERROR)( RETRIED_\d{1,2})?$/.test(
             event.error?.reason,
           )
             ? event.error.reason
             : undefined;
+        if (controlSocket) {
+          controls.delete(event.id);
+          controlSocket.end(
+            `${JSON.stringify({
+              type: event.type,
+              id: event.id,
+              success: event.success === true,
+              ...(event.success === true
+                ? { result }
+                : { error: { code, message: code } }),
+            })}\n`,
+          );
+          continue;
+        }
         // Tool discovery runs before the model request. Reload the persisted
         // session with fresh definitions instead of failing this user's turn.
         if (!event.success && code === "PI_SDK_TOOLSET_CHANGED") {
@@ -210,14 +307,39 @@ async function serve() {
             ? { result }
             : {
                 error: { code, message: code, ...(reason ? { reason } : {}) },
-                ...(event.result?.usage
-                  ? { result: { usage: event.result.usage } }
+                ...(result
+                  ? {
+                      result: {
+                        ...(event.result?.usage
+                          ? { usage: event.result.usage }
+                          : {}),
+                        ...(event.result?.actualModel
+                          ? { actualModel: event.result.actualModel }
+                          : {}),
+                        ...(event.result?.streamRuleTriggers
+                          ? {
+                              streamRuleTriggers:
+                                event.result.streamRuleTriggers,
+                            }
+                          : {}),
+                        ...(event.result?.sessionEntries
+                          ? { sessionEntries: event.result.sessionEntries }
+                          : {}),
+                        ...(event.result?.advisories
+                          ? { advisories: event.result.advisories }
+                          : {}),
+                        ...(event.result?.advisorUsage
+                          ? { advisorUsage: event.result.advisorUsage }
+                          : {}),
+                      },
+                    }
                   : {}),
               }),
         });
         const socket = active;
         active = undefined;
         sdkRequestId = undefined;
+        activeRunId = undefined;
         socket.end();
         idle = setTimeout(stop, 120000);
       }
@@ -252,6 +374,8 @@ async function serve() {
       } catch {}
     }
     active?.end();
+    for (const socket of controls.values()) socket.end();
+    controls.clear();
     active = undefined;
     server.close();
     await unlink(socketPath).catch(() => {});

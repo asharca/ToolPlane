@@ -13,6 +13,7 @@ function modelFailureKind(reason: string) {
   if (reason === "STREAM_INCOMPLETE") return "streamIncomplete";
   if (reason === "CONTENT_FILTER") return "contentFilter";
   if (reason === "PROVIDER_ERROR") return "providerError";
+  if (reason === "GATEWAY_ERROR") return "gatewayError";
   const status = Number(/^HTTP_(\d{3})$/.exec(reason)?.[1]);
   if (status === 401 || status === 403) return "auth";
   if (status === 404) return "notFound";
