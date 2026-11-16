@@ -5,6 +5,7 @@ import type { ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter, once } from "node:events";
+import { watch } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -1760,6 +1761,284 @@ describe("official Pi SDK headless session host", () => {
     expect(String(last?.patch)).toContain("[REDACTED]");
     expect(String(last?.patch)).not.toContain(f.context.runtimeToken);
     expect(String(last?.patch)).not.toContain("\uFFFD");
+  }, 60000);
+  it.each(["python", "javascript"] as const)(
+    "retains %s eval variables across turns, interrupts timeouts and resets explicitly",
+    async (language) => {
+      const f = await setup();
+      f.behavior.tool = "eval";
+      const host = await f.launch({
+        optionalBuiltinExtensions: [
+          resolve("scripts/pi-optional-tools/eval.mjs"),
+        ],
+        defaultTools: ["eval"],
+      });
+      const cell = async (code: string, options = {}) => {
+        f.behavior.toolArgs = JSON.stringify({ language, code, ...options });
+        const response = await host.request("prompt", "Execute this eval cell");
+        // A failed cell must stay a tool result, not fail or lose the native turn.
+        expect(response.success, JSON.stringify(response)).toBe(true);
+        const event = host.events.findLast(
+          (event) =>
+            event.type === "tool_execution_end" && event.toolName === "eval",
+        );
+        expect(event).toBeDefined();
+        return event;
+      };
+      expect(
+        await cell(
+          language === "python"
+            ? "counter = 41\nprint('initialized')"
+            : "let counter = 41; console.log('initialized')",
+        ),
+      ).toMatchObject({
+        isError: false,
+        result: { details: { language, output: "initialized\n" } },
+      });
+      expect(
+        await cell(
+          language === "python"
+            ? "counter += 1\ncounter"
+            : "counter += 1; counter",
+        ),
+      ).toMatchObject({
+        result: { details: { output: "42\n" } },
+      });
+      expect(
+        await cell(
+          language === "python" ? "while True: pass" : "while (true) {}",
+          { timeoutSeconds: 1 },
+        ),
+      ).toMatchObject({
+        isError: true,
+        result: { details: { reason: "EVAL_TIMEOUT" } },
+      });
+      const recovered = await cell("counter");
+      expect(recovered, JSON.stringify(recovered)).toMatchObject({
+        isError: false,
+        result: { details: { output: "42\n" } },
+      });
+      expect(
+        await cell(
+          language === "python" ? "'counter' in globals()" : "typeof counter",
+          { reset: true },
+        ),
+      ).toMatchObject({
+        isError: false,
+        result: {
+          details: {
+            stateReset: true,
+            output: language === "python" ? "False\n" : "undefined\n",
+          },
+        },
+      });
+      await host.stop();
+    },
+    60000,
+  );
+
+  it("discloses eval state loss after a host restart without losing the native session", async () => {
+    const f = await setup();
+    const options = {
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/eval.mjs"),
+      ],
+      defaultTools: ["eval"],
+    };
+    f.behavior.tool = "eval";
+    f.behavior.toolArgs = JSON.stringify({
+      language: "javascript",
+      code: "let retained = 7",
+    });
+    const first = await f.launch(options);
+    const initial = await first.request("prompt", "Initialize eval state");
+    expect(initial.success).toBe(true);
+    await first.stop();
+    f.behavior.toolArgs = JSON.stringify({
+      language: "javascript",
+      code: "typeof retained",
+    });
+    const resumed = await f.launch({ ...options, historyRequired: true });
+    const result = await resumed.request(
+      "prompt",
+      "Continue after restarting host",
+    );
+    expect(result).toMatchObject({
+      success: true,
+      result: {
+        state: { sessionId: assertDefined(initial.result).state.sessionId },
+      },
+    });
+    expect(resumed.events).toContainEqual(
+      expect.objectContaining({
+        type: "tool_execution_end",
+        toolName: "eval",
+        isError: false,
+        result: expect.objectContaining({
+          details: expect.objectContaining({
+            stateReset: true,
+            notice: expect.any(String),
+            output: "undefined\n",
+          }),
+        }),
+      }),
+    );
+    await resumed.stop();
+  }, 60000);
+
+  it("restarts an uninterruptible Python eval cell and explicitly reports lost state", async () => {
+    const f = await setup();
+    f.behavior.tool = "eval";
+    f.behavior.toolArgs = JSON.stringify({
+      language: "python",
+      code: "import signal\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\nwhile True: pass",
+      timeoutSeconds: 1,
+    });
+    const host = await f.launch({
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/eval.mjs"),
+      ],
+      defaultTools: ["eval"],
+    });
+    expect(
+      (await host.request("prompt", "Interrupt a noncooperative cell")).success,
+    ).toBe(true);
+    expect(host.events).toContainEqual(
+      expect.objectContaining({
+        type: "tool_execution_end",
+        toolName: "eval",
+        isError: true,
+        result: expect.objectContaining({
+          details: expect.objectContaining({
+            reason: "EVAL_TIMEOUT",
+            stateReset: true,
+            notice: expect.any(String),
+          }),
+        }),
+      }),
+    );
+    f.behavior.toolArgs = JSON.stringify({ language: "python", code: "6 * 7" });
+    expect(
+      (await host.request("prompt", "Use the replacement kernel")).success,
+    ).toBe(true);
+    expect(
+      host.events.findLast((event) => event.type === "tool_execution_end"),
+    ).toMatchObject({
+      isError: false,
+      result: {
+        details: {
+          output: "42\n",
+          stateReset: true,
+          notice: expect.any(String),
+        },
+      },
+    });
+    await host.stop();
+  }, 60000);
+
+  it("bounds retained eval output while draining both standard output streams", async () => {
+    const f = await setup();
+    f.behavior.tool = "eval";
+    f.behavior.toolArgs = JSON.stringify({
+      language: "python",
+      code: "import sys\nprint('x' * 100000)\nprint('stderr', file=sys.stderr)\n42",
+    });
+    const host = await f.launch({
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/eval.mjs"),
+      ],
+      defaultTools: ["eval"],
+    });
+    const result = await host.request("prompt", "Bound a large cell output");
+    expect(result.success).toBe(true);
+    const entries = (
+      await readFile(assertDefined(result.result).state.sessionFile, "utf8")
+    )
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    const message = entries.findLast(
+      (entry) =>
+        entry.type === "message" &&
+        entry.message.role === "toolResult" &&
+        entry.message.toolName === "eval",
+    ).message;
+    expect(message.isError).toBe(false);
+    expect(message.details.truncated).toBe(true);
+    expect(Buffer.byteLength(message.details.output)).toBeLessThanOrEqual(
+      50 * 1024,
+    );
+    await host.stop();
+  }, 60000);
+
+  it("cascades native abort into the Python cell and retains the interrupted kernel", async () => {
+    const f = await setup();
+    f.behavior.tool = "eval";
+    f.behavior.toolArgs = JSON.stringify({
+      language: "python",
+      code: "from pathlib import Path\nretained = 42\nPath('eval-started').write_text('ready')\nwhile True: pass",
+    });
+    const host = await f.launch({
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/eval.mjs"),
+      ],
+      defaultTools: ["eval"],
+    });
+    const watcher = watch(f.workspace);
+    cleanups.push(async () => {
+      watcher.close();
+    });
+    const started = once(watcher, "change");
+    const turn = host.request("prompt", "Abort this running cell");
+    await started;
+    watcher.close();
+    expect((await host.request("abort")).success).toBe(true);
+    expect(await turn).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_ABORTED" },
+    });
+    f.behavior.toolArgs = JSON.stringify({
+      language: "python",
+      code: "retained",
+    });
+    expect((await host.request("prompt", "Continue after abort")).success).toBe(
+      true,
+    );
+    expect(
+      host.events.findLast((event) => event.type === "tool_execution_end"),
+    ).toMatchObject({
+      isError: false,
+      result: { details: { output: "42\n" } },
+    });
+    await host.stop();
+  }, 60000);
+
+  it("returns a fixed failed tool result when the sandbox has no python3", async () => {
+    const f = await setup();
+    const environmentExtension = join(f.workspace, "without-python.mjs");
+    await writeFile(
+      environmentExtension,
+      `export default pi => { pi.on('session_start', () => { process.env.PATH = ${JSON.stringify(join(f.root, "no-executables"))}; }); };`,
+    );
+    f.behavior.tool = "eval";
+    f.behavior.toolArgs = JSON.stringify({ language: "python", code: "42" });
+    const host = await f.launch({
+      resources: { ...f.config.resources, extensions: [environmentExtension] },
+      optionalBuiltinExtensions: [
+        resolve("scripts/pi-optional-tools/eval.mjs"),
+      ],
+      defaultTools: ["eval"],
+    });
+    expect(
+      (await host.request("prompt", "Use unavailable Python")).success,
+    ).toBe(true);
+    expect(
+      host.events.findLast((event) => event.type === "tool_execution_end"),
+    ).toMatchObject({
+      isError: true,
+      result: { details: { reason: "EVAL_PYTHON_UNAVAILABLE" } },
+    });
+    await host.stop();
   }, 60000);
   it("runs real tools, preserves custom branch state on restart and isolates stdout", async () => {
     const f = await setup(),
