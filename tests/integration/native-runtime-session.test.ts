@@ -681,6 +681,7 @@ export default function(pi) {
     writeFileSync(${JSON.stringify(join(dir, "context"))}, process.env.TOOLPLANE_RUNTIME_TOKEN);
     // Exercise the broker's raw tool-event path, distinct from response results.
     writeSync(3, JSON.stringify({ type: 'tool_execution_end', toolCallId: 'edit-patch', toolName: 'edit', patch: '--- a/file\\n+++ b/file\\n@@ -1 +1 @@\\n-old\\n+new\\n', truncated: true, firstChangedLine: 1 }) + '\\n');
+    writeFileSync(3, JSON.stringify({ type: 'tool_execution_end', toolCallId: 'child-call', toolName: 'bash', isError: false, result: 'CHILD_OK', source: { subagentId: 'local-child', subagentName: 'Local child', parentToolCallId: 'task-batch', depth: 1, untrustedExtra: 'discard' } }) + '\\n');
   }});
   pi.registerCommand('Wait', { handler: async () => {
     const child = spawn(process.execPath, ['-e', 'process.stdin.resume()'], { stdio: ['pipe', 'ignore', 'ignore'] });
@@ -825,6 +826,19 @@ export default function(pi) {
         firstChangedLine: 1,
       }),
     );
+    expect(first.find((event) => event.toolCallId === "child-call")).toEqual({
+      type: "tool_execution_end",
+      toolCallId: "child-call",
+      toolName: "bash",
+      isError: false,
+      result: "CHILD_OK",
+      source: {
+        subagentId: "local-child",
+        subagentName: "Local child",
+        parentToolCallId: "task-batch",
+        depth: 1,
+      },
+    });
     expect(JSON.stringify(first)).not.toContain("untrusted stdout");
     expect(first.some((event) => event.type === "agent_end")).toBe(false);
     const sdkState = JSON.parse(await readFile(statePath, "utf8"));

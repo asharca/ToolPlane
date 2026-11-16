@@ -273,6 +273,10 @@ export async function runDedicatedSandboxTurn(
             contextFiles: input.contextFiles,
             disabledBuiltinTools: input.agent.disabledBuiltinTools,
             optionalBuiltinTools: input.agent.optionalBuiltinTools,
+            nativeSubagentPolicy: {
+              maxConcurrency: agent.nativeSubagentMaxConcurrency ?? 1,
+              maxDepth: agent.nativeSubagentMaxDepth ?? 1,
+            },
             messages: input.messages,
             skills: input.skills,
             piPackages: piSession?.packages,
@@ -294,19 +298,23 @@ export async function runDedicatedSandboxTurn(
             onTextDelta: input.onTextDelta,
             onActivity: async (activity) => {
               if (activity.type === "tool" && activity.toolCallId) {
-                const started = runningTools.get(activity.toolCallId);
+                const key = JSON.stringify([
+                  activity.source?.subagentId ?? null,
+                  activity.toolCallId,
+                ]);
+                const started = runningTools.get(key);
                 const merged = {
                   ...started,
                   ...activity,
                   input: activity.input ?? started?.input,
                 };
                 if (activity.status === "running") {
-                  runningTools.set(activity.toolCallId, {
+                  runningTools.set(key, {
                     ...merged,
                     startedAt: started?.startedAt ?? Date.now(),
                   });
                 } else {
-                  runningTools.delete(activity.toolCallId);
+                  runningTools.delete(key);
                   // One record per finished call; workspace members read it in the Agent tool log.
                   await recordEvent({
                     domain: "agent",
@@ -317,7 +325,12 @@ export async function runDedicatedSandboxTurn(
                     durationMs:
                       activity.durationMs ??
                       (started ? Date.now() - started.startedAt : undefined),
-                    attributes: { toolCallId: activity.toolCallId },
+                    attributes: {
+                      toolCallId: activity.toolCallId,
+                      ...(activity.source
+                        ? { subagentId: activity.source.subagentId }
+                        : {}),
+                    },
                     // Platform web content must never enter LogEvent bodies, even during captures.
                     ...(merged.deploymentId === "toolplane-runtime" &&
                     (merged.originalToolName === "web_search" ||

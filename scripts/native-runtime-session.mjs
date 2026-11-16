@@ -203,9 +203,37 @@ async function serve() {
           return;
         }
         if (event.type !== "toolplane_sdk_response") {
-          // Tool events, including patch/truncated/firstChangedLine, are forwarded
-          // intact; only SDK response results use the whitelist below.
-          if (active) send(event);
+          if (active) {
+            if (event.source) {
+              const source = event.source;
+              if (
+                typeof source.subagentId !== "string" ||
+                !source.subagentId ||
+                source.subagentId.length > 240
+              )
+                continue;
+              event.source = {
+                subagentId: source.subagentId,
+                ...(typeof source.subagentName === "string"
+                  ? { subagentName: source.subagentName.slice(0, 240) }
+                  : {}),
+                ...(typeof source.subagentVersionId === "string"
+                  ? {
+                      subagentVersionId: source.subagentVersionId.slice(0, 240),
+                    }
+                  : {}),
+                ...(typeof source.parentToolCallId === "string"
+                  ? { parentToolCallId: source.parentToolCallId.slice(0, 240) }
+                  : {}),
+                ...(Number.isInteger(source.depth) &&
+                source.depth >= 0 &&
+                source.depth <= 32
+                  ? { depth: source.depth }
+                  : {}),
+              };
+            }
+            send(event);
+          }
           continue;
         }
         const controlSocket = controls.get(event.id);

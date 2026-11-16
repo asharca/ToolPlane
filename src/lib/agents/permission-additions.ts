@@ -103,9 +103,13 @@ export function agentPermissionAdditions(
         `${role.name}:${role.providerId}/${role.model}`,
       ]);
   }
-  if (next.subagentMode === "native") {
+  if (
+    next.subagentMode === "native" ||
+    next.optionalBuiltinTools?.includes("task")
+  ) {
     const prior =
-      previous?.subagentMode === "native"
+      previous?.subagentMode === "native" ||
+      previous?.optionalBuiltinTools?.includes("task")
         ? previous.nativeSubagentPolicy
         : undefined;
     const policy = next.nativeSubagentPolicy;

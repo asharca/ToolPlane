@@ -258,7 +258,9 @@ export function publishTaskActivity(
   } else {
     if (!activity.toolCallId) return;
     const toolCallId = activity.toolCallId.slice(0, 256);
-    const id = `tool:${toolCallId}`;
+    const id = source
+      ? `tool:${JSON.stringify([source.subagentId, toolCallId])}`
+      : `tool:${toolCallId}`;
     const previous = activities.find((item) => item.id === id);
     next = {
       ...previous,

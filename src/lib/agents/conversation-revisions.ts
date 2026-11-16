@@ -257,12 +257,16 @@ export function diffAgentRevisions(
       [
         a.a2a,
         a.subagentMode ?? "platform",
-        a.subagentMode === "native" ? a.nativeSubagentPolicy : null,
+        a.subagentMode === "native" || a.optionalBuiltinTools?.includes("task")
+          ? a.nativeSubagentPolicy
+          : null,
       ],
       [
         b.a2a,
         b.subagentMode ?? "platform",
-        b.subagentMode === "native" ? b.nativeSubagentPolicy : null,
+        b.subagentMode === "native" || b.optionalBuiltinTools?.includes("task")
+          ? b.nativeSubagentPolicy
+          : null,
       ],
     ],
   ];

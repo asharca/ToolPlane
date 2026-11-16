@@ -14,6 +14,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { findPackageJSON } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -156,6 +157,7 @@ const EMPTY_STREAM = /empty_stream|empty .{0,40}stream/i;
 const TRANSIENT_STREAM =
   /empty_stream|empty .{0,40}stream|without finish_reason/i;
 const MAX_MODEL_RETRIES = 10;
+const toolSources = new AsyncLocalStorage();
 const emit = (event) => writeFileSync(3, `${JSON.stringify(event)}\n`);
 const within = (root, path) => {
   const rel = relative(root, path);
@@ -170,6 +172,8 @@ const within = (root, path) => {
 globalThis[Symbol.for("toolplane.pi.host-context.v1")] = {
   kind: "toolplane-sdk",
   platformMcp: true,
+  runTasks,
+  getEventSource: () => toolSources.getStore(),
 };
 mkdirSync(config.cwd, { recursive: true });
 mkdirSync(config.sessionsDir, { recursive: true });
@@ -263,6 +267,282 @@ let runtime,
   toolSignature,
   toolMap = new Map(),
   customTools = [];
+const childRuns = new Set();
+const childSlots = new Set();
+async function acquireChildSlot(signal) {
+  const limit = Math.max(
+    1,
+    Math.min(8, config.nativeSubagentPolicy?.maxConcurrency ?? 1),
+  );
+  while (childSlots.size >= limit) {
+    if (signal.aborted) return;
+    await Promise.race(childSlots);
+  }
+  if (signal.aborted) return;
+  let release;
+  const slot = new Promise((done) => {
+    release = () => {
+      childSlots.delete(slot);
+      done();
+    };
+  });
+  childSlots.add(slot);
+  return release;
+}
+let turnController;
+const CHILD_TIMEOUT_MS = 300_000;
+const CHILD_OUTPUT_CHARS = 20_000;
+async function cancelChildren() {
+  turnController?.abort();
+  await Promise.all([...childRuns]);
+}
+async function runTasks(parentToolCallId, args, signal) {
+  const invalid =
+    !args ||
+    !Array.isArray(args.tasks) ||
+    args.tasks.length < 1 ||
+    args.tasks.length > 8 ||
+    (args.context !== undefined &&
+      (typeof args.context !== "string" || args.context.length > 100000)) ||
+    Object.keys(args).some((key) => !["tasks", "context"].includes(key)) ||
+    args.tasks.some(
+      (task) =>
+        !task ||
+        typeof task !== "object" ||
+        Object.keys(task).some(
+          (key) => !["id", "description", "prompt"].includes(key),
+        ) ||
+        typeof task.id !== "string" ||
+        !/^[A-Za-z0-9_-]{1,64}$/.test(task.id) ||
+        typeof task.description !== "string" ||
+        !task.description.trim() ||
+        task.description.length > 240 ||
+        typeof task.prompt !== "string" ||
+        !task.prompt.trim() ||
+        task.prompt.length > 100000,
+    ) ||
+    new Set(args.tasks.map((task) => task.id.toLowerCase())).size !==
+      args.tasks.length;
+  if (invalid || !active || !runtime || !turnController)
+    return {
+      content: [
+        {
+          type: "text",
+          text: "TASK_INPUT_INVALID: Supply 1–8 uniquely named, non-empty tasks.",
+        },
+      ],
+      isError: true,
+      details: { reason: "TASK_INPUT_INVALID", results: [] },
+    };
+  const maxConcurrency = Math.max(
+    1,
+    Math.min(8, config.nativeSubagentPolicy?.maxConcurrency ?? 1),
+  );
+  const maxDepth = config.nativeSubagentPolicy?.maxDepth ?? 1;
+  if (maxDepth < 1)
+    return {
+      content: [
+        {
+          type: "text",
+          text: "TASK_DEPTH_EXCEEDED: Subagents cannot spawn further children.",
+        },
+      ],
+      isError: true,
+      details: { reason: "TASK_DEPTH_EXCEEDED", results: [] },
+    };
+  const batchSignal = AbortSignal.any([
+    turnController.signal,
+    ...(signal ? [signal] : []),
+  ]);
+  const tools = runtime.session
+    .getActiveToolNames()
+    .filter((name) => name !== "task");
+  const results = new Array(args.tasks.length);
+  let next = 0;
+  const batch = Promise.all(
+    Array.from(
+      { length: Math.min(maxConcurrency, args.tasks.length) },
+      async () => {
+        while (next < args.tasks.length) {
+          const index = next++;
+          results[index] = await runChild(
+            args.tasks[index],
+            args.context,
+            parentToolCallId,
+            tools,
+            batchSignal,
+          );
+        }
+      },
+    ),
+  );
+  childRuns.add(batch);
+  try {
+    await batch;
+  } finally {
+    childRuns.delete(batch);
+  }
+  const isError = results.some((result) => result.status !== "completed");
+  const details = {
+    status: isError ? "partial_failure" : "completed",
+    results,
+  };
+  return {
+    content: [{ type: "text", text: JSON.stringify(details) }],
+    details,
+    isError,
+  };
+}
+async function runChild(
+  task,
+  sharedContext,
+  parentToolCallId,
+  tools,
+  parentSignal,
+) {
+  const source = {
+    subagentId: `${task.id}-${randomUUID()}`,
+    subagentName: task.description,
+    parentToolCallId: parentToolCallId.slice(0, 240),
+    depth: 1,
+  };
+  const started = Date.now();
+  const release = await acquireChildSlot(parentSignal);
+  const controller = new AbortController();
+  const signal = AbortSignal.any([parentSignal, controller.signal]);
+  let timedOut = false,
+    session,
+    childUi,
+    unsubscribeChild,
+    lastMessage,
+    uiFailed = false;
+  let stop = Promise.resolve();
+  const cancel = () => {
+    childUi?.cancel();
+    stop = session?.abort().catch(() => {}) ?? Promise.resolve();
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, CHILD_TIMEOUT_MS);
+  const lifecycle = (status, output) =>
+    emit({
+      type:
+        status === "running" ? "tool_execution_start" : "tool_execution_end",
+      source,
+      toolCallId: source.subagentId,
+      toolName: "task",
+      ...(status === "running"
+        ? { args: { id: task.id, description: task.description } }
+        : { isError: status !== "completed", result: { status, ...output } }),
+    });
+  lifecycle("running");
+  let result;
+  try {
+    if (signal.aborted) throw new Error("cancelled");
+    const root = join(cwd, ".toolplane-subagents");
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    if (lstatSync(root).isSymbolicLink() || !within(cwd, realpathSync(root)))
+      throw new Error("scope");
+    const directory = join(root, source.subagentId);
+    mkdirSync(directory, { mode: 0o700 });
+    childUi = createNativeUi({
+      getContext: () => context,
+      theme,
+      source,
+      onError: () => {
+        uiFailed = true;
+      },
+    });
+    const manager = sdk.SessionManager.create(cwd, directory);
+    const child = await factory(
+      { cwd, sessionManager: manager },
+      { tools, ui: childUi, source },
+    );
+    session = child.session;
+    unsubscribeChild = session.subscribe((entry) => {
+      event(entry, source, session.model);
+      if (entry.type === "message_end" && entry.message.role === "assistant")
+        lastMessage = entry.message;
+      if (
+        entry.type === "message_end" &&
+        entry.message.role === "toolResult" &&
+        entry.message.toolName === "todo"
+      )
+        void childUi.projectTodos(manager).catch(() => {
+          uiFailed = true;
+        });
+    });
+    allowTransientStreamRetry(session);
+    await session.bindExtensions({
+      mode: context?.uiUrl ? "rpc" : "json",
+      uiContext: context?.uiUrl ? childUi.uiContext : undefined,
+      onError: () => {
+        uiFailed = true;
+      },
+    });
+    applyConfiguredThinkingLevel(session);
+    if (signal.aborted) {
+      cancel();
+      throw new Error("cancelled");
+    }
+    await session.prompt(
+      [
+        sharedContext ? `Shared background:\n${sharedContext}` : "",
+        `Assignment (${task.id}): ${task.description}\n${task.prompt}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    );
+    await session.waitForIdle();
+    await childUi.drain();
+    if (
+      signal.aborted ||
+      uiFailed ||
+      !lastMessage ||
+      ["error", "aborted"].includes(lastMessage.stopReason)
+    )
+      throw new Error("failed");
+    const text = contentText(lastMessage.content);
+    result = {
+      id: task.id,
+      status: "completed",
+      text: text.slice(0, CHILD_OUTPUT_CHARS),
+      truncated: text.length > CHILD_OUTPUT_CHARS,
+    };
+  } catch {
+    const status = timedOut
+      ? "timed_out"
+      : signal.aborted
+        ? "cancelled"
+        : "failed";
+    result = {
+      id: task.id,
+      status,
+      text: "",
+      truncated: false,
+      reason: {
+        timed_out: "TASK_TIMEOUT",
+        cancelled: "TASK_CANCELLED",
+        failed: "TASK_EXECUTION_FAILED",
+      }[status],
+    };
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", cancel);
+    childUi?.cancel();
+    await stop;
+    await session?.abort().catch(() => {});
+    await childUi?.drain().catch(() => {});
+    unsubscribeChild?.();
+    session?.dispose();
+    release?.();
+  }
+  result.durationMs = Date.now() - started;
+  lifecycle(result.status, result);
+  return result;
+}
 let texts = [],
   usage,
   turnError,
@@ -706,9 +986,9 @@ function toolPatch(event) {
       : {}),
   };
 }
-function event(event) {
+function event(event, source, sourceModel) {
   if (!active) return;
-  if (event.type === "queue_update" && queueRequest) {
+  if (!source && event.type === "queue_update" && queueRequest) {
     const mode = queueRequest.type;
     const native = mode === "steer" ? event.steering : event.followUp;
     const known = queuedInputs.filter((item) => item.mode === mode).length;
@@ -721,7 +1001,11 @@ function event(event) {
       });
     }
   }
-  if (event.type === "message_start" && event.message.role === "user") {
+  if (
+    !source &&
+    event.type === "message_start" &&
+    event.message.role === "user"
+  ) {
     const text = contentText(event.message.content);
     let index = queuedInputs.findIndex(
       (item) => item.mode === "steer" && item.injectedText === text,
@@ -739,8 +1023,13 @@ function event(event) {
       emitQueue();
     }
   }
-  if (event.type === "auto_retry_start") modelRetried = event.attempt;
-  if (event.type === "message_start" && event.message?.role === "assistant")
+  if (!source && event.type === "auto_retry_start")
+    modelRetried = event.attempt;
+  if (
+    !source &&
+    event.type === "message_start" &&
+    event.message?.role === "assistant"
+  )
     ruleText = "";
   if (event.type === "message_update") {
     const update = event.assistantMessageEvent;
@@ -774,6 +1063,7 @@ function event(event) {
     )
       emit({
         type: "message_update",
+        ...(source ? { source } : {}),
         assistantMessageEvent: { type: update.type, delta: update.delta },
       });
   }
@@ -782,6 +1072,7 @@ function event(event) {
     toolStarted = true;
     emit({
       type: event.type,
+      ...(source ? { source } : {}),
       toolCallId: event.toolCallId,
       toolName: event.toolName,
       args: toolPayload(event.args),
@@ -792,6 +1083,7 @@ function event(event) {
   if (event.type === "tool_execution_end")
     emit({
       type: event.type,
+      ...(source ? { source } : {}),
       toolCallId: event.toolCallId,
       toolName: event.toolName,
       isError: event.isError,
@@ -799,6 +1091,11 @@ function event(event) {
       ...toolPatch(event),
     });
   if (event.type === "message_end") {
+    if (source) {
+      if (event.message.role === "assistant")
+        recordUsage(event.message.usage, sourceModel);
+      return;
+    }
     if (
       event.message.role === "toolResult" &&
       event.message.toolName === "todo"
@@ -838,6 +1135,7 @@ function event(event) {
     }
   }
 }
+
 // Session setup and reload recompute settings from storage, so apply after them.
 function applyRetryBudget() {
   const retries = config.modelRetries ?? 0;
@@ -1021,13 +1319,34 @@ async function bindSession(session) {
   applyConfiguredThinkingLevel(session);
   persist();
 }
-async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }) {
+async function factory(
+  { cwd: nextCwd, sessionManager, sessionStartEvent },
+  child,
+) {
   if (
     realpathSync(nextCwd) !== cwd ||
-    !within(sessionsDir, resolve(sessionManager.getSessionDir()))
+    !within(
+      child ? join(cwd, ".toolplane-subagents") : sessionsDir,
+      resolve(sessionManager.getSessionDir()),
+    )
   )
     fail("PI_SDK_SESSION_SCOPE");
   await verifyPiPackageSnapshots(config.packages);
+  const ui = child?.ui ?? nativeUi;
+  const sessionSettings = child
+    ? sdk.SettingsManager.inMemory({
+        defaultTools: child.tools,
+        packages: [],
+        extensions: [],
+        skills: [],
+        prompts: [],
+        themes: [],
+        retry: {
+          enabled: (config.modelRetries ?? 0) > 0,
+          maxRetries: config.modelRetries ?? 0,
+        },
+      })
+    : settingsManager;
   const extensions = [
     ...config.resources.extensions,
     ...(config.optionalBuiltinExtensions ?? []),
@@ -1037,7 +1356,7 @@ async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }) {
     cwd,
     agentDir: config.agentDir,
     modelRuntime,
-    settingsManager,
+    settingsManager: sessionSettings,
     resourceLoaderOptions: {
       noExtensions: true,
       noSkills: true,
@@ -1078,11 +1397,15 @@ async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }) {
           hidden: true,
           factory: (pi) => {
             const project = (_event, ctx) =>
-              nativeUi.projectTodos(ctx.sessionManager);
+              ui.projectTodos(ctx.sessionManager);
             pi.on("session_start", project);
             pi.on("session_tree", project);
             pi.on("before_provider_request", () => {
-              if (active) emit({ type: "model_request" });
+              if (active)
+                emit({
+                  type: "model_request",
+                  ...(child ? { source: child.source } : {}),
+                });
             });
             pi.on("tool_call", approveToolCall);
             pi.on("turn_end", (boundary) => advisor.review(boundary));
@@ -1121,8 +1444,15 @@ async function factory({ cwd: nextCwd, sessionManager, sessionStartEvent }) {
     sessionManager,
     sessionStartEvent,
     model: config.model,
-    excludeTools: config.excludeTools,
-    customTools,
+    ...(child ? { tools: child.tools } : {}),
+    excludeTools: [...(config.excludeTools ?? []), ...(child ? ["task"] : [])],
+    customTools: child
+      ? customTools.map((tool) => ({
+          ...tool,
+          execute: (...args) =>
+            toolSources.run(child.source, () => tool.execute(...args)),
+        }))
+      : customTools,
   });
   return { ...result, services, diagnostics: services.diagnostics };
 }
@@ -1225,6 +1555,7 @@ async function handle(request) {
     try {
       aborted = true;
       advisor.cancel();
+      await cancelChildren();
       nativeUi.cancel();
       await runtime?.session.abort();
       respond(true, {
@@ -1340,6 +1671,7 @@ async function handle(request) {
     return;
   }
   active = request.id;
+  turnController = new AbortController();
   nativeUi.start();
   texts = [];
   usage = undefined;
@@ -1489,6 +1821,7 @@ async function handle(request) {
     };
   } catch (error) {
     try {
+      await cancelChildren();
       nativeUi.cancel();
       if (runtime) await runtime.session.abort();
     } catch {
@@ -1571,6 +1904,7 @@ input.on("close", () => {
   void (async () => {
     nativeUi.cancel();
     await nativeUi.drain();
+    await cancelChildren();
     await runtime?.session.abort();
     await runtime?.dispose();
   })().finally(() => process.exit());
