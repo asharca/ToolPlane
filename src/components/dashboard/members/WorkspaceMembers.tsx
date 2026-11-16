@@ -12,6 +12,7 @@ import {
   Trash2,
   UserMinus,
   UserPlus,
+  Search,
 } from "lucide-react";
 import { Button, ButtonLink } from "@/components/motion/button";
 import {
@@ -28,6 +29,8 @@ import { FormSelect } from "@/components/ui/FormSelect";
 import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
 import {
   DashboardFilterInput,
+  DashboardEmptyState,
+  DashboardToolbar,
   DashboardSection,
 } from "@/components/dashboard/DashboardUI";
 import { notify } from "@/components/dashboard/Toaster";
@@ -91,9 +94,7 @@ export function WorkspaceMembers({
 
   return (
     <div className="space-y-8">
-      <DashboardSection
-        title={t("members")}
-        count={members.length}
+      <DashboardToolbar
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <RolePermissions />
@@ -108,7 +109,7 @@ export function WorkspaceMembers({
                   <Button
                     type="button"
                     variant="primary"
-                    size="sm"
+                    size="md"
                     onClick={(event) => {
                       event.preventDefault();
                       openInvite();
@@ -135,31 +136,30 @@ export function WorkspaceMembers({
           </div>
         }
       >
-        {members.length + invitations.length > SEARCH_THRESHOLD ? (
-          <DashboardFilterInput
-            value={query}
-            onChange={setQuery}
-            placeholder={t("search")}
-          />
-        ) : null}
-        {visibleMembers.length ? (
-          <RowList>
-            {visibleMembers.map((member) => (
-              <MemberRow
-                // Remount after a server refresh so the role control resyncs.
-                key={`${member.userId}:${member.role}`}
-                slug={slug}
-                member={member}
-                canManage={canManage}
-              />
-            ))}
-          </RowList>
-        ) : (
-          <p className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-            {t("noMatches")}
-          </p>
-        )}
-      </DashboardSection>
+        <h1 className="text-xl font-semibold">{t("members")}</h1>
+      </DashboardToolbar>
+      {members.length + invitations.length > SEARCH_THRESHOLD ? (
+        <DashboardFilterInput
+          value={query}
+          onChange={setQuery}
+          placeholder={t("search")}
+        />
+      ) : null}
+      {visibleMembers.length ? (
+        <RowList>
+          {visibleMembers.map((member) => (
+            <MemberRow
+              // Remount after a server refresh so the role control resyncs.
+              key={`${member.userId}:${member.role}`}
+              slug={slug}
+              member={member}
+              canManage={canManage}
+            />
+          ))}
+        </RowList>
+      ) : (
+        <DashboardEmptyState icon={Search} title={t("noMatches")} />
+      )}
 
       {canManage && visibleInvitations.length ? (
         <DashboardSection

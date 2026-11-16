@@ -183,32 +183,110 @@ export function AgentSettings({
   );
 
   const approvalT = useTranslations("console.toolApproval");
-  const navigationItems: Array<{ id: SettingsTab; label: string }> = [
-    { id: "general", label: t("basic") },
-    { id: "instructions", label: t("instructions") },
-    { id: "sandboxes", label: t("sandboxes") },
-    { id: "advanced", label: t("advanced") },
-    { id: "builtInTools", label: t("builtInTools") },
-    ...(supportsChannelSettings
-      ? [{ id: "streamRules" as const, label: t("streamRules.title") }]
-      : []),
-    { id: "toolApproval", label: approvalT("title") },
-    { id: "memories", label: t("memories") },
-    { id: "mcp", label: t("mcp") },
-    { id: "skills", label: t("skills") },
-    { id: "piPackages", label: t("piPackages") },
+  const navigationItems: Array<{
+    id: SettingsTab;
+    label: string;
+    group: string;
+  }> = [
+    { id: "general", label: t("basic"), group: t("navigationGroups.basic") },
+    {
+      id: "instructions",
+      label: t("instructions"),
+      group: t("navigationGroups.basic"),
+    },
+    {
+      id: "builtInTools",
+      label: t("builtInTools"),
+      group: t("navigationGroups.capabilities"),
+    },
+    { id: "mcp", label: t("mcp"), group: t("navigationGroups.capabilities") },
+    {
+      id: "skills",
+      label: t("skills"),
+      group: t("navigationGroups.capabilities"),
+    },
+    {
+      id: "piPackages",
+      label: t("piPackages"),
+      group: t("navigationGroups.capabilities"),
+    },
     ...(isExecutableAgentRuntimeKind(settings.runtimeKind)
-      ? [{ id: "subAgents" as const, label: t("subAgents") }]
+      ? [
+          {
+            id: "subAgents" as const,
+            label: t("subAgents"),
+            group: t("navigationGroups.capabilities"),
+          },
+        ]
       : []),
-    { id: "a2a", label: t("a2a.title") },
-    { id: "triggers", label: automationT("triggers") },
-    { id: "usage", label: usageT("title") },
-    { id: "changelog", label: t("changelogTab") },
-    { id: "evolution", label: t("evolutionTab") },
-    { id: "clone", label: t("cloneAgent") },
+    {
+      id: "memories",
+      label: t("memories"),
+      group: t("navigationGroups.capabilities"),
+    },
+    {
+      id: "sandboxes",
+      label: t("sandboxes"),
+      group: t("navigationGroups.execution"),
+    },
+    {
+      id: "toolApproval",
+      label: approvalT("title"),
+      group: t("navigationGroups.execution"),
+    },
     ...(supportsChannelSettings
-      ? [{ id: "channels" as const, label: t("channelSettingsTab") }]
+      ? [
+          {
+            id: "streamRules" as const,
+            label: t("streamRules.title"),
+            group: t("navigationGroups.execution"),
+          },
+        ]
       : []),
+    {
+      id: "advanced",
+      label: t("advanced"),
+      group: t("navigationGroups.execution"),
+    },
+    ...(supportsChannelSettings
+      ? [
+          {
+            id: "channels" as const,
+            label: t("channelSettingsTab"),
+            group: t("navigationGroups.connections"),
+          },
+        ]
+      : []),
+    {
+      id: "a2a",
+      label: t("a2a.title"),
+      group: t("navigationGroups.connections"),
+    },
+    {
+      id: "triggers",
+      label: automationT("triggers"),
+      group: t("navigationGroups.connections"),
+    },
+    {
+      id: "usage",
+      label: usageT("title"),
+      group: t("navigationGroups.operations"),
+    },
+    {
+      id: "changelog",
+      label: t("changelogTab"),
+      group: t("navigationGroups.operations"),
+    },
+    {
+      id: "evolution",
+      label: t("evolutionTab"),
+      group: t("navigationGroups.operations"),
+    },
+    {
+      id: "clone",
+      label: t("cloneAgent"),
+      group: t("navigationGroups.operations"),
+    },
   ];
 
   return (

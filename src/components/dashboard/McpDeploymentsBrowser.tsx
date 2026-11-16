@@ -37,6 +37,7 @@ import {
   stopDeploymentAction,
 } from "@/lib/workspace/actions";
 import { DashboardEmptyState, DashboardTable } from "./DashboardUI";
+import { DeployCustomMcpDialog } from "./DeployCustomMcpDialog";
 
 export type McpDeploymentListItem = {
   id: string;
@@ -342,9 +343,11 @@ function DeploymentIdentity({
 export function McpDeploymentsBrowser({
   slug,
   deployments,
+  allowHttp,
 }: {
   slug: string;
   deployments: McpDeploymentListItem[];
+  allowHttp: boolean;
 }) {
   const [t, common] = [
     useTranslations("console.mcp"),
@@ -358,15 +361,17 @@ export function McpDeploymentsBrowser({
   const [page, setPage] = useState(1);
   const tableAreaRef = useRef<HTMLDivElement>(null);
   const [tableHeight, setTableHeight] = useState(0);
+  // The table area only mounts once the workspace has a deployment.
+  const hasDeployments = deployments.length > 0;
   useEffect(() => {
-    const area = tableAreaRef.current;
+    const area = hasDeployments ? tableAreaRef.current : null;
     if (!area) return;
     const observer = new ResizeObserver(([entry]) =>
       setTableHeight(Math.max(0, entry.contentRect.height - 2)),
     );
     observer.observe(area);
     return () => observer.disconnect();
-  }, []);
+  }, [hasDeployments]);
   const counts = useMemo(
     () => ({
       all: deployments.length,
@@ -433,6 +438,15 @@ export function McpDeploymentsBrowser({
     { key: "error", label: t("error"), count: counts.error },
     { key: "stopped", label: t("stopped"), count: counts.stopped },
   ];
+  if (deployments.length === 0) {
+    return (
+      <DashboardEmptyState
+        icon={Plug}
+        title={t("noServersDeployedYet")}
+        actions={<DeployCustomMcpDialog slug={slug} allowHttp={allowHttp} />}
+      />
+    );
+  }
 
   return (
     <section
@@ -481,29 +495,13 @@ export function McpDeploymentsBrowser({
           }))}
           className="w-full sm:w-44"
         />
-        <p
-          className="text-xs text-muted-foreground sm:ml-auto"
-          aria-live="polite"
-        >
-          {t("deploymentCountSummary", { count: filteredDeployments.length })}
-        </p>
       </div>
 
       <div ref={tableAreaRef} className="min-h-0 flex-1 overflow-auto">
         {filteredDeployments.length === 0 ? (
           <DashboardEmptyState
-            className="h-full"
-            icon={deployments.length === 0 ? Plug : Search}
-            title={
-              deployments.length === 0
-                ? t("noServersDeployedYet")
-                : t("noMcpFound")
-            }
-            description={
-              query || status !== "all"
-                ? t("searchMcp")
-                : t("serversDeployedToYourOrg")
-            }
+            icon={Search}
+            title={t("noMcpFound")}
             actions={
               query || status !== "all" ? (
                 <Button

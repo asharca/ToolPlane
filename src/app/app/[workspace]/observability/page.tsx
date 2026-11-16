@@ -11,7 +11,6 @@ import { getObservability } from "@/lib/observability/log";
 import { db } from "@/lib/db";
 import { LogExplorer } from "@/components/observability/LogExplorer";
 import { logFilterSchema } from "@/lib/observability/queries";
-import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { TabBar } from "@/components/dashboard/TabBar";
 import {
   DashboardEmptyState,
@@ -96,8 +95,10 @@ export default async function ObservabilityPage({
   if (current === "channels") {
     return (
       <>
-        <DashboardHeader title={t("observability")} />
         <DashboardPage>
+          <DashboardToolbar>
+            <h1 className="text-xl font-semibold">{t("observability")}</h1>
+          </DashboardToolbar>
           <TabBar tabs={tabs} current={current} basePath={base} />
           <ChannelObservability
             key={`${ws.id}:${query.agentId ?? ""}:${query.channelId ?? ""}`}
@@ -130,8 +131,10 @@ export default async function ObservabilityPage({
     ]);
     return (
       <>
-        <DashboardHeader title={t("observability")} />
         <DashboardPage>
+          <DashboardToolbar>
+            <h1 className="text-xl font-semibold">{t("observability")}</h1>
+          </DashboardToolbar>
           <TabBar tabs={tabs} current={current} basePath={base} />
           <LogExplorer
             key={`${ws.id}:${current}`}
@@ -156,8 +159,10 @@ export default async function ObservabilityPage({
   if (current === "agent-usage") {
     return (
       <>
-        <DashboardHeader title={t("observability")} />
         <DashboardPage>
+          <DashboardToolbar>
+            <h1 className="text-xl font-semibold">{t("observability")}</h1>
+          </DashboardToolbar>
           <TabBar tabs={tabs} current={current} basePath={base} />
           <WorkspaceAgentUsage key={`${ws.id}:agent-usage`} slug={slug} />
         </DashboardPage>
@@ -230,8 +235,10 @@ export default async function ObservabilityPage({
 
   return (
     <>
-      <DashboardHeader title={t("observability")} />
       <DashboardPage>
+        <DashboardToolbar>
+          <h1 className="text-xl font-semibold">{t("observability")}</h1>
+        </DashboardToolbar>
         <TabBar
           tabs={tabs}
           current={current}

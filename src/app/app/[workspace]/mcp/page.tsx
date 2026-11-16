@@ -72,7 +72,7 @@ export default async function McpServersPage({
   const anyProvisioning = deploymentItems.some(
     (deployment) => deployment.status === "provisioning",
   );
-  const marketHref = `/app/${encodeURIComponent(slug)}/market/mcp`;
+  const marketHref = `/app/${encodeURIComponent(slug)}/plugins`;
 
   return (
     <>
@@ -82,15 +82,15 @@ export default async function McpServersPage({
           className="shrink-0"
           actions={
             <>
+              <ButtonLink href={marketHref} variant="secondary" size="md">
+                <Store className="size-4" />
+                {t("pluginCenter")}
+              </ButtonLink>
               <DeployCustomMcpDialog
                 slug={slug}
                 allowHttp={allowHttp}
                 defaultOpen={query.create === "1"}
               />
-              <ButtonLink href={marketHref} variant="secondary" size="md">
-                <Store className="size-4" />
-                {t("browseToolplane")}
-              </ButtonLink>
             </>
           }
         >
@@ -109,7 +109,11 @@ export default async function McpServersPage({
           </p>
         ) : null}
 
-        <McpDeploymentsBrowser slug={slug} deployments={deploymentItems} />
+        <McpDeploymentsBrowser
+          slug={slug}
+          deployments={deploymentItems}
+          allowHttp={allowHttp}
+        />
       </DashboardPage>
     </>
   );

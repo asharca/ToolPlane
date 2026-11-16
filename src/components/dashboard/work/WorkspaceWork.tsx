@@ -2,6 +2,7 @@
 import { SidebarToolbar } from "@/components/dashboard/SidebarToolbar";
 import { useSidebarScroll } from "@/components/dashboard/useSidebarScroll";
 import { notify } from "@/components/dashboard/Toaster";
+import { ModelProviderNotice } from "@/components/dashboard/ModelProviderNotice";
 import { AgentMessageFeedback } from "@/components/dashboard/agents/AgentMessageFeedback";
 
 import { Button } from "@/components/motion/button";
@@ -2022,7 +2023,7 @@ export function WorkspaceWork({
           order,
         ).map((entry) => {
           if (!entry.source)
-            return { ...entry, label: entry.title || tAgents("newChat") };
+            return { ...entry, label: entry.title || t("untitledSession") };
           const { platform, chatId } = entry.source;
           const platformLabel = tChannels.has(`platforms.${platform}`)
             ? tChannels(`platforms.${platform}`)
@@ -2063,7 +2064,7 @@ export function WorkspaceWork({
       groupPreferences.entityOrder,
       groupPreferences.conversationOrder,
       tChannels,
-      tAgents,
+      t,
     ],
   );
   const groupedAgents = useMemo(() => {
@@ -4069,7 +4070,7 @@ export function WorkspaceWork({
                         : conversation?.title ||
                           selected?.title ||
                           selected?.task ||
-                          tAgents("newChat")}
+                          t("untitledSession")}
                     </p>
                     {controlAgent ? (
                       <span className="hidden max-w-40 truncate rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground sm:inline-block">
@@ -4471,7 +4472,7 @@ export function WorkspaceWork({
                   onTakeoverAnswered={releaseScreenControl}
                 />
               ) : null}
-              {unappliedDraft && agent ? (
+              {providers.length > 0 && unappliedDraft && agent ? (
                 <div
                   role="status"
                   className="mx-auto mb-2 flex w-[calc(100%_-_2rem)] max-w-[736px] flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm"
@@ -4493,7 +4494,12 @@ export function WorkspaceWork({
                   </Button>
                 </div>
               ) : null}
-              {showConfigurationNotice && controlAgent ? (
+              {!providers.length ? (
+                <ModelProviderNotice
+                  slug={slug}
+                  className="mx-auto mb-2 w-[calc(100%_-_2rem)] max-w-[736px]"
+                />
+              ) : showConfigurationNotice && controlAgent ? (
                 <div
                   role="alert"
                   className="mx-auto mb-2 flex w-[calc(100%_-_2rem)] max-w-[736px] flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm"

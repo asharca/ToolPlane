@@ -2,6 +2,7 @@
 import { SidebarToolbar } from "@/components/dashboard/SidebarToolbar";
 import { useSidebarScroll } from "@/components/dashboard/useSidebarScroll";
 import { notify } from "@/components/dashboard/Toaster";
+import { ModelProviderNotice } from "@/components/dashboard/ModelProviderNotice";
 
 import { Button } from "@/components/motion/button";
 
@@ -158,6 +159,7 @@ export function WorkspaceAssistantChat({
   deployments,
   initialMessages,
   providers,
+  hasProviders,
   defaultModelSelection = null,
   defaultReasoningEffort,
   selectedAssistantId,
@@ -176,6 +178,7 @@ export function WorkspaceAssistantChat({
   deployments: McpOption[];
   initialMessages: AgentUIMessage[];
   providers: ProviderOption[];
+  hasProviders: boolean;
   defaultModelSelection?: ModelSelection | null;
   defaultReasoningEffort: ReasoningLevel | null;
   selectedAssistantId: string | null;
@@ -1181,7 +1184,7 @@ export function WorkspaceAssistantChat({
                     />
                   ) : (
                     <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-                      {t("empty")}
+                      {t(search.trim() ? "empty" : "noAssistants")}
                     </p>
                   )}
                 </AnimatedSidebarGroupContent>
@@ -1309,6 +1312,10 @@ export function WorkspaceAssistantChat({
                   onStartBranch={(messageId) => void startBranch(messageId)}
                   onThreadUpgraded={refreshChat}
                 />
+              ) : !assistants.length && !hasProviders ? (
+                <div className="m-auto w-full max-w-xl px-6 pb-16">
+                  <ModelProviderNotice slug={slug} />
+                </div>
               ) : (
                 <div className="m-auto w-full max-w-xl px-6 pb-16 text-center">
                   <div className="mx-auto mb-5 grid size-14 place-items-center rounded-2xl bg-muted text-foreground">

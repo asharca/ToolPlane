@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, ButtonLink } from "@/components/motion/button";
+import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import { FormCheckbox } from "@/components/ui/FormCheckbox";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
@@ -32,6 +32,7 @@ import {
   type ModelProviderOption,
 } from "@/components/dashboard/models/ModelPicker";
 import { FormSelect } from "@/components/ui/FormSelect";
+import { ModelProviderNotice } from "@/components/dashboard/ModelProviderNotice";
 
 type KnowledgeBase = {
   id: string;
@@ -463,19 +464,10 @@ export function WorkspaceKnowledge({
               </p>
             </div>
             {!providers.length ? (
-              <div className="py-6 text-sm">
-                <p className="font-medium">{t("providerRequired")}</p>
-                <p className="mt-1 text-muted-foreground">
-                  {t("providerRequiredDescription")}
-                </p>
-                <ButtonLink
-                  href={`/app/${encodeURIComponent(slug)}/providers`}
-                  variant="secondary"
-                  className="mt-4"
-                >
-                  {t("openProviderSettings")}
-                </ButtonLink>
-              </div>
+              <ModelProviderNotice
+                slug={slug}
+                description={t("providerRequiredDescription")}
+              />
             ) : (
               <div className="grid gap-x-5 gap-y-4 py-6 sm:grid-cols-2">
                 <div className="sm:col-span-2 text-xs font-medium text-muted-foreground">

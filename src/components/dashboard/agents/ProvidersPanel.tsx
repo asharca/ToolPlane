@@ -1,5 +1,9 @@
 "use client";
-import { DashboardEmptyState } from "@/components/dashboard/DashboardUI";
+import {
+  DashboardEmptyState,
+  DashboardPage,
+  DashboardToolbar,
+} from "@/components/dashboard/DashboardUI";
 import { Button } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
@@ -864,7 +868,19 @@ function AddProviderDialog({
   /** Compact icon trigger for the provider list; the empty state keeps the labelled button. */
   iconTrigger?: boolean;
 }) {
-  const initialPreset = piProviderPresets[0] ?? customProviderPresets[0];
+  const commonPresets = [
+    "openai",
+    "anthropic",
+    "google",
+    "deepseek",
+    "openrouter",
+  ].flatMap((id) =>
+    piProviderPresets.filter((preset) => preset.format === `pi:${id}`),
+  );
+  const otherPresets = piProviderPresets
+    .filter((preset) => !commonPresets.includes(preset))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const initialPreset = commonPresets[0] ?? customProviderPresets[0];
   const t = useTranslations("console.agents");
   const common = useTranslations("common");
   const [open, setOpen] = useState(false);
@@ -882,8 +898,9 @@ function AddProviderDialog({
   const isCustomProvider = !format.startsWith("pi:");
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const presetGroups = [
-    { label: t("builtInProviders"), presets: piProviderPresets },
+    { label: t("commonProviders"), presets: commonPresets },
     { label: t("compatibleProviders"), presets: customProviderPresets },
+    { label: t("otherProviders"), presets: otherPresets },
   ]
     .map((group) => ({
       ...group,
@@ -2147,122 +2164,124 @@ export function ProvidersPanel({
     providers.find((provider) => provider.id === selectedProviderId) ??
     providers[0] ??
     null;
-  return selectedProvider ? (
-    <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col md:flex-row">
-      <aside
-        aria-label={t("modelProviders")}
-        className="flex max-h-60 shrink-0 flex-col border-b border-border/60 md:max-h-none md:w-64 md:border-b-0 md:border-r"
-      >
-        <div className="flex h-14 shrink-0 items-center justify-between gap-2 pl-4 pr-2">
-          <h1 className="truncate text-sm font-semibold">
-            {t("modelProviders")}
-          </h1>
+  return (
+    <DashboardPage className="flex min-h-0 flex-1 flex-col">
+      <DashboardToolbar
+        actions={
           <AddProviderDialog
             slug={slug}
             piProviderPresets={piProviderPresets}
             onCreated={handleCreated}
-            iconTrigger
+          />
+        }
+      >
+        <h1 className="text-xl font-semibold">{t("modelProviders")}</h1>
+      </DashboardToolbar>
+      {selectedProvider ? (
+        <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col md:flex-row">
+          <aside
+            aria-label={t("modelProviders")}
+            className="flex max-h-60 shrink-0 flex-col border-b border-border/60 md:max-h-none md:w-64 md:border-b-0 md:border-r"
+          >
+            {providers.length > 5 ? (
+              <div className="px-2 pb-1">
+                <Input
+                  leftIcon={<Search />}
+                  aria-label={`${common("search")} ${t("modelProviders")}`}
+                  placeholder={common("search")}
+                  value={providerQuery}
+                  onChange={setProviderQuery}
+                  className="w-full"
+                />
+              </div>
+            ) : null}
+            <nav
+              aria-label={t("modelProviders")}
+              className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2"
+            >
+              {visibleProviders.length > 0 ? (
+                visibleProviders.map((provider) => {
+                  const selected = provider.id === selectedProvider.id;
+                  const refresh = refreshes[provider.id];
+                  return (
+                    <button
+                      key={provider.id}
+                      type="button"
+                      aria-label={provider.name}
+                      aria-pressed={selected}
+                      aria-busy={refresh?.pending || undefined}
+                      onClick={() => selectProvider(provider.id)}
+                      className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors ${selected ? "bg-foreground/[0.08]" : "hover:bg-foreground/5"}`}
+                    >
+                      <ProviderMonogram name={provider.name} />
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className={`block truncate text-sm text-foreground ${selected ? "font-medium" : ""}`}
+                        >
+                          {provider.name}
+                        </span>
+                        <span
+                          className={`block truncate text-[11px] ${refresh?.state.error ? "text-destructive" : "text-muted-foreground"}`}
+                        >
+                          {refresh?.pending
+                            ? t("modelsFetching")
+                            : refresh?.state.error
+                              ? t("modelsFetchFailedLabel")
+                              : endpointHost(
+                                  providerEndpoint(
+                                    provider,
+                                    piProviderPresets,
+                                    provider.format,
+                                  ),
+                                )}
+                        </span>
+                      </span>
+                      {refresh?.pending ? (
+                        <RefreshCw
+                          aria-hidden="true"
+                          className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+                        />
+                      ) : (
+                        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                          {provider.modelCount}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                  {common("noResults")}
+                </p>
+              )}
+            </nav>
+          </aside>
+
+          <ProviderDetail
+            key={selectedProvider.id}
+            slug={slug}
+            provider={selectedProvider}
+            piProviderPresets={piProviderPresets}
+            refreshState={refreshes[selectedProvider.id]?.state ?? {}}
+            refreshing={refreshes[selectedProvider.id]?.pending ?? false}
+            onRefresh={() => {
+              void refreshProvider(selectedProvider.id);
+            }}
           />
         </div>
-        {providers.length > 5 ? (
-          <div className="px-2 pb-1">
-            <Input
-              leftIcon={<Search />}
-              aria-label={`${common("search")} ${t("modelProviders")}`}
-              placeholder={common("search")}
-              value={providerQuery}
-              onChange={setProviderQuery}
-              className="w-full"
+      ) : (
+        <DashboardEmptyState
+          icon={Cpu}
+          title={t("noProvidersYet")}
+          actions={
+            <AddProviderDialog
+              slug={slug}
+              piProviderPresets={piProviderPresets}
+              onCreated={handleCreated}
             />
-          </div>
-        ) : null}
-        <nav
-          aria-label={t("modelProviders")}
-          className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2"
-        >
-          {visibleProviders.length > 0 ? (
-            visibleProviders.map((provider) => {
-              const selected = provider.id === selectedProvider.id;
-              const refresh = refreshes[provider.id];
-              return (
-                <button
-                  key={provider.id}
-                  type="button"
-                  aria-label={provider.name}
-                  aria-pressed={selected}
-                  aria-busy={refresh?.pending || undefined}
-                  onClick={() => selectProvider(provider.id)}
-                  className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors ${selected ? "bg-foreground/[0.08]" : "hover:bg-foreground/5"}`}
-                >
-                  <ProviderMonogram name={provider.name} />
-                  <span className="min-w-0 flex-1">
-                    <span
-                      className={`block truncate text-sm text-foreground ${selected ? "font-medium" : ""}`}
-                    >
-                      {provider.name}
-                    </span>
-                    <span
-                      className={`block truncate text-[11px] ${refresh?.state.error ? "text-destructive" : "text-muted-foreground"}`}
-                    >
-                      {refresh?.pending
-                        ? t("modelsFetching")
-                        : refresh?.state.error
-                          ? t("modelsFetchFailedLabel")
-                          : endpointHost(
-                              providerEndpoint(
-                                provider,
-                                piProviderPresets,
-                                provider.format,
-                              ),
-                            )}
-                    </span>
-                  </span>
-                  {refresh?.pending ? (
-                    <RefreshCw
-                      aria-hidden="true"
-                      className="size-3.5 shrink-0 animate-spin text-muted-foreground"
-                    />
-                  ) : (
-                    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                      {provider.modelCount}
-                    </span>
-                  )}
-                </button>
-              );
-            })
-          ) : (
-            <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-              {common("noResults")}
-            </p>
-          )}
-        </nav>
-      </aside>
-
-      <ProviderDetail
-        key={selectedProvider.id}
-        slug={slug}
-        provider={selectedProvider}
-        piProviderPresets={piProviderPresets}
-        refreshState={refreshes[selectedProvider.id]?.state ?? {}}
-        refreshing={refreshes[selectedProvider.id]?.pending ?? false}
-        onRefresh={() => {
-          void refreshProvider(selectedProvider.id);
-        }}
-      />
-    </div>
-  ) : (
-    <DashboardEmptyState
-      icon={Cpu}
-      title={t("noProvidersYet")}
-      description={t("noProvidersYetAddOneAboveThenRefreshItsModels")}
-      actions={
-        <AddProviderDialog
-          slug={slug}
-          piProviderPresets={piProviderPresets}
-          onCreated={handleCreated}
+          }
         />
-      }
-      className="flex-1"
-    />
+      )}
+    </DashboardPage>
   );
 }

@@ -17,6 +17,7 @@ import { Button } from "@/components/motion/button";
 import { useTranslations } from "next-intl";
 import {
   useActionState,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -177,6 +178,13 @@ export function DeployCustomMcpDialog({
   const configName = parsedConfig?.name ?? "";
   const configCommand = parsedConfig?.command;
   const configIsRemote = parsedConfig?.source === "remote";
+  const requiresHttpConsent =
+    !allowHttp &&
+    parsedConfig?.source === "remote" &&
+    parsedConfig.ref.startsWith("http://");
+  useEffect(() => {
+    if (!requiresHttpConsent) setAllowUnsafeHttp(false);
+  }, [requiresHttpConsent]);
 
   const setJsonConfig = (nextConfig: string) => {
     setConfig(nextConfig);
@@ -270,7 +278,6 @@ export function DeployCustomMcpDialog({
           <DialogField
             label={t("jsonConfig")}
             htmlFor="config"
-            description={t("jsonCommandHint")}
             dirty={config !== ""}
           >
             <div className="space-y-3">
@@ -303,7 +310,7 @@ export function DeployCustomMcpDialog({
             {configIsRemote ? (
               <RemoteMcpTransportNotice url={parsedConfig?.ref} showHelp />
             ) : null}
-            {!allowHttp ? (
+            {requiresHttpConsent ? (
               <DialogField label={null} dirty={allowUnsafeHttp}>
                 <McpHttpConsent onChange={setAllowUnsafeHttp} />
               </DialogField>
@@ -330,6 +337,9 @@ export function DeployCustomMcpDialog({
                   description: (
                     <>
                       <div className="space-y-3 border-t border-border px-3 py-3">
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          {t("jsonCommandHint")}
+                        </p>
                         <p className="text-xs leading-5 text-muted-foreground">
                           {t("jsonExamplesHint")}
                         </p>
@@ -375,10 +385,7 @@ export function DeployCustomMcpDialog({
 
           {!configIsRemote ? (
             <>
-              <DialogField
-                label={t("runtimeFilesOptional")}
-                dirty={runtimeFiles.length > 0}
-              >
+              <DialogField label={null} dirty={runtimeFiles.length > 0}>
                 <BouncyAccordion
                   items={[
                     {
@@ -416,10 +423,7 @@ export function DeployCustomMcpDialog({
                 ) : null}
               </DialogField>
 
-              <DialogField
-                label={t("networkMode")}
-                dirty={network !== "isolated"}
-              >
+              <DialogField label={null} dirty={network !== "isolated"}>
                 <BouncyAccordion
                   items={[
                     {

@@ -178,6 +178,7 @@ export default async function WorkspaceChatPage({
         defaultModelSelection={defaultModelSelection}
         branch={activeThread?.branch ?? null}
         initialMessages={initialMessages}
+        hasProviders={providers.length > 0}
         providers={providers
           .filter((provider) => provider.apiKey.trim())
           .map((provider) => ({

@@ -2,7 +2,7 @@ import { ButtonLink } from "@/components/motion/button";
 import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { CheckCircle2, Store } from "lucide-react";
+import { Brain, CheckCircle2, Store } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getSkillImportSettings } from "@/lib/admin/settings";
 import {
@@ -135,7 +135,16 @@ export default async function SkillsPage({
       ) : null}
 
       {skills.length === 0 ? (
-        <DashboardEmptyState description={t("emptyInstalledHint")} />
+        <DashboardEmptyState
+          icon={Brain}
+          title={t("emptyInstalledHint")}
+          actions={
+            <AddSkillDialog
+              slug={slug}
+              maxSkillImportSkills={skillImportSettings.maxSkills}
+            />
+          }
+        />
       ) : null}
 
       {skills.length > 0 ? (

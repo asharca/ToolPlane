@@ -3,21 +3,7 @@
 import { useEffect, useState, type MouseEvent } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import {
-  Bot,
-  Boxes,
-  Brain,
-  Cpu,
-  LibraryBig,
-  MessageSquare,
-  PackageCheck,
-  Plug,
-  ScrollText,
-  Search,
-  Store,
-  Users,
-  type LucideIcon,
-} from "lucide-react";
+import { Search } from "lucide-react";
 import { useAnimatedSidebar } from "@/components/motion/animated-sidebar";
 import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
@@ -26,31 +12,9 @@ import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { DashboardCommandPalette } from "./DashboardCommandPalette";
 import { SystemUpdateButton } from "./SystemUpdateButton";
 import { pluginUpdateCountAction } from "@/lib/plugins/actions";
+import { WORKSPACE_NAV_GROUPS } from "./workspace-nav";
 
-type NavItem = { labelKey: string; segment: string; icon: LucideIcon };
 type Workspace = { id: string; slug: string; name: string };
-// Daily work first, then what agents are built from, then workspace setup.
-const NAV_ITEMS: NavItem[] = [
-  { labelKey: "chat", segment: "chat", icon: MessageSquare },
-  { labelKey: "agents", segment: "agents", icon: Bot },
-];
-const BUILD_ITEMS: NavItem[] = [
-  { labelKey: "mcpServers", segment: "mcp", icon: Plug },
-  { labelKey: "skills", segment: "skills", icon: Brain },
-  {
-    labelKey: "knowledgeInDevelopment",
-    segment: "knowledge",
-    icon: LibraryBig,
-  },
-  { labelKey: "myPlugins", segment: "plugins/installed", icon: PackageCheck },
-  { labelKey: "plugins", segment: "plugins", icon: Store },
-];
-const MANAGE_ITEMS: NavItem[] = [
-  { labelKey: "modelProviders", segment: "providers", icon: Cpu },
-  { labelKey: "sandboxes", segment: "sandboxes", icon: Boxes },
-  { labelKey: "observability", segment: "observability", icon: ScrollText },
-  { labelKey: "members", segment: "members", icon: Users },
-];
 
 export function DashboardSidebar({
   slug,
@@ -73,13 +37,7 @@ export function DashboardSidebar({
   const { open, isMobile, setOpenMobile } = useAnimatedSidebar();
   const activePath = pathname.slice(`${base}/`.length);
   const activeSegment = activePath.split("/")[0];
-  const activeId =
-    activePath === "plugins/installed" ||
-    activePath.startsWith("plugins/installed/")
-      ? "plugins/installed"
-      : activeSegment === "work"
-        ? "agents"
-        : activeSegment;
+  const activeId = activeSegment === "work" ? "agents" : activeSegment;
   const [updateCount, setUpdateCount] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: navigation refreshes the update count.
   useEffect(() => {
@@ -128,52 +86,33 @@ export function DashboardSidebar({
     <div className="contents" onClickCapture={navigate}>
       <WorkspaceSidebar
         title="ToolPlane"
+        className="[&_[data-slot=sidebar-group]+[data-slot=sidebar-group]]:mt-3 [&_[data-slot=sidebar-group]+[data-slot=sidebar-group]]:border-t [&_[data-slot=sidebar-group]+[data-slot=sidebar-group]]:border-border [&_[data-slot=sidebar-group]+[data-slot=sidebar-group]]:pt-3"
         activeId={activeId}
         onSelect={(id) => {
           if (id === "search") setPaletteOpen(true);
         }}
-        groups={[
-          {
-            id: "workspace",
-            items: [
-              {
-                id: "search",
-                label: t("search"),
-                icon: <Search />,
-              },
-              ...NAV_ITEMS.map(({ segment, labelKey, icon: Icon }) => ({
+        groups={WORKSPACE_NAV_GROUPS.map((group) => ({
+          id: group.id,
+          title: t(group.labelKey),
+          items: [
+            ...(group.id === "workspace"
+              ? [{ id: "search", label: t("search"), icon: <Search /> }]
+              : []),
+            ...group.items.map(
+              ({ segment, labelKey, icon: Icon, badgeKey }) => ({
                 id: segment,
                 label: t(labelKey),
                 icon: <Icon />,
                 href: `${base}/${segment}`,
-              })),
-            ],
-          },
-          {
-            id: "build",
-            title: t("build"),
-            items: BUILD_ITEMS.map(({ segment, labelKey, icon: Icon }) => ({
-              id: segment,
-              label: t(labelKey),
-              icon: <Icon />,
-              href: `${base}/${segment}`,
-              badge:
-                segment === "plugins/installed" && updateCount > 0
-                  ? updateCount
-                  : undefined,
-            })),
-          },
-          {
-            id: "manage",
-            title: t("manage"),
-            items: MANAGE_ITEMS.map(({ segment, labelKey, icon: Icon }) => ({
-              id: segment,
-              label: t(labelKey),
-              icon: <Icon />,
-              href: `${base}/${segment}`,
-            })),
-          },
-        ]}
+                badge: badgeKey ? (
+                  <span className="text-[10px]">{t(badgeKey)}</span>
+                ) : segment === "plugins" && updateCount > 0 ? (
+                  updateCount
+                ) : undefined,
+              }),
+            ),
+          ],
+        }))}
         footer={
           <div className="flex flex-col gap-0.5">
             <SystemUpdateButton

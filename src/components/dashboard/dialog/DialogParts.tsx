@@ -101,6 +101,8 @@ export type DialogNavItem = {
   label: string;
   icon?: ReactNode;
   dirty?: boolean;
+  group?: string;
+  disabled?: boolean;
 };
 
 export function DialogNav({
@@ -121,7 +123,7 @@ export function DialogNav({
   return (
     <aside
       className={cn(
-        "shrink-0 border-b border-border p-3 md:w-56 md:border-r md:border-b-0",
+        "shrink-0 border-b border-border p-3 md:w-56 md:overflow-y-auto md:border-r md:border-b-0",
         className,
       )}
     >
@@ -133,32 +135,45 @@ export function DialogNav({
         options={items.map((item) => ({
           value: item.id,
           label: item.dirty ? `${item.label} · ${t("modified")}` : item.label,
+          disabled: item.disabled,
         }))}
       />
       <nav aria-label={navLabel} className="hidden space-y-1 md:block">
-        {items.map((item) => (
-          <Button
-            key={item.id}
-            type="button"
-            size="md"
-            variant="ghost"
-            aria-current={active === item.id ? "page" : undefined}
-            onClick={() => onSelect(item.id)}
-            className={cn(
-              "h-9 w-full justify-start rounded-lg px-3 text-sm [&_svg]:size-4",
-              active === item.id && "bg-muted font-medium text-foreground",
-            )}
-          >
-            {item.icon}
-            <span className="min-w-0 truncate">{item.label}</span>
-            {item.dirty ? (
-              <span
-                className="ml-auto size-1.5 shrink-0 rounded-full bg-primary"
-                role="img"
-                aria-label={t("modified")}
-              />
+        {items.map((item, index) => (
+          <div key={item.id}>
+            {item.group && item.group !== items[index - 1]?.group ? (
+              <p
+                className={cn(
+                  "px-3 pb-1 text-xs font-medium text-muted-foreground",
+                  index > 0 && "pt-4",
+                )}
+              >
+                {item.group}
+              </p>
             ) : null}
-          </Button>
+            <Button
+              disabled={item.disabled}
+              type="button"
+              size="md"
+              variant="ghost"
+              aria-current={active === item.id ? "page" : undefined}
+              onClick={() => onSelect(item.id)}
+              className={cn(
+                "h-9 w-full justify-start rounded-lg px-3 text-sm [&_svg]:size-4",
+                active === item.id && "bg-muted font-medium text-foreground",
+              )}
+            >
+              {item.icon}
+              <span className="min-w-0 truncate">{item.label}</span>
+              {item.dirty ? (
+                <span
+                  className="ml-auto size-1.5 shrink-0 rounded-full bg-primary"
+                  role="img"
+                  aria-label={t("modified")}
+                />
+              ) : null}
+            </Button>
+          </div>
         ))}
       </nav>
     </aside>
