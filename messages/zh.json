@@ -1632,6 +1632,8 @@
       "toolDiff": "文件变更",
       "toolDiffTruncated": "内容已截断",
       "toolDiffFirstChangedLine": "首个变更行：{line}",
+      "toolImage": "工具图片 {index}",
+      "toolImageUnavailable": "图片不可用或超过 150 KiB 上限。",
       "enableWebSearch": "开启联网搜索",
       "disableWebSearch": "关闭联网搜索",
       "reasoningEffort": "思考强度",

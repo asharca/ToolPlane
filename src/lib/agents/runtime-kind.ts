@@ -129,6 +129,11 @@ export const AGENT_OPTIONAL_BUILTIN_TOOLS: readonly AgentOptionalBuiltinTool[] =
     },
     { name: "lsp", category: "search", implementation: "sandbox-extension" },
     { name: "debug", category: "shell", implementation: "sandbox-extension" },
+    {
+      name: "browser",
+      category: "browser",
+      implementation: "sandbox-extension",
+    },
   ];
 
 export function agentOptionalBuiltinTools(value: unknown) {

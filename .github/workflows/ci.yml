@@ -169,6 +169,17 @@ jobs:
       - name: Test core functionality
         run: pnpm test --shard=${{ matrix.shard }}/3
 
+      - name: Build production browser sandbox
+        if: matrix.shard == 1
+        run: docker build --target sandbox -t toolplane-sandbox:browser-ci .
+
+      - name: Test production browser sandbox lifecycle
+        if: matrix.shard == 1
+        env:
+          SANDBOX_DOCKER_SMOKE: 1
+          TOOLPLANE_BROWSER_TEST_IMAGE: toolplane-sandbox:browser-ci
+        run: pnpm exec vitest run tests/integration/agent-browser-image.live.test.ts
+
   runtime-build:
     if: github.event_name == 'workflow_dispatch' && inputs.full
     runs-on: ubuntu-latest

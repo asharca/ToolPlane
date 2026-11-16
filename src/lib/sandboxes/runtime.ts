@@ -9,7 +9,17 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { logSystemEvent } from "@/lib/observability/system";
 
+import { DEFAULT_SANDBOX_IMAGE } from "./images";
 export { DEFAULT_SANDBOX_IMAGE } from "./images";
+
+/** Only new templates use this override; captured revision digests never change. */
+export function getDefaultSandboxImage(): string {
+  const image = process.env.TOOLPLANE_DEFAULT_SANDBOX_IMAGE?.trim();
+  if (!image) return DEFAULT_SANDBOX_IMAGE;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/:-]*@sha256:[a-f0-9]{64}$/.test(image))
+    throw new Error("SANDBOX_DEFAULT_IMAGE_INVALID");
+  return image;
+}
 
 const VOLUME_COPY_TIMEOUT_MS = 15 * 60_000;
 const MAX_DOCKER_ERROR_BYTES = 64 * 1024;

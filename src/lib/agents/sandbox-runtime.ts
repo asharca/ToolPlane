@@ -3064,6 +3064,15 @@ async function runPiSdk(
     hostSources.update(source).update(content);
     hostFiles.push({ path, content });
   }
+  const browserNetwork = options.optionalBuiltinTools?.includes("browser")
+    ? ((
+        await db.sandbox.findFirst({
+          where: { id: options.sandboxId, workspaceId: options.workspaceId },
+          select: { network: true },
+        })
+      )?.network ?? "none")
+    : "none";
+  hostSources.update(`browser-network:${browserNetwork}`);
   const optionalBuiltinExtensions: string[] = [];
   for (const { name, content } of await piOptionalBuiltinExtensionSources(
     options.optionalBuiltinTools,
@@ -3275,6 +3284,7 @@ async function runPiSdk(
       ],
       optionalBuiltinExtensions,
       nativeSubagentPolicy: options.nativeSubagentPolicy,
+      browserNetwork,
       resources,
       packages: packages.map(({ manifest: _manifest, ...item }) => item),
       packageVerifierPath: verifierPath,

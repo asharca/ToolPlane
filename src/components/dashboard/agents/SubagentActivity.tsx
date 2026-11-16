@@ -13,6 +13,7 @@ import {
 } from "../ConversationMessage";
 import { ToolResult } from "@/components/agents/tool-result";
 import { ConversationToolDiff } from "../ConversationToolDiff";
+import { ConversationToolOutput } from "../ConversationToolOutput";
 
 export const SubagentConversationScope = createContext<{
   slug: string;
@@ -195,11 +196,10 @@ export function SubagentActivity({ value }: { value: unknown }) {
             />
           ) : null}
           {activity.output !== undefined && (!activity.patch || failed) ? (
-            <ToolPayload label={t("result")} language="text">
-              {toolOutputText(activity.output) ??
-                JSON.stringify(activity.output, null, 2) ??
-                ""}
-            </ToolPayload>
+            <ConversationToolOutput
+              value={activity.output}
+              label={t("result")}
+            />
           ) : null}
         </ToolResult>
       )}

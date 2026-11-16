@@ -31,6 +31,8 @@ import { createContextMaintenance } from "./pi-sdk-context.mjs";
 const config = JSON.parse(readFileSync(process.argv[2], "utf8"));
 // Native tools inherit this: importing a skill must not add files to its pinned snapshot.
 process.env.PYTHONDONTWRITEBYTECODE = "1";
+process.env.TOOLPLANE_BROWSER_NETWORK =
+  config.browserNetwork === "isolated" ? "isolated" : "none";
 // Pi state belongs to this conversation; HOME/XDG (CLI logins, user installs)
 // are the Agent-wide directories passed by the runtime, never /root.
 mkdirSync(config.agentDir, { recursive: true, mode: 0o700 });
@@ -979,10 +981,26 @@ const contentText = (content) =>
 // Tool input/output for the transcript and the workspace Agent tool log; bounded so one large
 // result (for example `cat` of a big file) cannot bloat the event stream.
 const TOOL_PAYLOAD_CHARS = 20_000;
-function toolPayload(value) {
+function toolPayload(value, toolName) {
   if (value === undefined) return undefined;
   const text =
     typeof value === "string" ? value : (JSON.stringify(value) ?? "");
+  // Browser screenshots are already bounded at capture. Preserve their native
+  // image block for both realtime UI and persisted tool history, not base64 text
+  // cut in half by the ordinary textual-output budget.
+  const image = value?.content?.[0];
+  if (
+    toolName === "browser" &&
+    text.length <= 206_000 &&
+    value.content.length === 1 &&
+    image?.type === "image" &&
+    image.mimeType === "image/jpeg" &&
+    typeof image.data === "string" &&
+    image.data.length <= 204_800 &&
+    image.data.startsWith("/9j/") &&
+    /^[A-Za-z0-9+/]*={0,2}$/.test(image.data)
+  )
+    return value;
   return text.length > TOOL_PAYLOAD_CHARS
     ? `${text.slice(0, TOOL_PAYLOAD_CHARS)}…[truncated]`
     : value;
@@ -1114,7 +1132,7 @@ function event(event, source, sourceModel) {
       toolCallId: event.toolCallId,
       toolName: event.toolName,
       isError: event.isError,
-      result: toolPayload(event.result),
+      result: toolPayload(event.result, event.toolName),
       ...toolPatch(event),
     });
   if (event.type === "message_end") {
