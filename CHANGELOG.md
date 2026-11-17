@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.42.1](https://github.com/asharca/ToolPlane/compare/v0.42.0...v0.42.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **work:** 修复耗时瀑布图超高时弹层首屏无法滚到顶部 ([#270](https://github.com/asharca/ToolPlane/issues/270)) ([afb853d](https://github.com/asharca/ToolPlane/commit/afb853d8478b268977d15fed838366953e174bf0))
+
 ## [0.42.0](https://github.com/asharca/ToolPlane/compare/v0.41.0...v0.42.0) (2026-11-17)
 
 
