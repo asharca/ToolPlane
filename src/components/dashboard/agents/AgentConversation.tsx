@@ -46,6 +46,12 @@ import {
 import { useLiveTaskOutput } from "@/components/dashboard/work/useLiveTaskOutput";
 import { LiveOutputView } from "@/components/dashboard/work/LiveOutputView";
 import { ConversationContentBlocks } from "@/components/dashboard/ConversationContentBlocks";
+import { WorkTurnTrace } from "@/components/dashboard/work/WorkTurnTrace";
+import { formatContentDuration } from "@/lib/conversation/content-blocks";
+import {
+  AGENT_TURN_TIMELINE_PART,
+  parseAgentTurnTimeline,
+} from "@/lib/agents/turn-timeline";
 import { CopyButton } from "@/components/dashboard/CopyButton";
 
 import { AgentPromptProvenance } from "@/components/dashboard/agents/AgentPromptProvenance";
@@ -1285,6 +1291,13 @@ export function AgentConversation({
                 typeof turnModelData.model === "string"
                   ? turnModelData.model
                   : null;
+              const timelinePart = sourceMessage.parts.find(
+                (part) => part.type === AGENT_TURN_TIMELINE_PART,
+              );
+              const timeline =
+                timelinePart && "data" in timelinePart
+                  ? parseAgentTurnTimeline(timelinePart.data)
+                  : null;
               const advisorOnly =
                 sourceMessage.parts.some(
                   (part) => part.type === ADVISOR_SUGGESTIONS_PART,
@@ -1352,9 +1365,30 @@ export function AgentConversation({
                 ) : null;
               const messageBody = (
                 <>
-                  {from === "assistant" && turnModel ? (
-                    <div className="mb-1 text-[11px] text-muted-foreground">
-                      {turnModel}
+                  {from === "assistant" && (turnModel || timeline) ? (
+                    <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                      {turnModel ? <span>{turnModel}</span> : null}
+                      {timeline ? (
+                        <WorkTurnTrace
+                          messageId={sourceMessage.id}
+                          timing={timeline}
+                          durationMs={timeline.completedAt - timeline.startedAt}
+                          parts={[
+                            ...(sourceMessage.parts as readonly {
+                              type: string;
+                            }[]),
+                            ...timeline.steps,
+                          ]}
+                          modelName={turnModel ?? timeline.modelName}
+                          status="completed"
+                        >
+                          <span data-ui="agent-message-duration">
+                            {formatContentDuration(
+                              timeline.completedAt - timeline.startedAt,
+                            )}
+                          </span>
+                        </WorkTurnTrace>
+                      ) : null}
                     </div>
                   ) : null}
                   {from === "user" ? (

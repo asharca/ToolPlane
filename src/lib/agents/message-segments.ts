@@ -1,3 +1,4 @@
+import type { AgentTurnTimeline } from "@/lib/agents/turn-timeline";
 import type { UIMessage } from "ai";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import type { AdvisorSuggestions } from "@/lib/agents/advisor";
@@ -21,6 +22,7 @@ export type AgentUIData = {
   "context-maintenance": ContextMaintenance;
   model: { providerId: string; model: string };
   "agent-turn-model": { providerId: string; model: string };
+  "agent-timeline": AgentTurnTimeline;
   "advisor-suggestions": AdvisorSuggestions;
   "subagent-activity": {
     type: "reasoning" | "tool";

@@ -33,6 +33,9 @@ export type WorkOutputSnapshot = {
   done: boolean;
   executionStage?: AgentExecutionStage;
   startedAt?: number;
+  completedAt?: number;
+  /** Execution stage transitions, kept for the turn's timing waterfall. */
+  stages?: Array<{ stage: AgentExecutionStage; at: number }>;
   runtimeKind?: string;
   modelName?: string;
   budgetWarning?: BudgetWarning;

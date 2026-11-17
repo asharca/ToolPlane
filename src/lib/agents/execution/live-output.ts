@@ -11,6 +11,8 @@ const MAX_TASKS = 128;
 const MAX_TEXT = 65_536;
 const MAX_ACTIVITIES = 48;
 const MAX_VALUE = 2048;
+/** Bounded so the settled projection stays well inside the task snapshot cap. */
+const MAX_STAGE_MARKS = 512;
 const REPLAY_MS = 60_000;
 const ACTIVE_TTL_MS = 3_600_000;
 type Capture = {
@@ -170,6 +172,9 @@ export function publishTaskStage(taskId: string, stage: AgentExecutionStage) {
   const capture = captureFor(taskId);
   if (!capture || capture.output.executionStage === stage) return;
   capture.output.executionStage = stage;
+  capture.output.stages ??= [];
+  if (capture.output.stages.length < MAX_STAGE_MARKS)
+    capture.output.stages.push({ stage, at: Date.now() });
   notify(taskId);
 }
 /** The model actually answering, e.g. after a fallback switch. */
@@ -288,6 +293,7 @@ export function publishTaskActivity(
           : { depth: activity.source.depth }),
       }
     : undefined;
+  const now = Date.now();
   if (capture.reasoningId) {
     const reasoning = activities.find(
       (item) => item.id === capture.reasoningId,
@@ -298,6 +304,7 @@ export function publishTaskActivity(
         reasoning.source?.subagentId !== source?.subagentId)
     ) {
       reasoning.status = "completed";
+      reasoning.completedAt ??= now;
       capture.reasoningId = undefined;
     }
   }
@@ -316,6 +323,8 @@ export function publishTaskActivity(
       ...(previous?.textOffset === undefined
         ? {}
         : { textOffset: previous.textOffset }),
+      startedAt: previous?.startedAt ?? now,
+      ...(activity.status === "running" ? {} : { completedAt: now }),
     };
     if (activity.status !== "running") capture.reasoningId = undefined;
   } else {
@@ -325,6 +334,15 @@ export function publishTaskActivity(
       ? `tool:${JSON.stringify([source.subagentId, toolCallId])}`
       : `tool:${toolCallId}`;
     const previous = activities.find((item) => item.id === id);
+    const startedAt = previous?.startedAt ?? now;
+    const completedAt =
+      activity.status === "running"
+        ? undefined
+        : (previous?.completedAt ?? now);
+    const durationMs =
+      activity.durationMs ??
+      previous?.durationMs ??
+      (completedAt === undefined ? undefined : completedAt - startedAt);
     next = {
       ...previous,
       id,
@@ -336,9 +354,9 @@ export function publishTaskActivity(
         capture.secrets,
       ),
       ...(source ? { source } : {}),
-      ...(activity.durationMs === undefined
-        ? {}
-        : { durationMs: activity.durationMs }),
+      startedAt,
+      ...(completedAt === undefined ? {} : { completedAt }),
+      ...(durationMs === undefined ? {} : { durationMs }),
       ...(activity.input === undefined
         ? {}
         : { input: safeValue(activity.input, capture.secrets) }),
@@ -388,8 +406,13 @@ export function finishTaskOutput(
   capture.output.done = true;
   capture.output.executionStage = undefined;
   capture.output.messageQueue = { messages: [], pendingMessageCount: 0 };
+  const now = Date.now();
+  capture.output.completedAt ??= now;
   for (const activity of capture.output.activities)
-    if (activity.status === "running") activity.status = status;
+    if (activity.status === "running") {
+      activity.status = status;
+      activity.completedAt ??= now;
+    }
   const runtime: LiveTaskActivity = {
     id: "runtime:final",
     type: "runtime",

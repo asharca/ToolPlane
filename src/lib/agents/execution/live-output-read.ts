@@ -16,7 +16,8 @@ const stage = z.enum([
   "generating",
   "tool-running",
 ]);
-const replaySchema = z.object({
+/** Durable copy of a settled local task's output in `toolplaneLiveOutput`. */
+export const taskOutputReplaySchema = z.object({
   taskId: z.string(),
   text: z.string().max(65_536),
   truncated: z.boolean().optional(),
@@ -40,6 +41,8 @@ const replaySchema = z.object({
         toolCallId: z.string().optional(),
         toolName: z.string().optional(),
         durationMs: z.number().optional(),
+        startedAt: z.number().optional(),
+        completedAt: z.number().optional(),
         input: z.unknown().optional(),
         output: z.unknown().optional(),
         patch: z.string().optional(),
@@ -50,6 +53,11 @@ const replaySchema = z.object({
     )
     .max(49),
   startedAt: z.number().optional(),
+  completedAt: z.number().optional(),
+  stages: z
+    .array(z.object({ stage, at: z.number() }))
+    .max(512)
+    .optional(),
   runtimeKind: z.string().optional(),
   modelName: z.string().optional(),
 });
@@ -76,7 +84,7 @@ export function readTaskOutput(row: A2ATask): LiveTaskOutput {
   if (live && (done ? live.done : live.active))
     return done && !live.text ? { ...live, text } : live;
   const replay = local
-    ? replaySchema.safeParse(task.metadata?.toolplaneLiveOutput)
+    ? taskOutputReplaySchema.safeParse(task.metadata?.toolplaneLiveOutput)
     : null;
   if (done && replay?.success && replay.data.taskId === row.id)
     return {
@@ -139,7 +147,7 @@ export async function recordedTaskOutput(
   });
   if (!row || !isLocalGrant(row.grant as unknown as TaskGrant))
     return { text: "" };
-  const replay = replaySchema.safeParse(
+  const replay = taskOutputReplaySchema.safeParse(
     Task.fromJSON(row.snapshot).metadata?.toolplaneLiveOutput,
   );
   return replay.success && replay.data.taskId === taskId

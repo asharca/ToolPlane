@@ -190,9 +190,15 @@ export async function persist(
       output.active = false;
       output.done = true;
       delete output.executionStage;
+      const settledAt = Date.now();
+      output.completedAt ??= settledAt;
       output.activities = output.activities.map((activity) =>
         activity.status === "running"
-          ? { ...activity, status: outcome }
+          ? {
+              ...activity,
+              status: outcome,
+              completedAt: activity.completedAt ?? settledAt,
+            }
           : activity,
       );
       output.activities.push({

@@ -4,7 +4,12 @@ import { useTranslations } from "next-intl";
 import type { LiveTaskOutput } from "@/lib/agents/execution/live-output-types";
 import { StreamingResponse } from "@/components/agents/streaming-response";
 import { WorkContentBlocks } from "@/components/dashboard/ConversationContentBlocks";
-import { interleaveLiveText } from "@/lib/conversation/content-blocks";
+import {
+  formatContentDuration,
+  interleaveLiveText,
+} from "@/lib/conversation/content-blocks";
+import { agentTurnTimeline } from "@/lib/agents/turn-timeline";
+import { WorkTurnTrace } from "./WorkTurnTrace";
 import type { LiveOutputConnection } from "./useLiveTaskOutput";
 import { AgentMessageQueueView } from "@/components/dashboard/AgentMessageQueue";
 
@@ -49,12 +54,33 @@ export function LiveOutputView({
   const stage = output.executionStage
     ? t(stageKeys[output.executionStage])
     : t("thinking");
+  const timeline = output.done ? agentTurnTimeline(output) : null;
+  const cancelled = output.activities.some(
+    (activity) =>
+      activity.type === "runtime" && activity.status === "cancelled",
+  );
   return (
     <div
       className="min-w-0 space-y-3"
       data-message-id={`live-${output.taskId}`}
       aria-busy={active || undefined}
     >
+      {timeline ? (
+        <div className="text-[11px] text-muted-foreground">
+          <WorkTurnTrace
+            messageId={output.taskId}
+            timing={timeline}
+            durationMs={timeline.completedAt - timeline.startedAt}
+            parts={output.activities}
+            modelName={output.modelName}
+            status={failed ? "failed" : cancelled ? "cancelled" : "completed"}
+          >
+            <span data-ui="task-output-duration">
+              {formatContentDuration(timeline.completedAt - timeline.startedAt)}
+            </span>
+          </WorkTurnTrace>
+        </div>
+      ) : null}
       <StreamingResponse
         status={active ? "streaming" : failed ? "error" : "complete"}
         copyText={!hideText ? output.text : undefined}
