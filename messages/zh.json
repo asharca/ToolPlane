@@ -1220,13 +1220,7 @@
       "noConfiguredModelProviders": "尚未配置模型提供商",
       "configureModelProviders": "配置模型提供商",
       "configurationNavigation": "智能体配置",
-      "navigationGroups": {
-        "basic": "基础",
-        "capabilities": "能力",
-        "execution": "运行",
-        "connections": "接入",
-        "operations": "管理"
-      },
+      "builtInTools": "内置工具",
       "modelRoutingSection": "模型路由",
       "executionSettings": "执行",
       "advisor": "审查顾问",

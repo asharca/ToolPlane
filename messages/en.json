@@ -1220,13 +1220,7 @@
       "noConfiguredModelProviders": "No model providers configured yet",
       "configureModelProviders": "Configure model providers",
       "configurationNavigation": "Agent configuration",
-      "navigationGroups": {
-        "basic": "Basics",
-        "capabilities": "Capabilities",
-        "execution": "Runtime",
-        "connections": "Connections",
-        "operations": "Manage"
-      },
+      "builtInTools": "Built-in tools",
       "modelRoutingSection": "Model routing",
       "executionSettings": "Execution",
       "advisor": "Advisor",

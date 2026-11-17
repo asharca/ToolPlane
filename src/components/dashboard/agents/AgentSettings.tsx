@@ -2,14 +2,7 @@
 import { DialogNav } from "../dialog";
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState } from "react";
-import {
-  Blocks,
-  Cable,
-  Settings2,
-  SlidersHorizontal,
-  Workflow,
-} from "lucide-react";
+import { useState } from "react";
 import { useTranslations } from "next-intl";
 import type { AgentResourceOption } from "@/components/dashboard/agents/AgentResourceSelect";
 import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
@@ -21,7 +14,6 @@ import type {
   AgentOwnSandbox,
   AgentExternalSandbox,
   AgentPiPackageOption,
-  AgentSettingsPage,
   AgentSettingsSection,
 } from "@/components/dashboard/agents/AgentSettingsForm";
 import type { AgentPluginCatalogOption } from "@/components/dashboard/agents/AgentPluginsPanel";
@@ -35,7 +27,7 @@ import { AgentTriggersPanel } from "./AgentTriggersPanel";
 import { AgentUsagePanel } from "../AgentUsagePanel";
 import { AgentClonePanel } from "./AgentClonePanel";
 import { AgentEvolutionPanel } from "./AgentEvolutionPanel";
-import { SettingsSection } from "./SettingsSection";
+import { AgentMemoriesPanel } from "./AgentMemoriesPanel";
 
 const AgentMessagingPanel = dynamic(() =>
   import("@/components/dashboard/agents/AgentMessagingPanel").then(
@@ -97,36 +89,51 @@ type ChannelSettingsData = {
 type PanelTarget =
   | "channels"
   | "a2a"
-  | "triggers"
-  | "usage"
   | "changelog"
   | "evolution"
-  | "clone"
-  | "memories";
-/** Every value accepted by `?settings=`; each lands on a page and a section. */
+  | "memories"
+  | "triggers"
+  | "usage"
+  | "clone";
+/** Every value accepted by `?settings=`. */
 export type AgentSettingsTarget = AgentSettingsSection | PanelTarget;
-type SettingsPage = AgentSettingsPage | "connections" | "operations";
+type SettingsTab = AgentSettingsTarget;
 
-const PANEL_PAGE: Record<PanelTarget, SettingsPage> = {
-  channels: "connections",
-  a2a: "connections",
-  triggers: "connections",
-  usage: "operations",
-  changelog: "operations",
-  evolution: "operations",
-  clone: "operations",
-  memories: "capabilities",
-};
+const AGENT_SETTINGS_SECTIONS: readonly AgentSettingsSection[] = [
+  "general",
+  "instructions",
+  "builtInTools",
+  "streamRules",
+  "toolApproval",
+  "mcp",
+  "skills",
+  "piPackages",
+  "sandboxes",
+  "subAgents",
+  "advanced",
+];
 
-function pageFor(target: AgentSettingsTarget): SettingsPage {
-  return target in PANEL_PAGE
-    ? PANEL_PAGE[target as PanelTarget]
-    : AGENT_SETTINGS_SECTION_PAGE[target as AgentSettingsSection];
+function isAgentSettingsSection(tab: SettingsTab): tab is AgentSettingsSection {
+  return AGENT_SETTINGS_SECTIONS.includes(tab as AgentSettingsSection);
 }
 
-/** Memory management lives in the long-term memory feature row. */
-function sectionFor(target: AgentSettingsTarget) {
-  return target === "memories" ? "builtInTools" : target;
+function resolveSettingsTab({
+  initialSettingsTab,
+  executable,
+}: {
+  initialSettingsTab?: AgentSettingsTarget | null;
+  executable: boolean;
+}): SettingsTab {
+  const requested = initialSettingsTab ?? "general";
+  if (
+    !executable &&
+    (requested === "channels" ||
+      requested === "subAgents" ||
+      requested === "streamRules")
+  ) {
+    return "general";
+  }
+  return requested;
 }
 
 export function AgentSettings({
@@ -151,59 +158,43 @@ export function AgentSettings({
   const t = useTranslations("console.agents");
   const automationT = useTranslations("console.agentAutomation");
   const usageT = useTranslations("console.agentUsage");
-  const supportsChannelSettings = isExecutableAgentRuntimeKind(
-    settings.runtimeKind,
-  );
-  const initialTarget =
-    initialSettingsTab === "channels" && !supportsChannelSettings
-      ? "general"
-      : (initialSettingsTab ?? "general");
-  const [page, setPage] = useState<SettingsPage>(pageFor(initialTarget));
-  // The section to bring into view after the next render of its page.
-  const [scrollTarget, setScrollTarget] = useState<string | null>(
-    initialTarget === "general" ? null : sectionFor(initialTarget),
+  const approvalT = useTranslations("console.toolApproval");
+  const executable = isExecutableAgentRuntimeKind(settings.runtimeKind);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>(() =>
+    resolveSettingsTab({ initialSettingsTab, executable }),
   );
   const [dirtySections, setDirtySections] = useState<AgentSettingsSection[]>(
     [],
   );
-  const contentRef = useRef<HTMLDivElement>(null);
+  const formSection = isAgentSettingsSection(settingsTab) ? settingsTab : null;
 
-  useEffect(() => {
-    if (!scrollTarget) return;
-    const frame = requestAnimationFrame(() => {
-      contentRef.current
-        ?.querySelector(`[data-settings-section="${scrollTarget}"]`)
-        ?.scrollIntoView({ block: "start" });
-      setScrollTarget(null);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [scrollTarget]);
-
-  const pages = [
-    { id: "basic", icon: SlidersHorizontal, top: "general" },
-    { id: "capabilities", icon: Blocks, top: "builtInTools" },
-    { id: "execution", icon: Workflow, top: "toolApproval" },
-    {
-      id: "connections",
-      icon: Cable,
-      top: supportsChannelSettings ? "channels" : "a2a",
-    },
-    { id: "operations", icon: Settings2, top: "usage" },
-  ] satisfies Array<{
-    id: SettingsPage;
-    icon: typeof Settings2;
-    top: string;
-  }>;
-
-  function show(section: AgentSettingsSection) {
-    setPage(AGENT_SETTINGS_SECTION_PAGE[section]);
-    setScrollTarget(section);
-  }
-
-  const formPage =
-    page === "basic" || page === "capabilities" || page === "execution"
-      ? page
-      : null;
+  const navigationItems: Array<{ id: SettingsTab; label: string }> = [
+    { id: "general", label: t("basic") },
+    { id: "instructions", label: t("instructions") },
+    { id: "sandboxes", label: t("sandboxes") },
+    { id: "advanced", label: t("advanced") },
+    { id: "builtInTools", label: t("builtInTools") },
+    ...(executable
+      ? [{ id: "streamRules" as const, label: t("streamRules.title") }]
+      : []),
+    { id: "toolApproval", label: approvalT("title") },
+    { id: "memories", label: t("memories") },
+    { id: "mcp", label: t("mcp") },
+    { id: "skills", label: t("skills") },
+    { id: "piPackages", label: t("piPackages") },
+    ...(executable
+      ? [{ id: "subAgents" as const, label: t("subAgents") }]
+      : []),
+    { id: "a2a", label: t("a2a.title") },
+    { id: "triggers", label: automationT("triggers") },
+    { id: "usage", label: usageT("title") },
+    { id: "changelog", label: t("changelogTab") },
+    { id: "evolution", label: t("evolutionTab") },
+    { id: "clone", label: t("cloneAgent") },
+    ...(executable
+      ? [{ id: "channels" as const, label: t("channelSettingsTab") }]
+      : []),
+  ];
 
   return (
     <div className="h-full min-h-0">
@@ -214,37 +205,18 @@ export function AgentSettings({
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           <DialogNav
             label={t("configurationNavigation")}
-            items={pages.map((item) => ({
-              id: item.id,
-              label: t(`navigationGroups.${item.id}`),
-              icon: <item.icon aria-hidden="true" />,
-              dirty: dirtySections.some(
-                (section) => AGENT_SETTINGS_SECTION_PAGE[section] === item.id,
-              ),
+            items={navigationItems.map((item) => ({
+              ...item,
+              dirty: dirtySections.includes(item.id as AgentSettingsSection),
             }))}
-            active={page}
-            onSelect={(id) => {
-              const next = pages.find((item) => item.id === id);
-              if (!next) return;
-              setPage(next.id);
-              setScrollTarget(next.top);
-            }}
-            footer={
-              settings.publishedRevision
-                ? t("revisions.published", {
-                    version: settings.publishedRevision.version,
-                  })
-                : t("revisions.unpublished")
-            }
+            active={settingsTab}
+            onSelect={(id) => setSettingsTab(id as SettingsTab)}
           />
-          <div
-            ref={contentRef}
-            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-          >
-            {/* The form stays mounted so every page's fields are saved together. */}
+          <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+            {/* The form stays mounted so every section's fields are saved together. */}
             <div
-              hidden={!formPage}
-              className={formPage ? "h-full min-h-0" : "hidden"}
+              hidden={!formSection}
+              className={formSection ? "h-full min-h-0" : "hidden"}
             >
               <AgentSettingsForm
                 // Only saved bindings reset the draft; a workspace install from the panel must not.
@@ -286,96 +258,97 @@ export function AgentSettings({
                 publishedRevision={settings.publishedRevision}
                 canManageCredentials={settings.canManageCredentials}
                 canApprovePluginSync={settings.canApprovePluginSync}
-                activePage={formPage ?? "basic"}
-                initialMemoryManagerOpen={initialTarget === "memories"}
-                onSectionChange={show}
+                activePage={
+                  formSection
+                    ? AGENT_SETTINGS_SECTION_PAGE[formSection]
+                    : "basic"
+                }
+                activeSection={formSection ?? undefined}
+                onSectionChange={setSettingsTab}
                 onDirtySectionsChange={setDirtySections}
                 className="flex h-full min-h-0 flex-col"
               />
             </div>
-            {page === "connections" ? (
-              <div className="h-full min-w-0 space-y-2 overflow-y-auto pb-5">
-                {supportsChannelSettings ? (
-                  <SettingsSection
-                    id="channels"
-                    title={t("channelSettingsTab")}
-                    flush
-                  >
-                    <AgentMessagingPanel
-                      showHeader={false}
-                      slug={slug}
-                      agentId={agentId}
-                      sandboxId={settings.ownSandbox?.id}
-                      connections={channelSettings.connections}
-                      ready={ready}
-                    />
-                  </SettingsSection>
-                ) : null}
-                <SettingsSection id="a2a" title={t("a2a.title")} flush>
-                  <AgentA2APanel
-                    key={`${slug}:${agentId}:${initialA2ATaskId ?? ""}`}
-                    slug={slug}
-                    agentId={agentId}
-                    runtimeKind={settings.runtimeKind}
-                    initialTaskId={initialA2ATaskId}
-                  />
-                </SettingsSection>
-                <SettingsSection
-                  id="triggers"
-                  title={automationT("triggers")}
-                  flush
-                >
-                  <AgentTriggersPanel
-                    key={`${slug}:${agentId}:triggers`}
-                    slug={slug}
-                    agentId={agentId}
-                    canManage={settings.canApprovePluginSync ?? false}
-                  />
-                </SettingsSection>
+            {settingsTab === "evolution" ? (
+              <div className="h-full min-w-0 overflow-y-auto">
+                <AgentEvolutionPanel
+                  key={agentId}
+                  agentId={agentId}
+                  currentRevisionId={settings.publishedRevision?.id ?? null}
+                />
               </div>
-            ) : page === "operations" ? (
-              <div className="h-full min-w-0 space-y-2 overflow-y-auto pb-5">
-                <SettingsSection id="usage" title={usageT("title")} flush>
-                  <AgentUsagePanel
-                    key={`${slug}:${agentId}:usage`}
-                    agentId={agentId}
-                    canManage={settings.canApprovePluginSync ?? false}
-                  />
-                </SettingsSection>
-                <SettingsSection id="changelog" title={t("changelogTab")} flush>
-                  <RevisionChangelog
-                    showHeader={false}
-                    key={agentId}
-                    url={`/api/v1/agents/${encodeURIComponent(agentId)}/revisions`}
-                    diffUrl={`/api/v1/agents/${encodeURIComponent(agentId)}/revisions/diff`}
-                    title={t("changelogTab")}
-                    className="space-y-5 px-6 py-5"
-                  />
-                </SettingsSection>
-                <SettingsSection id="evolution" title={t("evolutionTab")} flush>
-                  <AgentEvolutionPanel
-                    key={agentId}
-                    agentId={agentId}
-                    currentRevisionId={settings.publishedRevision?.id ?? null}
-                  />
-                </SettingsSection>
-                <SettingsSection id="clone" title={t("cloneAgent")} flush>
-                  <AgentClonePanel
-                    slug={slug}
-                    agentId={agentId}
-                    agentName={settings.name}
-                    mcpCount={
-                      settings.deployments.filter((item) => item.checked).length
-                    }
-                    skillCount={
-                      settings.skills.filter((item) => item.checked).length
-                    }
-                    piPackageCount={
-                      settings.piPackages?.filter((pkg) => pkg.enabledReleaseId)
-                        .length ?? 0
-                    }
-                  />
-                </SettingsSection>
+            ) : settingsTab === "memories" ? (
+              <div className="h-full min-w-0 overflow-y-auto">
+                <AgentMemoriesPanel
+                  key={`${slug}:${agentId}:memories`}
+                  slug={slug}
+                  agentId={agentId}
+                />
+              </div>
+            ) : settingsTab === "triggers" ? (
+              <div className="h-full overflow-y-auto">
+                <AgentTriggersPanel
+                  key={`${slug}:${agentId}:triggers`}
+                  slug={slug}
+                  agentId={agentId}
+                  canManage={settings.canApprovePluginSync ?? false}
+                />
+              </div>
+            ) : settingsTab === "usage" ? (
+              <div className="h-full overflow-y-auto">
+                <AgentUsagePanel
+                  key={`${slug}:${agentId}:usage`}
+                  agentId={agentId}
+                  canManage={settings.canApprovePluginSync ?? false}
+                />
+              </div>
+            ) : settingsTab === "channels" && executable ? (
+              <div className="h-full w-full overflow-y-auto">
+                <AgentMessagingPanel
+                  slug={slug}
+                  agentId={agentId}
+                  sandboxId={settings.ownSandbox?.id}
+                  connections={channelSettings.connections}
+                  ready={ready}
+                />
+              </div>
+            ) : settingsTab === "a2a" ? (
+              <div className="h-full overflow-y-auto">
+                <AgentA2APanel
+                  key={`${slug}:${agentId}:${initialA2ATaskId ?? ""}`}
+                  slug={slug}
+                  agentId={agentId}
+                  runtimeKind={settings.runtimeKind}
+                  initialTaskId={initialA2ATaskId}
+                />
+              </div>
+            ) : settingsTab === "clone" ? (
+              <div className="h-full overflow-y-auto">
+                <AgentClonePanel
+                  slug={slug}
+                  agentId={agentId}
+                  agentName={settings.name}
+                  mcpCount={
+                    settings.deployments.filter((item) => item.checked).length
+                  }
+                  skillCount={
+                    settings.skills.filter((item) => item.checked).length
+                  }
+                  piPackageCount={
+                    settings.piPackages?.filter((pkg) => pkg.enabledReleaseId)
+                      .length ?? 0
+                  }
+                />
+              </div>
+            ) : settingsTab === "changelog" ? (
+              <div className="h-full overflow-y-auto">
+                <RevisionChangelog
+                  key={agentId}
+                  url={`/api/v1/agents/${encodeURIComponent(agentId)}/revisions`}
+                  diffUrl={`/api/v1/agents/${encodeURIComponent(agentId)}/revisions/diff`}
+                  title={t("changelogTab")}
+                  className="space-y-6 px-6 py-5"
+                />
               </div>
             ) : null}
           </div>
