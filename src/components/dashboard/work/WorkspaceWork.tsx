@@ -87,6 +87,7 @@ import {
   type A2AContextSummary,
 } from "./A2AContextView";
 import { createWorkCompletionTransition } from "./completion-transition";
+import { WorkTurnTrace } from "./WorkTurnTrace";
 import { useWorkCompletionNotification } from "./useWorkCompletionNotification";
 import {
   ComposerModelSelect,
@@ -400,6 +401,8 @@ type WorkPart = {
   deploymentName?: string;
   originalToolName?: string;
   durationMs?: number;
+  startedAt?: number;
+  completedAt?: number;
   input?: unknown;
   output?: unknown;
   patch?: string;
@@ -424,6 +427,8 @@ type WorkActivity = {
   deploymentName?: string;
   originalToolName?: string;
   durationMs?: number;
+  startedAt?: number;
+  completedAt?: number;
   input?: unknown;
   output?: unknown;
   patch?: string;
@@ -496,7 +501,16 @@ type WorkTiming = {
   approvalWaitMs?: number;
   runtimeKind?: string;
   modelName?: string;
+  stages?: Array<{ stage: AgentExecutionStage; at: number }>;
 };
+
+const EXECUTION_STAGES: ReadonlySet<string> = new Set<AgentExecutionStage>([
+  "queued",
+  "preparing",
+  "waiting-model",
+  "generating",
+  "tool-running",
+]);
 
 type WorkTreeAction = {
   kind: "edit" | "retry" | "branch";
@@ -669,6 +683,18 @@ function parseWorkTiming(value: unknown): WorkTiming | null {
     data.approvalWaitMs >= 0
       ? data.approvalWaitMs
       : undefined;
+  const stages = Array.isArray(data.stages)
+    ? data.stages.flatMap((value: unknown) => {
+        if (!value || typeof value !== "object") return [];
+        const mark = value as { stage?: unknown; at?: unknown };
+        return typeof mark.stage === "string" &&
+          EXECUTION_STAGES.has(mark.stage) &&
+          typeof mark.at === "number" &&
+          Number.isFinite(mark.at)
+          ? [{ stage: mark.stage as AgentExecutionStage, at: mark.at }]
+          : [];
+      })
+    : [];
   return {
     startedAt,
     ...(completedAt === undefined ? {} : { completedAt }),
@@ -680,6 +706,7 @@ function parseWorkTiming(value: unknown): WorkTiming | null {
     ...(typeof data.modelName === "string" && data.modelName
       ? { modelName: data.modelName }
       : {}),
+    ...(stages.length ? { stages } : {}),
   };
 }
 
@@ -941,6 +968,8 @@ function WorkTranscript({
                       deploymentName: activity.deploymentName,
                       originalToolName: activity.originalToolName,
                       durationMs: activity.durationMs,
+                      startedAt: activity.startedAt,
+                      completedAt: activity.completedAt,
                       input: activity.input,
                       output: activity.output,
                       patch: activity.patch,
@@ -956,6 +985,8 @@ function WorkTranscript({
                       source: activity.source,
                       text: activity.text,
                       status: activity.status,
+                      startedAt: activity.startedAt,
+                      completedAt: activity.completedAt,
                     };
                   }
                   return {
@@ -1175,13 +1206,6 @@ function WorkTranscript({
                       parts={message.parts}
                       streaming={isStreamingMessage}
                       activeLabel={t(executionStageKeys[executionStage])}
-                      headerExtra={
-                        <WorkElapsed
-                          timing={messageTiming}
-                          live={isStreamingMessage}
-                          dataUi="work-process-duration"
-                        />
-                      }
                     />
                   </div>
                   {!rawText ||
@@ -1201,6 +1225,7 @@ function WorkTranscript({
           const showIdentity =
             messageIndex === 0 ||
             transcript[messageIndex - 1]?.role !== "assistant";
+          const messageDuration = workTimingDuration(messageTiming);
           const replyMetadata =
             message.role !== "user" ? (
               <div
@@ -1224,11 +1249,39 @@ function WorkTranscript({
                     {messageTime.label}
                   </time>
                 ) : null}
-                <WorkElapsed
-                  timing={messageTiming}
-                  live={isStreamingMessage}
-                  dataUi="work-message-duration"
-                />
+                {messageTiming &&
+                !isStreamingMessage &&
+                messageDuration !== undefined ? (
+                  <WorkTurnTrace
+                    messageId={message.id}
+                    timing={messageTiming}
+                    durationMs={messageDuration}
+                    parts={message.parts}
+                    modelName={messageModelName}
+                    status={
+                      processFailed
+                        ? "failed"
+                        : message.parts.some(
+                              (part) =>
+                                part.type === "work-runtime" &&
+                                part.status === "cancelled",
+                            )
+                          ? "cancelled"
+                          : "completed"
+                    }
+                  >
+                    <WorkElapsed
+                      timing={messageTiming}
+                      dataUi="work-message-duration"
+                    />
+                  </WorkTurnTrace>
+                ) : (
+                  <WorkElapsed
+                    timing={messageTiming}
+                    live={isStreamingMessage}
+                    dataUi="work-message-duration"
+                  />
+                )}
               </div>
             ) : null;
           const treeActions =
