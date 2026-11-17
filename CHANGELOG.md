@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.41.0](https://github.com/asharca/ToolPlane/compare/v0.40.0...v0.41.0) (2026-11-17)
+
+
+### Features
+
+* **agents:** 对话、频道与 A2A 回复支持耗时瀑布图 ([#263](https://github.com/asharca/ToolPlane/issues/263)) ([4fed68f](https://github.com/asharca/ToolPlane/commit/4fed68f3f3704841b899bc46245942dc5854926e))
+* **work:** 回复总耗时可展开为步骤瀑布图 ([#261](https://github.com/asharca/ToolPlane/issues/261)) ([78607d1](https://github.com/asharca/ToolPlane/commit/78607d19363489c27bc33629d0e937dff1ad3f6f))
+
+
+### Bug Fixes
+
+* **agents:** 恢复智能体设置的分项侧栏 ([f947917](https://github.com/asharca/ToolPlane/commit/f9479174d70e5a9bc32149a66e94c6b942950d24))
+* **channels:** 按工具调用分段发送频道回复，插话直接进入当前上下文 ([#260](https://github.com/asharca/ToolPlane/issues/260)) ([0873664](https://github.com/asharca/ToolPlane/commit/0873664da0acbee694352a6db158888d5bed6031))
+
 ## [0.40.0](https://github.com/asharca/ToolPlane/compare/v0.39.0...v0.40.0) (2026-11-17)
 
 
