@@ -600,3 +600,11 @@
 - **证据（2026-11-17，用户报告 10030）**：PR [#263](https://github.com/asharca/ToolPlane/pull/263) 只在 `AgentConversation` 读取 `data-agent-timeline`，但频道会话在 Work 中走 `channelConversation` 分支、由 `WorkTranscript` 渲染，它只认 `data-work-timing`；10030 上频道回复已带 timeline，页面却无耗时入口。同时 `conversationOutputPersisted` 在回复落库后隐藏 `LiveOutputView`，而频道／对话回复只落库正文，工具记录随之消失。现由 timeline 步骤携带实时输出中已截断、已脱敏的工具输入输出，并按持久化正文重新锚定位置；`WorkTranscript` 与 `AgentConversation` 都从中还原过程与瀑布图。
 - **下次怎么验证**：在用户实际使用的入口（Work 的频道会话、对话会话）各看一次已落库的回复：头部耗时可打开瀑布图、工具可展开到输入输出；再刷新页面确认不依赖实时视图。依据：`src/lib/agents/turn-timeline.ts`、`src/components/dashboard/work/WorkspaceWork.tsx`、`src/components/dashboard/agents/AgentConversation.tsx`。
 - **确认日期**：2026-11-17（用户报告）。
+
+### TP-L057：socket-proxy ACL 必须放行 session-MCP 捕获用到的 docker 动词
+
+**规则**：生产环境的 `DOCKER_HOST` 走 `tecnativa/docker-socket-proxy` 时，ACL 不仅要覆盖 create/start/cp/inspect，还必须包含 `COMMIT=1`；否则保存含 session MCP 包（npm/pypi）的 Agent 设置必然失败。报错在浏览器端只显示生产环境的 RSC digest，真实原因要去容器日志里找 `next.request.error`。
+
+- **证据（2026-11-17，用户报告 10030 保存报错）**：`tp.rhzy.ai` Work 页打开 Agent 设置（拦截路由 `(.)agents/[agentId]`）点保存，Server Action 调 `prepareSessionMcpRuntimeImage` 捕获运行时镜像，`docker commit` 被 socket-proxy 以 `403 Forbidden (administrative rules)` 拒绝，`captureDocker` 抛出 `MCP_CAPTURE_DOCKER_FAILED`。逐项验证 create/start/inspect/cp/manifest 均放行，仅 commit 被拒；socket-proxy 环境缺 `COMMIT`（模板 haproxy.cfg 中 `^/commit` 需 `env(COMMIT)`）。在 `/data/coolify/applications/nwfmi1cv32a15yxzy92o2b3i/docker-compose.yaml` 补 `COMMIT: 1` 并重建 proxy 后，从 app 容器实测 create→start→commit→inspect→rm→rmi 全部成功。注意 `captureDocker` 丢弃 stderr，定位时必须直接在 app 容器内手工重放各 docker 动词。
+- **下次怎么验证**：改动 socket-proxy ACL 后，在 app 容器内重放捕获链全部动词（create/start/inspect/cp/commit/rm/rmi），再让用户重试一次保存。依据：[捕获实现](src/lib/process/mcp-runtime-image.ts)、haproxy.cfg.template `^/commit` 规则。
+- **确认日期**：2026-11-17（用户报告）。
