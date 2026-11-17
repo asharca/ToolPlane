@@ -51,6 +51,8 @@ export type WorkOutputActivity = {
   deploymentName?: string;
   originalToolName?: string;
   durationMs?: number;
+  startedAt?: number;
+  completedAt?: number;
   input?: unknown;
   output?: unknown;
   patch?: string;

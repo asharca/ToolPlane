@@ -17,7 +17,13 @@ export type ToolBlockStatus =
   | "cancelled";
 
 export type ContentStep =
-  | { kind: "thinking"; id: string; text: string; streaming: boolean }
+  | {
+      kind: "thinking";
+      id: string;
+      text: string;
+      streaming: boolean;
+      durationMs?: number;
+    }
   | {
       kind: "tool";
       id: string;
@@ -190,12 +196,21 @@ export function toContentBlocks(
       return;
     }
     if (part.type === "reasoning") {
+      const streaming = options.streaming && part.state !== "done";
+      const durationMs =
+        !streaming &&
+        typeof part.startedAt === "number" &&
+        typeof part.completedAt === "number" &&
+        part.completedAt >= part.startedAt
+          ? part.completedAt - part.startedAt
+          : undefined;
       appendStep(
         {
           kind: "thinking",
           id,
           text: typeof part.text === "string" ? part.text : "",
-          streaming: options.streaming && part.state !== "done",
+          streaming,
+          ...(durationMs === undefined ? {} : { durationMs }),
         },
         partIndex,
       );
@@ -292,6 +307,26 @@ export function toContentBlocks(
   return blocks;
 }
 
+export function displayToolName(name: string): string {
+  return name.replace(/^(?:mcp__)?tp_\d+_[A-Za-z0-9_-]+__/, "");
+}
+
+/** A Work tool record's label: the MCP server and its own tool name when known. */
+export function workToolName(part: Readonly<Record<string, unknown>>): string {
+  if (
+    typeof part.deploymentName === "string" &&
+    part.deploymentName &&
+    typeof part.originalToolName === "string" &&
+    part.originalToolName
+  )
+    return `${part.deploymentName} · ${part.originalToolName}`;
+  if (typeof part.originalToolName === "string" && part.originalToolName)
+    return part.originalToolName;
+  return typeof part.toolName === "string" && part.toolName
+    ? part.toolName
+    : "Tool";
+}
+
 /** Work's persisted parts and live activities share this display-only adapter.
  * Keep every source slot, including ignored metadata, so streamed IDs stay stable.
  */
@@ -323,10 +358,7 @@ export function workContentParts(
       return {
         ...part,
         type: "dynamic-tool",
-        toolName:
-          part.deploymentName && part.originalToolName
-            ? `${part.deploymentName} · ${part.originalToolName}`
-            : (part.originalToolName ?? part.toolName ?? "Tool"),
+        toolName: workToolName(part),
         state:
           part.isError || status === "failed"
             ? "output-error"

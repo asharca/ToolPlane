@@ -36,6 +36,7 @@ import {
 } from "@/lib/agents/advisor";
 import {
   contentProcessStatus,
+  displayToolName,
   splitReasoning,
   toContentBlocks,
   workContentParts,
@@ -60,7 +61,6 @@ type Props = {
   parts: readonly { type: string; [key: string]: unknown }[];
   streaming: boolean;
   activeLabel?: string;
-  headerExtra?: ReactNode;
   processDataTypes?: readonly `data-${string}`[];
   renderDataStep?: (
     step: Extract<ContentStep, { kind: "data" }>,
@@ -71,10 +71,6 @@ type Props = {
 
 type ProcessBlock = Extract<ContentBlock, { kind: "process" }>;
 type ToolStep = Extract<ContentStep, { kind: "tool" }>;
-
-function displayToolName(name: string): string {
-  return name.replace(/^(?:mcp__)?tp_\d+_[A-Za-z0-9_-]+__/, "");
-}
 
 /** Tool payloads may already be serialized JSON; pretty-print instead of re-quoting. */
 function formatPayload(value: unknown): string {
@@ -190,9 +186,11 @@ function liveReasoningTitle(steps: readonly ContentStep[]): string | undefined {
 function ConversationThinkingStep({
   reasoning: { title, body },
   streaming,
+  durationMs,
 }: {
   reasoning: ReasoningOutline;
   streaming: boolean;
+  durationMs?: number;
 }) {
   const t = useTranslations("console.work");
   const [expanded, setExpanded] = useState(false);
@@ -200,14 +198,22 @@ function ConversationThinkingStep({
     () => (expanded ? assistantCodeRenderers(body) : undefined),
     [expanded, body],
   );
+  const duration = formatContentDuration(durationMs);
+  const durationLabel = duration ? (
+    <span className="shrink-0 font-normal tabular-nums opacity-70">
+      {duration}
+    </span>
+  ) : null;
   if (!body)
     return (
-      <div className="py-1 text-xs font-medium leading-relaxed text-muted-foreground">
-        {title}
+      <div className="flex items-baseline gap-2 py-1 text-xs font-medium leading-relaxed text-muted-foreground">
+        <span className="min-w-0">{title}</span>
+        {durationLabel}
       </div>
     );
   const heading =
-    title ?? (expanded ? t(streaming ? "thinking" : "thought") : undefined);
+    title ??
+    (expanded || duration ? t(streaming ? "thinking" : "thought") : undefined);
   return (
     <div className="min-w-0 text-xs leading-relaxed text-muted-foreground">
       <button
@@ -216,7 +222,12 @@ function ConversationThinkingStep({
         onClick={() => setExpanded((value) => !value)}
         className="block w-full rounded-md py-1 text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
       >
-        {heading ? <span className="block font-medium">{heading}</span> : null}
+        {heading ? (
+          <span className="flex items-baseline gap-2 font-medium">
+            <span className="min-w-0">{heading}</span>
+            {durationLabel}
+          </span>
+        ) : null}
         {expanded ? null : (
           <span className="line-clamp-2 whitespace-pre-wrap break-words">
             {body.replace(/^\*\*(.+?)\*\*[ \t]*$/gm, "$1")}
@@ -338,12 +349,10 @@ function ConversationToolStep({ step }: { step: ToolStep }) {
 function ConversationProcessBlock({
   block,
   activeLabel,
-  headerExtra,
   renderDataStep,
 }: {
   block: ProcessBlock;
   activeLabel?: string;
-  headerExtra?: ReactNode;
   renderDataStep?: Props["renderDataStep"];
 }) {
   const t = useTranslations("console.work");
@@ -417,7 +426,6 @@ function ConversationProcessBlock({
         <span className="min-w-0 truncate">
           {working ? <ThinkingShimmer>{label}</ThinkingShimmer> : summary}
         </span>
-        {headerExtra}
         <ChevronDown
           aria-hidden="true"
           className={cn(
@@ -464,6 +472,7 @@ function ConversationProcessBlock({
                         <ConversationThinkingStep
                           reasoning={item.reasoning}
                           streaming={item.step.streaming}
+                          durationMs={item.step.durationMs}
                         />
                       ) : (
                         content
@@ -556,7 +565,6 @@ export function ConversationContentBlocks({
   parts,
   streaming,
   activeLabel,
-  headerExtra,
   processDataTypes,
   renderDataStep,
   toolOverride,
@@ -614,7 +622,7 @@ export function ConversationContentBlocks({
     );
   return (
     <div className="w-full min-w-0 space-y-3">
-      {blocks.map((block, index) => {
+      {blocks.map((block) => {
         if (block.kind === "stream-rule")
           return <StreamRuleNotice key={block.id} trigger={block.trigger} />;
         if (block.kind === "text")
@@ -641,11 +649,6 @@ export function ConversationContentBlocks({
             key={block.id}
             block={block}
             activeLabel={streaming ? activeLabel : undefined}
-            headerExtra={
-              blocks.findLastIndex((item) => item.kind === "process") === index
-                ? headerExtra
-                : undefined
-            }
             renderDataStep={renderDataStep}
           />
         );
