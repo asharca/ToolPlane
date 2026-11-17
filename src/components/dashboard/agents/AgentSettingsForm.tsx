@@ -211,6 +211,8 @@ type Props = {
   canApprovePluginSync?: boolean;
   className?: string;
   activePage?: AgentSettingsPage;
+  /** When set, only this section is visible. Others stay mounted so one save covers them. */
+  activeSection?: AgentSettingsSection;
   initialMemoryManagerOpen?: boolean;
   /** Asks the container to show a section, e.g. after a validation error. */
   onSectionChange?: (section: AgentSettingsSection) => void;
@@ -255,6 +257,9 @@ export function AgentSettingsForm(props: Props) {
   const settingsState = useTranslations("common");
   const [localPage, setLocalPage] = useState<AgentSettingsPage>("basic");
   const page = props.activePage ?? localPage;
+  function showSection(id: AgentSettingsSection) {
+    return !props.activeSection || props.activeSection === id;
+  }
   function reveal(section: AgentSettingsSection) {
     setLocalPage(AGENT_SETTINGS_SECTION_PAGE[section]);
     props.onSectionChange?.(section);
@@ -845,7 +850,7 @@ export function AgentSettingsForm(props: Props) {
         <div className="space-y-5">
           <div hidden={Boolean(review)} className="space-y-8">
             {/* Outside the form: the memory manager has forms of its own. */}
-            {page === "capabilities" ? (
+            {page === "capabilities" && showSection("builtInTools") ? (
               <SettingsSection
                 id="builtInTools"
                 title={t("builtinFeatures.title")}
@@ -945,7 +950,7 @@ export function AgentSettingsForm(props: Props) {
               />
               <fieldset disabled={pending} className="min-w-0 space-y-8">
                 <section
-                  hidden={!showBasics}
+                  hidden={!showBasics || !showSection("general")}
                   data-settings-section="general"
                   className="scroll-mt-4 space-y-5"
                 >
@@ -1053,7 +1058,7 @@ export function AgentSettingsForm(props: Props) {
                   </div>
                 </section>
                 <section
-                  hidden={!showBasics}
+                  hidden={!showBasics || !showSection("instructions")}
                   data-settings-section="instructions"
                   className="scroll-mt-4 space-y-5"
                 >
@@ -1089,56 +1094,65 @@ export function AgentSettingsForm(props: Props) {
                   />
                 </section>
                 <div hidden={page !== "capabilities"} className="space-y-8">
-                  <AgentResourceList
-                    id="mcp"
-                    icon={Server}
-                    label={t("mcp")}
-                    name="deploymentId"
-                    options={deployments}
-                    selectedIds={deploymentIds}
-                    disabled={pending}
-                    onSelectionChange={(next) => {
-                      setDeploymentIds(next);
-                      changed();
-                    }}
-                  />
-                  <AgentResourceList
-                    id="skills"
-                    icon={PackageCheck}
-                    label={t("skills")}
-                    name="installedSkillId"
-                    options={skills}
-                    selectedIds={skillIds}
-                    disabled={pending}
-                    onSelectionChange={(next) => {
-                      setSkillIds(next);
-                      changed();
-                    }}
-                  />
-                  <AgentPluginsPanel
-                    title={t("piPackages")}
-                    slug={slug}
-                    agentId={agentId}
-                    runtimeKind={runtimeKind}
-                    options={piPackages}
-                    catalog={pluginCatalog}
-                    deployments={pluginDeployments}
-                    packages={packages}
-                    applied={appliedConfig?.packages ?? []}
-                    canManage={canApprovePluginSync}
-                    locked={dirty || pending}
-                    flowContext={pluginFlow.context}
-                    flowResult={pluginFlow.result}
-                    clearFlowResult={pluginFlow.clearResult}
-                    onAdd={(listingId) => selectPlugin(listingId, piPackages)}
-                    onInstalled={pluginFlow.add}
-                    onChange={(next) => {
-                      setPackages(next);
-                      changed();
-                    }}
-                  />
+                  <div hidden={!showSection("mcp")}>
+                    <AgentResourceList
+                      id="mcp"
+                      icon={Server}
+                      label={t("mcp")}
+                      name="deploymentId"
+                      options={deployments}
+                      selectedIds={deploymentIds}
+                      disabled={pending}
+                      onSelectionChange={(next) => {
+                        setDeploymentIds(next);
+                        changed();
+                      }}
+                    />
+                  </div>
+                  <div hidden={!showSection("skills")}>
+                    <AgentResourceList
+                      id="skills"
+                      icon={PackageCheck}
+                      label={t("skills")}
+                      name="installedSkillId"
+                      options={skills}
+                      selectedIds={skillIds}
+                      disabled={pending}
+                      onSelectionChange={(next) => {
+                        setSkillIds(next);
+                        changed();
+                      }}
+                    />
+                  </div>
+                  <div hidden={!showSection("piPackages")}>
+                    <AgentPluginsPanel
+                      title={t("piPackages")}
+                      slug={slug}
+                      agentId={agentId}
+                      runtimeKind={runtimeKind}
+                      options={piPackages}
+                      catalog={pluginCatalog}
+                      deployments={pluginDeployments}
+                      packages={packages}
+                      applied={appliedConfig?.packages ?? []}
+                      canManage={canApprovePluginSync}
+                      locked={dirty || pending}
+                      flowContext={pluginFlow.context}
+                      flowResult={pluginFlow.result}
+                      clearFlowResult={pluginFlow.clearResult}
+                      onAdd={(listingId) => selectPlugin(listingId, piPackages)}
+                      onInstalled={pluginFlow.add}
+                      onChange={(next) => {
+                        setPackages(next);
+                        changed();
+                      }}
+                    />
+                  </div>
                   {/* Subagents save through their own request, not the form. */}
-                  <div onChange={(event) => event.stopPropagation()}>
+                  <div
+                    hidden={!showSection("subAgents")}
+                    onChange={(event) => event.stopPropagation()}
+                  >
                     <SubagentResources
                       title={t("subAgents")}
                       slug={slug}
@@ -1156,7 +1170,11 @@ export function AgentSettingsForm(props: Props) {
                   </div>
                 </div>
                 <div hidden={page !== "execution"} className="space-y-8">
-                  <SettingsSection id="toolApproval" title={approvalT("title")}>
+                  <SettingsSection
+                    id="toolApproval"
+                    title={approvalT("title")}
+                    hidden={!showSection("toolApproval")}
+                  >
                     <ToolApprovalSettings
                       value={toolApproval}
                       disabled={pending}
@@ -1170,6 +1188,7 @@ export function AgentSettingsForm(props: Props) {
                   <SettingsSection
                     id="streamRules"
                     title={t("streamRules.title")}
+                    hidden={!showSection("streamRules")}
                   >
                     <AgentStreamRulesEditor
                       draft={streamRules}
@@ -1181,6 +1200,7 @@ export function AgentSettingsForm(props: Props) {
                     id="advanced"
                     title={t("modelRoutingSection")}
                     className="space-y-4"
+                    hidden={!showSection("advanced")}
                   >
                     <DialogField
                       label={t("modelRouting.fallbackModels")}
@@ -1350,6 +1370,7 @@ export function AgentSettingsForm(props: Props) {
                     id="execution"
                     title={t("executionSettings")}
                     className="space-y-4"
+                    hidden={!showSection("advanced")}
                   >
                     <DialogField
                       label={t("maxToolSteps")}
@@ -1540,6 +1561,7 @@ export function AgentSettingsForm(props: Props) {
                     id="sandboxes"
                     title={t("sandboxes")}
                     className="space-y-5"
+                    hidden={!showSection("sandboxes")}
                   >
                     <DialogField label={t("ownSandbox")}>
                       {ownSandbox ? (
@@ -1747,7 +1769,10 @@ export function AgentSettingsForm(props: Props) {
                 </div>
               </fieldset>
             </form>
-            <section hidden={page !== "execution"} className="space-y-5">
+            <section
+              hidden={page !== "execution" || !showSection("advanced")}
+              className="space-y-5"
+            >
               <BouncyAccordion
                 items={[
                   {
