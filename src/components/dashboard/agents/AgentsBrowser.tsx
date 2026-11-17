@@ -58,7 +58,6 @@ import {
   AgentBuiltinFeatures,
 } from "@/components/dashboard/agents/AgentBuiltinFeatures";
 import { SystemPromptEditor } from "@/components/dashboard/SystemPromptEditor";
-import { OmpImport } from "@/components/dashboard/agents/OmpImport";
 import { ModelProviderNotice } from "@/components/dashboard/ModelProviderNotice";
 
 export type AgentRow = {
@@ -164,7 +163,6 @@ export function AgentsBrowser({
       return provider && model ? { providerId: provider.id, model } : null;
     })();
   const [creating, setCreating] = useState(createOnly);
-  const [importingOmp, setImportingOmp] = useState(false);
   const [createStep, setCreateStep] = useState<CreateStep>("basic");
   const [agentName, setAgentName] = useState("");
   const [agentDescription, setAgentDescription] = useState("");
@@ -234,7 +232,6 @@ export function AgentsBrowser({
 
   function closeCreateForm() {
     setCreating(false);
-    setImportingOmp(false);
     setCreateStep("basic");
     setAgentName("");
     setAgentDescription("");
@@ -274,7 +271,6 @@ export function AgentsBrowser({
             ) : null}
             <Button
               type="button"
-              disabled={importingOmp}
               onClick={() => {
                 if (creating) closeCreateForm();
                 else {
@@ -303,16 +299,7 @@ export function AgentsBrowser({
         />
       ) : null}
 
-      {creating && importingOmp ? (
-        <OmpImport
-          slug={slug}
-          providers={createOptions.providers}
-          defaultModel={createOptions.defaultModel}
-          createOnly={createOnly}
-          onBack={() => setImportingOmp(false)}
-          onCancel={closeCreateForm}
-        />
-      ) : creating ? (
+      {creating ? (
         <form
           id="agent-create-form"
           onSubmit={(event) => {
@@ -653,17 +640,7 @@ export function AgentsBrowser({
                   <ChevronLeft className="size-4 shrink-0" />
                   {t("back")}
                 </Button>
-              ) : (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  disabled={createPending}
-                  onClick={() => setImportingOmp(true)}
-                  className="text-muted-foreground"
-                >
-                  {t("ompImport.title")}
-                </Button>
-              )
+              ) : null
             }
             cancel={
               <CancelContainer>
