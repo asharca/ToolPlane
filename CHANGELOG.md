@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.40.0](https://github.com/asharca/ToolPlane/compare/v0.39.0...v0.40.0) (2026-11-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **console:** 移除从 OMP 导入智能体配置的功能，POST /api/v1/workspaces/{slug}/agents/import 与 /import/preview 不再可用。
+
+### Features
+
+* **agents:** 支持桌面浏览器沙箱与用户接管 ([#255](https://github.com/asharca/ToolPlane/issues/255)) ([dee4d4b](https://github.com/asharca/ToolPlane/commit/dee4d4bd271b09eb62db39f349cd8da585f3ee48))
+* **console:** 统一首次上手引导并精简导航与设置界面 ([#257](https://github.com/asharca/ToolPlane/issues/257)) ([a6d757f](https://github.com/asharca/ToolPlane/commit/a6d757f16ce35152c991a1a3ce6d1145864dd345))
+
+
+### Bug Fixes
+
+* **agents:** 推理摘要标题用作运行状态，工具路径摘要保留文件名 ([#256](https://github.com/asharca/ToolPlane/issues/256)) ([cebed19](https://github.com/asharca/ToolPlane/commit/cebed198727d0c171a315aeded8ac1177ad712e2))
+* **agents:** 频道执行失败带出原因，支持实时进度与按 Agent 设置任务时限 ([#258](https://github.com/asharca/ToolPlane/issues/258)) ([f66a9cd](https://github.com/asharca/ToolPlane/commit/f66a9cd91d39e8ffeec532a333e73b20513ec418))
+
 ## [0.39.0](https://github.com/asharca/ToolPlane/compare/v0.38.1...v0.39.0) (2026-11-16)
 
 
