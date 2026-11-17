@@ -42,6 +42,12 @@ import {
 } from "@/lib/agents/turn-model";
 import { AGENT_TURN_MODEL_PART } from "@/lib/agents/turn-model";
 import {
+  AGENT_TURN_TIMELINE_PART,
+  agentTurnTimeline,
+  type AgentTurnTimeline,
+} from "@/lib/agents/turn-timeline";
+import { taskOutputReplaySchema } from "./live-output-read";
+import {
   runtimeFailureText,
   taskRuntimeFailure,
 } from "@/lib/agents/runtime-failure";
@@ -587,7 +593,8 @@ export type AgentEntryRuntimePart =
   | { type: typeof AGENT_TURN_MODEL_PART; data: AgentModelOverride }
   | { type: typeof COMMAND_RESULT_PART; data: RuntimeCommandResult }
   | StreamRuleTriggerPart
-  | { type: typeof CONTEXT_MAINTENANCE_PART; data: ContextMaintenance };
+  | { type: typeof CONTEXT_MAINTENANCE_PART; data: ContextMaintenance }
+  | { type: typeof AGENT_TURN_TIMELINE_PART; data: AgentTurnTimeline };
 const piSdkMetadataSchema = z
   .object({
     commands: RuntimeCommandsSchema,
@@ -609,12 +616,16 @@ const piSdkMetadataSchema = z
   .strict();
 /** Project only the public runtime metadata, never SDK state or private paths. */
 export function agentEntryRuntimeParts(task: Task): AgentEntryRuntimePart[] {
-  const replay = z
+  const replay = taskOutputReplaySchema.safeParse(
+    task.metadata?.toolplaneLiveOutput,
+  );
+  const live = taskOutput(task.id);
+  const replayStart = z
     .object({ startedAt: z.number().finite() })
     .safeParse(task.metadata?.toolplaneLiveOutput);
   const startedAt =
-    taskOutput(task.id)?.startedAt ??
-    (replay.success ? replay.data.startedAt : undefined);
+    live?.startedAt ??
+    (replayStart.success ? replayStart.data.startedAt : undefined);
   const identity: AgentEntryRuntimePart = {
     type: "data-agent-task",
     data: {
@@ -643,6 +654,14 @@ export function agentEntryRuntimeParts(task: Task): AgentEntryRuntimePart[] {
         data: { runtimeKind, commands },
       },
     ];
+    const settledOutput = live?.done
+      ? live
+      : replay.success && replay.data.taskId === task.id
+        ? replay.data
+        : null;
+    const timeline = settledOutput ? agentTurnTimeline(settledOutput) : null;
+    if (timeline)
+      parts.push({ type: AGENT_TURN_TIMELINE_PART, data: timeline });
     if (usage) parts.push({ type: RUNTIME_USAGE_PART, data: usage });
     if (model) parts.push({ type: AGENT_TURN_MODEL_PART, data: model });
     if (commandResult)
