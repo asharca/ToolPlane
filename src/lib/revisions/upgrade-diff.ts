@@ -9,6 +9,7 @@ export type RevisionChangedField =
   | "toolApproval"
   | "secretObfuscation"
   | "maxSteps"
+  | "taskTimeout"
   | "packages"
   | "knowledge"
   | "environment"

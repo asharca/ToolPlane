@@ -219,6 +219,7 @@ export function diffAgentRevisions(
       ],
     ],
     ["maxSteps", a.maxSteps, b.maxSteps],
+    ["taskTimeout", a.taskTimeoutSeconds ?? null, b.taskTimeoutSeconds ?? null],
     ["reasoningEffort", a.reasoningEffort ?? null, b.reasoningEffort ?? null],
     ["streamRules", a.streamRules ?? [], b.streamRules ?? []],
     [

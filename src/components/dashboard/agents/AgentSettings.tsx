@@ -71,6 +71,8 @@ type SettingsData = {
   secretObfuscation: boolean;
   advisor?: AgentRevisionConfig["advisor"] | null;
   maxSteps: number;
+  taskTimeoutSeconds: number | null;
+  defaultTaskTimeoutSeconds: number;
   providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
@@ -270,6 +272,8 @@ export function AgentSettings({
                 secretObfuscation={settings.secretObfuscation}
                 advisor={settings.advisor}
                 maxSteps={settings.maxSteps}
+                taskTimeoutSeconds={settings.taskTimeoutSeconds}
+                defaultTaskTimeoutSeconds={settings.defaultTaskTimeoutSeconds}
                 providers={settings.providers}
                 deployments={settings.deployments}
                 skills={settings.skills}

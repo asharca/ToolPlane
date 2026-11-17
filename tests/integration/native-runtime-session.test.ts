@@ -1186,6 +1186,14 @@ export default function(pi) {
         ];
         const recovered = await run();
         expect(attempts).toEqual(["primary", "primary", "backup"]);
+        // Live output switches to the answering model before the turn ends.
+        expect(recovered).toContainEqual(
+          expect.objectContaining({
+            type: "model_selected",
+            providerId: "secondary",
+            model: "backup",
+          }),
+        );
         expect(
           recovered.find((event) => event.type === "toolplane_sdk_response"),
         ).toMatchObject({

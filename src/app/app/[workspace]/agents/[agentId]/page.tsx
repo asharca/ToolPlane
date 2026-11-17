@@ -32,6 +32,7 @@ import {
 import { listPluginBindingDeployments } from "@/lib/plugins/binding-deployments";
 import { reasoningModelIds } from "@/lib/agents/model";
 import { normalizeReasoningLevel } from "@/lib/agents/constants";
+import { A2A_LIMITS } from "@/lib/a2a/model";
 
 export const dynamic = "force-dynamic";
 
@@ -171,6 +172,8 @@ export default async function AgentDetailPage({
           model: agent.model,
           advisor,
           maxSteps: agent.maxSteps,
+          taskTimeoutSeconds: agent.taskTimeoutSeconds,
+          defaultTaskTimeoutSeconds: A2A_LIMITS.deadlineSeconds,
           reasoningEffort:
             normalizeReasoningLevel(agent.reasoningEffort) ?? null,
           toolApproval: ToolApprovalPolicySchema.parse(

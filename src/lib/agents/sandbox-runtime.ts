@@ -118,6 +118,10 @@ export const PI_SDK_RUNTIME = {
 
 const PACKAGE_INSTALL_TIMEOUT_MS = 15 * 60_000;
 const TURN_TIMEOUT_MS = 30 * 60_000;
+/** Never below the default and never before the task deadline, which stays the effective limit. */
+export function sandboxTurnTimeoutMs(deadlineAt: Date) {
+  return Math.max(TURN_TIMEOUT_MS, deadlineAt.getTime() - Date.now() + 60_000);
+}
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const RUNTIME_TEMP_ROOT = "/workspace/.toolplane/runtime-tmp";
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -231,6 +235,11 @@ export type RunSandboxAgentTurnOptions = {
   onTextDelta?: (text: string) => void | Promise<void>;
   onActivity?: (activity: SandboxRuntimeActivity) => void | Promise<void>;
   onExecutionStage?: (stage: AgentExecutionStage) => void | Promise<void>;
+  /** The model now answering after a fallback switch. */
+  onModelSelected?: (model: {
+    providerId: string;
+    model: string;
+  }) => void | Promise<void>;
   onContextUsage?: (usage: ContextUsageSnapshot) => void | Promise<void>;
   onCommands?: (commands: RuntimeCommand[]) => void | Promise<void>;
   onUsage?: (usage: RuntimeUsage) => void | Promise<void>;
@@ -3349,6 +3358,20 @@ async function runPiSdk(
             ? String(event.reason)
             : "MCP_UNREACHABLE",
         };
+      return;
+    }
+    if (event.type === "model_selected") {
+      const selected = z
+        .object({
+          providerId: z.string().min(1).max(240),
+          model: z.string().min(1).max(240),
+        })
+        .safeParse(event);
+      if (selected.success)
+        await options.onModelSelected?.({
+          providerId: selected.data.providerId,
+          model: selected.data.model,
+        });
       return;
     }
     if (event.type === "stream_rule_triggered") {

@@ -151,6 +151,15 @@ export function publishTaskStage(taskId: string, stage: AgentExecutionStage) {
   capture.output.executionStage = stage;
   notify(taskId);
 }
+/** The model actually answering, e.g. after a fallback switch. */
+export function publishTaskModel(taskId: string, modelName: string) {
+  const capture = captureFor(taskId);
+  if (!capture) return;
+  const safe = redactText(modelName, capture.secrets);
+  if (capture.output.modelName === safe) return;
+  capture.output.modelName = safe;
+  notify(taskId);
+}
 export function publishTaskMessageQueue(
   taskId: string,
   queue: AgentMessageQueue,

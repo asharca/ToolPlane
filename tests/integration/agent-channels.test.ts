@@ -18,7 +18,8 @@ import {
 } from "@/lib/agents/execution/entries";
 import type * as EntryModule from "@/lib/agents/execution/entries";
 import { claimTask, finishTask, getTask } from "@/lib/a2a/store";
-import { textArtifact } from "@/lib/a2a/model";
+import { A2A_LIMITS, textArtifact } from "@/lib/a2a/model";
+import { sandboxTurnTimeoutMs } from "@/lib/agents/sandbox-runtime";
 import { db } from "@/lib/db";
 import {
   applyNativeUiAction,
@@ -376,7 +377,9 @@ async function nativeBinding(conversationId: string) {
     include: { lastTask: true, context: true },
   });
 }
-async function piCommandChannel() {
+async function piCommandChannel(
+  agentData: { taskTimeoutSeconds?: number } = {},
+) {
   const agent = await db.agent.create({
     data: {
       workspaceId: workspace.id,
@@ -385,6 +388,7 @@ async function piCommandChannel() {
       runtimeKind: "pi-sdk",
       providerId,
       model: "test",
+      ...agentData,
     },
   });
   await enableNativeAgent(agent.id);
@@ -1522,6 +1526,78 @@ describe("workspace channels", () => {
 });
 
 describe("channel execution delivery and conversation approvals", () => {
+  it("gives channel tasks the pinned Agent time limit, else the system default", async () => {
+    const deadlines: number[] = [];
+    for (const taskTimeoutSeconds of [7_200, undefined]) {
+      const { run } = await piCommandChannel(
+        taskTimeoutSeconds ? { taskTimeoutSeconds } : {},
+      );
+      vi.mocked(runAgentEntry).mockImplementationOnce(async (input) => {
+        const accepted = await submitAgentEntry(input, () => {});
+        deadlines.push(
+          (accepted.row.deadlineAt.getTime() -
+            accepted.row.createdAt.getTime()) /
+            1000,
+        );
+        // The sandbox turn must not end before the task deadline.
+        expect(sandboxTurnTimeoutMs(accepted.row.deadlineAt)).toBeGreaterThan(
+          accepted.row.deadlineAt.getTime() - Date.now(),
+        );
+        const running = assertDefined(await claimTask(accepted.row.id));
+        await finishTask(
+          running.id,
+          assertDefined(running.leaseToken),
+          TaskState.TASK_STATE_FAILED,
+          "PI_SDK_REQUEST_FAILED",
+        );
+        return {
+          task: await getTask(accepted.grant, accepted.row.id),
+          path: "/app",
+        };
+      });
+      await run("hi");
+    }
+    expect(deadlines[0]).toBeCloseTo(7_200, -1);
+    expect(deadlines[1]).toBeCloseTo(A2A_LIMITS.deadlineSeconds, -1);
+  });
+
+  it("keeps the text produced before a failure next to the coded failure", async () => {
+    const { agent, run } = await piCommandChannel();
+    const progress = "Cloned the repository. Running the deployment now.";
+    vi.mocked(runAgentEntry).mockImplementationOnce(async (input) => {
+      const accepted = await submitAgentEntry(input, () => {});
+      const path = `/app/${workspace.slug}/work?agent=${input.agentId}&c=${input.sourceId}`;
+      await input.onAccepted?.(Task.fromJSON(accepted.row.snapshot), path);
+      const running = assertDefined(await claimTask(accepted.row.id));
+      startTaskOutput(running.id, { runtimeKind: "pi-sdk" });
+      publishTaskText(running.id, progress);
+      await finishTask(
+        running.id,
+        assertDefined(running.leaseToken),
+        TaskState.TASK_STATE_FAILED,
+        "PI_TASK_MODEL_TIMEOUT: The task deadline was reached while waiting for a model response.",
+      );
+      return { task: await getTask(accepted.grant, accepted.row.id), path };
+    });
+    const result = await run("deploy it");
+    if (!("conversationId" in result.body))
+      throw new Error("Expected conversation reply");
+    expect(result.body).toMatchObject({
+      failed: true,
+      message: expect.stringContaining("（PI_TASK_MODEL_TIMEOUT）"),
+    });
+    // The channel reply stays short; the conversation keeps the work.
+    expect(result.body.message).not.toContain(progress);
+    const reply = await db.message.findFirstOrThrow({
+      where: { conversationId: result.body.conversationId, role: "assistant" },
+    });
+    const texts = (reply.parts as Array<{ type: string; text?: string }>)
+      .filter((part) => part.type === "text")
+      .map((part) => part.text);
+    expect(texts).toEqual([progress, result.body.message]);
+    expect(agent.id).toBe(result.body.agentId);
+  });
+
   it.each(["failed-task", "observer-error"])(
     "persists a safe failed assistant reply without successful artifacts or replay (%s)",
     async (mode) => {
@@ -1562,10 +1638,20 @@ describe("channel execution delivery and conversation approvals", () => {
           onUiRequired,
         });
       const result = await run();
+      // The task's allowlisted code reaches the user; observer errors stay generic.
+      const failureMessage =
+        mode === "failed-task"
+          ? expect.stringContaining(
+              "本次执行未能完成（PI_SDK_REQUEST_FAILED）：",
+            )
+          : CHANNEL_EXECUTION_FAILURE_MESSAGE;
       expect(result.body).toMatchObject({
         delivery: "message",
-        message: CHANNEL_EXECUTION_FAILURE_MESSAGE,
+        message: failureMessage,
       });
+      expect(JSON.stringify(result.body)).not.toMatch(
+        /super-secret|internal\/runtime|executor.stack|Bearer/,
+      );
       expect(onUiRequired).not.toHaveBeenCalled();
       if (!("conversationId" in result.body))
         throw new Error("Expected conversation reply");
@@ -1578,14 +1664,17 @@ describe("channel execution delivery and conversation approvals", () => {
       expect(
         messages.find((message) => message.role === "assistant")?.parts,
       ).toEqual([
-        { type: "text", text: CHANNEL_EXECUTION_FAILURE_MESSAGE },
+        { type: "text", text: failureMessage },
         {
           type: "data-agent-execution",
           data: {
             status: "failed",
             error: {
-              code: "AGENT_EXECUTION_FAILED",
-              message: CHANNEL_EXECUTION_FAILURE_MESSAGE,
+              code:
+                mode === "failed-task"
+                  ? "PI_SDK_REQUEST_FAILED"
+                  : "AGENT_EXECUTION_FAILED",
+              message: failureMessage,
             },
           },
         },
@@ -1605,7 +1694,7 @@ describe("channel execution delivery and conversation approvals", () => {
       );
       const calls = vi.mocked(runAgentEntry).mock.calls.length;
       expect((await run()).body).toMatchObject({
-        message: CHANNEL_EXECUTION_FAILURE_MESSAGE,
+        message: failureMessage,
       });
       expect(vi.mocked(runAgentEntry).mock.calls).toHaveLength(calls);
       expect(await db.message.count({ where: { conversationId } })).toBe(2);

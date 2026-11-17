@@ -27,6 +27,7 @@ import { enrichLogContext } from "@/lib/observability/context";
 import { withRequestLogging } from "@/lib/observability/http";
 import { workspaceAccessResponse } from "@/lib/workspace/access-stream";
 import { notifyTaskOutput } from "@/lib/agents/execution/live-output";
+import { recordedTaskOutput } from "@/lib/agents/execution/live-output-read";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
@@ -243,6 +244,10 @@ export const POST = withRequestLogging(
               responseError = error;
             }
             const runtimeParts = agentEntryRuntimeParts(result.task);
+            // A failed turn keeps the text it produced, not just the error.
+            const partialText = responseFailed
+              ? (await recordedTaskOutput(result.task.id)).text
+              : "";
             const previous = await db.message.findFirst({
               where: { conversationId: conversation.id },
               orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -253,7 +258,9 @@ export const POST = withRequestLogging(
               ...hookParts,
               ...childParts,
               ...(responseFailed
-                ? []
+                ? partialText.trim()
+                  ? [{ type: "text", text: partialText, state: "done" }]
+                  : []
                 : [{ type: "text", text: responseText, state: "done" }]),
             ];
             if (parts.length)

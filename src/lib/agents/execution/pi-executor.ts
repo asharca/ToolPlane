@@ -32,6 +32,7 @@ import {
   publishTaskText,
   publishTaskActivity,
   publishTaskStage,
+  publishTaskModel,
   publishTaskMessageQueue,
   resetTaskMessageOutput,
 } from "./live-output";
@@ -182,6 +183,7 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
         await observer?.onActivity?.(activity);
       },
       onExecutionStage,
+      onModelSelected: ({ model }) => publishTaskModel(row.id, model),
       onContextUsage: observer?.onContextUsage,
       onStreamRule: async (trigger) => {
         streamRuleTriggers.push(trigger);

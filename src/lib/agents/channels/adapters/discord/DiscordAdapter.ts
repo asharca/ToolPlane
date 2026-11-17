@@ -7,7 +7,7 @@ import {
   type ImageAttachment,
   MAX_FILE_SIZE_BYTES,
 } from "../../media";
-import { clampSurrogateBoundary } from "../../text";
+import { streamTail } from "../../text";
 import { channelFetch as fetch, sanitizeRemoteUrl } from "../../http";
 import WebSocket from "ws";
 
@@ -119,16 +119,25 @@ class DiscordStreamingController {
 
     await this.flush.waitForFlush();
 
+    // The streamed message becomes the first chunk; the rest follow, nothing is truncated.
+    const [first = "", ...rest] = splitMessage(finalText, DISCORD_MAX_LENGTH);
     try {
       this.currentText = finalText;
-      await this.editMessage(finalText);
-      return true;
+      await this.editMessage(first);
     } catch (error) {
       this.log.warn("Failed to finalize Discord stream", {
         error: error instanceof Error ? error.message : String(error),
       });
       return false;
     }
+    for (const chunk of rest) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await this.apiRequest(
+        `${DISCORD_API_BASE}/channels/${this.discordChannelId}/messages`,
+        { method: "POST", body: { content: chunk } },
+      );
+    }
+    return true;
   }
 
   async error(errorMessage: string): Promise<void> {
@@ -145,7 +154,7 @@ class DiscordStreamingController {
       const displayText = this.currentText
         ? `${this.currentText}\n\n---\n**Error**: ${errorMessage}`
         : `**Error**: ${errorMessage}`;
-      await this.editMessage(displayText);
+      await this.editMessage(streamTail(displayText, DISCORD_MAX_LENGTH));
     } catch {
       // Best-effort error update
     }
@@ -175,7 +184,9 @@ class DiscordStreamingController {
         `${DISCORD_API_BASE}/channels/${this.discordChannelId}/messages`,
         {
           method: "POST",
-          body: { content: this.currentText || "..." },
+          body: {
+            content: streamTail(this.currentText, DISCORD_MAX_LENGTH) || "...",
+          },
         },
       );
       const data = (await response.json()) as { id?: string };
@@ -187,20 +198,14 @@ class DiscordStreamingController {
     }
   }
 
+  /** `text` must already fit one Discord message. */
   private async editMessage(text: string): Promise<void> {
     if (!this.messageId) return;
-    // Discord messages max 2000 chars — truncate with indicator if needed,
-    // keeping any surrogate pair at the cut whole so we don't send a lone surrogate.
-    const content =
-      text.length > DISCORD_MAX_LENGTH
-        ? text.slice(0, clampSurrogateBoundary(text, DISCORD_MAX_LENGTH - 3)) +
-          "..."
-        : text;
     await this.apiRequest(
       `${DISCORD_API_BASE}/channels/${this.discordChannelId}/messages/${this.messageId}`,
       {
         method: "PATCH",
-        body: { content },
+        body: { content: text },
       },
     );
   }
@@ -208,7 +213,7 @@ class DiscordStreamingController {
   private async performFlush(): Promise<void> {
     if (!this.messageId || !this.currentText) return;
     try {
-      await this.editMessage(this.currentText);
+      await this.editMessage(streamTail(this.currentText, DISCORD_MAX_LENGTH));
     } catch {
       // Swallow flush errors — FlushController will reflush if needed
     }

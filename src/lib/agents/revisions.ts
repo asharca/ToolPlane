@@ -309,6 +309,9 @@ export async function captureAgentRevisionConfig(
     ...(agent.streamRules != null ? { streamRules: agent.streamRules } : {}),
     toolApproval: agent.toolApproval ?? { mode: "off" },
     secretObfuscation: agent.secretObfuscation,
+    ...(agent.taskTimeoutSeconds != null
+      ? { taskTimeoutSeconds: agent.taskTimeoutSeconds }
+      : {}),
     disabledBuiltinTools: agent.disabledBuiltinTools,
     optionalBuiltinTools: agent.optionalBuiltinTools,
     sandboxTemplateId: template?.id ?? null,
