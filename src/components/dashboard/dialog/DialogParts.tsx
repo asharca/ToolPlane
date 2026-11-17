@@ -185,6 +185,7 @@ export function DialogField({
   description,
   dirty,
   layout = "stack",
+  fill = false,
   children,
   className,
 }: {
@@ -194,6 +195,8 @@ export function DialogField({
   dirty?: boolean;
   /** `row` puts a content-width control beside its label. */
   layout?: "stack" | "row";
+  /** Stretches a stacked field and its control to the remaining height of a flex column. */
+  fill?: boolean;
   children: ReactNode;
   className?: string;
 }) {
@@ -222,7 +225,9 @@ export function DialogField({
         "group/dialog-field relative",
         row
           ? "flex min-h-9 flex-wrap items-center justify-between gap-x-6 gap-y-2"
-          : "space-y-2",
+          : fill
+            ? "flex min-h-0 flex-1 flex-col gap-2"
+            : "space-y-2",
         className,
       )}
     >
@@ -238,6 +243,7 @@ export function DialogField({
         className={cn(
           "rounded-lg [[data-dirty=true]_&]:ring-1 [[data-dirty=true]_&]:ring-primary/50",
           row && "min-w-0 max-w-full shrink-0",
+          fill && !row && "flex min-h-0 flex-1 flex-col",
         )}
       >
         {children}

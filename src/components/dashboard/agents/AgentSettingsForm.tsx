@@ -892,6 +892,12 @@ export function AgentSettingsForm(props: Props) {
   const textareaClass =
     "w-full rounded-lg border border-border bg-background p-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
   const showBasics = page === "basic";
+  // Long free text (description, instructions) takes the whole content height when shown alone.
+  const fillBody =
+    !review &&
+    showBasics &&
+    (props.activeSection === "general" ||
+      props.activeSection === "instructions");
   if (!isExecutableAgentRuntimeKind(runtimeKind))
     return (
       <div className={props.className}>
@@ -911,8 +917,11 @@ export function AgentSettingsForm(props: Props) {
   return (
     <div className={props.className ?? "flex h-full min-h-0 flex-col"}>
       <DialogBody className="flex flex-col overscroll-contain">
-        <div className="space-y-5">
-          <div hidden={Boolean(review)} className="space-y-8">
+        <div className={fillBody ? "flex flex-1 flex-col gap-5" : "space-y-5"}>
+          <div
+            hidden={Boolean(review)}
+            className={fillBody ? "flex flex-1 flex-col gap-8" : "space-y-8"}
+          >
             {/* Outside the form: the memory manager has forms of its own. */}
             {page === "capabilities" && showSection("builtInTools") ? (
               <SettingsSection
@@ -957,7 +966,7 @@ export function AgentSettingsForm(props: Props) {
                 reveal(invalidSection);
               }}
               data-unsaved-changes={hasUnsavedChanges ? "true" : "false"}
-              className="space-y-5"
+              className={fillBody ? "flex flex-1 flex-col gap-5" : "space-y-5"}
             >
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="agentId" value={agentId} />
@@ -1012,11 +1021,14 @@ export function AgentSettingsForm(props: Props) {
                 disabledTools={disabledTools}
                 enabledOptionalTools={enabledOptionalTools}
               />
-              <fieldset disabled={pending} className="min-w-0 space-y-8">
+              <fieldset
+                disabled={pending}
+                className={`min-w-0 ${fillBody ? "flex flex-1 flex-col gap-8" : "space-y-8"}`}
+              >
                 <section
                   hidden={!showBasics || !showSection("general")}
                   data-settings-section="general"
-                  className="scroll-mt-4 space-y-5"
+                  className={`scroll-mt-4 ${fillBody ? "flex flex-1 flex-col gap-5" : "space-y-5"}`}
                 >
                   <DialogField
                     label={t("name")}
@@ -1031,21 +1043,6 @@ export function AgentSettingsForm(props: Props) {
                       value={name}
                       onChange={setName}
                       className="w-full"
-                    />
-                  </DialogField>
-                  <DialogField
-                    label={t("description")}
-                    htmlFor={`${formId}-description`}
-                    dirty={fieldDirty.description}
-                  >
-                    <textarea
-                      id={`${formId}-description`}
-                      name="description"
-                      value={description}
-                      maxLength={500}
-                      rows={2}
-                      onChange={(event) => setDescription(event.target.value)}
-                      className={textareaClass}
                     />
                   </DialogField>
                   <div className="space-y-4">
@@ -1120,11 +1117,27 @@ export function AgentSettingsForm(props: Props) {
                       </DialogField>
                     )}
                   </div>
+                  <DialogField
+                    label={t("description")}
+                    htmlFor={`${formId}-description`}
+                    dirty={fieldDirty.description}
+                    fill={fillBody}
+                  >
+                    <textarea
+                      id={`${formId}-description`}
+                      name="description"
+                      value={description}
+                      maxLength={500}
+                      rows={4}
+                      onChange={(event) => setDescription(event.target.value)}
+                      className={`${textareaClass} ${fillBody ? "min-h-32 flex-1 resize-none" : ""}`}
+                    />
+                  </DialogField>
                 </section>
                 <section
                   hidden={!showBasics || !showSection("instructions")}
                   data-settings-section="instructions"
-                  className="scroll-mt-4 space-y-5"
+                  className={`scroll-mt-4 ${fillBody ? "flex flex-1 flex-col gap-5" : "space-y-5"}`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <span className="text-sm font-medium">
@@ -1154,7 +1167,7 @@ export function AgentSettingsForm(props: Props) {
                     maxLength={100_000}
                     placeholder={t("youAreAHelpfulAssistant")}
                     dirty={prompt !== props.systemPrompt}
-                    className="h-80 min-h-64 flex-none"
+                    className="min-h-64"
                   />
                 </section>
                 <div hidden={page !== "capabilities"} className="space-y-8">
