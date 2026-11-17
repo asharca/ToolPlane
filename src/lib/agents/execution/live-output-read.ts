@@ -40,6 +40,8 @@ export const taskOutputReplaySchema = z.object({
           .optional(),
         toolCallId: z.string().optional(),
         toolName: z.string().optional(),
+        deploymentName: z.string().optional(),
+        originalToolName: z.string().optional(),
         durationMs: z.number().optional(),
         startedAt: z.number().optional(),
         completedAt: z.number().optional(),
@@ -49,6 +51,7 @@ export const taskOutputReplaySchema = z.object({
         truncated: z.boolean().optional(),
         firstChangedLine: z.number().int().positive().optional(),
         isError: z.boolean().optional(),
+        textOffset: z.number().int().nonnegative().optional(),
       }),
     )
     .max(49),

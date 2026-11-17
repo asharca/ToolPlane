@@ -592,3 +592,11 @@
 - **证据（2026-11-17，用户反馈）**：Work 中把模型切到非默认后发出首条消息，回复实际使用所选模型，输入栏却回到默认模型。`WorkspaceWork` 的 `composerScope` 为 `agent:sandbox:session`：创建后把选择迁到 `agent:activeSandboxId:session`，但乐观会话的 `sandbox` 为 null，服务端数据到达后又换成会话自己的沙箱，两次都读不到选择。改为模型与思考强度使用不含沙箱的 `conversationScope`；隔离实例的真实浏览器中，修复前发送后 0.5s 即显示默认模型，修复后 40s 内（沙箱创建、回合执行完成）一直显示所选模型，已有会话的追问也保持选择。
 - **下次怎么验证**：改动输入栏状态键时，用非默认选择从新会话发出首条消息，并在沙箱就绪、回合结束和后台刷新后再读一次输入栏显示。依据：`src/components/dashboard/work/WorkspaceWork.tsx`。
 - **确认日期**：2026-11-17（用户反馈）。
+
+### TP-L056：按入口实际渲染的组件验收，持久化回复要接住实时视图的过程
+
+**规则**：同一类回复在不同入口可能由不同组件渲染；新增展示前先查清每个入口落到哪个组件，并在该组件里验收。实时视图在回复落库后隐藏时，落库的回复必须自带同样的过程记录（工具、思考及其载荷），不能只留正文。
+
+- **证据（2026-11-17，用户报告 10030）**：PR [#263](https://github.com/asharca/ToolPlane/pull/263) 只在 `AgentConversation` 读取 `data-agent-timeline`，但频道会话在 Work 中走 `channelConversation` 分支、由 `WorkTranscript` 渲染，它只认 `data-work-timing`；10030 上频道回复已带 timeline，页面却无耗时入口。同时 `conversationOutputPersisted` 在回复落库后隐藏 `LiveOutputView`，而频道／对话回复只落库正文，工具记录随之消失。现由 timeline 步骤携带实时输出中已截断、已脱敏的工具输入输出，并按持久化正文重新锚定位置；`WorkTranscript` 与 `AgentConversation` 都从中还原过程与瀑布图。
+- **下次怎么验证**：在用户实际使用的入口（Work 的频道会话、对话会话）各看一次已落库的回复：头部耗时可打开瀑布图、工具可展开到输入输出；再刷新页面确认不依赖实时视图。依据：`src/lib/agents/turn-timeline.ts`、`src/components/dashboard/work/WorkspaceWork.tsx`、`src/components/dashboard/agents/AgentConversation.tsx`。
+- **确认日期**：2026-11-17（用户报告）。

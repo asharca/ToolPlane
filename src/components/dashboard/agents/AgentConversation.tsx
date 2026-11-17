@@ -47,9 +47,13 @@ import { useLiveTaskOutput } from "@/components/dashboard/work/useLiveTaskOutput
 import { LiveOutputView } from "@/components/dashboard/work/LiveOutputView";
 import { ConversationContentBlocks } from "@/components/dashboard/ConversationContentBlocks";
 import { WorkTurnTrace } from "@/components/dashboard/work/WorkTurnTrace";
-import { formatContentDuration } from "@/lib/conversation/content-blocks";
+import {
+  formatContentDuration,
+  workContentParts,
+} from "@/lib/conversation/content-blocks";
 import {
   AGENT_TURN_TIMELINE_PART,
+  agentTimelineDisplayParts,
   parseAgentTurnTimeline,
 } from "@/lib/agents/turn-timeline";
 import { CopyButton } from "@/components/dashboard/CopyButton";
@@ -1315,6 +1319,14 @@ export function AgentConversation({
               const text = message.parts
                 .flatMap((part) => (part.type === "text" ? [part.text] : []))
                 .join("\n");
+              // Recorded tool steps use Work's activity shape.
+              const processParts = streaming
+                ? message.parts
+                : agentTimelineDisplayParts(message.parts).map((part) =>
+                    part.type === "tool" || "source" in part
+                      ? workContentParts([part], false)[0]
+                      : part,
+                  );
               const branch = branchNavigation.find(
                 (item) => item.messageId === sourceMessage.id,
               );
@@ -1418,7 +1430,7 @@ export function AgentConversation({
                   ) : (
                     <ConversationContentBlocks
                       messageId={message.id}
-                      parts={message.parts}
+                      parts={processParts}
                       streaming={streaming}
                       processDataTypes={[
                         "data-subagent-activity",

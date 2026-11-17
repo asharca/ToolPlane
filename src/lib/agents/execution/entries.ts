@@ -517,12 +517,8 @@ export async function runAgentEntry(
     throw error;
   }
 }
-export function agentEntryResult(
-  task: Task,
-  path: string,
-  includeQueuedReplies = false,
-) {
-  const text = task.artifacts
+function artifactReplyText(task: Task, includeQueuedReplies: boolean) {
+  return task.artifacts
     .flatMap((a) => {
       const queued =
         includeQueuedReplies &&
@@ -540,6 +536,13 @@ export function agentEntryResult(
       ];
     })
     .join("\n\n");
+}
+export function agentEntryResult(
+  task: Task,
+  path: string,
+  includeQueuedReplies = false,
+) {
+  const text = artifactReplyText(task, includeQueuedReplies);
   const detail = task.status?.message?.parts
     .flatMap((p) => (p.content?.$case === "text" ? [p.content.value] : []))
     .join("\n");
@@ -659,7 +662,9 @@ export function agentEntryRuntimeParts(task: Task): AgentEntryRuntimePart[] {
       : replay.success && replay.data.taskId === task.id
         ? replay.data
         : null;
-    const timeline = settledOutput ? agentTurnTimeline(settledOutput) : null;
+    const timeline = settledOutput
+      ? agentTurnTimeline(settledOutput, artifactReplyText(task, false))
+      : null;
     if (timeline)
       parts.push({ type: AGENT_TURN_TIMELINE_PART, data: timeline });
     if (usage) parts.push({ type: RUNTIME_USAGE_PART, data: usage });
