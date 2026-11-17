@@ -13,6 +13,7 @@ import {
   type SyntheticEvent,
 } from "react";
 import { Plus, Search, X, type LucideIcon } from "lucide-react";
+import { DashboardEmptyState } from "../DashboardUI";
 import { SettingsSection } from "./SettingsSection";
 import { useTranslations } from "next-intl";
 
@@ -404,6 +405,7 @@ export function AgentResourceList({
   selectedIds,
   onSelectionChange,
   disabled = false,
+  empty,
 }: {
   id: string;
   icon: LucideIcon;
@@ -413,6 +415,8 @@ export function AgentResourceList({
   selectedIds: ReadonlySet<string>;
   onSelectionChange: (next: Set<string>) => void;
   disabled?: boolean;
+  /** Shown in place of the list until something is added. */
+  empty: { title: string; description: string };
 }) {
   const t = useTranslations("console.agents");
   const [adding, setAdding] = useState(false);
@@ -500,7 +504,14 @@ export function AgentResourceList({
             </li>
           ))}
         </ul>
-      ) : null}
+      ) : (
+        <DashboardEmptyState
+          icon={Icon}
+          title={empty.title}
+          description={empty.description}
+          className="rounded-xl bg-muted/30"
+        />
+      )}
     </SettingsSection>
   );
 }

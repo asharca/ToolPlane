@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useState } from "react";
 import { useTranslations } from "next-intl";
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ListFilter, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
 import { FormSelect } from "@/components/ui/FormSelect";
@@ -11,6 +11,7 @@ import {
   streamRuleValidationCode,
   type StreamRule,
 } from "@/lib/agents/stream-rules";
+import { DashboardEmptyState } from "../DashboardUI";
 import { DialogField } from "../dialog";
 
 export type StreamRulesDraft = {
@@ -149,34 +150,48 @@ export function AgentStreamRulesEditor({
       </p>
     );
 
+  const addButton = (
+    <Button
+      type="button"
+      variant="outline"
+      disabled={disabled || rules.length >= 50}
+      onClick={() =>
+        update([
+          ...rules,
+          {
+            id: crypto.randomUUID(),
+            name: "",
+            target: "assistant_text",
+            pattern: "",
+            action: "remind",
+            message: "",
+          },
+        ])
+      }
+    >
+      <Plus aria-hidden="true" className="size-4" />
+      {t("add")}
+    </Button>
+  );
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm text-muted-foreground">
-          {t("count", { count: rules.length })}
-        </span>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={disabled || rules.length >= 50}
-          onClick={() =>
-            update([
-              ...rules,
-              {
-                id: crypto.randomUUID(),
-                name: "",
-                target: "assistant_text",
-                pattern: "",
-                action: "remind",
-                message: "",
-              },
-            ])
-          }
-        >
-          <Plus aria-hidden="true" className="size-4" />
-          {t("add")}
-        </Button>
-      </div>
+      {rules.length ? (
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm text-muted-foreground">
+            {t("count", { count: rules.length })}
+          </span>
+          {addButton}
+        </div>
+      ) : (
+        <DashboardEmptyState
+          icon={ListFilter}
+          title={t("emptyTitle")}
+          description={t("emptyDescription")}
+          actions={addButton}
+          className="rounded-xl bg-muted/30"
+        />
+      )}
       {rules.map((rule, index) => {
         const prefix = `${id}-${rule.id}`;
         const patch = (change: Partial<StreamRule>) =>

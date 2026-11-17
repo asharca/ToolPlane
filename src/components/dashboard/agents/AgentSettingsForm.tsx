@@ -417,6 +417,7 @@ export function AgentSettingsForm(props: Props) {
     skills: !sameSet(skillIds, selected(skills)),
     sandboxes:
       attachmentsDirty ||
+      secretObfuscation !== props.secretObfuscation ||
       environment !==
         (appliedConfig
           ? JSON.stringify(appliedConfig.environment, null, 2)
@@ -444,7 +445,6 @@ export function AgentSettingsForm(props: Props) {
       fallbackModelsDirty ||
       roleModelDirty("compaction") ||
       roleModelDirty("title") ||
-      secretObfuscation !== props.secretObfuscation ||
       JSON.stringify(advisor) !== JSON.stringify(props.advisor ?? null),
   };
   const dirtySections: AgentSettingsSection[] = [
@@ -554,8 +554,32 @@ export function AgentSettingsForm(props: Props) {
   const [credentials, setCredentials] = useState<
     Array<{ id: string; name: string; revokedAt: Date | null }>
   >([]);
+  const [credentialsState, setCredentialsState] = useState<
+    "idle" | "loading" | "loaded" | "failed"
+  >("idle");
   const [credentialName, setCredentialName] = useState("");
   const [credentialValue, setCredentialValue] = useState("");
+  const credentialsVisible =
+    canManageCredentials && page === "execution" && showSection("sandboxes");
+  // Loads once, the first time the sandbox page is shown to an owner.
+  useEffect(() => {
+    if (!credentialsVisible || credentialsState !== "idle") return;
+    setCredentialsState("loading");
+    const data = new FormData();
+    data.set("workspace", slug);
+    data.set("agentId", agentId);
+    void listAgentEnvironmentCredentialsAction(data).then(
+      (result) => {
+        if (result.error) {
+          setCredentialsState("failed");
+          return;
+        }
+        setCredentials(result.credentials ?? []);
+        setCredentialsState("loaded");
+      },
+      () => setCredentialsState("failed"),
+    );
+  }, [credentialsVisible, credentialsState, slug, agentId]);
   function changed() {
     setDirty(true);
     setReview(null);
@@ -680,7 +704,9 @@ export function AgentSettingsForm(props: Props) {
       }
       const text = t.has(`modelRouting.errors.${code}`)
         ? t(`modelRouting.errors.${code}`)
-        : code;
+        : r.has(`credentialErrors.${code}`)
+          ? r(`credentialErrors.${code}`)
+          : code;
       if (code === "AGENT_REVISION_CONFLICT") setReview(null);
       setError(text);
       notify(text, { severity: "error" });
@@ -824,10 +850,54 @@ export function AgentSettingsForm(props: Props) {
     const result = await listAgentEnvironmentCredentialsAction(identity());
     if (result.error) throw new Error(result.error);
     setCredentials(result.credentials ?? []);
+    setCredentialsState("loaded");
+  }
+  const referencedCredentialIds = (() => {
+    try {
+      const definition = JSON.parse(
+        environment,
+      ) as AgentRevisionConfig["environment"];
+      return new Set(
+        definition.credentialReferences.map(
+          (reference) => reference.credentialId,
+        ),
+      );
+    } catch {
+      return new Set<string>();
+    }
+  })();
+  // A revoked credential can no longer be referenced; leaving it in the draft would fail the next save.
+  function dropCredentialReference(credentialId: string) {
+    setEnvironment((current) => {
+      try {
+        const definition = JSON.parse(
+          current,
+        ) as AgentRevisionConfig["environment"];
+        if (
+          !definition.credentialReferences.some(
+            (reference) => reference.credentialId === credentialId,
+          )
+        )
+          return current;
+        definition.credentialReferences =
+          definition.credentialReferences.filter(
+            (reference) => reference.credentialId !== credentialId,
+          );
+        return JSON.stringify(definition, null, 2);
+      } catch {
+        return current;
+      }
+    });
   }
   const textareaClass =
     "w-full rounded-lg border border-border bg-background p-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
   const showBasics = page === "basic";
+  // Long free text (description, instructions) takes the whole content height when shown alone.
+  const fillBody =
+    !review &&
+    showBasics &&
+    (props.activeSection === "general" ||
+      props.activeSection === "instructions");
   if (!isExecutableAgentRuntimeKind(runtimeKind))
     return (
       <div className={props.className}>
@@ -847,8 +917,11 @@ export function AgentSettingsForm(props: Props) {
   return (
     <div className={props.className ?? "flex h-full min-h-0 flex-col"}>
       <DialogBody className="flex flex-col overscroll-contain">
-        <div className="space-y-5">
-          <div hidden={Boolean(review)} className="space-y-8">
+        <div className={fillBody ? "flex flex-1 flex-col gap-5" : "space-y-5"}>
+          <div
+            hidden={Boolean(review)}
+            className={fillBody ? "flex flex-1 flex-col gap-8" : "space-y-8"}
+          >
             {/* Outside the form: the memory manager has forms of its own. */}
             {page === "capabilities" && showSection("builtInTools") ? (
               <SettingsSection
@@ -893,7 +966,7 @@ export function AgentSettingsForm(props: Props) {
                 reveal(invalidSection);
               }}
               data-unsaved-changes={hasUnsavedChanges ? "true" : "false"}
-              className="space-y-5"
+              className={fillBody ? "flex flex-1 flex-col gap-5" : "space-y-5"}
             >
               <input type="hidden" name="workspace" value={slug} />
               <input type="hidden" name="agentId" value={agentId} />
@@ -948,11 +1021,14 @@ export function AgentSettingsForm(props: Props) {
                 disabledTools={disabledTools}
                 enabledOptionalTools={enabledOptionalTools}
               />
-              <fieldset disabled={pending} className="min-w-0 space-y-8">
+              <fieldset
+                disabled={pending}
+                className={`min-w-0 ${fillBody ? "flex flex-1 flex-col gap-8" : "space-y-8"}`}
+              >
                 <section
                   hidden={!showBasics || !showSection("general")}
                   data-settings-section="general"
-                  className="scroll-mt-4 space-y-5"
+                  className={`scroll-mt-4 ${fillBody ? "flex flex-1 flex-col gap-5" : "space-y-5"}`}
                 >
                   <DialogField
                     label={t("name")}
@@ -967,21 +1043,6 @@ export function AgentSettingsForm(props: Props) {
                       value={name}
                       onChange={setName}
                       className="w-full"
-                    />
-                  </DialogField>
-                  <DialogField
-                    label={t("description")}
-                    htmlFor={`${formId}-description`}
-                    dirty={fieldDirty.description}
-                  >
-                    <textarea
-                      id={`${formId}-description`}
-                      name="description"
-                      value={description}
-                      maxLength={500}
-                      rows={2}
-                      onChange={(event) => setDescription(event.target.value)}
-                      className={textareaClass}
                     />
                   </DialogField>
                   <div className="space-y-4">
@@ -1056,11 +1117,27 @@ export function AgentSettingsForm(props: Props) {
                       </DialogField>
                     )}
                   </div>
+                  <DialogField
+                    label={t("description")}
+                    htmlFor={`${formId}-description`}
+                    dirty={fieldDirty.description}
+                    fill={fillBody}
+                  >
+                    <textarea
+                      id={`${formId}-description`}
+                      name="description"
+                      value={description}
+                      maxLength={500}
+                      rows={4}
+                      onChange={(event) => setDescription(event.target.value)}
+                      className={`${textareaClass} ${fillBody ? "min-h-32 flex-1 resize-none" : ""}`}
+                    />
+                  </DialogField>
                 </section>
                 <section
                   hidden={!showBasics || !showSection("instructions")}
                   data-settings-section="instructions"
-                  className="scroll-mt-4 space-y-5"
+                  className={`scroll-mt-4 ${fillBody ? "flex flex-1 flex-col gap-5" : "space-y-5"}`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <span className="text-sm font-medium">
@@ -1090,7 +1167,7 @@ export function AgentSettingsForm(props: Props) {
                     maxLength={100_000}
                     placeholder={t("youAreAHelpfulAssistant")}
                     dirty={prompt !== props.systemPrompt}
-                    className="h-80 min-h-64 flex-none"
+                    className="min-h-64"
                   />
                 </section>
                 <div hidden={page !== "capabilities"} className="space-y-8">
@@ -1103,6 +1180,10 @@ export function AgentSettingsForm(props: Props) {
                       options={deployments}
                       selectedIds={deploymentIds}
                       disabled={pending}
+                      empty={{
+                        title: t("resourceList.empty.mcp.title"),
+                        description: t("resourceList.empty.mcp.description"),
+                      }}
                       onSelectionChange={(next) => {
                         setDeploymentIds(next);
                         changed();
@@ -1118,6 +1199,10 @@ export function AgentSettingsForm(props: Props) {
                       options={skills}
                       selectedIds={skillIds}
                       disabled={pending}
+                      empty={{
+                        title: t("resourceList.empty.skills.title"),
+                        description: t("resourceList.empty.skills.description"),
+                      }}
                       onSelectionChange={(next) => {
                         setSkillIds(next);
                         changed();
@@ -1411,22 +1496,6 @@ export function AgentSettingsForm(props: Props) {
                         value={timeoutMinutes}
                         onChange={setTimeoutMinutes}
                         className="w-24"
-                      />
-                    </DialogField>
-                    <DialogField
-                      label={t("secretObfuscation")}
-                      description={t("secretObfuscationDescription")}
-                      dirty={fieldDirty.secretObfuscation}
-                      layout="row"
-                    >
-                      <Switch
-                        checked={secretObfuscation}
-                        ariaLabel={t("secretObfuscation")}
-                        disabled={pending}
-                        onCheckedChange={(checked) => {
-                          setSecretObfuscation(checked);
-                          changed();
-                        }}
                       />
                     </DialogField>
                     <DialogField
@@ -1769,10 +1838,174 @@ export function AgentSettingsForm(props: Props) {
                 </div>
               </fieldset>
             </form>
+            {/* Outside the form: credential actions save on their own. */}
             <section
-              hidden={page !== "execution" || !showSection("advanced")}
+              hidden={page !== "execution" || !showSection("sandboxes")}
               className="space-y-5"
             >
+              {canManageCredentials ? (
+                <DialogField label={r("credentials")}>
+                  <div className="space-y-3">
+                    {credentialsState === "failed" ? (
+                      <p role="alert" className="text-sm text-destructive">
+                        {r("credentialsLoadFailed")}
+                      </p>
+                    ) : credentialsState !== "loaded" ? (
+                      <p
+                        role="status"
+                        className="text-sm text-muted-foreground"
+                      >
+                        {settingsState("loading")}
+                      </p>
+                    ) : credentials.length ? (
+                      <ul className="m-0 list-none divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 p-0">
+                        {credentials.map((credential) => (
+                          <li
+                            key={credential.id}
+                            className="flex min-w-0 items-center gap-3 px-4 py-2"
+                          >
+                            <span
+                              className={`min-w-0 flex-1 truncate font-mono text-sm ${credential.revokedAt ? "text-muted-foreground line-through" : ""}`}
+                            >
+                              {credential.name}
+                            </span>
+                            {credential.revokedAt ? (
+                              <span className="shrink-0 text-xs text-muted-foreground">
+                                {r("credentialRevoked")}
+                              </span>
+                            ) : (
+                              <>
+                                {referencedCredentialIds.has(credential.id) ? (
+                                  <span className="shrink-0 text-xs text-muted-foreground">
+                                    {r("credentialReferenced")}
+                                  </span>
+                                ) : (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    disabled={pending || !environment.trim()}
+                                    onClick={() =>
+                                      void perform(async () => {
+                                        const definition = JSON.parse(
+                                          environment,
+                                        ) as AgentRevisionConfig["environment"];
+                                        definition.credentialReferences = [
+                                          ...definition.credentialReferences.filter(
+                                            (reference) =>
+                                              reference.name !==
+                                              credential.name,
+                                          ),
+                                          {
+                                            name: credential.name,
+                                            credentialId: credential.id,
+                                          },
+                                        ];
+                                        setEnvironment(
+                                          JSON.stringify(definition, null, 2),
+                                        );
+                                        setReview(null);
+                                      })
+                                    }
+                                  >
+                                    {r("credentialRef")}
+                                  </Button>
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={pending}
+                                  onClick={() =>
+                                    void perform(async () => {
+                                      const data = identity();
+                                      data.set("credentialId", credential.id);
+                                      const result =
+                                        await revokeAgentEnvironmentCredentialAction(
+                                          data,
+                                        );
+                                      if ("error" in result)
+                                        throw new Error(result.error);
+                                      dropCredentialReference(credential.id);
+                                      await loadCredentials();
+                                      setReview(null);
+                                    })
+                                  }
+                                >
+                                  {r("revokeCredential")}
+                                </Button>
+                              </>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        {r("noCredentials")}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap items-start gap-2">
+                      <Input
+                        aria-label={r("credentialName")}
+                        placeholder={r("credentialName")}
+                        value={credentialName}
+                        onChange={setCredentialName}
+                        className="min-w-40 flex-1"
+                        classNames={{ input: "font-mono" }}
+                      />
+                      <Input
+                        aria-label={r("credentialValue")}
+                        placeholder={r("credentialValue")}
+                        type="password"
+                        value={credentialValue}
+                        onChange={setCredentialValue}
+                        className="min-w-40 flex-1"
+                      />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={
+                          pending || !credentialName || !credentialValue
+                        }
+                        onClick={() =>
+                          void perform(async () => {
+                            const data = identity();
+                            data.set("name", credentialName);
+                            data.set("value", credentialValue);
+                            const result =
+                              await createAgentEnvironmentCredentialAction(
+                                data,
+                              );
+                            if ("error" in result)
+                              throw new Error(result.error);
+                            setCredentialName("");
+                            setCredentialValue("");
+                            await loadCredentials();
+                          })
+                        }
+                      >
+                        {r("createCredential")}
+                      </Button>
+                    </div>
+                  </div>
+                </DialogField>
+              ) : null}
+              <DialogField
+                label={t("secretObfuscation")}
+                description={t("secretObfuscationDescription")}
+                dirty={fieldDirty.secretObfuscation}
+                layout="row"
+              >
+                <Switch
+                  checked={secretObfuscation}
+                  ariaLabel={t("secretObfuscation")}
+                  disabled={pending}
+                  onCheckedChange={(checked) => {
+                    setSecretObfuscation(checked);
+                    changed();
+                  }}
+                />
+              </DialogField>
               <BouncyAccordion
                 items={[
                   {
@@ -1798,135 +2031,6 @@ export function AgentSettingsForm(props: Props) {
                   },
                 ]}
               />
-              <h4 className="text-sm font-medium">{r("credentials")}</h4>
-              {canManageCredentials ? (
-                <>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={pending}
-                    onClick={() => void perform(loadCredentials)}
-                  >
-                    {r("loadCredentials")}
-                  </Button>
-                  <DialogField
-                    label={r("credentialName")}
-                    dirty={credentialName !== ""}
-                  >
-                    <Input
-                      aria-label={r("credentialName")}
-                      value={credentialName}
-                      onChange={setCredentialName}
-                    />
-                  </DialogField>
-                  <DialogField
-                    label={r("credentialValue")}
-                    dirty={credentialValue !== ""}
-                  >
-                    <Input
-                      aria-label={r("credentialValue")}
-                      type="password"
-                      value={credentialValue}
-                      onChange={setCredentialValue}
-                    />
-                  </DialogField>
-                  <Button
-                    type="button"
-                    disabled={pending || !credentialName || !credentialValue}
-                    onClick={() =>
-                      void perform(async () => {
-                        const data = identity();
-                        data.set("name", credentialName);
-                        data.set("value", credentialValue);
-                        const result =
-                          await createAgentEnvironmentCredentialAction(data);
-                        if (result.error) throw new Error(result.error);
-                        setCredentialValue("");
-                        await loadCredentials();
-                      })
-                    }
-                  >
-                    {r("createCredential")}
-                  </Button>
-                  {credentials.length ? (
-                    credentials.map((credential) => (
-                      <div
-                        key={credential.id}
-                        className="space-y-2 rounded-lg border border-border p-3"
-                      >
-                        <p>{credential.name}</p>
-                        <code className="block break-all text-xs">
-                          {JSON.stringify({
-                            name: credential.name,
-                            credentialId: credential.id,
-                          })}
-                        </code>
-                        {credential.revokedAt ? (
-                          <p>{String(credential.revokedAt)}</p>
-                        ) : (
-                          <div className="flex flex-wrap gap-2">
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              disabled={pending || !environment.trim()}
-                              onClick={() =>
-                                void perform(async () => {
-                                  const definition = JSON.parse(
-                                    environment,
-                                  ) as AgentRevisionConfig["environment"];
-                                  definition.credentialReferences = [
-                                    ...definition.credentialReferences.filter(
-                                      (reference) =>
-                                        reference.name !== credential.name,
-                                    ),
-                                    {
-                                      name: credential.name,
-                                      credentialId: credential.id,
-                                    },
-                                  ];
-                                  setEnvironment(
-                                    JSON.stringify(definition, null, 2),
-                                  );
-                                  setReview(null);
-                                })
-                              }
-                            >
-                              {r("credentialRef")}
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              disabled={pending}
-                              onClick={() =>
-                                void perform(async () => {
-                                  const data = identity();
-                                  data.set("credentialId", credential.id);
-                                  const result =
-                                    await revokeAgentEnvironmentCredentialAction(
-                                      data,
-                                    );
-                                  if ("error" in result)
-                                    throw new Error(result.error);
-                                  await loadCredentials();
-                                  setReview(null);
-                                })
-                              }
-                            >
-                              {r("revokeCredential")}
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      {r("noCredentials")}
-                    </p>
-                  )}
-                </>
-              ) : (
-                <p>{r("credentialOwner")}</p>
-              )}
             </section>
           </div>
           {review ? (

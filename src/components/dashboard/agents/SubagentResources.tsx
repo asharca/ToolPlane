@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { Bot, Plus, X } from "lucide-react";
 import { Button } from "@/components/motion/button/base";
 import { Checkbox } from "@/components/motion/checkbox";
+import { DashboardEmptyState } from "../DashboardUI";
 import { SettingsSection } from "./SettingsSection";
 
 export type PlatformSubagentOption = {
@@ -228,7 +229,14 @@ export function SubagentResources({
               </li>
             ))}
         </ul>
-      ) : null}
+      ) : (
+        <DashboardEmptyState
+          icon={Bot}
+          title={agents("resourceList.empty.subAgents.title")}
+          description={agents("resourceList.empty.subAgents.description")}
+          className="rounded-xl bg-muted/30"
+        />
+      )}
     </SettingsSection>
   );
 }
