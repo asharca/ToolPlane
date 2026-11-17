@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.42.0](https://github.com/asharca/ToolPlane/compare/v0.41.0...v0.42.0) (2026-11-17)
+
+
+### Features
+
+* **agents:** 收紧智能体设置弹窗，环境凭据移到沙箱页 ([#266](https://github.com/asharca/ToolPlane/issues/266)) ([9ca6fe5](https://github.com/asharca/ToolPlane/commit/9ca6fe5440ce27e2378a36d745d194d08af44933))
+
+
+### Bug Fixes
+
+* **agents:** 频道与对话回复恢复耗时瀑布图和工具过程记录 ([#267](https://github.com/asharca/ToolPlane/issues/267)) ([4b900ea](https://github.com/asharca/ToolPlane/commit/4b900ea309627a4a27990b9c53a362a5b9c66046))
+* **work:** 发送后输入栏保留所选模型 ([#265](https://github.com/asharca/ToolPlane/issues/265)) ([d088769](https://github.com/asharca/ToolPlane/commit/d088769a2e3554be033243d7dec6ca4fce4b7f1b))
+
 ## [0.41.0](https://github.com/asharca/ToolPlane/compare/v0.40.0...v0.41.0) (2026-11-17)
 
 
