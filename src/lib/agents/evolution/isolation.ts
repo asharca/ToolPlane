@@ -18,11 +18,9 @@ import { EvolutionError } from "./errors";
 import type { RecordedEvolutionTool } from "./contracts";
 import { logSystemEvent } from "@/lib/observability/system";
 import { z } from "zod";
-import { agentRuntimeBuiltinToolGroups } from "@/lib/agents/runtime-kind";
+import { agentRuntimeBuiltinTools } from "@/lib/agents/runtime-kind";
 import { PI_PACKAGE_CAPTURE_IMAGE } from "@/lib/agents/pi-version";
-const nativeToolNames = agentRuntimeBuiltinToolGroups("pi-sdk").flatMap(
-  (group) => group.tools,
-);
+const nativeToolNames = agentRuntimeBuiltinTools("pi-sdk");
 export function evolutionNativeTools(disabledBuiltinTools: readonly string[]) {
   return nativeToolNames.filter((name) => !disabledBuiltinTools.includes(name));
 }

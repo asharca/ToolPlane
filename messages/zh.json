@@ -831,7 +831,7 @@
         },
         "permissionKinds": {
           "subagent": "新增或更新的子智能体版本及权限",
-          "builtin": "新增内置工具",
+          "builtin": "新增功能",
           "mcp": "新增或变更的 MCP 工具",
           "skill": "新增或更新的技能",
           "package": "新增或更新的能力包",
@@ -913,14 +913,11 @@
         }
       },
       "subagentResources": {
-        "label": "工作区平台智能体",
         "nativeMode": "OMP 原生子任务",
-        "platformHelp": "发布后，当前智能体可调用勾选的智能体。",
         "reviewConcurrency": "最大并发数：{value}",
         "reviewDepth": "最大深度：{value}",
         "loading": "正在加载子智能体设置…",
         "loadFailed": "无法加载子智能体设置。",
-        "empty": "本工作区暂无可选择的平台智能体。",
         "select": "选择 {name} 作为子智能体",
         "unavailable": "此智能体当前不可用于委派执行。",
         "saveFailed": "无法保存子智能体设置。",
@@ -1341,10 +1338,55 @@
       "advanced": "高级",
       "instructionsSettingsDescription": "每次对话前应用的系统行为。",
       "resourceSettingsDescription": "选择此智能体可使用的工作区能力。",
-      "builtInTools": "内置工具",
-      "builtInToolsDescription": "由 {runtime} 运行时提供；个别工具是否可用仍取决于模型、凭据或当前模式。",
-      "optionalBuiltinTools": "可选内置工具",
-      "optionalBuiltinToolsDescription": "默认关闭。启用工具会改变执行权限，需审核并应用修订后使用。",
+      "builtinFeatures": {
+        "title": "功能",
+        "manageMemories": "管理记忆",
+        "files": {
+          "name": "文件读写",
+          "description": "读取、搜索和修改工作目录中的文件"
+        },
+        "shell": {
+          "name": "终端命令",
+          "description": "在沙箱中运行命令行程序"
+        },
+        "todo": {
+          "name": "任务清单",
+          "description": "拆分步骤并跟踪进度"
+        },
+        "web": {
+          "name": "联网搜索",
+          "description": "搜索网页并读取网页内容"
+        },
+        "browser": {
+          "name": "浏览器",
+          "description": "打开网页，点击、输入并截图"
+        },
+        "memory": {
+          "name": "长期记忆",
+          "description": "跨会话记住并回忆信息"
+        },
+        "subtasks": {
+          "name": "并行子任务",
+          "description": "把独立的工作分给多个子会话同时完成"
+        },
+        "codeRun": {
+          "name": "代码运行",
+          "description": "在保留变量的环境中运行 Python 或 JavaScript"
+        },
+        "codeIntel": {
+          "name": "代码智能",
+          "description": "代码诊断、跳转定义和断点调试"
+        },
+        "rewind": {
+          "name": "会话回退",
+          "description": "探索前设检查点，之后回退并只保留结论"
+        }
+      },
+      "resourceList": {
+        "add": "添加",
+        "done": "完成",
+        "remove": "移除 {name}"
+      },
       "OPTIONAL_BUILTIN_TOOLS_INVALID": "只能选择已注册的可选工具，请刷新设置后重试。",
       "OPTIONAL_BUILTIN_TOOLS_SAVE_FAILED": "无法保存可选工具设置，请重试。",
       "memories": "记忆",
@@ -1374,14 +1416,6 @@
       "AGENT_MEMORY_LIMIT_REACHED": "当前智能体已有 500 条记忆，请先删除部分记忆再添加。",
       "AGENT_MEMORY_NOT_FOUND": "未找到记忆或智能体。",
       "AGENT_MEMORY_FAILED": "无法完成记忆操作，请重试。",
-      "enableBuiltInToolGroup": "启用{category}工具",
-      "toolCategoryFile": "文件",
-      "toolCategoryShell": "命令行",
-      "toolCategorySearch": "搜索",
-      "toolCategoryContext": "上下文",
-      "toolCategoryOrchestration": "编排",
-      "toolCategoryBrowser": "浏览器",
-      "toolCategoryMedia": "媒体",
       "advancedSettingsDescription": "运行限制与运行时维护。",
       "runtimeSummary": "运行时摘要",
       "attachedCapabilities": "已绑定 {count} 项",
@@ -1842,9 +1876,6 @@
         "historyAgent": "智能体"
       },
       "pluginPanel": {
-        "selectedCount": "已选 {count}/{max}",
-        "add": "添加插件",
-        "empty": "尚未启用插件",
         "state": {
           "unsaved": "未保存",
           "unapplied": "待应用",
@@ -1865,7 +1896,6 @@
         "configure": "配置并添加",
         "noMatches": "没有匹配的插件",
         "nothing": "没有可添加的插件",
-        "back": "返回",
         "cancel": "取消"
       }
     },
@@ -3503,7 +3533,7 @@
         "packages": "Pi 插件已变更",
         "knowledge": "知识库已变更",
         "environment": "运行环境已变更",
-        "builtinTools": "内置工具已变更",
+        "builtinTools": "功能已变更",
         "a2a": "智能体协作设置已变更"
       },
       "mcpAdded": "新增 MCP 服务：{name}",

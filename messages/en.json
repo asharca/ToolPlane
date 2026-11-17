@@ -831,7 +831,7 @@
         },
         "permissionKinds": {
           "subagent": "New or updated subagent versions and permissions",
-          "builtin": "Additional built-in tools",
+          "builtin": "Additional features",
           "mcp": "New or changed MCP tools",
           "skill": "New or updated skills",
           "package": "New or updated packages",
@@ -913,14 +913,11 @@
         }
       },
       "subagentResources": {
-        "label": "Workspace platform Agents",
         "nativeMode": "OMP native sub-tasks",
-        "platformHelp": "Publishing authorizes this agent to call the selected agents.",
         "reviewConcurrency": "Maximum concurrency: {value}",
         "reviewDepth": "Maximum depth: {value}",
         "loading": "Loading sub-agent settings…",
         "loadFailed": "Could not load sub-agent settings.",
-        "empty": "No platform Agents are available in this workspace.",
         "select": "Select {name} as a sub-agent",
         "unavailable": "This Agent is currently unavailable for delegation.",
         "saveFailed": "Could not save the sub-agent settings.",
@@ -1341,10 +1338,55 @@
       "advanced": "Advanced",
       "instructionsSettingsDescription": "System behavior applied before each conversation.",
       "resourceSettingsDescription": "Select the workspace capabilities this agent can use.",
-      "builtInTools": "Built-in tools",
-      "builtInToolsDescription": "Provided by the {runtime} runtime; individual tools may still depend on the model, credentials, or current mode.",
-      "optionalBuiltinTools": "Optional built-in tools",
-      "optionalBuiltinToolsDescription": "Off by default. Enabling a tool changes execution permissions and requires revision review before use.",
+      "builtinFeatures": {
+        "title": "Features",
+        "manageMemories": "Manage memories",
+        "files": {
+          "name": "Files",
+          "description": "Read, search, and edit files in the working directory"
+        },
+        "shell": {
+          "name": "Terminal",
+          "description": "Run command-line programs in the sandbox"
+        },
+        "todo": {
+          "name": "Task list",
+          "description": "Break work into steps and track progress"
+        },
+        "web": {
+          "name": "Web search",
+          "description": "Search the web and read pages"
+        },
+        "browser": {
+          "name": "Browser",
+          "description": "Open pages, click, type, and take screenshots"
+        },
+        "memory": {
+          "name": "Long-term memory",
+          "description": "Remember and recall information across conversations"
+        },
+        "subtasks": {
+          "name": "Parallel subtasks",
+          "description": "Split independent work across concurrent sub-sessions"
+        },
+        "codeRun": {
+          "name": "Code execution",
+          "description": "Run Python or JavaScript with variables kept between calls"
+        },
+        "codeIntel": {
+          "name": "Code intelligence",
+          "description": "Diagnostics, go to definition, and breakpoint debugging"
+        },
+        "rewind": {
+          "name": "Conversation rewind",
+          "description": "Checkpoint before exploring, then rewind keeping only the findings"
+        }
+      },
+      "resourceList": {
+        "add": "Add",
+        "done": "Done",
+        "remove": "Remove {name}"
+      },
       "OPTIONAL_BUILTIN_TOOLS_INVALID": "Select only registered optional tools. Refresh settings and try again.",
       "OPTIONAL_BUILTIN_TOOLS_SAVE_FAILED": "Could not save optional tool settings. Try again.",
       "memories": "Memories",
@@ -1374,14 +1416,6 @@
       "AGENT_MEMORY_LIMIT_REACHED": "This Agent has 500 memories. Delete existing memories before saving more.",
       "AGENT_MEMORY_NOT_FOUND": "Memory or Agent not found.",
       "AGENT_MEMORY_FAILED": "Could not complete the memory operation. Try again.",
-      "enableBuiltInToolGroup": "Enable {category} tools",
-      "toolCategoryFile": "Files",
-      "toolCategoryShell": "Shell",
-      "toolCategorySearch": "Search",
-      "toolCategoryContext": "Context",
-      "toolCategoryOrchestration": "Orchestration",
-      "toolCategoryBrowser": "Browser",
-      "toolCategoryMedia": "Media",
       "advancedSettingsDescription": "Run limits and runtime maintenance.",
       "runtimeSummary": "Runtime summary",
       "attachedCapabilities": "{count} attached",
@@ -1842,9 +1876,6 @@
         "historyAgent": "Agent"
       },
       "pluginPanel": {
-        "selectedCount": "{count}/{max} selected",
-        "add": "Add plugin",
-        "empty": "No plugins enabled",
         "state": {
           "unsaved": "Unsaved",
           "unapplied": "Not applied",
@@ -1865,7 +1896,6 @@
         "configure": "Configure and add",
         "noMatches": "No matching plugins",
         "nothing": "No plugins to add",
-        "back": "Back",
         "cancel": "Cancel"
       }
     },
@@ -3503,7 +3533,7 @@
         "packages": "Pi packages changed",
         "knowledge": "Knowledge bases changed",
         "environment": "Runtime environment changed",
-        "builtinTools": "Built-in tools changed",
+        "builtinTools": "Features changed",
         "a2a": "Agent collaboration settings changed"
       },
       "mcpAdded": "MCP server added: {name}",

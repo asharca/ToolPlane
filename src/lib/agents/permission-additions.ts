@@ -1,5 +1,5 @@
 import type { AgentRevisionConfig } from "./revision-types";
-import { agentRuntimeBuiltinToolGroups } from "./runtime-kind";
+import { agentRuntimeBuiltinTools } from "./runtime-kind";
 import { isSupportedPiVersion, PI_SDK_VERSION } from "./pi-version";
 
 // Legacy Pi pins run on the installed SDK; only a different runtime is a change.
@@ -39,9 +39,7 @@ export function agentPermissionAdditions(
   };
   const tools =
     previous?.disabledBuiltinTools ??
-    agentRuntimeBuiltinToolGroups(next.runtimeKind).flatMap(
-      (group) => group.tools,
-    );
+    agentRuntimeBuiltinTools(next.runtimeKind);
   add(
     "builtin",
     "builtin",

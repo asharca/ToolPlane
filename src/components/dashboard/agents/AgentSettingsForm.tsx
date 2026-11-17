@@ -34,10 +34,15 @@ import {
   type ModelSelection,
 } from "@/components/dashboard/models/ModelPicker";
 import {
-  AgentResourceSelect,
+  AgentResourceList,
   type AgentResourceOption,
 } from "./AgentResourceSelect";
-import { AgentBuiltInTools } from "./AgentBuiltInTools";
+import {
+  AgentBuiltinFeatureInputs,
+  AgentBuiltinFeatures,
+} from "./AgentBuiltinFeatures";
+import { AgentMemoriesPanel } from "./AgentMemoriesPanel";
+import { SettingsSection } from "./SettingsSection";
 import {
   AgentStreamRulesEditor,
   useStreamRulesDraft,
@@ -83,9 +88,9 @@ import {
   type AgentPermissionAddition,
 } from "@/lib/agents/permission-additions";
 import {
+  agentBuiltinFeatureForTool,
   isExecutableAgentRuntimeKind,
   agentRuntimeSupportsProviderFormat,
-  type AgentOptionalBuiltinTool,
 } from "@/lib/agents/runtime-kind";
 import {
   SubagentResources,
@@ -109,6 +114,23 @@ export type AgentSettingsSection =
   | "sandboxes"
   | "subAgents"
   | "advanced";
+export type AgentSettingsPage = "basic" | "capabilities" | "execution";
+export const AGENT_SETTINGS_SECTION_PAGE: Record<
+  AgentSettingsSection,
+  AgentSettingsPage
+> = {
+  general: "basic",
+  instructions: "basic",
+  builtInTools: "capabilities",
+  mcp: "capabilities",
+  skills: "capabilities",
+  piPackages: "capabilities",
+  subAgents: "capabilities",
+  toolApproval: "execution",
+  streamRules: "execution",
+  advanced: "execution",
+  sandboxes: "execution",
+};
 export type AgentPiPackageOption = {
   marketInstallId: string;
   listingId: string;
@@ -161,7 +183,6 @@ type Props = {
   contextFiles: boolean;
   disabledBuiltinTools?: string[];
   optionalBuiltinTools: string[];
-  optionalBuiltinToolOptions: readonly AgentOptionalBuiltinTool[];
   providerId: string | null;
   model: string | null;
   reasoningEffort: ReasoningLevel | null;
@@ -185,7 +206,9 @@ type Props = {
   canManageCredentials?: boolean;
   canApprovePluginSync?: boolean;
   className?: string;
-  activeSection?: AgentSettingsSection;
+  activePage?: AgentSettingsPage;
+  initialMemoryManagerOpen?: boolean;
+  /** Asks the container to show a section, e.g. after a validation error. */
   onSectionChange?: (section: AgentSettingsSection) => void;
   onDirtySectionsChange?: (sections: AgentSettingsSection[]) => void;
 };
@@ -214,6 +237,7 @@ export function AgentSettingsForm(props: Props) {
   } = props;
   const t = useTranslations("console.agents");
   const r = useTranslations("console.agents.revisions");
+  const approvalT = useTranslations("console.toolApproval");
   const streamRules = useStreamRulesDraft(
     slug,
     agentId,
@@ -225,8 +249,12 @@ export function AgentSettingsForm(props: Props) {
   const closeModal = useCloseSettingsModal();
   const formId = useId();
   const settingsState = useTranslations("common");
-  const [section, setSection] = useState<AgentSettingsSection>("general");
-  const active = props.activeSection ?? section;
+  const [localPage, setLocalPage] = useState<AgentSettingsPage>("basic");
+  const page = props.activePage ?? localPage;
+  function reveal(section: AgentSettingsSection) {
+    setLocalPage(AGENT_SETTINGS_SECTION_PAGE[section]);
+    props.onSectionChange?.(section);
+  }
   const [name, setName] = useState(props.name);
   const [description, setDescription] = useState(props.description ?? "");
   const [prompt, setPrompt] = useState(props.systemPrompt);
@@ -604,8 +632,7 @@ export function AgentSettingsForm(props: Props) {
       },
     ]);
     changed();
-    setSection("piPackages");
-    props.onSectionChange?.("piPackages");
+    reveal("piPackages");
     return "selected";
   }
   const pluginFlow = usePluginAgentFlow({
@@ -632,8 +659,7 @@ export function AgentSettingsForm(props: Props) {
         code === "AGENT_ROLE_MODELS_INVALID" ||
         code === t("advisorInvalid")
       ) {
-        setSection("advanced");
-        props.onSectionChange?.("advanced");
+        reveal("advanced");
       }
       const text = t.has(`modelRouting.errors.${code}`)
         ? t(`modelRouting.errors.${code}`)
@@ -784,7 +810,7 @@ export function AgentSettingsForm(props: Props) {
   }
   const textareaClass =
     "w-full rounded-lg border border-border bg-background p-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-  const showBasics = active === "general" || active === "instructions";
+  const showBasics = page === "basic";
   if (!isExecutableAgentRuntimeKind(runtimeKind))
     return (
       <div className={props.className}>
@@ -805,7 +831,30 @@ export function AgentSettingsForm(props: Props) {
     <div className={props.className ?? "flex h-full min-h-0 flex-col"}>
       <DialogBody className="flex flex-col overscroll-contain">
         <div className="space-y-5">
-          <div hidden={Boolean(review)} className="space-y-5">
+          <div hidden={Boolean(review)} className="space-y-8">
+            {/* Outside the form: the memory manager has forms of its own. */}
+            {page === "capabilities" ? (
+              <SettingsSection
+                id="builtInTools"
+                title={t("builtinFeatures.title")}
+              >
+                <AgentBuiltinFeatures
+                  runtimeKind={runtimeKind}
+                  disabledTools={disabledTools}
+                  enabledOptionalTools={enabledOptionalTools}
+                  disabled={pending}
+                  onChange={(next) => {
+                    setDisabledTools(next.disabledTools);
+                    setEnabledOptionalTools(next.enabledOptionalTools);
+                    changed();
+                  }}
+                  memoryManagerOpen={props.initialMemoryManagerOpen}
+                  memoryManager={
+                    <AgentMemoriesPanel slug={slug} agentId={agentId} />
+                  }
+                />
+              </SettingsSection>
+            ) : null}
             <form
               onSubmit={(event) => {
                 event.preventDefault();
@@ -820,8 +869,7 @@ export function AgentSettingsForm(props: Props) {
                   return;
                 const invalidSection =
                   target.name === "maxSteps" ? "advanced" : "general";
-                setSection(invalidSection);
-                props.onSectionChange?.(invalidSection);
+                reveal(invalidSection);
               }}
               data-unsaved-changes={hasUnsavedChanges ? "true" : "false"}
               className="space-y-5"
@@ -865,8 +913,17 @@ export function AgentSettingsForm(props: Props) {
                 name="externalSandboxes"
                 value={JSON.stringify(attachments)}
               />
-              <fieldset disabled={pending} className="min-w-0 space-y-5">
-                <section hidden={!showBasics} className="space-y-5">
+              <AgentBuiltinFeatureInputs
+                runtimeKind={runtimeKind}
+                disabledTools={disabledTools}
+                enabledOptionalTools={enabledOptionalTools}
+              />
+              <fieldset disabled={pending} className="min-w-0 space-y-8">
+                <section
+                  hidden={!showBasics}
+                  data-settings-section="general"
+                  className="scroll-mt-4 space-y-5"
+                >
                   <DialogField
                     label={t("name")}
                     htmlFor={`${formId}-name`}
@@ -964,7 +1021,11 @@ export function AgentSettingsForm(props: Props) {
                     )}
                   </div>
                 </section>
-                <section hidden={!showBasics} className="space-y-5">
+                <section
+                  hidden={!showBasics}
+                  data-settings-section="instructions"
+                  className="scroll-mt-4 space-y-5"
+                >
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <span className="text-sm font-medium">
                       {t("instructions")}
@@ -996,69 +1057,35 @@ export function AgentSettingsForm(props: Props) {
                     className="h-80 min-h-64 flex-none"
                   />
                 </section>
-                <section hidden={active !== "streamRules"}>
-                  <AgentStreamRulesEditor
-                    draft={streamRules}
-                    disabled={pending}
-                    onChange={changed}
-                  />
-                </section>
-                <section hidden={active !== "builtInTools"}>
-                  <AgentBuiltInTools
-                    runtimeKind={runtimeKind}
-                    disabledTools={disabledTools}
-                    onDisabledToolsChange={(next) => {
-                      setDisabledTools(next);
-                      changed();
-                    }}
-                    optionalToolOptions={props.optionalBuiltinToolOptions}
-                    enabledOptionalTools={enabledOptionalTools}
-                    onEnabledOptionalToolsChange={(next) => {
-                      setEnabledOptionalTools(next);
-                      changed();
-                    }}
-                    disabled={pending}
-                  />
-                </section>
-                <section hidden={active !== "toolApproval"}>
-                  <ToolApprovalSettings
-                    value={toolApproval}
-                    disabled={pending}
-                    dirty={fieldDirty.toolApproval}
-                    onChange={(value) => {
-                      setToolApproval(value);
-                      changed();
-                    }}
-                  />
-                </section>
-                <section hidden={active !== "mcp"}>
-                  <AgentResourceSelect
+                <div hidden={page !== "capabilities"} className="space-y-8">
+                  <AgentResourceList
+                    id="mcp"
                     icon={Server}
                     label={t("mcp")}
                     name="deploymentId"
                     options={deployments}
                     selectedIds={deploymentIds}
+                    disabled={pending}
                     onSelectionChange={(next) => {
                       setDeploymentIds(next);
                       changed();
                     }}
                   />
-                </section>
-                <section hidden={active !== "skills"}>
-                  <AgentResourceSelect
+                  <AgentResourceList
+                    id="skills"
                     icon={PackageCheck}
                     label={t("skills")}
                     name="installedSkillId"
                     options={skills}
                     selectedIds={skillIds}
+                    disabled={pending}
                     onSelectionChange={(next) => {
                       setSkillIds(next);
                       changed();
                     }}
                   />
-                </section>
-                <section hidden={active !== "piPackages"}>
                   <AgentPluginsPanel
+                    title={t("piPackages")}
                     slug={slug}
                     agentId={agentId}
                     runtimeKind={runtimeKind}
@@ -1079,231 +1106,51 @@ export function AgentSettingsForm(props: Props) {
                       changed();
                     }}
                   />
-                </section>
-                <section hidden={active !== "sandboxes"} className="space-y-5">
-                  <DialogField label={t("ownSandbox")}>
-                    {ownSandbox ? (
-                      <div className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-4">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <ButtonLink
-                            href={`/app/${slug}/sandboxes/${ownSandbox.id}`}
-                            variant="ghost"
-                            size="sm"
-                          >
-                            <Box className="size-4" />
-                            {ownSandbox.name}
-                          </ButtonLink>
-                          <StatusBadge status={ownSandbox.status} />
-                        </div>
-                        <dl className="grid min-w-0 gap-2 text-xs sm:grid-cols-[auto_minmax(0,1fr)]">
-                          <dt className="text-muted-foreground">
-                            {s("image")}
-                          </dt>
-                          <dd
-                            title={ownSandbox.image ?? ""}
-                            className="min-w-0 truncate font-mono"
-                          >
-                            {ownSandbox.image?.replace(
-                              /(@sha256:[a-f0-9]{12})[a-f0-9]+/gi,
-                              "$1…",
-                            ) ?? "—"}
-                          </dd>
-                          <dt className="text-muted-foreground">
-                            {s("network")}
-                          </dt>
-                          <dd>
-                            {ownSandbox.network === "none"
-                              ? s("networkNone")
-                              : s("networkIsolated")}
-                          </dd>
-                        </dl>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        {t("ownSandboxMissing")}
-                      </p>
-                    )}
-                  </DialogField>
-                  <DialogField
-                    label={t("externalSandboxes")}
-                    dirty={attachmentsDirty}
+                  {/* Subagents save through their own request, not the form. */}
+                  <div onChange={(event) => event.stopPropagation()}>
+                    <SubagentResources
+                      title={t("subAgents")}
+                      slug={slug}
+                      agentId={agentId}
+                      snapshot={subagentSnapshot}
+                      draft={subagentDraft}
+                      disabled={pending || !canApprovePluginSync}
+                      onLoad={setSubagentSnapshot}
+                      onChange={(draft) => {
+                        setSubagentDraft(draft);
+                        setReview(null);
+                        setMessage("");
+                      }}
+                    />
+                  </div>
+                </div>
+                <div hidden={page !== "execution"} className="space-y-8">
+                  <SettingsSection id="toolApproval" title={approvalT("title")}>
+                    <ToolApprovalSettings
+                      value={toolApproval}
+                      disabled={pending}
+                      dirty={fieldDirty.toolApproval}
+                      onChange={(value) => {
+                        setToolApproval(value);
+                        changed();
+                      }}
+                    />
+                  </SettingsSection>
+                  <SettingsSection
+                    id="streamRules"
+                    title={t("streamRules.title")}
                   >
-                    <div className="space-y-3">
-                      {attachments.map((attachment) => {
-                        const sandbox = externalSandboxes.find(
-                          (item) => item.id === attachment.sandboxId,
-                        );
-                        if (!sandbox) return null;
-                        const KindIcon =
-                          sandbox.kind === "connector"
-                            ? Cable
-                            : sandbox.kind === "ssh"
-                              ? Server
-                              : Box;
-                        return (
-                          <div
-                            key={sandbox.id}
-                            className="space-y-2 rounded-xl border border-border p-3"
-                          >
-                            <div className="flex flex-wrap items-center gap-2">
-                              <KindIcon className="size-4 shrink-0 text-muted-foreground" />
-                              <ButtonLink
-                                href={`/app/${slug}/sandboxes/${sandbox.id}`}
-                                variant="ghost"
-                                size="sm"
-                                className="min-w-0 max-w-full"
-                              >
-                                <span className="truncate">{sandbox.name}</span>
-                              </ButtonLink>
-                              <span className="text-xs text-muted-foreground">
-                                {s(
-                                  sandbox.kind === "ssh"
-                                    ? "sshMode"
-                                    : sandbox.kind === "connector"
-                                      ? "connectorMode"
-                                      : "docker",
-                                )}
-                              </span>
-                              <StatusBadge status={sandbox.status} />
-                              <div className="ml-auto flex items-center gap-2">
-                                <FormSelect
-                                  label={t("sandboxAccessFor", {
-                                    name: sandbox.name,
-                                  })}
-                                  value={attachment.access}
-                                  options={EXTERNAL_SANDBOX_ACCESS.map(
-                                    (access) => ({
-                                      value: access,
-                                      label: s(`access.${access}`),
-                                    }),
-                                  )}
-                                  onValueChange={(access) => {
-                                    setAttachments((current) =>
-                                      current.map((item) =>
-                                        item.sandboxId === sandbox.id
-                                          ? {
-                                              ...item,
-                                              access:
-                                                access as ExternalSandboxAccess,
-                                            }
-                                          : item,
-                                      ),
-                                    );
-                                    changed();
-                                  }}
-                                />
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  aria-label={t("removeExternalSandbox", {
-                                    name: sandbox.name,
-                                  })}
-                                  onClick={() => {
-                                    setAttachments((current) =>
-                                      current.filter(
-                                        (item) => item.sandboxId !== sandbox.id,
-                                      ),
-                                    );
-                                    changed();
-                                  }}
-                                >
-                                  <Trash2 className="size-4" />
-                                </Button>
-                              </div>
-                            </div>
-                            {attachment.access === "full" ? (
-                              <p className="text-xs text-amber-700 dark:text-amber-400">
-                                {t("externalSandboxFullWarning")}
-                              </p>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                      {attachments.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">
-                          {t("noExternalSandboxes")}
-                        </p>
-                      ) : null}
-                      {attachments.length >= MAX_EXTERNAL_SANDBOXES ? (
-                        <p className="text-xs text-muted-foreground">
-                          {t("externalSandboxLimit", {
-                            count: MAX_EXTERNAL_SANDBOXES,
-                          })}
-                        </p>
-                      ) : externalSandboxes.some(
-                          (sandbox) =>
-                            !attachments.some(
-                              (item) => item.sandboxId === sandbox.id,
-                            ),
-                        ) ? (
-                        <FormSelect
-                          label={t("addExternalSandbox")}
-                          value=""
-                          options={[
-                            {
-                              value: "",
-                              label: t("addExternalSandbox"),
-                              disabled: true,
-                            },
-                            ...externalSandboxes
-                              .filter(
-                                (sandbox) =>
-                                  !attachments.some(
-                                    (item) => item.sandboxId === sandbox.id,
-                                  ),
-                              )
-                              .map((sandbox) => ({
-                                value: sandbox.id,
-                                label: `${sandbox.name} · ${s(sandbox.kind === "ssh" ? "sshMode" : sandbox.kind === "connector" ? "connectorMode" : "docker")}`,
-                              })),
-                          ]}
-                          onValueChange={(sandboxId) => {
-                            setAttachments((current) =>
-                              current.length < MAX_EXTERNAL_SANDBOXES &&
-                              !current.some(
-                                (item) => item.sandboxId === sandboxId,
-                              )
-                                ? [...current, { sandboxId, access: "read" }]
-                                : current,
-                            );
-                            changed();
-                          }}
-                        />
-                      ) : null}
-                      <ButtonLink
-                        href={`/app/${slug}/sandboxes?scope=external`}
-                        variant="secondary"
-                        size="sm"
-                      >
-                        {t("manageExternalSandboxes")}
-                      </ButtonLink>
-                    </div>
-                  </DialogField>
-                </section>
-                <section
-                  hidden={active !== "subAgents"}
-                  onChange={(event) => event.stopPropagation()}
-                >
-                  <SubagentResources
-                    slug={slug}
-                    agentId={agentId}
-                    snapshot={subagentSnapshot}
-                    draft={subagentDraft}
-                    disabled={pending || !canApprovePluginSync}
-                    onLoad={setSubagentSnapshot}
-                    onChange={(draft) => {
-                      setSubagentDraft(draft);
-                      setReview(null);
-                      setMessage("");
-                    }}
-                  />
-                </section>
-                <section hidden={active !== "advanced"} className="space-y-8">
-                  <div className="space-y-5">
-                    <h3 className="text-sm font-medium">
-                      {t("modelRoutingSection")}
-                    </h3>
+                    <AgentStreamRulesEditor
+                      draft={streamRules}
+                      disabled={pending}
+                      onChange={changed}
+                    />
+                  </SettingsSection>
+                  <SettingsSection
+                    id="advanced"
+                    title={t("modelRoutingSection")}
+                    className="space-y-5"
+                  >
                     <DialogField
                       label={t("modelRouting.fallbackModels")}
                       dirty={fallbackModelsDirty}
@@ -1461,11 +1308,12 @@ export function AgentSettingsForm(props: Props) {
                         </DialogField>
                       ))}
                     </div>
-                  </div>
-                  <div className="space-y-5">
-                    <h3 className="text-sm font-medium">
-                      {t("executionSettings")}
-                    </h3>
+                  </SettingsSection>
+                  <SettingsSection
+                    id="execution"
+                    title={t("executionSettings")}
+                    className="space-y-5"
+                  >
                     <DialogField
                       label={t("maxToolSteps")}
                       htmlFor={`${formId}-steps`}
@@ -1619,11 +1467,219 @@ export function AgentSettingsForm(props: Props) {
                         </DialogField>
                       </div>
                     ) : null}
-                  </div>
-                </section>
+                  </SettingsSection>
+                  <SettingsSection
+                    id="sandboxes"
+                    title={t("sandboxes")}
+                    className="space-y-5"
+                  >
+                    <DialogField label={t("ownSandbox")}>
+                      {ownSandbox ? (
+                        <div className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <ButtonLink
+                              href={`/app/${slug}/sandboxes/${ownSandbox.id}`}
+                              variant="ghost"
+                              size="sm"
+                            >
+                              <Box className="size-4" />
+                              {ownSandbox.name}
+                            </ButtonLink>
+                            <StatusBadge status={ownSandbox.status} />
+                          </div>
+                          <dl className="grid min-w-0 gap-2 text-xs sm:grid-cols-[auto_minmax(0,1fr)]">
+                            <dt className="text-muted-foreground">
+                              {s("image")}
+                            </dt>
+                            <dd
+                              title={ownSandbox.image ?? ""}
+                              className="min-w-0 truncate font-mono"
+                            >
+                              {ownSandbox.image?.replace(
+                                /(@sha256:[a-f0-9]{12})[a-f0-9]+/gi,
+                                "$1…",
+                              ) ?? "—"}
+                            </dd>
+                            <dt className="text-muted-foreground">
+                              {s("network")}
+                            </dt>
+                            <dd>
+                              {ownSandbox.network === "none"
+                                ? s("networkNone")
+                                : s("networkIsolated")}
+                            </dd>
+                          </dl>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          {t("ownSandboxMissing")}
+                        </p>
+                      )}
+                    </DialogField>
+                    <DialogField
+                      label={t("externalSandboxes")}
+                      dirty={attachmentsDirty}
+                    >
+                      <div className="space-y-3">
+                        {attachments.map((attachment) => {
+                          const sandbox = externalSandboxes.find(
+                            (item) => item.id === attachment.sandboxId,
+                          );
+                          if (!sandbox) return null;
+                          const KindIcon =
+                            sandbox.kind === "connector"
+                              ? Cable
+                              : sandbox.kind === "ssh"
+                                ? Server
+                                : Box;
+                          return (
+                            <div
+                              key={sandbox.id}
+                              className="space-y-2 rounded-xl border border-border p-3"
+                            >
+                              <div className="flex flex-wrap items-center gap-2">
+                                <KindIcon className="size-4 shrink-0 text-muted-foreground" />
+                                <ButtonLink
+                                  href={`/app/${slug}/sandboxes/${sandbox.id}`}
+                                  variant="ghost"
+                                  size="sm"
+                                  className="min-w-0 max-w-full"
+                                >
+                                  <span className="truncate">
+                                    {sandbox.name}
+                                  </span>
+                                </ButtonLink>
+                                <span className="text-xs text-muted-foreground">
+                                  {s(
+                                    sandbox.kind === "ssh"
+                                      ? "sshMode"
+                                      : sandbox.kind === "connector"
+                                        ? "connectorMode"
+                                        : "docker",
+                                  )}
+                                </span>
+                                <StatusBadge status={sandbox.status} />
+                                <div className="ml-auto flex items-center gap-2">
+                                  <FormSelect
+                                    label={t("sandboxAccessFor", {
+                                      name: sandbox.name,
+                                    })}
+                                    value={attachment.access}
+                                    options={EXTERNAL_SANDBOX_ACCESS.map(
+                                      (access) => ({
+                                        value: access,
+                                        label: s(`access.${access}`),
+                                      }),
+                                    )}
+                                    onValueChange={(access) => {
+                                      setAttachments((current) =>
+                                        current.map((item) =>
+                                          item.sandboxId === sandbox.id
+                                            ? {
+                                                ...item,
+                                                access:
+                                                  access as ExternalSandboxAccess,
+                                              }
+                                            : item,
+                                        ),
+                                      );
+                                      changed();
+                                    }}
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    aria-label={t("removeExternalSandbox", {
+                                      name: sandbox.name,
+                                    })}
+                                    onClick={() => {
+                                      setAttachments((current) =>
+                                        current.filter(
+                                          (item) =>
+                                            item.sandboxId !== sandbox.id,
+                                        ),
+                                      );
+                                      changed();
+                                    }}
+                                  >
+                                    <Trash2 className="size-4" />
+                                  </Button>
+                                </div>
+                              </div>
+                              {attachment.access === "full" ? (
+                                <p className="text-xs text-amber-700 dark:text-amber-400">
+                                  {t("externalSandboxFullWarning")}
+                                </p>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                        {attachments.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">
+                            {t("noExternalSandboxes")}
+                          </p>
+                        ) : null}
+                        {attachments.length >= MAX_EXTERNAL_SANDBOXES ? (
+                          <p className="text-xs text-muted-foreground">
+                            {t("externalSandboxLimit", {
+                              count: MAX_EXTERNAL_SANDBOXES,
+                            })}
+                          </p>
+                        ) : externalSandboxes.some(
+                            (sandbox) =>
+                              !attachments.some(
+                                (item) => item.sandboxId === sandbox.id,
+                              ),
+                          ) ? (
+                          <FormSelect
+                            label={t("addExternalSandbox")}
+                            value=""
+                            options={[
+                              {
+                                value: "",
+                                label: t("addExternalSandbox"),
+                                disabled: true,
+                              },
+                              ...externalSandboxes
+                                .filter(
+                                  (sandbox) =>
+                                    !attachments.some(
+                                      (item) => item.sandboxId === sandbox.id,
+                                    ),
+                                )
+                                .map((sandbox) => ({
+                                  value: sandbox.id,
+                                  label: `${sandbox.name} · ${s(sandbox.kind === "ssh" ? "sshMode" : sandbox.kind === "connector" ? "connectorMode" : "docker")}`,
+                                })),
+                            ]}
+                            onValueChange={(sandboxId) => {
+                              setAttachments((current) =>
+                                current.length < MAX_EXTERNAL_SANDBOXES &&
+                                !current.some(
+                                  (item) => item.sandboxId === sandboxId,
+                                )
+                                  ? [...current, { sandboxId, access: "read" }]
+                                  : current,
+                              );
+                              changed();
+                            }}
+                          />
+                        ) : null}
+                        <ButtonLink
+                          href={`/app/${slug}/sandboxes?scope=external`}
+                          variant="secondary"
+                          size="sm"
+                        >
+                          {t("manageExternalSandboxes")}
+                        </ButtonLink>
+                      </div>
+                    </DialogField>
+                  </SettingsSection>
+                </div>
               </fieldset>
             </form>
-            <section hidden={active !== "sandboxes"} className="space-y-5">
+            <section hidden={page !== "execution"} className="space-y-5">
               <BouncyAccordion
                 items={[
                   {
@@ -1926,7 +1982,21 @@ export function AgentSettingsForm(props: Props) {
                                     addition.resourceId,
                                   )
                                 ? r(`delegationChanges.${addition.resourceId}`)
-                                : addition.values.join(", ")}
+                                : addition.kind === "builtin"
+                                  ? [
+                                      ...new Set(
+                                        addition.values.map((tool) => {
+                                          const feature =
+                                            agentBuiltinFeatureForTool(tool);
+                                          return feature
+                                            ? t(
+                                                `builtinFeatures.${feature.id}.name`,
+                                              )
+                                            : tool;
+                                        }),
+                                      ),
+                                    ].join("、")
+                                  : addition.values.join(", ")}
                       </p>
                     </li>
                   );
@@ -1997,8 +2067,7 @@ export function AgentSettingsForm(props: Props) {
             type="submit"
             variant={saveNeedsAttention ? "primary" : "secondary"}
             disabled={
-              pending ||
-              (active === "streamRules" && streamRules.rules === null)
+              pending || (page === "execution" && streamRules.rules === null)
             }
             aria-busy={pending}
             className="min-w-24 gap-2 rounded-xl"

@@ -77,64 +77,68 @@ export const AGENT_RUNTIME_CAPABILITIES = {
   }
 >;
 
-export type AgentRuntimeBuiltinToolCategory =
-  | "file"
-  | "shell"
-  | "search"
-  | "context"
-  | "orchestration"
-  | "browser"
-  | "media";
-
-export type AgentRuntimeBuiltinToolGroup = {
-  category: AgentRuntimeBuiltinToolCategory;
-  tools: readonly string[];
-};
-
 export type AgentOptionalBuiltinTool = {
   /** Stable native tool name; never accept module paths from revision data. */
   name: string;
-  category: AgentRuntimeBuiltinToolCategory;
   implementation: "sandbox-extension" | "platform";
 };
 
 /** Register only implemented, trusted tools. Optional tools are always opt-in. */
 export const AGENT_OPTIONAL_BUILTIN_TOOLS: readonly AgentOptionalBuiltinTool[] =
   [
-    { name: "web_search", category: "search", implementation: "platform" },
-    { name: "web_fetch", category: "search", implementation: "platform" },
-    { name: "memory_retain", category: "context", implementation: "platform" },
-    { name: "memory_recall", category: "context", implementation: "platform" },
-    { name: "memory_forget", category: "context", implementation: "platform" },
-    { name: "eval", category: "shell", implementation: "sandbox-extension" },
-    {
-      name: "task",
-      category: "orchestration",
-      implementation: "sandbox-extension",
-    },
-    {
-      name: "checkpoint",
-      category: "context",
-      implementation: "sandbox-extension",
-    },
-    {
-      name: "rewind",
-      category: "context",
-      implementation: "sandbox-extension",
-    },
-    {
-      name: "context_notes",
-      category: "context",
-      implementation: "sandbox-extension",
-    },
-    { name: "lsp", category: "search", implementation: "sandbox-extension" },
-    { name: "debug", category: "shell", implementation: "sandbox-extension" },
-    {
-      name: "browser",
-      category: "browser",
-      implementation: "sandbox-extension",
-    },
+    { name: "web_search", implementation: "platform" },
+    { name: "web_fetch", implementation: "platform" },
+    { name: "memory_retain", implementation: "platform" },
+    { name: "memory_recall", implementation: "platform" },
+    { name: "memory_forget", implementation: "platform" },
+    { name: "eval", implementation: "sandbox-extension" },
+    { name: "task", implementation: "sandbox-extension" },
+    { name: "checkpoint", implementation: "sandbox-extension" },
+    { name: "rewind", implementation: "sandbox-extension" },
+    { name: "context_notes", implementation: "sandbox-extension" },
+    { name: "lsp", implementation: "sandbox-extension" },
+    { name: "debug", implementation: "sandbox-extension" },
+    { name: "browser", implementation: "sandbox-extension" },
   ];
+
+export type AgentBuiltinFeatureId =
+  | "files"
+  | "shell"
+  | "todo"
+  | "web"
+  | "browser"
+  | "memory"
+  | "subtasks"
+  | "codeRun"
+  | "codeIntel"
+  | "rewind";
+
+/**
+ * User-facing switches over Pi tools. Each tool belongs to exactly one feature;
+ * persisted configuration still stores tool names.
+ */
+export const AGENT_BUILTIN_FEATURES: readonly {
+  id: AgentBuiltinFeatureId;
+  tools: readonly string[];
+}[] = [
+  { id: "files", tools: ["read", "edit", "write", "grep", "find", "ls"] },
+  { id: "shell", tools: ["bash"] },
+  { id: "todo", tools: ["todo"] },
+  { id: "web", tools: ["web_search", "web_fetch"] },
+  { id: "browser", tools: ["browser"] },
+  {
+    id: "memory",
+    tools: ["memory_retain", "memory_recall", "memory_forget"],
+  },
+  { id: "subtasks", tools: ["task"] },
+  { id: "codeRun", tools: ["eval"] },
+  { id: "codeIntel", tools: ["lsp", "debug"] },
+  { id: "rewind", tools: ["checkpoint", "rewind", "context_notes"] },
+];
+
+export function agentBuiltinFeatureForTool(tool: string) {
+  return AGENT_BUILTIN_FEATURES.find((feature) => feature.tools.includes(tool));
+}
 
 export function agentOptionalBuiltinTools(value: unknown) {
   return isExecutableAgentRuntimeKind(value)
@@ -172,63 +176,61 @@ export function agentOptionalBuiltinToolOptions(
   }));
 }
 
-const AGENT_RUNTIME_BUILTIN_TOOL_GROUPS: Record<
-  AgentRuntimeKind,
-  readonly AgentRuntimeBuiltinToolGroup[]
-> = {
-  pi: [
-    { category: "file", tools: ["read", "edit", "write"] },
-    { category: "search", tools: ["grep", "find", "ls"] },
-    { category: "shell", tools: ["bash"] },
-  ],
-  "pi-sdk": [
-    { category: "file", tools: ["read", "edit", "write"] },
-    { category: "search", tools: ["grep", "find", "ls"] },
-    { category: "shell", tools: ["bash"] },
-    { category: "orchestration", tools: ["todo"] },
-  ],
-  omp: [
-    { category: "file", tools: ["read", "edit", "write"] },
-    { category: "search", tools: ["grep", "glob", "web_search"] },
-    { category: "shell", tools: ["bash", "eval"] },
-    { category: "orchestration", tools: ["todo", "task", "wait", "ask"] },
-  ],
-  "claude-code": [
-    { category: "file", tools: ["Read", "Edit", "Write"] },
-    { category: "search", tools: ["Glob", "Grep"] },
-    { category: "shell", tools: ["Bash"] },
-    { category: "orchestration", tools: ["Workflow"] },
-  ],
-  dsh: [
-    {
-      category: "file",
-      tools: ["read", "read_image", "edit", "write", "str_replace_editor"],
-    },
-    { category: "search", tools: ["glob", "grep", "web_search"] },
-    {
-      category: "shell",
-      tools: ["bash", "job_output", "job_list", "job_kill"],
-    },
-    {
-      category: "orchestration",
-      tools: [
-        "todo_write",
-        "skill",
-        "get_goal",
-        "create_goal",
-        "update_goal",
-        "exit_plan_mode",
-        "subagent",
-        "subagent_fork",
-        "send_message",
-        "interrupt_agent",
-        "list_agents",
-        "workflow",
-        "ralph",
-      ],
-    },
-  ],
-};
+const AGENT_RUNTIME_BUILTIN_TOOLS: Record<AgentRuntimeKind, readonly string[]> =
+  {
+    pi: ["read", "edit", "write", "grep", "find", "ls", "bash"],
+    "pi-sdk": ["read", "edit", "write", "grep", "find", "ls", "bash", "todo"],
+    omp: [
+      "read",
+      "edit",
+      "write",
+      "grep",
+      "glob",
+      "web_search",
+      "bash",
+      "eval",
+      "todo",
+      "task",
+      "wait",
+      "ask",
+    ],
+    "claude-code": [
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "Bash",
+      "Workflow",
+    ],
+    dsh: [
+      "read",
+      "read_image",
+      "edit",
+      "write",
+      "str_replace_editor",
+      "glob",
+      "grep",
+      "web_search",
+      "bash",
+      "job_output",
+      "job_list",
+      "job_kill",
+      "todo_write",
+      "skill",
+      "get_goal",
+      "create_goal",
+      "update_goal",
+      "exit_plan_mode",
+      "subagent",
+      "subagent_fork",
+      "send_message",
+      "interrupt_agent",
+      "list_agents",
+      "workflow",
+      "ralph",
+    ],
+  };
 
 const GENERIC_PROXY_PROVIDER_FORMATS = new Set([
   "openai",
@@ -259,27 +261,18 @@ export function agentRuntimeCapabilities(value: unknown) {
   return kind ? AGENT_RUNTIME_CAPABILITIES[kind] : null;
 }
 
-export function agentRuntimeBuiltinToolGroups(
-  value: unknown,
-): readonly AgentRuntimeBuiltinToolGroup[] {
+/** Default-on tools of a runtime, in the order passed to the runtime. */
+export function agentRuntimeBuiltinTools(value: unknown): readonly string[] {
   const kind = implementedAgentRuntimeKind(value);
-  return kind ? AGENT_RUNTIME_BUILTIN_TOOL_GROUPS[kind] : [];
+  return kind ? AGENT_RUNTIME_BUILTIN_TOOLS[kind] : [];
 }
 
 export function normalizeDisabledBuiltinTools(
   value: unknown,
   tools: readonly string[] | undefined,
 ): string[] {
-  const available = new Set(
-    agentRuntimeBuiltinToolGroups(value).flatMap((group) => group.tools),
-  );
+  const available = new Set(agentRuntimeBuiltinTools(value));
   return [...new Set((tools ?? []).filter((tool) => available.has(tool)))];
-}
-
-export function agentRuntimeSupportsBuiltinToolSelection(
-  value: unknown,
-): boolean {
-  return isExecutableAgentRuntimeKind(value);
 }
 
 export function isSandboxHarnessRuntimeKind(

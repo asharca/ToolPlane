@@ -4609,7 +4609,7 @@ describe("unified native ingress mappings", () => {
       string,
       (typeof optionalBuiltinPlatformHandlers)[string]
     >;
-    registry.push({ name, category: "context", implementation: "platform" });
+    registry.push({ name, implementation: "platform" });
     catalog.push({
       name,
       description: "Count this task's real persisted row",

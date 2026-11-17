@@ -49,12 +49,14 @@ import { DeleteAgentButton } from "@/components/dashboard/agents/DeleteAgentButt
 import { ConnectDialog } from "@/components/dashboard/ConnectDialog";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
 import {
-  agentOptionalBuiltinToolOptions,
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
   isExecutableAgentRuntimeKind,
 } from "@/lib/agents/runtime-kind";
-import { AgentBuiltInTools } from "@/components/dashboard/agents/AgentBuiltInTools";
+import {
+  AgentBuiltinFeatureInputs,
+  AgentBuiltinFeatures,
+} from "@/components/dashboard/agents/AgentBuiltinFeatures";
 import { SystemPromptEditor } from "@/components/dashboard/SystemPromptEditor";
 import { OmpImport } from "@/components/dashboard/agents/OmpImport";
 import { ModelProviderNotice } from "@/components/dashboard/ModelProviderNotice";
@@ -185,7 +187,7 @@ export function AgentsBrowser({
   const [enabledOptionalTools, setEnabledOptionalTools] = useState<Set<string>>(
     () => new Set(),
   );
-  const optionalToolOptions = agentOptionalBuiltinToolOptions(runtime);
+  const builtinFeatures = useTranslations("console.agents.builtinFeatures");
   const setupCount = agents.filter(
     (agent) =>
       isExecutableAgentRuntimeKind(agent.runtimeKind) && !isAgentReady(agent),
@@ -215,7 +217,7 @@ export function AgentsBrowser({
     },
     {
       id: "builtInTools",
-      label: t("builtInTools"),
+      label: builtinFeatures("title"),
     },
     { id: "mcp", label: t("mcp") },
     {
@@ -535,36 +537,27 @@ export function AgentsBrowser({
                 aria-labelledby="agent-create-built-in-tools-title"
                 className="space-y-6 px-6 py-5"
               >
-                <div>
-                  <h3
-                    id="agent-create-built-in-tools-title"
-                    className="text-xl font-semibold tracking-tight text-foreground"
-                  >
-                    {t("builtInTools")}
-                  </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("builtInToolsDescription", {
-                      runtime: agentRuntimeDisplayName(runtime),
-                    })}
-                  </p>
-                </div>
-                <DialogField
-                  label={t("builtInTools")}
-                  dirty={
-                    disabledBuiltinTools.size > 0 ||
-                    enabledOptionalTools.size > 0
-                  }
+                <h3
+                  id="agent-create-built-in-tools-title"
+                  className="text-xl font-semibold tracking-tight text-foreground"
                 >
-                  <AgentBuiltInTools
-                    runtimeKind={runtime}
-                    disabledTools={disabledBuiltinTools}
-                    onDisabledToolsChange={setDisabledBuiltinTools}
-                    optionalToolOptions={optionalToolOptions}
-                    enabledOptionalTools={enabledOptionalTools}
-                    onEnabledOptionalToolsChange={setEnabledOptionalTools}
-                    disabled={createPending}
-                  />
-                </DialogField>
+                  {builtinFeatures("title")}
+                </h3>
+                <AgentBuiltinFeatureInputs
+                  runtimeKind={runtime}
+                  disabledTools={disabledBuiltinTools}
+                  enabledOptionalTools={enabledOptionalTools}
+                />
+                <AgentBuiltinFeatures
+                  runtimeKind={runtime}
+                  disabledTools={disabledBuiltinTools}
+                  enabledOptionalTools={enabledOptionalTools}
+                  onChange={(next) => {
+                    setDisabledBuiltinTools(next.disabledTools);
+                    setEnabledOptionalTools(next.enabledOptionalTools);
+                  }}
+                  disabled={createPending}
+                />
               </section>
 
               <section
