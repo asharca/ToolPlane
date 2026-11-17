@@ -302,9 +302,15 @@ export function CenterMorphModalContent({
                   tests/fixed-overlay-edge-sampling.test.tsx. */}
               <div
                 inert={!isPresent}
-                className="pointer-events-none fixed inset-4 z-[100] flex items-center justify-center overflow-y-auto"
+                className="pointer-events-none fixed inset-4 z-[100] overflow-y-auto"
               >
-                <div className="flex w-full flex-col items-center py-8 drop-shadow-2xl">
+                {/* Centering lives on this `min-h-full` wrapper, not the scroll
+                  container: a flex-centered child taller than the scrollport
+                  (e.g. a long trace waterfall) overflows symmetrically and its
+                  top becomes unreachable. A `min-h-full` flex column instead
+                  grows with the content, so centering holds when content fits
+                  and the full panel stays scrollable into view when it does not. */}
+                <div className="flex min-h-full w-full flex-col items-center justify-center py-8 drop-shadow-2xl">
                   <motion.div
                     ref={panelRef}
                     id={context.contentId}
