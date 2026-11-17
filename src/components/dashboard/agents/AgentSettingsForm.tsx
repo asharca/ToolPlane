@@ -566,7 +566,7 @@ export function AgentSettingsForm(props: Props) {
       );
     return (
       <ModelPicker
-        className="flex min-w-0 flex-1"
+        className="flex w-72 max-w-full"
         providers={modelProviders}
         value={available ? selection : null}
         pending={pending}
@@ -954,10 +954,14 @@ export function AgentSettingsForm(props: Props) {
                       className={textareaClass}
                     />
                   </DialogField>
-                  <div className="grid gap-5 md:grid-cols-2">
-                    <DialogField label={t("model")} dirty={fieldDirty.model}>
+                  <div className="space-y-4">
+                    <DialogField
+                      label={t("model")}
+                      dirty={fieldDirty.model}
+                      layout="row"
+                    >
                       <ModelPicker
-                        className="flex w-full"
+                        className="flex w-72 max-w-full"
                         providers={providers.filter((item) =>
                           agentRuntimeSupportsProviderFormat(
                             runtimeKind,
@@ -1000,8 +1004,10 @@ export function AgentSettingsForm(props: Props) {
                         label={t("defaultReasoningEffort")}
                         htmlFor={`${formId}-reasoning-effort`}
                         dirty={fieldDirty.reasoningEffort}
+                        layout="row"
                       >
                         <FormSelect
+                          className="w-40"
                           id={`${formId}-reasoning-effort`}
                           label={t("defaultReasoningEffort")}
                           value={reasoningEffort}
@@ -1149,175 +1155,182 @@ export function AgentSettingsForm(props: Props) {
                   <SettingsSection
                     id="advanced"
                     title={t("modelRoutingSection")}
-                    className="space-y-5"
+                    className="space-y-4"
                   >
                     <DialogField
                       label={t("modelRouting.fallbackModels")}
                       dirty={fallbackModelsDirty}
+                      layout="row"
                     >
-                      <ol className="space-y-2">
-                        {fallbackModels.map((item, index) => (
-                          <li
-                            key={item.id}
-                            className="flex min-w-0 flex-wrap items-center gap-2"
-                          >
-                            <span
-                              className="w-4 text-xs tabular-nums text-muted-foreground"
-                              aria-hidden="true"
+                      <div className="flex flex-col items-end gap-2">
+                        <ol className="space-y-2">
+                          {fallbackModels.map((item, index) => (
+                            <li
+                              key={item.id}
+                              className="flex min-w-0 flex-wrap items-center gap-2"
                             >
-                              {index + 1}
-                            </span>
-                            {modelPicker(
-                              item.selection,
-                              t("modelRouting.fallbackPosition", {
-                                position: index + 1,
-                              }),
-                              (next) =>
-                                setFallbackModels((current) =>
-                                  current.map((entry) =>
-                                    entry.id === item.id
-                                      ? { ...entry, selection: next }
-                                      : entry,
+                              <span
+                                className="w-4 text-xs tabular-nums text-muted-foreground"
+                                aria-hidden="true"
+                              >
+                                {index + 1}
+                              </span>
+                              {modelPicker(
+                                item.selection,
+                                t("modelRouting.fallbackPosition", {
+                                  position: index + 1,
+                                }),
+                                (next) =>
+                                  setFallbackModels((current) =>
+                                    current.map((entry) =>
+                                      entry.id === item.id
+                                        ? { ...entry, selection: next }
+                                        : entry,
+                                    ),
                                   ),
-                                ),
-                            )}
-                            <div className="flex shrink-0 items-center">
-                              {([-1, 1] as const).map((direction) => (
+                              )}
+                              <div className="flex shrink-0 items-center">
+                                {([-1, 1] as const).map((direction) => (
+                                  <Button
+                                    key={direction}
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    disabled={
+                                      pending ||
+                                      index + direction < 0 ||
+                                      index + direction >= fallbackModels.length
+                                    }
+                                    aria-label={t(
+                                      direction < 0
+                                        ? "modelRouting.moveUp"
+                                        : "modelRouting.moveDown",
+                                      { position: index + 1 },
+                                    )}
+                                    onClick={() => {
+                                      setFallbackModels((current) => {
+                                        const next = [...current];
+                                        [next[index], next[index + direction]] =
+                                          [
+                                            next[index + direction],
+                                            next[index],
+                                          ];
+                                        return next;
+                                      });
+                                      changed();
+                                    }}
+                                  >
+                                    {direction < 0 ? (
+                                      <ArrowUp
+                                        className="size-4"
+                                        aria-hidden="true"
+                                      />
+                                    ) : (
+                                      <ArrowDown
+                                        className="size-4"
+                                        aria-hidden="true"
+                                      />
+                                    )}
+                                  </Button>
+                                ))}
                                 <Button
-                                  key={direction}
                                   type="button"
                                   variant="ghost"
                                   size="icon"
-                                  disabled={
-                                    pending ||
-                                    index + direction < 0 ||
-                                    index + direction >= fallbackModels.length
-                                  }
-                                  aria-label={t(
-                                    direction < 0
-                                      ? "modelRouting.moveUp"
-                                      : "modelRouting.moveDown",
-                                    { position: index + 1 },
-                                  )}
+                                  disabled={pending}
+                                  aria-label={t("modelRouting.removeFallback", {
+                                    position: index + 1,
+                                  })}
                                   onClick={() => {
-                                    setFallbackModels((current) => {
-                                      const next = [...current];
-                                      [next[index], next[index + direction]] = [
-                                        next[index + direction],
-                                        next[index],
-                                      ];
-                                      return next;
-                                    });
+                                    setFallbackModels((current) =>
+                                      current.filter(
+                                        (_, position) => position !== index,
+                                      ),
+                                    );
                                     changed();
                                   }}
                                 >
-                                  {direction < 0 ? (
-                                    <ArrowUp
-                                      className="size-4"
-                                      aria-hidden="true"
-                                    />
-                                  ) : (
-                                    <ArrowDown
-                                      className="size-4"
-                                      aria-hidden="true"
-                                    />
-                                  )}
+                                  <Trash2
+                                    className="size-4"
+                                    aria-hidden="true"
+                                  />
                                 </Button>
-                              ))}
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                disabled={pending}
-                                aria-label={t("modelRouting.removeFallback", {
-                                  position: index + 1,
-                                })}
-                                onClick={() => {
-                                  setFallbackModels((current) =>
-                                    current.filter(
-                                      (_, position) => position !== index,
-                                    ),
-                                  );
-                                  changed();
-                                }}
-                              >
-                                <Trash2 className="size-4" aria-hidden="true" />
-                              </Button>
-                            </div>
-                          </li>
-                        ))}
-                      </ol>
-                      {fallbackModels.length < 3
-                        ? modelPicker(
-                            null,
-                            t("modelRouting.addFallback"),
-                            (selection) => {
-                              const item = {
-                                id: crypto.randomUUID(),
-                                selection,
-                              };
-                              setFallbackModels((current) =>
-                                current.length < 3
-                                  ? [...current, item]
-                                  : current,
-                              );
-                            },
-                          )
-                        : null}
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                        {fallbackModels.length < 3
+                          ? modelPicker(
+                              null,
+                              t("modelRouting.addFallback"),
+                              (selection) => {
+                                const item = {
+                                  id: crypto.randomUUID(),
+                                  selection,
+                                };
+                                setFallbackModels((current) =>
+                                  current.length < 3
+                                    ? [...current, item]
+                                    : current,
+                                );
+                              },
+                            )
+                          : null}
+                      </div>
                     </DialogField>
-                    <div className="grid gap-5 md:grid-cols-2">
-                      {(["compaction", "title"] as const).map((role) => (
-                        <DialogField
-                          key={role}
-                          label={t(`modelRouting.${role}`)}
-                          dirty={roleModelDirty(role)}
-                        >
-                          <div className="flex min-w-0 items-center gap-2">
-                            {modelPicker(
-                              roleModels[role] ?? null,
-                              t(`modelRouting.${role}`),
-                              (next) =>
-                                setRoleModels((current) => ({
-                                  ...current,
-                                  [role]: next,
-                                })),
-                              t("modelRouting.usePrimary"),
-                            )}
-                            {roleModels[role] ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                disabled={pending}
-                                aria-label={t("modelRouting.clearRole", {
-                                  role: t(`modelRouting.${role}`),
-                                })}
-                                onClick={() => {
-                                  setRoleModels((current) => {
-                                    const next = { ...current };
-                                    delete next[role];
-                                    return next;
-                                  });
-                                  changed();
-                                }}
-                              >
-                                <Trash2 className="size-4" aria-hidden="true" />
-                              </Button>
-                            ) : null}
-                          </div>
-                        </DialogField>
-                      ))}
-                    </div>
+                    {(["compaction", "title"] as const).map((role) => (
+                      <DialogField
+                        key={role}
+                        label={t(`modelRouting.${role}`)}
+                        dirty={roleModelDirty(role)}
+                        layout="row"
+                      >
+                        <div className="flex min-w-0 items-center gap-1">
+                          {modelPicker(
+                            roleModels[role] ?? null,
+                            t(`modelRouting.${role}`),
+                            (next) =>
+                              setRoleModels((current) => ({
+                                ...current,
+                                [role]: next,
+                              })),
+                            t("modelRouting.usePrimary"),
+                          )}
+                          {roleModels[role] ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              disabled={pending}
+                              aria-label={t("modelRouting.clearRole", {
+                                role: t(`modelRouting.${role}`),
+                              })}
+                              onClick={() => {
+                                setRoleModels((current) => {
+                                  const next = { ...current };
+                                  delete next[role];
+                                  return next;
+                                });
+                                changed();
+                              }}
+                            >
+                              <Trash2 className="size-4" aria-hidden="true" />
+                            </Button>
+                          ) : null}
+                        </div>
+                      </DialogField>
+                    ))}
                   </SettingsSection>
                   <SettingsSection
                     id="execution"
                     title={t("executionSettings")}
-                    className="space-y-5"
+                    className="space-y-4"
                   >
                     <DialogField
                       label={t("maxToolSteps")}
                       htmlFor={`${formId}-steps`}
                       dirty={fieldDirty.maxSteps}
+                      layout="row"
                     >
                       <Input
                         id={`${formId}-steps`}
@@ -1328,12 +1341,14 @@ export function AgentSettingsForm(props: Props) {
                         max={AGENT_STEP_BOUNDS.max}
                         value={steps}
                         onChange={setSteps}
+                        className="w-24"
                       />
                     </DialogField>
                     <DialogField
                       label={t("secretObfuscation")}
                       description={t("secretObfuscationDescription")}
                       dirty={fieldDirty.secretObfuscation}
+                      layout="row"
                     >
                       <Switch
                         checked={secretObfuscation}
@@ -1348,6 +1363,7 @@ export function AgentSettingsForm(props: Props) {
                     <DialogField
                       label={t("advisor")}
                       dirty={fieldDirty.advisor}
+                      layout="row"
                     >
                       <Switch
                         checked={advisor !== null}
@@ -1369,10 +1385,10 @@ export function AgentSettingsForm(props: Props) {
                       />
                     </DialogField>
                     {advisor ? (
-                      <div className="space-y-5">
-                        <DialogField label={t("advisorModel")}>
+                      <div className="space-y-4">
+                        <DialogField label={t("advisorModel")} layout="row">
                           <ModelPicker
-                            className="flex w-full"
+                            className="flex w-72 max-w-full"
                             pending={pending}
                             providers={providers.filter((item) =>
                               agentRuntimeSupportsProviderFormat(
@@ -1412,8 +1428,10 @@ export function AgentSettingsForm(props: Props) {
                         <DialogField
                           label={t("advisorCadence")}
                           htmlFor={`${formId}-advisor-cadence`}
+                          layout="row"
                         >
                           <FormSelect
+                            className="w-40"
                             id={`${formId}-advisor-cadence`}
                             label={t("advisorCadence")}
                             value={advisor.cadence}
@@ -1439,8 +1457,10 @@ export function AgentSettingsForm(props: Props) {
                         <DialogField
                           label={t("advisorMinSeverity")}
                           htmlFor={`${formId}-advisor-severity`}
+                          layout="row"
                         >
                           <FormSelect
+                            className="w-40"
                             id={`${formId}-advisor-severity`}
                             label={t("advisorMinSeverity")}
                             value={advisor.minSeverity}

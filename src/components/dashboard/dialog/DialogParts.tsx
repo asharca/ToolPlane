@@ -182,6 +182,7 @@ export function DialogField({
   htmlFor,
   description,
   dirty,
+  layout = "stack",
   children,
   className,
 }: {
@@ -189,32 +190,57 @@ export function DialogField({
   htmlFor?: string;
   description?: ReactNode;
   dirty?: boolean;
+  /** `row` puts a content-width control beside its label. */
+  layout?: "stack" | "row";
   children: ReactNode;
   className?: string;
 }) {
   const t = useTranslations("common");
+  const row = layout === "row";
+  const heading = (
+    <label
+      htmlFor={htmlFor}
+      className="flex flex-wrap items-center gap-2 text-sm font-medium"
+    >
+      {label}
+      <span className="hidden rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary group-data-[dirty=true]/dialog-field:inline-block">
+        {t("modified")}
+      </span>
+    </label>
+  );
+  const hint = description ? (
+    <div className="text-xs text-muted-foreground">{description}</div>
+  ) : null;
   return (
     <div
       data-dialog-field=""
       data-dirty={dirty ? "true" : undefined}
       data-dialog-field-controlled={dirty !== undefined ? "" : undefined}
-      className={cn("group/dialog-field relative space-y-2", className)}
+      className={cn(
+        "group/dialog-field relative",
+        row
+          ? "flex min-h-9 flex-wrap items-center justify-between gap-x-6 gap-y-2"
+          : "space-y-2",
+        className,
+      )}
     >
-      <label
-        htmlFor={htmlFor}
-        className="flex flex-wrap items-center gap-2 text-sm font-medium"
+      {row ? (
+        <div className="min-w-0 flex-1 space-y-0.5">
+          {heading}
+          {hint}
+        </div>
+      ) : (
+        heading
+      )}
+      <div
+        className={cn(
+          "rounded-lg [[data-dirty=true]_&]:ring-1 [[data-dirty=true]_&]:ring-primary/50",
+          row && "min-w-0 max-w-full shrink-0",
+        )}
       >
-        {label}
-        <span className="hidden rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary group-data-[dirty=true]/dialog-field:inline-block">
-          {t("modified")}
-        </span>
-      </label>
-      <div className="rounded-lg [[data-dirty=true]_&]:ring-1 [[data-dirty=true]_&]:ring-primary/50">
         {children}
       </div>
-      {description ? (
-        <div className="text-xs text-muted-foreground">{description}</div>
-      ) : null}
+      {row ? null : hint}
     </div>
   );
 }

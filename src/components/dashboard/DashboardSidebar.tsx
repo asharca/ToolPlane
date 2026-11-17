@@ -86,33 +86,32 @@ export function DashboardSidebar({
     <div className="contents" onClickCapture={navigate}>
       <WorkspaceSidebar
         title="ToolPlane"
-        className="[&_[data-slot=sidebar-group]+[data-slot=sidebar-group]]:mt-3 [&_[data-slot=sidebar-group]+[data-slot=sidebar-group]]:border-t [&_[data-slot=sidebar-group]+[data-slot=sidebar-group]]:border-border [&_[data-slot=sidebar-group]+[data-slot=sidebar-group]]:pt-3"
         activeId={activeId}
         onSelect={(id) => {
           if (id === "search") setPaletteOpen(true);
         }}
-        groups={WORKSPACE_NAV_GROUPS.map((group) => ({
-          id: group.id,
-          title: t(group.labelKey),
-          items: [
-            ...(group.id === "workspace"
-              ? [{ id: "search", label: t("search"), icon: <Search /> }]
-              : []),
-            ...group.items.map(
-              ({ segment, labelKey, icon: Icon, badgeKey }) => ({
-                id: segment,
-                label: t(labelKey),
-                icon: <Icon />,
-                href: `${base}/${segment}`,
-                badge: badgeKey ? (
-                  <span className="text-[10px]">{t(badgeKey)}</span>
-                ) : segment === "plugins" && updateCount > 0 ? (
-                  updateCount
-                ) : undefined,
-              }),
-            ),
-          ],
-        }))}
+        groups={[
+          {
+            id: "workspace",
+            title: workspaceName,
+            items: [
+              { id: "search", label: t("search"), icon: <Search /> },
+              ...WORKSPACE_NAV_GROUPS.flatMap((group) => group.items).map(
+                ({ segment, labelKey, icon: Icon, badgeKey }) => ({
+                  id: segment,
+                  label: t(labelKey),
+                  icon: <Icon />,
+                  href: `${base}/${segment}`,
+                  badge: badgeKey ? (
+                    <span className="text-[10px]">{t(badgeKey)}</span>
+                  ) : segment === "plugins" && updateCount > 0 ? (
+                    updateCount
+                  ) : undefined,
+                }),
+              ),
+            ],
+          },
+        ]}
         footer={
           <div className="flex flex-col gap-0.5">
             <SystemUpdateButton

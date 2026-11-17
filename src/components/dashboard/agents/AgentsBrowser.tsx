@@ -411,17 +411,37 @@ export function AgentsBrowser({
                 </DialogField>
                 <input type="hidden" name="runtime" value={runtime} />
                 <DialogField
+                  label={t("description")}
+                  htmlFor="agent-create-description"
+                  dirty={agentDescription !== ""}
+                >
+                  <textarea
+                    id="agent-create-description"
+                    name="description"
+                    value={agentDescription}
+                    onChange={(event) =>
+                      setAgentDescription(event.target.value)
+                    }
+                    maxLength={500}
+                    rows={3}
+                    placeholder={t("agentDescriptionPlaceholder")}
+                    className="min-h-24 w-full resize-y rounded-xl border border-border/60 bg-muted/20 px-3.5 py-3 text-sm leading-6 outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20"
+                  />
+                </DialogField>
+
+                <DialogField
                   label={t("model")}
                   dirty={
                     providerId !== (defaultNativeModel?.providerId ?? "") ||
                     modelId !== (defaultNativeModel?.model ?? "")
                   }
+                  layout="row"
                 >
                   <input type="hidden" name="providerId" value={providerId} />
                   <input type="hidden" name="model" value={modelId} />
 
                   <ModelPicker
-                    className="flex w-full"
+                    className="flex w-72 max-w-full"
                     providers={compatibleProviders}
                     value={
                       providerId && modelId
@@ -443,7 +463,6 @@ export function AgentsBrowser({
                         label={modelId || t("selectModel")}
                         placeholder={!modelId}
                         provider={selectedProvider?.name}
-                        note={selectedProvider?.name}
                       />
                     }
                   />
@@ -452,6 +471,7 @@ export function AgentsBrowser({
                   label={t("desktopAndBrowser")}
                   description={t("desktopAndBrowserHint")}
                   dirty={desktop}
+                  layout="row"
                 >
                   <Switch
                     checked={desktop}
@@ -461,28 +481,10 @@ export function AgentsBrowser({
                   />
                 </DialogField>
                 <DialogField
-                  label={t("description")}
-                  htmlFor="agent-create-description"
-                  dirty={agentDescription !== ""}
-                >
-                  <textarea
-                    id="agent-create-description"
-                    name="description"
-                    value={agentDescription}
-                    onChange={(event) =>
-                      setAgentDescription(event.target.value)
-                    }
-                    maxLength={500}
-                    rows={3}
-                    placeholder={t("agentDescriptionPlaceholder")}
-                    className="min-h-24 w-full resize-y rounded-xl border border-border/60 bg-muted/20 px-3.5 py-3 text-sm leading-6 outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20"
-                  />
-                </DialogField>
-
-                <DialogField
                   label={t("maxToolSteps")}
                   htmlFor="agent-create-max-steps"
                   dirty={maxSteps !== String(AGENT_STEP_BOUNDS.default)}
+                  layout="row"
                 >
                   <Input
                     id="agent-create-max-steps"
@@ -492,7 +494,7 @@ export function AgentsBrowser({
                     max={AGENT_STEP_BOUNDS.max}
                     value={maxSteps}
                     onChange={setMaxSteps}
-                    className="mt-1.5 w-full"
+                    className="w-24"
                     classNames={{
                       label: "px-0 text-xs font-semibold",
                       field: "rounded-xl bg-muted/20",
