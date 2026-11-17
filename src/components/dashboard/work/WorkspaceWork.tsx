@@ -96,6 +96,10 @@ import {
 } from "@/components/dashboard/ComposerModelSelect";
 import type { ComposerReference } from "@/lib/work/composer-types";
 import { interleaveLiveText } from "@/lib/conversation/content-blocks";
+import {
+  AGENT_TURN_TIMELINE_PART,
+  agentTimelineDisplayParts,
+} from "@/lib/agents/turn-timeline";
 import { CopyButton } from "@/components/dashboard/CopyButton";
 import { SidebarGroupDialog } from "@/components/dashboard/SidebarGroupDialog";
 import { sidebarHoverActionsClassName } from "@/components/dashboard/sidebarHoverActions";
@@ -710,10 +714,15 @@ function parseWorkTiming(value: unknown): WorkTiming | null {
   };
 }
 
+/** Work turns record `data-work-timing`; channel, chat and trigger replies record a turn timeline. */
 function messageWorkTiming(message: WorkMessage): WorkTiming | null {
   for (let index = message.parts.length - 1; index >= 0; index -= 1) {
     const part = message.parts[index];
-    if (part?.type !== "data-work-timing") continue;
+    if (
+      part?.type !== "data-work-timing" &&
+      part?.type !== AGENT_TURN_TIMELINE_PART
+    )
+      continue;
     const timing = parseWorkTiming(part.data);
     if (timing) return timing;
   }
@@ -1084,6 +1093,10 @@ function WorkTranscript({
                 }
               : null;
           const messageTiming = persistedTiming ?? fallbackTiming;
+          // Entry replies keep their process in the timeline, not as their own parts.
+          const displayParts = agentTimelineDisplayParts(
+            message.parts,
+          ) as WorkPart[];
           const turnModelData = message.parts.find(
             (part) => part.type === "data-agent-turn-model",
           )?.data;
@@ -1203,7 +1216,7 @@ function WorkTranscript({
                   <div data-ui="work-process" className="w-full">
                     <WorkContentBlocks
                       messageId={message.id}
-                      parts={message.parts}
+                      parts={displayParts}
                       streaming={isStreamingMessage}
                       activeLabel={t(executionStageKeys[executionStage])}
                     />
@@ -1256,7 +1269,7 @@ function WorkTranscript({
                     messageId={message.id}
                     timing={messageTiming}
                     durationMs={messageDuration}
-                    parts={message.parts}
+                    parts={displayParts}
                     modelName={messageModelName}
                     status={
                       processFailed

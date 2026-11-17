@@ -18,6 +18,7 @@ import {
   workContentParts,
 } from "@/lib/conversation/content-blocks";
 import { assistantSegments } from "./message-segments";
+import { agentTimelineDisplayParts } from "./turn-timeline";
 
 export const SESSION_EXPORT_MAX_BYTES = 8 * 1024 * 1024;
 const errors = {
@@ -127,7 +128,7 @@ function markdownMessage(message: {
           !!part && typeof part === "object" && typeof part.type === "string",
       )
     : [];
-  const normalized = parts.map((part) =>
+  const normalized = agentTimelineDisplayParts(parts).map((part) =>
     ["work-tool", "tool"].includes(part.type)
       ? workContentParts([part], true)[0]
       : part,
