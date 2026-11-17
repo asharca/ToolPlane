@@ -600,3 +600,11 @@
 - **证据（2026-11-17，用户报告 10030）**：PR [#263](https://github.com/asharca/ToolPlane/pull/263) 只在 `AgentConversation` 读取 `data-agent-timeline`，但频道会话在 Work 中走 `channelConversation` 分支、由 `WorkTranscript` 渲染，它只认 `data-work-timing`；10030 上频道回复已带 timeline，页面却无耗时入口。同时 `conversationOutputPersisted` 在回复落库后隐藏 `LiveOutputView`，而频道／对话回复只落库正文，工具记录随之消失。现由 timeline 步骤携带实时输出中已截断、已脱敏的工具输入输出，并按持久化正文重新锚定位置；`WorkTranscript` 与 `AgentConversation` 都从中还原过程与瀑布图。
 - **下次怎么验证**：在用户实际使用的入口（Work 的频道会话、对话会话）各看一次已落库的回复：头部耗时可打开瀑布图、工具可展开到输入输出；再刷新页面确认不依赖实时视图。依据：`src/lib/agents/turn-timeline.ts`、`src/components/dashboard/work/WorkspaceWork.tsx`、`src/components/dashboard/agents/AgentConversation.tsx`。
 - **确认日期**：2026-11-17（用户报告）。
+
+### TP-L057：滚动容器不能用 flex 居中，超高内容会把首屏顶出可达范围
+
+**规则**：`overflow` 滚动容器上的 `items-center justify-center` 只在内容不超高时成立；内容一旦超过滚动视口，flex 居中会让内容上下对称溢出，scrollTop=0 仍看不到顶部，滚动到底部反而把它推得更远。居中应放在 `min-h-full` 的内层 flex 包裹器上：内容不超高时照常居中，超高时包裹器随内容撑高、整段内容可在滚动容器里完整滚到。
+
+- **错误与原因**：2026-11-17 用户报告线上 10030 的 A2A 任务耗时瀑布图“太长溢出视窗”。`CenterMorphModalContent` 的滚动层 `fixed inset-4 flex items-center justify-center overflow-y-auto` 在瀑布图（每个 span 一行 42px，长任务上百行）超过视口后，面板顶部被裁到视口上方且任何滚动都不可达；真实浏览器 480px 视口、531px 瀑布图实测面板顶部在 -25.5px，滚到底反而到 -99.5px。
+- **下次怎么验证**：打开内容必然超高的浮层（瀑布图、长列表、长 diff），把视口高度临时压小制造溢出，分别记录 scrollTop=0 与 scrollTop=max 时面板首尾是否都在滚动容器可视范围内；内容不超高时居中位置不变。本修复把居中移到 `min-h-full` 内层包裹器，同一真实瀑布图首屏与底部均可达。依据：[中心展开浮层](src/components/motion/center-morph-modal.tsx)。
+- **确认日期**：2026-11-17（用户报告）。
