@@ -3,7 +3,6 @@
 import { type ReactNode, useDeferredValue, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
-  ArrowLeft,
   Cable,
   ExternalLink,
   Plus,
@@ -27,6 +26,7 @@ import { notify } from "../Toaster";
 import { AgentPluginSyncReview } from "./AgentPluginSyncReview";
 import type { AgentPiPackageOption } from "./AgentSettingsForm";
 import type { PluginSelectionResult } from "../plugins/usePluginAgentFlow";
+import { SettingsSection } from "./SettingsSection";
 
 export const MAX_AGENT_PLUGINS = 16;
 
@@ -44,6 +44,7 @@ export type AgentPluginCatalogOption = {
 type PackageSelection = { marketInstallId: string; releaseId: string };
 
 export function AgentPluginsPanel({
+  title,
   slug,
   agentId,
   runtimeKind,
@@ -61,6 +62,7 @@ export function AgentPluginsPanel({
   onInstalled,
   onChange,
 }: {
+  title: string;
   slug: string;
   agentId: string;
   runtimeKind: string;
@@ -180,190 +182,194 @@ export function AgentPluginsPanel({
   const addButton = (
     <Button
       type="button"
+      variant="secondary"
       size="sm"
       disabled={!editable || full}
       onClick={() => setAdding(true)}
     >
-      <Plus className="size-4" />
-      {t("add")}
+      <Plus className="size-4" aria-hidden />
+      {agents("resourceList.add")}
     </Button>
   );
 
   if (adding)
     return (
-      // Search and binding selects must not mark the Agent form dirty.
-      <div className="space-y-4" onChange={(event) => event.stopPropagation()}>
-        <div className="flex items-center gap-2">
+      <SettingsSection
+        id="piPackages"
+        title={title}
+        action={
           <Button
             type="button"
-            variant="ghost"
+            variant="secondary"
             size="sm"
             onClick={() => {
               setAdding(false);
               setConfiguring(null);
             }}
           >
-            <ArrowLeft className="size-4" />
-            {t("back")}
+            {agents("resourceList.done")}
           </Button>
-          <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-            {t("selectedCount", {
-              count: packages.length,
-              max: MAX_AGENT_PLUGINS,
-            })}
-          </span>
-        </div>
-        <Input
-          leftIcon={<Search />}
-          type="search"
-          value={query}
-          placeholder={t("search")}
-          aria-label={t("search")}
-          className="w-full"
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.preventDefault();
-          }}
-          onChange={(value) => setQuery(value)}
-        />
-        <p className="text-xs leading-5 text-muted-foreground">
-          {flow("prerequisites")}
-        </p>
-        {full ? (
-          <p role="status" className="text-sm">
-            {flow("limit")}
+        }
+      >
+        {/* Search and binding selects must not mark the Agent form dirty. */}
+        <div
+          className="space-y-4"
+          onChange={(event) => event.stopPropagation()}
+        >
+          <Input
+            leftIcon={<Search />}
+            type="search"
+            value={query}
+            placeholder={t("search")}
+            aria-label={t("search")}
+            className="w-full"
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.preventDefault();
+            }}
+            onChange={(value) => setQuery(value)}
+          />
+          <p className="text-xs leading-5 text-amber-700 dark:text-amber-400">
+            {agents("piPackageSecurity")}
           </p>
-        ) : null}
-        {installed.length ? (
-          <PickerSection title={t("installed")}>
-            {installed.map((pkg) => (
-              <PickerRow
-                key={pkg.marketInstallId}
-                name={pkg.name}
-                version={pkg.currentVersion}
-                summary={pkg.summary}
-                counts={counts(pkg)}
-              >
-                {selectedFor(pkg) ? (
-                  <AnimatedBadge size="sm" status="success">
-                    {t("added")}
-                  </AnimatedBadge>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    disabled={!editable || full}
-                    onClick={() => add(pkg.listingId)}
-                  >
-                    {t("addAction")}
-                  </Button>
-                )}
-              </PickerRow>
-            ))}
-          </PickerSection>
-        ) : null}
-        {installable.length ? (
-          <PickerSection title={t("catalog")}>
-            {installable.map((item) => {
-              const open = configuring === item.listingId;
-              const binding = pluginBindingState(
-                item.requirements,
-                deployments,
-                open ? bindings : {},
-              );
-              const busy = installing === item.listingId;
-              return (
+          <p className="text-xs leading-5 text-muted-foreground">
+            {flow("prerequisites")}
+          </p>
+          {full ? (
+            <p role="status" className="text-sm">
+              {flow("limit")}
+            </p>
+          ) : null}
+          {installed.length ? (
+            <PickerSection title={t("installed")}>
+              {installed.map((pkg) => (
                 <PickerRow
-                  key={item.listingId}
-                  name={item.name}
-                  version={item.version}
-                  summary={item.summary}
-                  counts={counts({
-                    ...item,
-                    mcpRequirementCount: item.requirements.length,
-                  })}
-                  expanded={
-                    open ? (
-                      <div className="space-y-3">
-                        <PluginMcpBindingFields
-                          requirements={item.requirements}
-                          deployments={deployments}
-                          bindings={bindings}
-                          onChange={setBindings}
-                          disabled={busy}
-                        />
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            disabled={busy}
-                            onClick={() => setConfiguring(null)}
-                          >
-                            {t("cancel")}
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            disabled={
-                              !editable ||
-                              full ||
-                              !binding.ready ||
-                              installing !== null
-                            }
-                            onClick={() => void install(item, binding.selected)}
-                          >
-                            {busy ? t("installing") : t("installAndAdd")}
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null
-                  }
+                  key={pkg.marketInstallId}
+                  name={pkg.name}
+                  version={pkg.currentVersion}
+                  summary={pkg.summary}
+                  counts={counts(pkg)}
                 >
-                  {item.requirements.length ? (
-                    open ? null : (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        disabled={!editable || full || installing !== null}
-                        onClick={() => {
-                          setBindings({});
-                          setConfiguring(item.listingId);
-                        }}
-                      >
-                        {t("configure")}
-                      </Button>
-                    )
+                  {selectedFor(pkg) ? (
+                    <AnimatedBadge size="sm" status="success">
+                      {t("added")}
+                    </AnimatedBadge>
                   ) : (
                     <Button
                       type="button"
                       variant="secondary"
                       size="sm"
-                      disabled={!editable || full || installing !== null}
-                      onClick={() => void install(item, {})}
+                      disabled={!editable || full}
+                      onClick={() => add(pkg.listingId)}
                     >
-                      {busy ? t("installing") : t("installAndAdd")}
+                      {t("addAction")}
                     </Button>
                   )}
                 </PickerRow>
-              );
-            })}
-          </PickerSection>
-        ) : null}
-        {!installed.length && !installable.length ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            {search ? t("noMatches") : t("nothing")}
-          </p>
-        ) : null}
-      </div>
+              ))}
+            </PickerSection>
+          ) : null}
+          {installable.length ? (
+            <PickerSection title={t("catalog")}>
+              {installable.map((item) => {
+                const open = configuring === item.listingId;
+                const binding = pluginBindingState(
+                  item.requirements,
+                  deployments,
+                  open ? bindings : {},
+                );
+                const busy = installing === item.listingId;
+                return (
+                  <PickerRow
+                    key={item.listingId}
+                    name={item.name}
+                    version={item.version}
+                    summary={item.summary}
+                    counts={counts({
+                      ...item,
+                      mcpRequirementCount: item.requirements.length,
+                    })}
+                    expanded={
+                      open ? (
+                        <div className="space-y-3">
+                          <PluginMcpBindingFields
+                            requirements={item.requirements}
+                            deployments={deployments}
+                            bindings={bindings}
+                            onChange={setBindings}
+                            disabled={busy}
+                          />
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              disabled={busy}
+                              onClick={() => setConfiguring(null)}
+                            >
+                              {t("cancel")}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={
+                                !editable ||
+                                full ||
+                                !binding.ready ||
+                                installing !== null
+                              }
+                              onClick={() =>
+                                void install(item, binding.selected)
+                              }
+                            >
+                              {busy ? t("installing") : t("installAndAdd")}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null
+                    }
+                  >
+                    {item.requirements.length ? (
+                      open ? null : (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          disabled={!editable || full || installing !== null}
+                          onClick={() => {
+                            setBindings({});
+                            setConfiguring(item.listingId);
+                          }}
+                        >
+                          {t("configure")}
+                        </Button>
+                      )
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={!editable || full || installing !== null}
+                        onClick={() => void install(item, {})}
+                      >
+                        {busy ? t("installing") : t("installAndAdd")}
+                      </Button>
+                    )}
+                  </PickerRow>
+                );
+              })}
+            </PickerSection>
+          ) : null}
+          {!installed.length && !installable.length ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              {search ? t("noMatches") : t("nothing")}
+            </p>
+          ) : null}
+        </div>
+      </SettingsSection>
     );
 
   return (
-    <div className="space-y-4">
-      <p className="text-xs leading-5 text-muted-foreground">
-        {agents("piPackageSecurity")} {agents("piPackagesNewSession")}
-      </p>
+    <SettingsSection id="piPackages" title={title} action={addButton}>
       {!canManage ? (
         <p role="status" className="text-sm">
           {flow("unauthorized")}
@@ -375,16 +381,7 @@ export function AgentPluginsPanel({
       ) : null}
 
       {rows.length ? (
-        <div className="overflow-hidden rounded-xl border border-border">
-          <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/30 px-4 py-2.5">
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {t("selectedCount", {
-                count: packages.length,
-                max: MAX_AGENT_PLUGINS,
-              })}
-            </span>
-            {addButton}
-          </div>
+        <div className="overflow-hidden rounded-xl border border-border/60">
           <ul className="divide-y divide-border">
             {rows.map((pkg) => {
               const selection = selectedFor(pkg);
@@ -571,16 +568,8 @@ export function AgentPluginsPanel({
             })}
           </ul>
         </div>
-      ) : (
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border px-6 py-10 text-center">
-          <span className="flex size-10 items-center justify-center rounded-xl bg-muted">
-            <Puzzle className="size-5 text-muted-foreground" />
-          </span>
-          <p className="text-sm text-muted-foreground">{t("empty")}</p>
-          {addButton}
-        </div>
-      )}
-    </div>
+      ) : null}
+    </SettingsSection>
   );
 }
 

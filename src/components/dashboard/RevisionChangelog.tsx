@@ -14,11 +14,13 @@ export function RevisionChangelog({
   title,
   className,
   diffUrl,
+  showHeader = true,
 }: {
   url: string;
   title: string;
   className?: string;
   diffUrl?: string;
+  showHeader?: boolean;
 }) {
   const t = useTranslations("console.revisionUpdate");
   const locale = useLocale();
@@ -66,9 +68,11 @@ export function RevisionChangelog({
 
   return (
     <div className={className}>
-      <header className="border-b border-border/60 pb-5">
-        <h3 className="text-base font-semibold tracking-tight">{title}</h3>
-      </header>
+      {showHeader ? (
+        <header className="border-b border-border/60 pb-5">
+          <h3 className="text-base font-semibold tracking-tight">{title}</h3>
+        </header>
+      ) : null}
       {page && !page.entries.length ? (
         <p className="text-sm text-muted-foreground">{t("changelog.empty")}</p>
       ) : null}

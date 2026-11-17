@@ -6,4 +6,4 @@
  * devices keep the always-visible menu.
  */
 export const sidebarHoverActionsClassName =
-  "[@media(hover:hover)]:[&_[role=treeitem]:not(:hover,:focus-within,[data-menu-open])_:is([data-sidebar-reveal],[aria-label^='Actions_for'])]:hidden";
+  "[@media(hover:hover)]:[&_[role=treeitem]:not(:hover,:focus-within,[data-menu-open])_:is([data-sidebar-reveal],[aria-label^='Actions_for'])]:hidden [@media(hover:none)]:[&_[role=treeitem]:not(:focus-within,[data-menu-open])_[data-sidebar-reveal]:not([aria-pressed])]:hidden [@media(hover:none)]:[&_[role=treeitem]_:is([data-sidebar-reveal],[aria-label^='Actions_for'])]:opacity-100";

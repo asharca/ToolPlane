@@ -670,7 +670,11 @@ export function ModelPicker({
                 ))
               ) : (
                 <p className="px-3 py-10 text-center text-sm text-muted-foreground">
-                  {t("noMatchingModels")}
+                  {t(
+                    providers.length
+                      ? "noMatchingModels"
+                      : "noConfiguredModelProviders",
+                  )}
                 </p>
               )}
             </div>
@@ -687,13 +691,17 @@ export function ModelPicker({
             <footer className="shrink-0 border-t border-border/60 p-1.5">
               <Button
                 type="button"
-                variant="ghost"
+                variant={providers.length ? "ghost" : "primary"}
                 size="sm"
                 onClick={() => {
                   close();
                   onConfigure();
                 }}
-                className="h-8 w-full justify-start gap-1.5 rounded-lg px-2 text-left text-xs text-muted-foreground"
+                className={cn(
+                  "h-8 w-full gap-1.5 rounded-lg px-2 text-xs",
+                  providers.length &&
+                    "justify-start text-left text-muted-foreground",
+                )}
               >
                 <Settings2 className="size-3.5 shrink-0" />
                 <span className="min-w-0 truncate">

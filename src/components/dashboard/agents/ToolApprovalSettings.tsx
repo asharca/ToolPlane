@@ -26,9 +26,15 @@ export function ToolApprovalSettings({
   const overrides = value.overrides ?? {};
   const name = toolName.trim();
   return (
-    <div className="space-y-5">
-      <DialogField label={t("mode")} htmlFor={`${id}-mode`} dirty={dirty}>
+    <div className="space-y-4">
+      <DialogField
+        label={t("mode")}
+        htmlFor={`${id}-mode`}
+        dirty={dirty}
+        layout="row"
+      >
         <FormSelect
+          className="w-40"
           id={`${id}-mode`}
           label={t("mode")}
           value={value.mode}
@@ -115,7 +121,7 @@ export function ToolApprovalSettings({
           </div>
         </div>
       </DialogField>
-      <p className="text-sm text-muted-foreground">{t("help")}</p>
+      <p className="text-xs text-muted-foreground">{t("help")}</p>
     </div>
   );
 }

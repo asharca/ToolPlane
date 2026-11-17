@@ -5,7 +5,7 @@ import Link from "next/link";
 import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
 
-export type Tab = { key: string; label: string; count?: number };
+export type Tab = { key: string; label: string; count?: number; href?: string };
 
 export function TabBar({
   tabs,
@@ -27,7 +27,9 @@ export function TabBar({
             for (const [key, value] of Object.entries(query ?? {}))
               if (value) params.set(key, value);
             if (tab.key !== tabs[0]?.key) params.set("tab", tab.key);
-            const href = params.toString() ? `${basePath}?${params}` : basePath;
+            const href =
+              tab.href ??
+              (params.toString() ? `${basePath}?${params}` : basePath);
             return (
               <Link
                 key={tab.key}
@@ -45,7 +47,9 @@ export function TabBar({
               >
                 {tab.label}
                 {typeof tab.count === "number" ? (
-                  <span className="text-muted-foreground">{tab.count}</span>
+                  <span className="ml-1.5 text-muted-foreground">
+                    {tab.count}
+                  </span>
                 ) : null}
                 {tab.key === current ? (
                   <motion.span

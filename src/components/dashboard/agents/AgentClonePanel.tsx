@@ -45,7 +45,7 @@ export function AgentClonePanel({
   }, [state]);
 
   return (
-    <form action={action} className="max-w-2xl space-y-5 px-6 py-5">
+    <form action={action} className="min-w-0 space-y-5 px-6 py-5">
       <input type="hidden" name="workspace" value={slug} />
       <input type="hidden" name="agentId" value={agentId} />
       <p className="text-sm text-muted-foreground">

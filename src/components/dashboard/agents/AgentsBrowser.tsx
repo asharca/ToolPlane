@@ -9,6 +9,7 @@ import {
   DialogBody,
   DialogFooter,
   DialogField,
+  DialogNav,
 } from "@/components/dashboard/dialog";
 
 import { useTranslations } from "next-intl";
@@ -16,7 +17,6 @@ import { Fragment, startTransition, useActionState, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
-  Box,
   Bot,
   CheckCircle2,
   CircleAlert,
@@ -49,14 +49,16 @@ import { DeleteAgentButton } from "@/components/dashboard/agents/DeleteAgentButt
 import { ConnectDialog } from "@/components/dashboard/ConnectDialog";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
 import {
-  agentOptionalBuiltinToolOptions,
   agentRuntimeDisplayName,
   agentRuntimeSupportsProviderFormat,
   isExecutableAgentRuntimeKind,
 } from "@/lib/agents/runtime-kind";
-import { AgentBuiltInTools } from "@/components/dashboard/agents/AgentBuiltInTools";
+import {
+  AgentBuiltinFeatureInputs,
+  AgentBuiltinFeatures,
+} from "@/components/dashboard/agents/AgentBuiltinFeatures";
 import { SystemPromptEditor } from "@/components/dashboard/SystemPromptEditor";
-import { OmpImport } from "@/components/dashboard/agents/OmpImport";
+import { ModelProviderNotice } from "@/components/dashboard/ModelProviderNotice";
 
 export type AgentRow = {
   id: string;
@@ -161,7 +163,6 @@ export function AgentsBrowser({
       return provider && model ? { providerId: provider.id, model } : null;
     })();
   const [creating, setCreating] = useState(createOnly);
-  const [importingOmp, setImportingOmp] = useState(false);
   const [createStep, setCreateStep] = useState<CreateStep>("basic");
   const [agentName, setAgentName] = useState("");
   const [agentDescription, setAgentDescription] = useState("");
@@ -184,7 +185,7 @@ export function AgentsBrowser({
   const [enabledOptionalTools, setEnabledOptionalTools] = useState<Set<string>>(
     () => new Set(),
   );
-  const optionalToolOptions = agentOptionalBuiltinToolOptions(runtime);
+  const builtinFeatures = useTranslations("console.agents.builtinFeatures");
   const setupCount = agents.filter(
     (agent) =>
       isExecutableAgentRuntimeKind(agent.runtimeKind) && !isAgentReady(agent),
@@ -203,30 +204,23 @@ export function AgentsBrowser({
   const createSteps: Array<{
     id: CreateStep;
     label: string;
-    description: string;
   }> = [
     {
       id: "basic",
       label: t("basic"),
-      description: t("generalSettingsDescription"),
     },
     {
       id: "instructions",
       label: t("instructions"),
-      description: t("instructionsSettingsDescription"),
     },
     {
       id: "builtInTools",
-      label: t("builtInTools"),
-      description: t("builtInToolsDescription", {
-        runtime: agentRuntimeDisplayName(runtime),
-      }),
+      label: builtinFeatures("title"),
     },
-    { id: "mcp", label: t("mcp"), description: t("mcpSettingsDescription") },
+    { id: "mcp", label: t("mcp") },
     {
       id: "skills",
       label: t("skills"),
-      description: t("skillsSettingsDescription"),
     },
   ];
   const createStepIndex = Math.max(
@@ -238,7 +232,6 @@ export function AgentsBrowser({
 
   function closeCreateForm() {
     setCreating(false);
-    setImportingOmp(false);
     setCreateStep("basic");
     setAgentName("");
     setAgentDescription("");
@@ -278,7 +271,6 @@ export function AgentsBrowser({
             ) : null}
             <Button
               type="button"
-              disabled={importingOmp}
               onClick={() => {
                 if (creating) closeCreateForm();
                 else {
@@ -301,39 +293,13 @@ export function AgentsBrowser({
       ) : null}
 
       {!hasProviders && !creating ? (
-        <div className="flex flex-col gap-3 rounded-xl border border-border bg-muted px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <CircleAlert className="mt-0.5 size-5 shrink-0 text-muted-foreground text-muted-foreground" />
-            <div>
-              <p className="text-sm font-semibold text-foreground">
-                {t("modelProviderRequired")}
-              </p>
-              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                {t("modelProviderRequiredDescription")}
-              </p>
-            </div>
-          </div>
-          <ButtonLink
-            href={`/app/${encodeURIComponent(slug)}/providers`}
-            variant="secondary"
-            className="shrink-0"
-          >
-            <Cpu className="size-4" />
-            {t("addModelProvider")}
-          </ButtonLink>
-        </div>
+        <ModelProviderNotice
+          slug={slug}
+          description={t("modelProviderRequiredDescription")}
+        />
       ) : null}
 
-      {creating && importingOmp ? (
-        <OmpImport
-          slug={slug}
-          providers={createOptions.providers}
-          defaultModel={createOptions.defaultModel}
-          createOnly={createOnly}
-          onBack={() => setImportingOmp(false)}
-          onCancel={closeCreateForm}
-        />
-      ) : creating ? (
+      {creating ? (
         <form
           id="agent-create-form"
           onSubmit={(event) => {
@@ -353,82 +319,39 @@ export function AgentsBrowser({
           <input type="hidden" name="workspace" value={slug} />
           <input type="hidden" name="returnTo" value={requestedReturnTo} />
           {desktop ? <input type="hidden" name="desktop" value="on" /> : null}
-          <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-            <nav
-              aria-label={t("configurationNavigation")}
-              className="shrink-0 border-b border-border/60 bg-muted/25 sm:w-44 sm:border-b-0 sm:border-r"
-            >
-              <div className="hidden px-5 pb-3 pt-6 text-xs font-medium text-muted-foreground sm:block">
-                {createStepIndex + 1} / {createSteps.length}
-                <span className="mx-2 text-border">·</span>
-                {agentRuntimeDisplayName(runtime)}
-              </div>
-              <ol className="grid grid-cols-5 gap-1 p-3 sm:flex sm:flex-col sm:gap-1.5 sm:px-3 sm:pb-6 sm:pt-0">
-                {createSteps.map((step, index) => {
-                  const active = index === createStepIndex;
-                  const dirty =
-                    step.id === "basic"
-                      ? agentName !== "" ||
-                        agentDescription !== "" ||
-                        desktop ||
-                        maxSteps !== String(AGENT_STEP_BOUNDS.default) ||
-                        providerId !== (defaultNativeModel?.providerId ?? "") ||
-                        modelId !== (defaultNativeModel?.model ?? "")
-                      : step.id === "instructions"
-                        ? systemPrompt !== ""
-                        : step.id === "builtInTools"
-                          ? disabledBuiltinTools.size > 0 ||
-                            enabledOptionalTools.size > 0
-                          : step.id === "mcp"
-                            ? selectedDeploymentIds.size > 0
-                            : selectedSkillIds.size > 0;
-                  const done = index < createStepIndex;
-                  return (
-                    <li key={step.id} className="min-w-0">
-                      <Button
-                        type="button"
-                        aria-current={active ? "step" : undefined}
-                        aria-label={step.label}
-                        disabled={index > createStepIndex}
-                        onClick={() => {
-                          if (done) setCreateStep(step.id);
-                        }}
-                        variant={active ? "secondary" : "ghost"}
-                        className={cx(
-                          "h-auto w-full flex-col gap-1.5 rounded-xl px-1 py-2 text-sm sm:flex-row sm:justify-start sm:gap-3 sm:px-3 sm:py-2.5",
-                          active &&
-                            "bg-background font-medium shadow-sm ring-1 ring-border/60",
-                        )}
-                      >
-                        <span
-                          className={cx(
-                            "flex size-6 shrink-0 items-center justify-center rounded-full text-[11px] font-medium",
-                            active || done
-                              ? "bg-foreground text-background"
-                              : "border border-border text-muted-foreground",
-                          )}
-                        >
-                          {done ? (
-                            <CheckCircle2 className="size-3.5" />
-                          ) : (
-                            index + 1
-                          )}
-                        </span>
-                        <span className="max-w-full truncate">
-                          {step.label}
-                        </span>
-                        {dirty ? (
-                          <span
-                            aria-hidden="true"
-                            className="size-1.5 shrink-0 rounded-full bg-primary"
-                          />
-                        ) : null}
-                      </Button>
-                    </li>
-                  );
-                })}
-              </ol>
-            </nav>
+          <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+            <DialogNav
+              label={t("configurationNavigation")}
+              active={activeCreateStep}
+              onSelect={(id) => {
+                const index = createSteps.findIndex((step) => step.id === id);
+                if (index <= createStepIndex) setCreateStep(id as CreateStep);
+              }}
+              items={createSteps.map((step, index) => {
+                const dirty =
+                  step.id === "basic"
+                    ? agentName !== "" ||
+                      agentDescription !== "" ||
+                      desktop ||
+                      maxSteps !== String(AGENT_STEP_BOUNDS.default) ||
+                      providerId !== (defaultNativeModel?.providerId ?? "") ||
+                      modelId !== (defaultNativeModel?.model ?? "")
+                    : step.id === "instructions"
+                      ? systemPrompt !== ""
+                      : step.id === "builtInTools"
+                        ? disabledBuiltinTools.size > 0 ||
+                          enabledOptionalTools.size > 0
+                        : step.id === "mcp"
+                          ? selectedDeploymentIds.size > 0
+                          : selectedSkillIds.size > 0;
+                return {
+                  id: step.id,
+                  label: `${index + 1}. ${step.label}`,
+                  dirty,
+                  disabled: index > createStepIndex,
+                };
+              })}
+            />
 
             <DialogBody className="flex min-w-0 flex-col overscroll-contain !p-0 !space-y-0 [scrollbar-width:thin]">
               <section
@@ -436,6 +359,12 @@ export function AgentsBrowser({
                 aria-labelledby="agent-create-basic-title"
                 className="space-y-6 px-6 py-5"
               >
+                {!hasProviders ? (
+                  <ModelProviderNotice
+                    slug={slug}
+                    description={t("modelProviderRequiredDescription")}
+                  />
+                ) : null}
                 <div>
                   <h3
                     id="agent-create-basic-title"
@@ -443,46 +372,7 @@ export function AgentsBrowser({
                   >
                     {t("basic")}
                   </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("generalSettingsDescription")}
-                  </p>
                 </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-muted/20 p-4">
-                  <p className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">
-                    {t("ompImport.entryHelp")}
-                  </p>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={createPending}
-                    onClick={() => setImportingOmp(true)}
-                  >
-                    {t("ompImport.title")}
-                  </Button>
-                </div>
-
-                {!hasProviders ? (
-                  <div className="flex flex-wrap items-start gap-3 rounded-2xl border border-border/60 bg-muted/30 px-4 py-3">
-                    <CircleAlert className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-                    <div className="min-w-40 flex-1">
-                      <p className="text-sm font-semibold text-foreground">
-                        {t("modelProviderRequired")}
-                      </p>
-                      <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                        {t("modelProviderRequiredDescription")}
-                      </p>
-                    </div>
-                    <ButtonLink
-                      href={`/app/${encodeURIComponent(slug)}/providers`}
-                      variant="secondary"
-                      className="shrink-0"
-                    >
-                      <Cpu className="size-4" />
-                      {t("addModelProvider")}
-                    </ButtonLink>
-                  </div>
-                ) : null}
 
                 <DialogField
                   label={t("name")}
@@ -508,17 +398,37 @@ export function AgentsBrowser({
                 </DialogField>
                 <input type="hidden" name="runtime" value={runtime} />
                 <DialogField
+                  label={t("description")}
+                  htmlFor="agent-create-description"
+                  dirty={agentDescription !== ""}
+                >
+                  <textarea
+                    id="agent-create-description"
+                    name="description"
+                    value={agentDescription}
+                    onChange={(event) =>
+                      setAgentDescription(event.target.value)
+                    }
+                    maxLength={500}
+                    rows={3}
+                    placeholder={t("agentDescriptionPlaceholder")}
+                    className="min-h-24 w-full resize-y rounded-xl border border-border/60 bg-muted/20 px-3.5 py-3 text-sm leading-6 outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20"
+                  />
+                </DialogField>
+
+                <DialogField
                   label={t("model")}
                   dirty={
                     providerId !== (defaultNativeModel?.providerId ?? "") ||
                     modelId !== (defaultNativeModel?.model ?? "")
                   }
+                  layout="row"
                 >
                   <input type="hidden" name="providerId" value={providerId} />
                   <input type="hidden" name="model" value={modelId} />
 
                   <ModelPicker
-                    className="flex w-full"
+                    className="flex w-72 max-w-full"
                     providers={compatibleProviders}
                     value={
                       providerId && modelId
@@ -540,7 +450,6 @@ export function AgentsBrowser({
                         label={modelId || t("selectModel")}
                         placeholder={!modelId}
                         provider={selectedProvider?.name}
-                        note={selectedProvider?.name}
                       />
                     }
                   />
@@ -549,6 +458,7 @@ export function AgentsBrowser({
                   label={t("desktopAndBrowser")}
                   description={t("desktopAndBrowserHint")}
                   dirty={desktop}
+                  layout="row"
                 >
                   <Switch
                     checked={desktop}
@@ -558,37 +468,10 @@ export function AgentsBrowser({
                   />
                 </DialogField>
                 <DialogField
-                  label={t("description")}
-                  htmlFor="agent-create-description"
-                  dirty={agentDescription !== ""}
-                >
-                  <textarea
-                    id="agent-create-description"
-                    name="description"
-                    value={agentDescription}
-                    onChange={(event) =>
-                      setAgentDescription(event.target.value)
-                    }
-                    maxLength={500}
-                    rows={3}
-                    placeholder={t("agentDescriptionPlaceholder")}
-                    className="min-h-24 w-full resize-y rounded-xl border border-border/60 bg-muted/20 px-3.5 py-3 text-sm leading-6 outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20"
-                  />
-                </DialogField>
-
-                <div className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
-                  <Box className="mt-0.5 size-4 shrink-0" />
-                  <p>{t("automaticSandboxHelp")}</p>
-                </div>
-                <div className="space-y-2 rounded-2xl border border-border/60 bg-muted/20 p-4 text-xs leading-relaxed text-muted-foreground">
-                  <p>{t("piPackageSecurity")}</p>
-                  <p>{t("piPackageHeadless")}</p>
-                  <p>{t("piSdkCreateHelp")}</p>
-                </div>
-                <DialogField
                   label={t("maxToolSteps")}
                   htmlFor="agent-create-max-steps"
                   dirty={maxSteps !== String(AGENT_STEP_BOUNDS.default)}
+                  layout="row"
                 >
                   <Input
                     id="agent-create-max-steps"
@@ -598,7 +481,7 @@ export function AgentsBrowser({
                     max={AGENT_STEP_BOUNDS.max}
                     value={maxSteps}
                     onChange={setMaxSteps}
-                    className="mt-1.5 w-full"
+                    className="w-24"
                     classNames={{
                       label: "px-0 text-xs font-semibold",
                       field: "rounded-xl bg-muted/20",
@@ -643,36 +526,27 @@ export function AgentsBrowser({
                 aria-labelledby="agent-create-built-in-tools-title"
                 className="space-y-6 px-6 py-5"
               >
-                <div>
-                  <h3
-                    id="agent-create-built-in-tools-title"
-                    className="text-xl font-semibold tracking-tight text-foreground"
-                  >
-                    {t("builtInTools")}
-                  </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("builtInToolsDescription", {
-                      runtime: agentRuntimeDisplayName(runtime),
-                    })}
-                  </p>
-                </div>
-                <DialogField
-                  label={t("builtInTools")}
-                  dirty={
-                    disabledBuiltinTools.size > 0 ||
-                    enabledOptionalTools.size > 0
-                  }
+                <h3
+                  id="agent-create-built-in-tools-title"
+                  className="text-xl font-semibold tracking-tight text-foreground"
                 >
-                  <AgentBuiltInTools
-                    runtimeKind={runtime}
-                    disabledTools={disabledBuiltinTools}
-                    onDisabledToolsChange={setDisabledBuiltinTools}
-                    optionalToolOptions={optionalToolOptions}
-                    enabledOptionalTools={enabledOptionalTools}
-                    onEnabledOptionalToolsChange={setEnabledOptionalTools}
-                    disabled={createPending}
-                  />
-                </DialogField>
+                  {builtinFeatures("title")}
+                </h3>
+                <AgentBuiltinFeatureInputs
+                  runtimeKind={runtime}
+                  disabledTools={disabledBuiltinTools}
+                  enabledOptionalTools={enabledOptionalTools}
+                />
+                <AgentBuiltinFeatures
+                  runtimeKind={runtime}
+                  disabledTools={disabledBuiltinTools}
+                  enabledOptionalTools={enabledOptionalTools}
+                  onChange={(next) => {
+                    setDisabledBuiltinTools(next.disabledTools);
+                    setEnabledOptionalTools(next.enabledOptionalTools);
+                  }}
+                  disabled={createPending}
+                />
               </section>
 
               <section
@@ -738,11 +612,6 @@ export function AgentsBrowser({
               </section>
             </DialogBody>
           </div>
-          {lastCreateStep ? (
-            <p className="mx-4 mb-3 rounded-xl bg-muted/50 px-4 py-3 text-xs leading-relaxed text-muted-foreground sm:mx-6">
-              {t("createReadyHelp")}
-            </p>
-          ) : null}
           {createState.error ? (
             <p
               role="alert"
@@ -771,7 +640,7 @@ export function AgentsBrowser({
                   <ChevronLeft className="size-4 shrink-0" />
                   {t("back")}
                 </Button>
-              ) : undefined
+              ) : null
             }
             cancel={
               <CancelContainer>

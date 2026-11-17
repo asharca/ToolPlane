@@ -14,7 +14,7 @@ import {
 } from "@/lib/agents/queries";
 import { effectiveStatus } from "@/lib/process/supervisor";
 import { AgentSettings } from "@/components/dashboard/agents/AgentSettings";
-import type { AgentSettingsSection } from "@/components/dashboard/agents/AgentSettingsForm";
+import type { AgentSettingsTarget } from "@/components/dashboard/agents/AgentSettings";
 import { listAgentChannelConnections } from "@/lib/agents/channel-connections";
 import { toAgentChannelConnectionClientView } from "@/lib/agents/channel-connection-client";
 import { SettingsModal } from "@/components/dashboard/SettingsModal";
@@ -120,27 +120,29 @@ export default async function AgentDetailPage({
     : null;
   const advisor =
     current?.advisor == null ? null : AgentAdvisorSchema.parse(current.advisor);
-  const allowedSections: AgentSettingsSection[] = [
+  const settingsTargets: readonly AgentSettingsTarget[] = [
     "general",
     "instructions",
     "builtInTools",
     "toolApproval",
+    "streamRules",
     "mcp",
     "skills",
     "piPackages",
     "sandboxes",
     "subAgents",
     "advanced",
+    "channels",
+    "a2a",
+    "triggers",
+    "usage",
+    "changelog",
+    "evolution",
+    "clone",
+    "memories",
   ];
   const initialSettingsTab =
-    settings === "a2a" ||
-    settings === "channels" ||
-    settings === "changelog" ||
-    settings === "evolution" ||
-    settings === "triggers" ||
-    settings === "usage"
-      ? settings
-      : (allowedSections.find((section) => section === settings) ?? "general");
+    settingsTargets.find((target) => target === settings) ?? "general";
   return (
     <SettingsModal
       title={agent.name}
@@ -165,7 +167,6 @@ export default async function AgentDetailPage({
           contextFiles: agent.contextFiles,
           disabledBuiltinTools: agent.disabledBuiltinTools,
           optionalBuiltinTools: agent.optionalBuiltinTools,
-          optionalBuiltinToolOptions: agent.optionalBuiltinToolOptions,
           providerId: agent.providerId,
           model: agent.model,
           advisor,

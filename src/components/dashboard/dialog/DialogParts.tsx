@@ -101,6 +101,7 @@ export type DialogNavItem = {
   label: string;
   icon?: ReactNode;
   dirty?: boolean;
+  disabled?: boolean;
 };
 
 export function DialogNav({
@@ -108,12 +109,15 @@ export function DialogNav({
   active,
   onSelect,
   label,
+  footer,
   className,
 }: {
   items: DialogNavItem[];
   active: string;
   onSelect: (id: string) => void;
   label?: string;
+  /** Quiet status shown under the navigation, e.g. the published version. */
+  footer?: ReactNode;
   className?: string;
 }) {
   const t = useTranslations("common");
@@ -121,7 +125,7 @@ export function DialogNav({
   return (
     <aside
       className={cn(
-        "shrink-0 border-b border-border p-3 md:w-56 md:border-r md:border-b-0",
+        "shrink-0 border-b border-border p-3 md:flex md:w-56 md:flex-col md:overflow-y-auto md:border-r md:border-b-0",
         className,
       )}
     >
@@ -133,34 +137,42 @@ export function DialogNav({
         options={items.map((item) => ({
           value: item.id,
           label: item.dirty ? `${item.label} · ${t("modified")}` : item.label,
+          disabled: item.disabled,
         }))}
       />
-      <nav aria-label={navLabel} className="hidden space-y-1 md:block">
+      <nav aria-label={navLabel} className="hidden flex-1 space-y-1 md:block">
         {items.map((item) => (
-          <Button
-            key={item.id}
-            type="button"
-            size="md"
-            variant="ghost"
-            aria-current={active === item.id ? "page" : undefined}
-            onClick={() => onSelect(item.id)}
-            className={cn(
-              "h-9 w-full justify-start rounded-lg px-3 text-sm [&_svg]:size-4",
-              active === item.id && "bg-muted font-medium text-foreground",
-            )}
-          >
-            {item.icon}
-            <span className="min-w-0 truncate">{item.label}</span>
-            {item.dirty ? (
-              <span
-                className="ml-auto size-1.5 shrink-0 rounded-full bg-primary"
-                role="img"
-                aria-label={t("modified")}
-              />
-            ) : null}
-          </Button>
+          <div key={item.id}>
+            <Button
+              disabled={item.disabled}
+              type="button"
+              size="md"
+              variant="ghost"
+              aria-current={active === item.id ? "page" : undefined}
+              onClick={() => onSelect(item.id)}
+              className={cn(
+                "h-9 w-full justify-start rounded-lg px-3 text-sm [&_svg]:size-4",
+                active === item.id && "bg-muted font-medium text-foreground",
+              )}
+            >
+              {item.icon}
+              <span className="min-w-0 truncate">{item.label}</span>
+              {item.dirty ? (
+                <span
+                  className="ml-auto size-1.5 shrink-0 rounded-full bg-primary"
+                  role="img"
+                  aria-label={t("modified")}
+                />
+              ) : null}
+            </Button>
+          </div>
         ))}
       </nav>
+      {footer ? (
+        <p className="mt-2 px-1 text-xs text-muted-foreground md:px-3">
+          {footer}
+        </p>
+      ) : null}
     </aside>
   );
 }
@@ -170,6 +182,7 @@ export function DialogField({
   htmlFor,
   description,
   dirty,
+  layout = "stack",
   children,
   className,
 }: {
@@ -177,32 +190,57 @@ export function DialogField({
   htmlFor?: string;
   description?: ReactNode;
   dirty?: boolean;
+  /** `row` puts a content-width control beside its label. */
+  layout?: "stack" | "row";
   children: ReactNode;
   className?: string;
 }) {
   const t = useTranslations("common");
+  const row = layout === "row";
+  const heading = (
+    <label
+      htmlFor={htmlFor}
+      className="flex flex-wrap items-center gap-2 text-sm font-medium"
+    >
+      {label}
+      <span className="hidden rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary group-data-[dirty=true]/dialog-field:inline-block">
+        {t("modified")}
+      </span>
+    </label>
+  );
+  const hint = description ? (
+    <div className="text-xs text-muted-foreground">{description}</div>
+  ) : null;
   return (
     <div
       data-dialog-field=""
       data-dirty={dirty ? "true" : undefined}
       data-dialog-field-controlled={dirty !== undefined ? "" : undefined}
-      className={cn("group/dialog-field relative space-y-2", className)}
+      className={cn(
+        "group/dialog-field relative",
+        row
+          ? "flex min-h-9 flex-wrap items-center justify-between gap-x-6 gap-y-2"
+          : "space-y-2",
+        className,
+      )}
     >
-      <label
-        htmlFor={htmlFor}
-        className="flex flex-wrap items-center gap-2 text-sm font-medium"
+      {row ? (
+        <div className="min-w-0 flex-1 space-y-0.5">
+          {heading}
+          {hint}
+        </div>
+      ) : (
+        heading
+      )}
+      <div
+        className={cn(
+          "rounded-lg [[data-dirty=true]_&]:ring-1 [[data-dirty=true]_&]:ring-primary/50",
+          row && "min-w-0 max-w-full shrink-0",
+        )}
       >
-        {label}
-        <span className="hidden rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary group-data-[dirty=true]/dialog-field:inline-block">
-          {t("modified")}
-        </span>
-      </label>
-      <div className="rounded-lg [[data-dirty=true]_&]:ring-1 [[data-dirty=true]_&]:ring-primary/50">
         {children}
       </div>
-      {description ? (
-        <div className="text-xs text-muted-foreground">{description}</div>
-      ) : null}
+      {row ? null : hint}
     </div>
   );
 }

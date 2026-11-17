@@ -21,6 +21,7 @@ import {
   useDirtyFields,
 } from "@/components/dashboard/dialog";
 import { RevisionChangelog } from "@/components/dashboard/RevisionChangelog";
+import { ModelProviderNotice } from "@/components/dashboard/ModelProviderNotice";
 import {
   ModelPicker,
   ModelPickerTrigger,
@@ -342,6 +343,7 @@ export function AssistantEditor({
                 aria-labelledby="assistant-create-basic-title"
                 className="space-y-5"
               >
+                {!providers.length ? <ModelProviderNotice slug={slug} /> : null}
                 <h3
                   id="assistant-create-basic-title"
                   className="text-base font-semibold text-foreground"

@@ -12,7 +12,8 @@ import {
   useState,
   type SyntheticEvent,
 } from "react";
-import { Search, X, type LucideIcon } from "lucide-react";
+import { Plus, Search, X, type LucideIcon } from "lucide-react";
+import { SettingsSection } from "./SettingsSection";
 import { useTranslations } from "next-intl";
 
 const RESOURCE_RENDER_LIMIT = 100;
@@ -390,5 +391,116 @@ export function AgentResourceSelect({
         </div>
       )}
     </fieldset>
+  );
+}
+
+/** Lists only the selected resources; the full selector opens on demand. */
+export function AgentResourceList({
+  id,
+  icon,
+  label,
+  name,
+  options,
+  selectedIds,
+  onSelectionChange,
+  disabled = false,
+}: {
+  id: string;
+  icon: LucideIcon;
+  label: string;
+  name: string;
+  options: AgentResourceOption[];
+  selectedIds: ReadonlySet<string>;
+  onSelectionChange: (next: Set<string>) => void;
+  disabled?: boolean;
+}) {
+  const t = useTranslations("console.agents");
+  const [adding, setAdding] = useState(false);
+  const Icon = icon;
+  const selected = options.filter((option) => selectedIds.has(option.id));
+  return (
+    <SettingsSection
+      id={id}
+      title={label}
+      action={
+        adding ? (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => setAdding(false)}
+          >
+            {t("resourceList.done")}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={disabled}
+            onClick={() => setAdding(true)}
+          >
+            <Plus className="size-4" aria-hidden />
+            {t("resourceList.add")}
+          </Button>
+        )
+      }
+    >
+      {adding ? (
+        <AgentResourceSelect
+          icon={icon}
+          label={label}
+          name={name}
+          options={options}
+          selectedIds={selectedIds}
+          onSelectionChange={onSelectionChange}
+        />
+      ) : selected.length ? (
+        <ul className="m-0 list-none divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 p-0">
+          {selected.map((option) => (
+            <li
+              key={option.id}
+              className="flex min-w-0 items-center gap-3 px-4 py-2.5"
+            >
+              <input type="hidden" name={name} value={option.id} />
+              <Icon
+                className="size-4 shrink-0 text-muted-foreground"
+                aria-hidden
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-foreground">
+                  {option.label}
+                </span>
+                {option.description ? (
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {option.description}
+                  </span>
+                ) : null}
+              </span>
+              {option.status ? (
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {statusLabel(option.status, t)}
+                </span>
+              ) : null}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={disabled}
+                aria-label={t("resourceList.remove", { name: option.label })}
+                title={t("resourceList.remove", { name: option.label })}
+                onClick={() => {
+                  const next = new Set(selectedIds);
+                  next.delete(option.id);
+                  onSelectionChange(next);
+                }}
+              >
+                <X className="size-4" aria-hidden />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </SettingsSection>
   );
 }

@@ -12,6 +12,105 @@
 @source "../../node_modules/@streamdown/code/dist/*.js";
 @source "../../node_modules/@streamdown/mermaid/dist/*.js";
 
+/* Fields read as fields through a faint fill plus a border clearly stronger
+   than structural --border (about 1.6:1), without outlining every control in
+   near-text contrast. Structural borders stay on --border. */
+:root {
+  --input: oklch(15% 0 0 / 0.24);
+  --field: oklch(15% 0 0 / 0.025);
+}
+
+.dark {
+  --input: rgb(255 255 255 / 0.16);
+  --field: rgb(255 255 255 / 0.03);
+}
+
+@layer utilities {
+  /* Match existing field borders, never add width to borderless composers or
+     search inputs. One-class specificity lets focus/error/dirty utilities win. */
+  :where(
+    input:not(
+      [type="checkbox"],
+      [type="radio"],
+      [type="range"],
+      [type="file"],
+      [type="hidden"],
+      [type="button"],
+      [type="submit"],
+      [type="reset"],
+      [type="image"],
+      [type="color"]
+    ),
+    textarea,
+    select,
+    button:is(
+      [role="combobox"],
+      [aria-haspopup="listbox"],
+      [aria-haspopup="dialog"].w-full.bg-background
+    ),
+    div[data-state]:not(:focus-within):has(
+      > input:not(
+          [type="checkbox"],
+          [type="radio"],
+          [type="range"],
+          [type="file"],
+          [type="hidden"],
+          [type="button"],
+          [type="submit"],
+          [type="reset"],
+          [type="image"],
+          [type="color"]
+        )
+    )
+  ):is(
+    .border-border,
+    [class^="border-border/"],
+    [class*=" border-border/"]
+  ):where(
+    :not([data-state="focused"], [data-state="error"], [data-dirty="true"])
+  ) {
+    border-color: var(--input);
+    background-color: var(--field);
+  }
+
+  /* Keep dropdown hover/open borders at the same contrast without overriding
+     their focus or invalid-state colors. This token is local to field triggers. */
+  :where(
+    button:is(
+      [role="combobox"],
+      [aria-haspopup="listbox"],
+      [aria-haspopup="dialog"].w-full.bg-background
+    )
+  ):is(.border-border, [class^="border-border/"], [class*=" border-border/"]) {
+    --color-border-strong: var(--input);
+  }
+
+  :where(
+    input:not(
+      [type="checkbox"],
+      [type="radio"],
+      [type="range"],
+      [type="file"],
+      [type="hidden"],
+      [type="button"],
+      [type="submit"],
+      [type="reset"],
+      [type="image"],
+      [type="color"]
+    ),
+    textarea,
+    select,
+    button[role="combobox"]
+  ):is(
+    .border-border,
+    .border-input,
+    [class^="border-border/"],
+    [class*=" border-border/"]
+  )[aria-invalid="true"] {
+    border-color: var(--destructive);
+  }
+}
+
 .sandbox-terminal .xterm {
   height: 100%;
   padding: 0.875rem;

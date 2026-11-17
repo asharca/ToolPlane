@@ -214,11 +214,15 @@ export default async function WorkspaceWorkPage({
   return (
     <>
       <DashboardHeader title={t("title")} />
-      {welcome === "1" ? (
+      {welcome === "1" ||
+      (!providers.length && workspace.ownerId === user.id) ? (
         <WorkspaceWelcome
           slug={slug}
           name={workspace.name}
           isOwner={workspace.ownerId === user.id}
+          hasProviders={providers.length > 0}
+          hasAgents={agents.length > 0}
+          hasConversations={sessions.length > 0 || conversations.length > 0}
         />
       ) : null}
       <WorkspaceWork

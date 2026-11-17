@@ -1,11 +1,10 @@
-import { getLocale, getTranslations } from "next-intl/server";
+import { getLocale } from "next-intl/server";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import {
   getWorkspaceForUser,
   getWorkspaceMembers,
 } from "@/lib/workspace/queries";
-import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { DashboardPage } from "@/components/dashboard/DashboardUI";
 import {
   WorkspaceMembers,
@@ -40,10 +39,7 @@ export default async function MembersPage({
 }: {
   params: Promise<{ workspace: string }>;
 }) {
-  const [t, locale] = await Promise.all([
-    getTranslations("console.members"),
-    getLocale(),
-  ]);
+  const locale = await getLocale();
   const { workspace: slug } = await params;
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
@@ -65,8 +61,7 @@ export default async function MembersPage({
 
   return (
     <>
-      <DashboardHeader title={t("members")} />
-      <DashboardPage className="max-w-4xl py-8">
+      <DashboardPage>
         <WorkspaceMembers
           slug={slug}
           canManage={isOwner}

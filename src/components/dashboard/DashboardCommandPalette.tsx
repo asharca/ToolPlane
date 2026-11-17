@@ -3,29 +3,14 @@
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import {
-  Sun,
-  Moon,
-  Plug,
-  Brain,
-  Boxes,
-  Bot,
-  BarChart3,
-  Code2,
-  Users,
-  Home,
-  MessageSquare,
-  PackageCheck,
-  Settings,
-  Store,
-  TerminalSquare,
-} from "lucide-react";
+import { Sun, Moon, Code2, Home, Settings } from "lucide-react";
 import {
   CommandPalette,
   type CommandItem,
 } from "@/components/motion/command-palette";
 import { useThemeToggle } from "@/components/motion/theme-toggle";
 import { SITE } from "@/lib/site";
+import { WORKSPACE_NAV_GROUPS } from "./workspace-nav";
 
 function workspaceSlug(pathname: string): string | null {
   const parts = pathname.split("/");
@@ -98,87 +83,29 @@ export function DashboardCommandPalette({
     const list: CommandItem[] = [];
     if (slug) {
       const b = `/app/${slug}`;
-      list.push(
-        {
-          id: "mcp",
-          label: t("mcp"),
-          group: t("groupBuild"),
-          icon: Plug,
-          onSelect: go(`${b}/mcp`),
-        },
-        {
-          id: "skills",
-          label: t("skills"),
-          group: t("groupBuild"),
-          icon: Brain,
-          onSelect: go(`${b}/skills`),
-        },
-        {
-          id: "agents",
-          label: t("agents"),
-          group: t("groupRun"),
-          icon: Bot,
-          onSelect: go(`${b}/agents`),
-        },
-        {
-          id: "sandboxes",
-          label: t("sandboxes"),
-          group: t("groupBuild"),
-          icon: Boxes,
-          onSelect: go(`${b}/sandboxes`),
-        },
-        {
-          id: "chat",
-          label: t("chat"),
-          group: t("groupRun"),
-          icon: MessageSquare,
-          onSelect: go(`${b}/chat`),
-        },
-        {
-          id: "my-plugins",
-          label: `${sidebarT("myPlugins")}${pluginUpdateCount > 0 ? ` (${pluginUpdateCount})` : ""}`,
-          group: t("groupRun"),
-          icon: PackageCheck,
-          onSelect: go(`${b}/plugins/installed`),
-        },
-        {
-          id: "plugins",
-          label: sidebarT("plugins"),
-          group: t("groupRun"),
-          icon: Store,
-          onSelect: go(`${b}/plugins`),
-        },
-        {
-          id: "work",
-          label: t("work"),
-          group: t("groupRun"),
-          icon: TerminalSquare,
-          onSelect: go(`${b}/work`),
-        },
-        {
-          id: "obs",
-          label: t("logs"),
-          group: t("groupOperate"),
-          icon: BarChart3,
-          onSelect: go(`${b}/observability`),
-        },
-        {
-          id: "members",
-          label: t("members"),
-          group: t("groupWorkspace"),
-          icon: Users,
-          onSelect: go(`${b}/members`),
-        },
-        {
-          id: "settings",
-          label: t("settings"),
-          group: t("groupWorkspace"),
-          icon: Settings,
-          onSelect: go(
-            `${b}/settings?returnTo=${encodeURIComponent(returnTo)}`,
-          ),
-        },
-      );
+      for (const group of WORKSPACE_NAV_GROUPS) {
+        for (const item of group.items) {
+          list.push({
+            id: item.segment,
+            label: sidebarT(item.labelKey),
+            group: sidebarT(group.labelKey),
+            icon: item.icon,
+            badge: item.badgeKey
+              ? sidebarT(item.badgeKey)
+              : item.segment === "plugins" && pluginUpdateCount > 0
+                ? pluginUpdateCount
+                : undefined,
+            onSelect: go(`${b}/${item.segment}`),
+          });
+        }
+      }
+      list.push({
+        id: "settings",
+        label: t("settings"),
+        group: sidebarT("manage"),
+        icon: Settings,
+        onSelect: go(`${b}/settings?returnTo=${encodeURIComponent(returnTo)}`),
+      });
     }
     list.push(
       {
@@ -197,7 +124,7 @@ export function DashboardCommandPalette({
       },
       {
         id: "theme",
-        label: t("toggleDarkMode"),
+        label: t(isDark ? "switchToLightMode" : "switchToDarkMode"),
         group: t("groupActions"),
         icon: isDark ? Sun : Moon,
         onSelect: () => {

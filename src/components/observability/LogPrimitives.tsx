@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import { ScrollText } from "lucide-react";
+import { DashboardEmptyState } from "@/components/dashboard/DashboardUI";
 
 export function RelativeTime({ value }: { value: string }) {
   const locale = useLocale();
@@ -87,8 +89,6 @@ export function StatusBadge({ status }: { status: string }) {
 export function EmptyState({ message }: { message?: string }) {
   const t = useTranslations("console.observability.viewer");
   return (
-    <div className="rounded-lg border border-dashed border-border p-12 text-center text-sm text-muted-foreground">
-      {message ?? t("empty")}
-    </div>
+    <DashboardEmptyState icon={ScrollText} title={message ?? t("empty")} />
   );
 }

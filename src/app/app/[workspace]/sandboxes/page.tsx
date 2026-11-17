@@ -10,7 +10,6 @@ import { Bot, Boxes, Cpu, Laptop, Terminal } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { listSandboxes } from "@/lib/sandboxes/queries";
-import { getAgentSandboxAutoStopSettings } from "@/lib/admin/settings";
 import {
   isExternalSandboxAccess,
   isExternalSandboxCandidate,
@@ -30,7 +29,6 @@ import {
   findSandboxImageOption,
 } from "@/lib/sandboxes/images";
 import { effectiveStatus } from "@/lib/process/supervisor";
-import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { SandboxStatusRefresher } from "@/components/dashboard/sandboxes/SandboxStatusRefresher";
 import { SandboxCreateForm } from "@/components/dashboard/sandboxes/SandboxCreateForm";
@@ -39,7 +37,6 @@ import { SandboxBatchTable } from "@/components/dashboard/sandboxes/SandboxBatch
 import {
   DashboardEmptyState,
   DashboardPage,
-  DashboardSection,
   DashboardToolbar,
 } from "@/components/dashboard/DashboardUI";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
@@ -64,34 +61,6 @@ function formatDate(d: Date, timeZone: string, locale: string): string {
     timeZone,
     { month: "short", day: "numeric", year: "numeric" },
     locale,
-  );
-}
-
-function SandboxStat({
-  label,
-  value,
-  icon: Icon,
-  className,
-}: {
-  label: string;
-  value: number;
-  icon: typeof Boxes;
-  className?: string;
-}) {
-  return (
-    <div
-      className={`rounded-xl border border-border bg-card px-4 py-3 ${className ?? ""}`}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-medium text-muted-foreground">
-          {label}
-        </span>
-        <Icon className="size-4 text-muted-foreground" />
-      </div>
-      <div className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-        {value}
-      </div>
-    </div>
   );
 }
 
@@ -170,10 +139,7 @@ export default async function SandboxesPage({
   const ws = await getWorkspaceForUser(slug, user.id);
   if (!ws) redirect("/app");
 
-  const [sandboxes, autoStop] = await Promise.all([
-    listSandboxes(ws.id),
-    getAgentSandboxAutoStopSettings(),
-  ]);
+  const sandboxes = await listSandboxes(ws.id);
   const runtimeSandboxes = sandboxes.filter((s) => s.role === "runtime");
   const externalSandboxes = sandboxes.filter(
     (sandbox) =>
@@ -204,75 +170,42 @@ export default async function SandboxesPage({
     runtime: "runtimeSandboxes",
     external: "externalSandboxes",
   } as const;
-  const sectionTitle = t(scopeLabels[scope]);
   const filters = (["runtime", "external"] as const).map((value) => ({
     value,
-    label: t(scopeLabels[value]),
+    label: `${t(scopeLabels[value])} (${value === "runtime" ? runtimeSandboxes.length : externalSandboxes.length})`,
     href: `/app/${slug}/sandboxes${value === "runtime" ? "" : `?scope=${value}`}`,
   }));
 
   return (
     <>
       <SandboxStatusRefresher transitioning={anyProvisioning} />
-      <DashboardHeader title={t("sandboxes")} />
       <DashboardPage>
         <DashboardToolbar
           actions={<SandboxCreateForm workspace={slug} workspaceId={ws.id} />}
         >
-          <p className="text-sm text-muted-foreground">
-            {t("sandboxRolesDescription")}
-          </p>
+          <h1 className="text-xl font-semibold">{t("sandboxes")}</h1>
         </DashboardToolbar>
 
-        <div className="grid grid-cols-2 gap-3">
-          <SandboxStat
-            label={t("runtimeSandboxes")}
-            value={runtimeSandboxes.length}
-            icon={Bot}
-          />
-          <SandboxStat
-            label={t("externalSandboxes")}
-            value={externalSandboxes.length}
-            icon={Laptop}
-          />
-        </div>
-
-        <DashboardSection
-          title={sectionTitle}
-          count={sandboxRows.length}
-          actions={
-            <nav
-              aria-label={t("sandboxViews")}
-              className="flex flex-wrap items-center gap-1 rounded-lg border border-border p-1"
-            >
-              {filters.map((filter) => (
-                <Link
-                  key={filter.value}
-                  href={filter.href}
-                  aria-current={scope === filter.value ? "page" : undefined}
-                  className={
-                    scope === filter.value
-                      ? "rounded-lg px-2 py-1 text-xs font-medium text-foreground bg-muted"
-                      : "rounded-lg px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }
-                >
-                  {filter.label}
-                </Link>
-              ))}
-            </nav>
-          }
-        >
-          {scope === "runtime" ? (
-            <p className="mb-4 text-sm leading-6 text-muted-foreground">
-              {t("runtimeLifecycleDescription", {
-                policy: t(
-                  autoStop.enabled
-                    ? "runtimeAutoStopEnabled"
-                    : "runtimeAutoStopDisabled",
-                ),
-              })}
-            </p>
-          ) : null}
+        <section className="space-y-4">
+          <nav
+            aria-label={t("sandboxViews")}
+            className="flex flex-wrap items-center gap-1 rounded-lg border border-border p-1"
+          >
+            {filters.map((filter) => (
+              <Link
+                key={filter.value}
+                href={filter.href}
+                aria-current={scope === filter.value ? "page" : undefined}
+                className={
+                  scope === filter.value
+                    ? "rounded-lg px-2 py-1 text-xs font-medium text-foreground bg-muted"
+                    : "rounded-lg px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                }
+              >
+                {filter.label}
+              </Link>
+            ))}
+          </nav>
           {sandboxRows.length === 0 ? (
             <DashboardEmptyState
               icon={Boxes}
@@ -282,6 +215,11 @@ export default async function SandboxesPage({
                   ? "runtimeSandboxesEmpty"
                   : "externalSandboxesEmpty",
               )}
+              actions={
+                scope === "external" ? (
+                  <SandboxCreateForm workspace={slug} workspaceId={ws.id} />
+                ) : undefined
+              }
             />
           ) : (
             <SandboxBatchTable
@@ -566,7 +504,7 @@ export default async function SandboxesPage({
               })}
             />
           )}
-        </DashboardSection>
+        </section>
       </DashboardPage>
     </>
   );

@@ -280,15 +280,7 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       subAgents: { select: { childId: true } },
     },
   });
-  return agent
-    ? {
-        ...agent,
-        optionalBuiltinToolOptions: agentOptionalBuiltinToolOptions(
-          agent.runtimeKind,
-          agent.optionalBuiltinTools,
-        ),
-      }
-    : null;
+  return agent;
 }
 
 export async function getAgentOptionalBuiltinTools(

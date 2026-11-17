@@ -25,9 +25,9 @@ import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton"
 import {
   DashboardEmptyState,
   DashboardTable,
-  DashboardToolbar,
 } from "@/components/dashboard/DashboardUI";
 import { notify } from "@/components/dashboard/Toaster";
+import { PluginPageHeader } from "./PluginPageHeader";
 import {
   pluginBatchAction,
   type PluginBatchOperation,
@@ -170,13 +170,12 @@ export function InstalledPluginsTable({
   }
 
   const toolbar = (
-    <DashboardToolbar
+    <PluginPageHeader
+      base={base}
+      current="installed"
+      updateCount={updatable.length}
       actions={
         <>
-          <ButtonLink href={base} variant="secondary" size="md">
-            <Store className="size-4" />
-            {t("installed.browse")}
-          </ButtonLink>
           {canManage && updatable.length > 0 ? (
             <form
               action={async () => {
@@ -207,15 +206,7 @@ export function InstalledPluginsTable({
           ) : null}
         </>
       }
-    >
-      <h1 className="text-xl font-semibold">{t("installed.title")}</h1>
-      <p className="text-sm text-muted-foreground">
-        {t("installed.subtitle", { count: plugins.length })}
-        {updatable.length > 0
-          ? ` · ${t("installed.subtitleUpdates", { count: updatable.length })}`
-          : ""}
-      </p>
-    </DashboardToolbar>
+    />
   );
 
   if (plugins.length === 0) {

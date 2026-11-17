@@ -54,7 +54,7 @@ import {
 import { safeSkillFilePath, type SkillBundleFile } from "@/lib/skills/bundle";
 import { skillLabel } from "@/lib/workspace/skill-label";
 import {
-  agentRuntimeBuiltinToolGroups,
+  agentRuntimeBuiltinTools,
   normalizeDisabledBuiltinTools,
   agentOptionalBuiltinTool,
   normalizeOptionalBuiltinTools,
@@ -3274,9 +3274,9 @@ async function runPiSdk(
       contextFiles: options.contextFiles === true,
       excludeTools,
       defaultTools: [
-        ...agentRuntimeBuiltinToolGroups("pi-sdk")
-          .flatMap((group) => group.tools)
-          .filter((name) => !excludeTools.includes(name)),
+        ...agentRuntimeBuiltinTools("pi-sdk").filter(
+          (name) => !excludeTools.includes(name),
+        ),
         ...normalizeOptionalBuiltinTools(options.optionalBuiltinTools).filter(
           (name) =>
             agentOptionalBuiltinTool(name)?.implementation ===

@@ -12,7 +12,6 @@ import {
 import {
   DashboardEmptyState,
   DashboardPage,
-  DashboardToolbar,
 } from "@/components/dashboard/DashboardUI";
 import { ButtonLink } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
@@ -20,6 +19,7 @@ import {
   PluginListFilter,
   PluginQuickAdd,
 } from "@/components/dashboard/plugins/PluginForms";
+import { PluginPageHeader } from "@/components/dashboard/plugins/PluginPageHeader";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
 import { db } from "@/lib/db";
@@ -169,32 +169,11 @@ export default async function PluginsPage({
   ];
   return (
     <DashboardPage>
-      <DashboardToolbar
-        actions={
-          <ButtonLink href={`${base}/sources`} variant="secondary" size="md">
-            <GitBranch className="size-4" />
-            {t("sources")}
-          </ButtonLink>
-        }
-      >
-        <h1 className="text-xl font-semibold">{t("title")}</h1>
-        <p className="text-sm text-muted-foreground">
-          {t("availableCount", { count: items.length })}
-          {catalog.updateCount > 0 ? (
-            <>
-              {" · "}
-              <Link
-                href={`${base}/installed?filter=updates`}
-                className="text-primary hover:underline"
-              >
-                {t("installed.subtitleUpdates", {
-                  count: catalog.updateCount,
-                })}
-              </Link>
-            </>
-          ) : null}
-        </p>
-      </DashboardToolbar>
+      <PluginPageHeader
+        base={base}
+        current="catalog"
+        updateCount={catalog.updateCount}
+      />
       <div className="flex w-full flex-wrap items-center gap-2">
         <form key={q} action={base} method="get" className="w-full sm:w-72">
           {Object.entries(filterParams).map(([name, item]) =>
@@ -224,6 +203,15 @@ export default async function PluginsPage({
             options={filter.options}
           />
         ))}
+        <ButtonLink
+          href={`${base}/sources`}
+          variant="secondary"
+          size="md"
+          className="sm:ml-auto"
+        >
+          <GitBranch className="size-4" />
+          {t("sources")}
+        </ButtonLink>
       </div>
       {items.length ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

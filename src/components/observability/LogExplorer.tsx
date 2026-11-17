@@ -420,7 +420,6 @@ export function LogExplorer({
         </ButtonLink>
       </form>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold">{t(tab)}</h2>
         {page && !params.cursor && (
           <LiveToggle<LogItem>
             key={streamUrl}

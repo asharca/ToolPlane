@@ -2,7 +2,10 @@
 
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
+import { Bot, Plus, X } from "lucide-react";
+import { Button } from "@/components/motion/button/base";
 import { Checkbox } from "@/components/motion/checkbox";
+import { SettingsSection } from "./SettingsSection";
 
 export type PlatformSubagentOption = {
   id: string;
@@ -26,6 +29,7 @@ export type SubagentResourcesSnapshot = {
 };
 
 export function SubagentResources({
+  title,
   slug,
   agentId,
   snapshot,
@@ -34,6 +38,7 @@ export function SubagentResources({
   onLoad,
   onChange,
 }: {
+  title: string;
   slug: string;
   agentId: string;
   snapshot: SubagentResourcesSnapshot | null;
@@ -43,9 +48,11 @@ export function SubagentResources({
   onChange: (draft: SubagentDraft) => void;
 }) {
   const t = useTranslations("console.agents.subagentResources");
+  const agents = useTranslations("console.agents");
   const id = useId();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [adding, setAdding] = useState(false);
   const nativePolicy = draft?.nativePolicy ?? snapshot?.nativePolicy;
   const selectedIds = useMemo(
     () =>
@@ -83,89 +90,145 @@ export function SubagentResources({
     return () => controller.abort();
   }, [agentId, slug, onLoad]);
 
-  if (loading && !snapshot)
-    return (
-      <p role="status" className="text-sm text-muted-foreground">
-        {t("loading")}
-      </p>
-    );
-  if (error)
-    return (
-      <p role="alert" className="text-sm text-destructive">
-        {t("loadFailed")}
-      </p>
-    );
-  if (!snapshot || !nativePolicy) return null;
   const update = (patch: Partial<SubagentDraft>) =>
+    nativePolicy &&
     onChange({
       native: false,
       agentIds: [...selectedIds],
       nativePolicy,
       ...patch,
     });
+  const remove = (targetId: string) =>
+    update({ agentIds: [...selectedIds].filter((id) => id !== targetId) });
 
   return (
-    <div className="min-w-0 space-y-6">
-      <p id={`${id}-help`} className="text-sm leading-6 text-muted-foreground">
-        {t("help")}
-      </p>
-      <section className="space-y-3">
-        <h3 className="text-sm font-medium">{t("label")}</h3>
-        <p className="text-sm leading-6 text-muted-foreground">
-          {t("platformHelp")}
-        </p>
-        {!snapshot.agents.length ? (
-          <p className="text-sm text-muted-foreground">{t("empty")}</p>
-        ) : (
-          <fieldset
-            disabled={disabled}
-            aria-describedby={`${id}-help`}
-            className="min-w-0 overflow-hidden rounded-xl border border-border/60 bg-background"
+    <SettingsSection
+      id="subAgents"
+      title={title}
+      action={
+        adding ? (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => setAdding(false)}
           >
-            <legend className="sr-only">{t("label")}</legend>
-            {snapshot.agents.map((agent, index) => {
-              const checked = selectedIds.has(agent.id);
-              const detailsId = `${id}-details-${index}`;
-              return (
+            {agents("resourceList.done")}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={disabled || !snapshot?.agents.length}
+            onClick={() => setAdding(true)}
+          >
+            <Plus className="size-4" aria-hidden />
+            {agents("resourceList.add")}
+          </Button>
+        )
+      }
+    >
+      {loading && !snapshot ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {t("loading")}
+        </p>
+      ) : error ? (
+        <p role="alert" className="text-sm text-destructive">
+          {t("loadFailed")}
+        </p>
+      ) : !snapshot || !nativePolicy ? null : adding ? (
+        <fieldset
+          disabled={disabled}
+          className="min-w-0 overflow-hidden rounded-xl border border-border/60 bg-background"
+        >
+          <legend className="sr-only">{title}</legend>
+          {snapshot.agents.map((agent, index) => {
+            const checked = selectedIds.has(agent.id);
+            const detailsId = `${id}-details-${index}`;
+            return (
+              <div
+                key={agent.id}
+                className={`space-y-1 border-b border-border/60 px-4 py-3 last:border-b-0 ${checked ? "bg-muted/40" : ""}`}
+              >
+                <Checkbox
+                  checked={checked}
+                  label={agent.name}
+                  aria-label={t("select", { name: agent.name })}
+                  aria-describedby={
+                    agent.description || agent.reason ? detailsId : undefined
+                  }
+                  disabled={disabled || Boolean(agent.disabled && !checked)}
+                  onCheckedChange={(nextChecked) => {
+                    const next = new Set(selectedIds);
+                    if (nextChecked) next.add(agent.id);
+                    else next.delete(agent.id);
+                    update({ agentIds: [...next] });
+                  }}
+                />
                 <div
-                  key={agent.id}
-                  className={`space-y-1 border-b border-border/60 px-4 py-3 last:border-b-0 ${checked ? "bg-muted/40" : ""}`}
+                  id={detailsId}
+                  className="space-y-1 pl-8 text-xs text-muted-foreground"
                 >
-                  <Checkbox
-                    checked={checked}
-                    label={agent.name}
-                    aria-label={t("select", { name: agent.name })}
-                    aria-describedby={
-                      agent.description || agent.reason ? detailsId : undefined
-                    }
-                    disabled={disabled || Boolean(agent.disabled && !checked)}
-                    onCheckedChange={(nextChecked) => {
-                      const next = new Set(selectedIds);
-                      if (nextChecked) next.add(agent.id);
-                      else next.delete(agent.id);
-                      update({ agentIds: [...next] });
-                    }}
-                  />
-                  <div
-                    id={detailsId}
-                    className="space-y-1 pl-8 text-xs text-muted-foreground"
-                  >
-                    {agent.description ? <p>{agent.description}</p> : null}
-                    {agent.reason ? (
-                      <p>
-                        {t.has(`reasons.${agent.reason}`)
-                          ? t(`reasons.${agent.reason}`)
-                          : t("unavailable")}
-                      </p>
-                    ) : null}
-                  </div>
+                  {agent.description ? <p>{agent.description}</p> : null}
+                  {agent.reason ? (
+                    <p>
+                      {t.has(`reasons.${agent.reason}`)
+                        ? t(`reasons.${agent.reason}`)
+                        : t("unavailable")}
+                    </p>
+                  ) : null}
                 </div>
-              );
-            })}
-          </fieldset>
-        )}
-      </section>
-      <p className="text-sm text-muted-foreground">{t("platformOnly")}</p>
-    </div>
+              </div>
+            );
+          })}
+        </fieldset>
+      ) : selectedIds.size ? (
+        <ul className="m-0 list-none divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 p-0">
+          {snapshot.agents
+            .filter((agent) => selectedIds.has(agent.id))
+            .map((agent) => (
+              <li
+                key={agent.id}
+                className="flex min-w-0 items-center gap-3 px-4 py-2.5"
+              >
+                <Bot
+                  className="size-4 shrink-0 text-muted-foreground"
+                  aria-hidden
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-foreground">
+                    {agent.name}
+                  </span>
+                  {agent.reason ? (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {t.has(`reasons.${agent.reason}`)
+                        ? t(`reasons.${agent.reason}`)
+                        : t("unavailable")}
+                    </span>
+                  ) : agent.description ? (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {agent.description}
+                    </span>
+                  ) : null}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  disabled={disabled}
+                  aria-label={agents("resourceList.remove", {
+                    name: agent.name,
+                  })}
+                  title={agents("resourceList.remove", { name: agent.name })}
+                  onClick={() => remove(agent.id)}
+                >
+                  <X className="size-4" aria-hidden />
+                </Button>
+              </li>
+            ))}
+        </ul>
+      ) : null}
+    </SettingsSection>
   );
 }
