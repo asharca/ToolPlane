@@ -1717,6 +1717,8 @@ export function WorkspaceWork({
         ? t("conversationWorkspaceProvisioning")
         : t("noSandbox");
   const controlWorkspaceRoot = "/workspace";
+  // Turn choices follow the conversation; its sandbox identity arrives after creation.
+  const conversationScope = `${controlAgent?.id}:${selected?.id ?? conversation?.id ?? "new"}`;
   const composerScope = `${controlAgent?.id}:${controlSandbox?.id}:${selected?.id ?? conversation?.id ?? "new"}`;
   const screenSandboxId = controlSandbox?.id;
   const screenRunning = controlSandbox?.running === true;
@@ -1797,10 +1799,10 @@ export function WorkspaceWork({
       : null;
   const reasoningAvailable = selectionSupportsReasoning(
     providers,
-    modelChoices[composerScope] ?? defaultModelSelection,
+    modelChoices[conversationScope] ?? defaultModelSelection,
   );
   const reasoningEffort =
-    reasoningChoices[composerScope] ??
+    reasoningChoices[conversationScope] ??
     conversation?.reasoningEffort ??
     selected?.reasoningEffort ??
     "default";
@@ -2984,8 +2986,8 @@ export function WorkspaceWork({
           agentId,
           sandboxId: activeSandboxId,
           task: draft.trim(),
-          ...(modelChoices[composerScope]
-            ? { modelOverride: modelChoices[composerScope] }
+          ...(modelChoices[conversationScope]
+            ? { modelOverride: modelChoices[conversationScope] }
             : {}),
           ...(reasoningAvailable ? { reasoningEffort } : {}),
           ...(references.length ? { references } : {}),
@@ -2999,10 +3001,10 @@ export function WorkspaceWork({
       };
       if (!response.ok || !body.workSessionId)
         throw new Error(body.error || t("createError"));
-      const nextScope = `${agentId}:${activeSandboxId}:${body.workSessionId}`;
+      const nextScope = `${agentId}:${body.workSessionId}`;
       setModelChoices((choices) => ({
         ...choices,
-        [nextScope]: choices[composerScope] ?? null,
+        [nextScope]: choices[conversationScope] ?? null,
       }));
       setReasoningChoices((choices) => ({
         ...choices,
@@ -3219,8 +3221,8 @@ export function WorkspaceWork({
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               line: input,
-              ...(modelChoices[composerScope]
-                ? { modelOverride: modelChoices[composerScope] }
+              ...(modelChoices[conversationScope]
+                ? { modelOverride: modelChoices[conversationScope] }
                 : {}),
             }),
           },
@@ -3264,8 +3266,8 @@ export function WorkspaceWork({
     if (
       await postAction("input", {
         input,
-        ...(modelChoices[composerScope]
-          ? { modelOverride: modelChoices[composerScope] }
+        ...(modelChoices[conversationScope]
+          ? { modelOverride: modelChoices[conversationScope] }
           : {}),
         ...(reasoningAvailable ? { reasoningEffort } : {}),
         ...(references.length ? { references } : {}),
@@ -4322,16 +4324,16 @@ export function WorkspaceWork({
                       }
                       mcpToolsUpdated={controlAgent.mcpToolsUpdated}
                       modelName={conversation.modelName}
-                      modelOverride={modelChoices[composerScope] ?? null}
+                      modelOverride={modelChoices[conversationScope] ?? null}
                       modelPicker={
                         <ComposerModelSelect
                           providers={providers}
                           defaultSelection={defaultModelSelection}
-                          value={modelChoices[composerScope] ?? null}
+                          value={modelChoices[conversationScope] ?? null}
                           onChange={(value) =>
                             setModelChoices((choices) => ({
                               ...choices,
-                              [composerScope]: value,
+                              [conversationScope]: value,
                             }))
                           }
                         />
@@ -4665,11 +4667,11 @@ export function WorkspaceWork({
                             <ComposerModelSelect
                               providers={providers}
                               defaultSelection={defaultModelSelection}
-                              value={modelChoices[composerScope] ?? null}
+                              value={modelChoices[conversationScope] ?? null}
                               onChange={(value) =>
                                 setModelChoices((choices) => ({
                                   ...choices,
-                                  [composerScope]: value,
+                                  [conversationScope]: value,
                                 }))
                               }
                             />
@@ -4689,7 +4691,7 @@ export function WorkspaceWork({
                                 onChange={(value) =>
                                   setReasoningChoices((choices) => ({
                                     ...choices,
-                                    [composerScope]: value,
+                                    [conversationScope]: value,
                                   }))
                                 }
                               />
