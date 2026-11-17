@@ -13,6 +13,7 @@ import { generateWorkSessionTitle } from "@/lib/agents/conversation-naming";
 import { activeConversationMessages } from "@/lib/agents/conversation-context";
 import { persistAgentPromptInvocation } from "@/lib/agents/prompt-invocation";
 import type { SandboxRuntimeActivity } from "@/lib/agents/sandbox-runtime";
+import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
 import {
   STREAM_RULE_TRIGGER_PART,
   type StreamRuleTrigger,
@@ -94,6 +95,9 @@ type WorkToolPart = {
   deploymentName?: string;
   originalToolName?: string;
   durationMs?: number;
+  /** Wall-clock epoch ms observed by the coordinator. */
+  startedAt?: number;
+  completedAt?: number;
   input: unknown;
   output?: unknown;
   patch?: string;
@@ -111,8 +115,16 @@ type WorkTracePart =
       text: string;
       state: "done";
       source?: SandboxRuntimeActivity["source"];
+      startedAt?: number;
+      completedAt?: number;
     }
-  | { type: "text"; text: string; state: "done" }
+  | {
+      type: "text";
+      text: string;
+      state: "done";
+      startedAt?: number;
+      completedAt?: number;
+    }
   | {
       type: "work-runtime";
       runtimeKind: string;
@@ -121,6 +133,9 @@ type WorkTracePart =
 
 type WorkProcessPart = Exclude<WorkTracePart, { type: "work-runtime" }>;
 
+/** Bounded so a long turn cannot grow its persisted timing part without limit. */
+const MAX_STAGE_MARKS = 2_000;
+
 type WorkTurnTiming = {
   startedAt: number;
   completedAt: number;
@@ -128,6 +143,8 @@ type WorkTurnTiming = {
   approvalWaitMs?: number;
   runtimeKind: string;
   modelName?: string;
+  /** Execution stage transitions; the console derives the turn's waterfall from them. */
+  stages?: Array<{ stage: AgentExecutionStage; at: number }>;
 };
 
 type CoordinatorState = {
@@ -301,6 +318,8 @@ async function executeWork(workSessionId: string) {
   let activeReasoningSource: SandboxRuntimeActivity["source"];
   let reasoningSequence = 0;
   let reasoningActive = false;
+  let activeReasoningStartedAt: number | undefined;
+  const stageMarks: NonNullable<WorkTurnTiming["stages"]> = [];
   let runtimeStatus: "completed" | "failed" | "cancelled" = "completed";
   let tracePersisted = false;
   let contextUsage: ContextUsageSnapshot | undefined;
@@ -395,6 +414,7 @@ async function executeWork(workSessionId: string) {
       durationMs: Math.max(0, completedAt - runStartedAt),
       runtimeKind: work.runtimeKind,
       ...(modelName ? { modelName } : {}),
+      ...(stageMarks.length ? { stages: stageMarks } : {}),
     };
   };
 
@@ -403,21 +423,28 @@ async function executeWork(workSessionId: string) {
     reasoningActive = false;
     const text = activeReasoningText;
     const id = activeReasoningId ?? `reasoning:${++reasoningSequence}`;
+    const completedAt = Date.now();
+    const startedAt = activeReasoningStartedAt ?? completedAt;
     if (text)
       trace.push({
         type: "reasoning",
         text,
         state: "done",
         ...(activeReasoningSource ? { source: activeReasoningSource } : {}),
+        startedAt,
+        completedAt,
       });
     activeReasoningText = "";
     activeReasoningId = null;
+    activeReasoningStartedAt = undefined;
     publishWorkActivity(work.id, {
       id,
       type: "reasoning",
       status: "completed",
       ...(text ? { text } : {}),
       ...(activeReasoningSource ? { source: activeReasoningSource } : {}),
+      startedAt,
+      completedAt,
     });
     activeReasoningSource = undefined;
   };
@@ -429,6 +456,7 @@ async function executeWork(workSessionId: string) {
       if (!reasoningActive && activity.status === "running") {
         reasoningActive = true;
         activeReasoningId = `reasoning:${++reasoningSequence}`;
+        activeReasoningStartedAt = Date.now();
       }
       if (activity.delta && reasoningText.length < MAX_REASONING_CHARACTERS) {
         const delta = activity.delta.slice(
@@ -451,12 +479,15 @@ async function executeWork(workSessionId: string) {
         finishReasoning();
       } else {
         const text = activity.delta?.slice(0, MAX_REASONING_CHARACTERS) ?? "";
+        const at = Date.now();
         if (text)
           trace.push({
             type: "reasoning",
             text,
             state: "done",
             ...(activity.source ? { source: activity.source } : {}),
+            startedAt: at,
+            completedAt: at,
           });
         publishWorkActivity(work.id, {
           id: `reasoning:${++reasoningSequence}`,
@@ -464,6 +495,8 @@ async function executeWork(workSessionId: string) {
           status: "completed",
           ...(text ? { text } : {}),
           ...(activity.source ? { source: activity.source } : {}),
+          startedAt: at,
+          completedAt: at,
         });
       }
       return;
@@ -483,6 +516,12 @@ async function executeWork(workSessionId: string) {
     const originalToolName = deploymentId
       ? (activity.originalToolName ?? previous?.originalToolName)
       : previous?.originalToolName;
+    const now = Date.now();
+    if (
+      activity.status === "running" &&
+      !toolStartedAt.has(activity.toolCallId)
+    )
+      toolStartedAt.set(activity.toolCallId, now);
     const startedAt = toolStartedAt.get(activity.toolCallId);
     const reportedDurationMs =
       typeof activity.durationMs === "number" &&
@@ -490,17 +529,20 @@ async function executeWork(workSessionId: string) {
       activity.durationMs >= 0
         ? Math.round(activity.durationMs)
         : undefined;
-    if (activity.status === "running" && startedAt === undefined) {
-      toolStartedAt.set(activity.toolCallId, Date.now());
-    }
     const durationMs =
       activity.status === "running"
         ? previous?.durationMs
         : (previous?.durationMs ??
           reportedDurationMs ??
-          (startedAt === undefined
-            ? undefined
-            : Math.max(0, Date.now() - startedAt)));
+          (startedAt === undefined ? undefined : Math.max(0, now - startedAt)));
+    const completedAt =
+      activity.status === "running"
+        ? previous?.completedAt
+        : (previous?.completedAt ?? now);
+    const partStartedAt =
+      startedAt ??
+      previous?.startedAt ??
+      (completedAt === undefined ? undefined : completedAt - (durationMs ?? 0));
     const part: WorkToolPart = {
       type: "work-tool",
       toolCallId: activity.toolCallId,
@@ -508,6 +550,8 @@ async function executeWork(workSessionId: string) {
       ...(deploymentName ? { deploymentName } : {}),
       ...(originalToolName ? { originalToolName } : {}),
       ...(durationMs === undefined ? {} : { durationMs }),
+      ...(partStartedAt === undefined ? {} : { startedAt: partStartedAt }),
+      ...(completedAt === undefined ? {} : { completedAt }),
       input:
         activity.input === undefined
           ? (previous?.input ?? null)
@@ -543,6 +587,10 @@ async function executeWork(workSessionId: string) {
         ? { originalToolName: next.originalToolName }
         : {}),
       ...(next.durationMs === undefined ? {} : { durationMs: next.durationMs }),
+      ...(next.startedAt === undefined ? {} : { startedAt: next.startedAt }),
+      ...(next.completedAt === undefined
+        ? {}
+        : { completedAt: next.completedAt }),
       input: next.input,
       ...(next.output === undefined ? {} : { output: next.output }),
       ...(next.patch === undefined
@@ -559,14 +607,16 @@ async function executeWork(workSessionId: string) {
     for (const [toolCallId, part] of toolTrace) {
       if (part.status !== "running") continue;
       const startedAt = toolStartedAt.get(toolCallId);
+      const completedAt = Date.now();
       const durationMs =
         part.durationMs ??
         (startedAt === undefined
           ? undefined
-          : Math.max(0, Date.now() - startedAt));
+          : Math.max(0, completedAt - startedAt));
       const settled = Object.assign(part, {
         status,
         isError: status === "failed",
+        completedAt,
         ...(durationMs === undefined ? {} : { durationMs }),
       } as const);
       publishWorkActivity(work.id, {
@@ -585,6 +635,10 @@ async function executeWork(workSessionId: string) {
         ...(settled.durationMs === undefined
           ? {}
           : { durationMs: settled.durationMs }),
+        ...(settled.startedAt === undefined
+          ? {}
+          : { startedAt: settled.startedAt }),
+        completedAt,
         input: settled.input,
         isError: settled.isError,
       });
@@ -689,8 +743,18 @@ async function executeWork(workSessionId: string) {
         onTextDelta: (delta) => {
           finishReasoning();
           const last = trace.at(-1);
-          if (last?.type === "text") last.text += delta;
-          else trace.push({ type: "text", text: delta, state: "done" });
+          const at = Date.now();
+          if (last?.type === "text") {
+            last.text += delta;
+            last.completedAt = at;
+          } else
+            trace.push({
+              type: "text",
+              text: delta,
+              state: "done",
+              startedAt: at,
+              completedAt: at,
+            });
           publishWorkOutput(work.id, delta);
         },
         onActivity,
@@ -710,7 +774,11 @@ async function executeWork(workSessionId: string) {
           toolStartedAt.clear();
           resetWorkMessageOutput(work.id);
         },
-        onExecutionStage: (stage) => publishWorkExecutionStage(work.id, stage),
+        onExecutionStage: (stage) => {
+          if (stageMarks.length < MAX_STAGE_MARKS)
+            stageMarks.push({ stage, at: Date.now() });
+          publishWorkExecutionStage(work.id, stage);
+        },
         onContextUsage: (next) => {
           contextUsage = next;
         },
