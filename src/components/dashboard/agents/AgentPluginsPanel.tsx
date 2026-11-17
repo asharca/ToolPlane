@@ -26,6 +26,7 @@ import { notify } from "../Toaster";
 import { AgentPluginSyncReview } from "./AgentPluginSyncReview";
 import type { AgentPiPackageOption } from "./AgentSettingsForm";
 import type { PluginSelectionResult } from "../plugins/usePluginAgentFlow";
+import { DashboardEmptyState } from "../DashboardUI";
 import { SettingsSection } from "./SettingsSection";
 
 export const MAX_AGENT_PLUGINS = 16;
@@ -568,6 +569,13 @@ export function AgentPluginsPanel({
             })}
           </ul>
         </div>
+      ) : canManage && runtimeKind === "pi-sdk" ? (
+        <DashboardEmptyState
+          icon={Puzzle}
+          title={agents("resourceList.empty.piPackages.title")}
+          description={agents("resourceList.empty.piPackages.description")}
+          className="rounded-xl bg-muted/30"
+        />
       ) : null}
     </SettingsSection>
   );

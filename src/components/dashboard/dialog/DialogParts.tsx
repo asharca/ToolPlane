@@ -102,6 +102,8 @@ export type DialogNavItem = {
   icon?: ReactNode;
   dirty?: boolean;
   disabled?: boolean;
+  /** Starts a new group, set apart by whitespace only. */
+  separated?: boolean;
 };
 
 export function DialogNav({
@@ -142,7 +144,7 @@ export function DialogNav({
       />
       <nav aria-label={navLabel} className="hidden flex-1 space-y-1 md:block">
         {items.map((item) => (
-          <div key={item.id}>
+          <div key={item.id} className={item.separated ? "pt-2" : undefined}>
             <Button
               disabled={item.disabled}
               type="button"

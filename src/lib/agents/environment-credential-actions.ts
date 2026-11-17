@@ -7,6 +7,17 @@ import {
   createAgentEnvironmentCredential,
   revokeAgentEnvironmentCredential,
 } from "./environment-credentials";
+import { AgentRevisionError } from "./revisions";
+
+/** Returns the fixed rule code instead of letting it surface as a server-action failure. */
+async function credentialResult<T>(operation: () => Promise<T>) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof AgentRevisionError) return { error: error.code };
+    throw error;
+  }
+}
 
 /** Values are accepted once; list/create/revoke responses never contain plaintext. */
 export async function createAgentEnvironmentCredentialAction(
@@ -20,14 +31,15 @@ export async function createAgentEnvironmentCredentialAction(
   );
   if (!workspace || workspace.ownerId !== user.id)
     return { error: "forbidden" };
-  const credential = await createAgentEnvironmentCredential({
-    actorUserId: user.id,
-    workspaceId: workspace.id,
-    agentId: String(formData.get("agentId") ?? ""),
-    name: String(formData.get("name") ?? ""),
-    value: String(formData.get("value") ?? ""),
-  });
-  return { credential };
+  return credentialResult(async () => ({
+    credential: await createAgentEnvironmentCredential({
+      actorUserId: user.id,
+      workspaceId: workspace.id,
+      agentId: String(formData.get("agentId") ?? ""),
+      name: String(formData.get("name") ?? ""),
+      value: String(formData.get("value") ?? ""),
+    }),
+  }));
 }
 
 export async function revokeAgentEnvironmentCredentialAction(
@@ -41,12 +53,14 @@ export async function revokeAgentEnvironmentCredentialAction(
   );
   if (!workspace || workspace.ownerId !== user.id)
     return { error: "forbidden" };
-  return revokeAgentEnvironmentCredential({
-    actorUserId: user.id,
-    workspaceId: workspace.id,
-    agentId: String(formData.get("agentId") ?? ""),
-    credentialId: String(formData.get("credentialId") ?? ""),
-  });
+  return credentialResult(() =>
+    revokeAgentEnvironmentCredential({
+      actorUserId: user.id,
+      workspaceId: workspace.id,
+      agentId: String(formData.get("agentId") ?? ""),
+      credentialId: String(formData.get("credentialId") ?? ""),
+    }),
+  );
 }
 
 export async function listAgentEnvironmentCredentialsAction(

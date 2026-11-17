@@ -756,6 +756,8 @@
       "streamRules": {
         "title": "流式规则",
         "count": "{count} / 50 条规则",
+        "emptyTitle": "还没有流式规则",
+        "emptyDescription": "回复或工具调用命中规则时，提醒或阻止智能体。",
         "add": "新增规则",
         "remove": "删除规则",
         "moveUp": "上移",
@@ -860,12 +862,20 @@
         "credentialValue": "密钥值（仅写入）",
         "createCredential": "创建凭据",
         "revokeCredential": "撤销",
-        "credentialRef": "凭据引用",
-        "loadCredentials": "加载凭据",
-        "noCredentials": "暂无有效凭据",
+        "credentialRef": "引用到环境",
+        "credentialReferenced": "已引用",
+        "credentialRevoked": "已撤销",
+        "credentialsLoadFailed": "无法加载环境凭据，请重新打开设置。",
+        "noCredentials": "暂无环境凭据",
+        "credentialErrors": {
+          "AGENT_CREDENTIAL_NAME_INVALID": "变量名只能用字母、数字和下划线，不能以数字开头，也不能用 TP_、TOOLPLANE_、NODE_ 等保留前缀或 PATH、HOME 等系统变量名。",
+          "AGENT_CREDENTIAL_VALUE_INVALID": "密钥值不能为空，且不能超过 64 KB。",
+          "AGENT_CREDENTIAL_FORBIDDEN": "无法管理这个智能体的凭据。",
+          "forbidden": "仅工作区所有者可管理凭据。",
+          "unauthorized": "登录已失效，请重新登录。"
+        },
         "publishedSuccess": "已保存，对新会话生效。",
         "reviewHelp": "以下仅列出本次新增或扩大的访问权限。允许后保存生效，不会立即运行任务；返回修改不会授予这些权限。",
-        "credentialOwner": "仅工作区所有者可管理凭据。",
         "noEnvironment": "请选择运行环境模板或提供环境配置。"
       },
       "modelRouting": {
@@ -1291,7 +1301,25 @@
       "resourceList": {
         "add": "添加",
         "done": "完成",
-        "remove": "移除 {name}"
+        "remove": "移除 {name}",
+        "empty": {
+          "mcp": {
+            "title": "还没有添加 MCP 服务器",
+            "description": "添加后，智能体可以调用服务器提供的工具。"
+          },
+          "skills": {
+            "title": "还没有添加技能",
+            "description": "技能是可复用的做事方法，智能体会在需要时按它完成任务。"
+          },
+          "piPackages": {
+            "title": "还没有添加插件",
+            "description": "插件一次带来一组技能、扩展和工具。"
+          },
+          "subAgents": {
+            "title": "还没有添加子智能体",
+            "description": "子智能体可以接手独立的子任务，完成后交回结果。"
+          }
+        }
       },
       "OPTIONAL_BUILTIN_TOOLS_INVALID": "只能选择已注册的可选工具，请刷新设置后重试。",
       "OPTIONAL_BUILTIN_TOOLS_SAVE_FAILED": "无法保存可选工具设置，请重试。",

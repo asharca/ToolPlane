@@ -756,6 +756,8 @@
       "streamRules": {
         "title": "Streaming rules",
         "count": "{count} / 50 rules",
+        "emptyTitle": "No streaming rules yet",
+        "emptyDescription": "Remind or stop the agent when a reply or tool call matches a rule.",
         "add": "Add rule",
         "remove": "Remove rule",
         "moveUp": "Move up",
@@ -860,12 +862,20 @@
         "credentialValue": "Secret value (write-only)",
         "createCredential": "Create credential",
         "revokeCredential": "Revoke",
-        "credentialRef": "Credential reference",
-        "loadCredentials": "Load credentials",
-        "noCredentials": "No active credentials",
+        "credentialRef": "Reference in environment",
+        "credentialReferenced": "Referenced",
+        "credentialRevoked": "Revoked",
+        "credentialsLoadFailed": "Could not load environment credentials. Reopen settings to try again.",
+        "noCredentials": "No environment credentials",
+        "credentialErrors": {
+          "AGENT_CREDENTIAL_NAME_INVALID": "Use only letters, digits and underscores, not starting with a digit. Reserved prefixes such as TP_, TOOLPLANE_ and NODE_, and system names such as PATH and HOME, are not allowed.",
+          "AGENT_CREDENTIAL_VALUE_INVALID": "The secret value must not be empty or larger than 64 KB.",
+          "AGENT_CREDENTIAL_FORBIDDEN": "You can't manage credentials for this agent.",
+          "forbidden": "Only the workspace owner can manage credentials.",
+          "unauthorized": "Your session has expired. Sign in again."
+        },
         "publishedSuccess": "Saved. Changes apply to new conversations.",
         "reviewHelp": "Only new or expanded access is listed here. Allowing applies your changes without running a task; returning to edit grants none of these permissions.",
-        "credentialOwner": "Only the workspace owner can manage credentials.",
         "noEnvironment": "Select an environment template or provide environment settings."
       },
       "modelRouting": {
@@ -1291,7 +1301,25 @@
       "resourceList": {
         "add": "Add",
         "done": "Done",
-        "remove": "Remove {name}"
+        "remove": "Remove {name}",
+        "empty": {
+          "mcp": {
+            "title": "No MCP servers yet",
+            "description": "Add one to let the agent call the tools it provides."
+          },
+          "skills": {
+            "title": "No skills yet",
+            "description": "Skills are reusable ways of working the agent follows when a task needs them."
+          },
+          "piPackages": {
+            "title": "No plugins yet",
+            "description": "A plugin brings a set of skills, extensions, and tools at once."
+          },
+          "subAgents": {
+            "title": "No subagents yet",
+            "description": "Subagents take over independent subtasks and hand back the result."
+          }
+        }
       },
       "OPTIONAL_BUILTIN_TOOLS_INVALID": "Select only registered optional tools. Refresh settings and try again.",
       "OPTIONAL_BUILTIN_TOOLS_SAVE_FAILED": "Could not save optional tool settings. Try again.",

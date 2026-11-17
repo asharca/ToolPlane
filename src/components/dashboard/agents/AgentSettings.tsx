@@ -168,33 +168,51 @@ export function AgentSettings({
   );
   const formSection = isAgentSettingsSection(settingsTab) ? settingsTab : null;
 
-  const navigationItems: Array<{ id: SettingsTab; label: string }> = [
-    { id: "general", label: t("basic") },
-    { id: "instructions", label: t("instructions") },
-    { id: "sandboxes", label: t("sandboxes") },
-    { id: "advanced", label: t("advanced") },
-    { id: "builtInTools", label: t("builtInTools") },
-    ...(executable
-      ? [{ id: "streamRules" as const, label: t("streamRules.title") }]
-      : []),
-    { id: "toolApproval", label: approvalT("title") },
-    { id: "memories", label: t("memories") },
-    { id: "mcp", label: t("mcp") },
-    { id: "skills", label: t("skills") },
-    { id: "piPackages", label: t("piPackages") },
-    ...(executable
-      ? [{ id: "subAgents" as const, label: t("subAgents") }]
-      : []),
-    { id: "a2a", label: t("a2a.title") },
-    { id: "triggers", label: automationT("triggers") },
-    { id: "usage", label: usageT("title") },
-    { id: "changelog", label: t("changelogTab") },
-    { id: "evolution", label: t("evolutionTab") },
-    { id: "clone", label: t("cloneAgent") },
-    ...(executable
-      ? [{ id: "channels" as const, label: t("channelSettingsTab") }]
-      : []),
+  // Related pages sit together; groups are set apart by whitespace, not titles.
+  const navigationGroups: Array<Array<{ id: SettingsTab; label: string }>> = [
+    [
+      { id: "general", label: t("basic") },
+      { id: "instructions", label: t("instructions") },
+    ],
+    [
+      { id: "builtInTools", label: t("builtInTools") },
+      { id: "mcp", label: t("mcp") },
+      { id: "skills", label: t("skills") },
+      { id: "piPackages", label: t("piPackages") },
+      ...(executable
+        ? [{ id: "subAgents" as const, label: t("subAgents") }]
+        : []),
+      { id: "memories", label: t("memories") },
+    ],
+    [
+      { id: "sandboxes", label: t("sandboxes") },
+      { id: "toolApproval", label: approvalT("title") },
+      ...(executable
+        ? [{ id: "streamRules" as const, label: t("streamRules.title") }]
+        : []),
+      { id: "advanced", label: t("advanced") },
+    ],
+    [
+      ...(executable
+        ? [{ id: "channels" as const, label: t("channelSettingsTab") }]
+        : []),
+      { id: "a2a", label: t("a2a.title") },
+      { id: "triggers", label: automationT("triggers") },
+    ],
+    [
+      { id: "usage", label: usageT("title") },
+      { id: "changelog", label: t("changelogTab") },
+      { id: "evolution", label: t("evolutionTab") },
+      { id: "clone", label: t("cloneAgent") },
+    ],
   ];
+  const navigationItems = navigationGroups.flatMap((group, groupIndex) =>
+    group.map((item, index) => ({
+      ...item,
+      separated: groupIndex > 0 && index === 0,
+      dirty: dirtySections.includes(item.id as AgentSettingsSection),
+    })),
+  );
 
   return (
     <div className="h-full min-h-0">
@@ -205,10 +223,8 @@ export function AgentSettings({
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           <DialogNav
             label={t("configurationNavigation")}
-            items={navigationItems.map((item) => ({
-              ...item,
-              dirty: dirtySections.includes(item.id as AgentSettingsSection),
-            }))}
+            items={navigationItems}
+            className="md:w-52 [&_nav]:space-y-0.5 [&_nav_button]:h-8"
             active={settingsTab}
             onSelect={(id) => setSettingsTab(id as SettingsTab)}
           />
