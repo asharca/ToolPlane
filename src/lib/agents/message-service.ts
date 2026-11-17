@@ -189,8 +189,8 @@ export async function runAgentChannelMessage(params: {
   attachmentParts?: UIMessage["parts"];
   signal?: AbortSignal;
   onUiRequired?: (message: string) => Promise<void>;
-  /** Latest streamed reply text while the Agent works; must not block. */
-  onTextUpdate?: (text: string) => void;
+  /** Latest reply segments while the Agent works; must not block. */
+  onReplySegments?: (segments: readonly string[]) => void;
   inboundPersisted?: boolean;
   hostedIngress?: boolean;
   inboundDedupeKey?: string;
@@ -801,7 +801,7 @@ export async function runAgentChannelMessage(params: {
     connectionId: channel.id,
     actorId: channel.a2aActorId,
     onUiRequired: params.onUiRequired,
-    onTextUpdate: params.onTextUpdate,
+    onReplySegments: params.onReplySegments,
     attachmentParts: params.attachmentParts,
     signal: params.signal,
     channelSessionKey: sessionKey,
@@ -814,7 +814,7 @@ async function runLoadedAgentMessage(params: {
   agent: AgentForRun;
   actorId?: string;
   onUiRequired?: (message: string) => Promise<void>;
-  onTextUpdate?: (text: string) => void;
+  onReplySegments?: (segments: readonly string[]) => void;
   rawBody: unknown;
   defaults?: Partial<AgentMessageBody>;
   connectionId?: string;
@@ -1067,7 +1067,7 @@ async function runLoadedAgentMessage(params: {
         }),
       onUiRequired: (path) =>
         params.onUiRequired?.(`Pi 扩展需要你的输入，请打开会话：${path}`),
-      onTextUpdate: params.onTextUpdate,
+      onReplySegments: params.onReplySegments,
     });
     const replyText = await appendBudgetWarningText(
       agentEntryResult(result.task, result.path),
