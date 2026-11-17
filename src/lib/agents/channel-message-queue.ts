@@ -127,7 +127,7 @@ export async function queueRunningChannelMessages(
     try {
       const result = await control.send({
         id: row.id,
-        mode: "follow_up",
+        mode: "steer",
         text: event.promptText,
         deduplicate: true,
       });

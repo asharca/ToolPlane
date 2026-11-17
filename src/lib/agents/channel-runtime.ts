@@ -13,7 +13,7 @@ import { hostedRunnerSpec } from "./platform-runner";
 import { getMessagingPlatform, missingStartCredentialNames } from "./platforms";
 import { appendAgentChannelLog } from "./channel-runtime-logs";
 import { admitChannelSender } from "./channel-sender-access";
-import { buildMessagingSessionKey } from "./messaging";
+import { buildMessagingSessionKey, isSilentAgentReply } from "./messaging";
 import {
   persistChannelInboundEvent,
   processChannelInboundQueue,
@@ -41,6 +41,16 @@ import type {
 
 // Longer than every silent reply token, so a silent reply is never shown as progress.
 const STREAM_MIN_CHARS = 16;
+
+/** The final reply minus segments already sent as their own messages, matched in order. */
+function undeliveredReply(reply: string, delivered: readonly string[]) {
+  let position = 0;
+  for (const segment of delivered) {
+    const index = reply.indexOf(segment, position);
+    if (index >= 0) position = index + segment.length;
+  }
+  return reply.slice(position).trim();
+}
 
 type RunnerState = {
   adapter: ChannelAdapter;
@@ -294,21 +304,42 @@ async function start(
     });
 
     const streamingChats = new Set<string>();
-    /** Pumps the latest progress text to the adapter without blocking execution. */
+    /**
+     * Pumps reply segments to the adapter without blocking execution. Like
+     * Hermes, text before each tool call is finalized as its own message, so
+     * later text starts a new message instead of piling into one.
+     */
     const channelReplyStream = (chatId: string, opts: SendMessageOptions) => {
       streamingChats.add(chatId);
-      let pending: string | null = null;
-      let delivered: string | null = null;
+      let pending: readonly string[] | null = null;
+      const delivered: string[] = [];
+      let sealed = 0;
+      let open: string | null = null;
       let failed = false;
       let closed = false;
       let pump: Promise<void> | null = null;
       const drain = async () => {
         while (pending !== null && !failed) {
-          const text: string = pending;
+          const segments: readonly string[] = pending;
           pending = null;
           try {
-            await adapter.onTextUpdate(chatId, text, opts);
-            delivered = text;
+            for (; sealed < segments.length - 1; sealed++) {
+              const text = segments[sealed].trim();
+              if (!text || isSilentAgentReply(text)) continue;
+              if (
+                open === null ||
+                !(await adapter.onStreamSegment(chatId, text, opts))
+              )
+                await adapter.sendMessage(chatId, text, opts);
+              open = null;
+              delivered.push(text);
+            }
+            const last = segments.at(-1) ?? "";
+            // Short text may still become a silent reply token; never show it early.
+            if (last.trim().length >= STREAM_MIN_CHARS && last !== open) {
+              await adapter.onTextUpdate(chatId, last, opts);
+              open = last;
+            }
           } catch {
             failed = true;
             log(
@@ -320,25 +351,18 @@ async function start(
         pump = null;
       };
       return {
-        update: (text: string) => {
-          // Short text may still become a silent reply token; never show it early.
-          if (
-            closed ||
-            failed ||
-            controller.signal.aborted ||
-            text.trim().length < STREAM_MIN_CHARS
-          )
-            return;
-          pending = text;
+        update: (segments: readonly string[]) => {
+          if (closed || failed || controller.signal.aborted) return;
+          pending = segments;
           pump ??= drain();
         },
         close: () => {
           closed = true;
         },
-        /** The last progress text shown, or null when nothing was streamed. */
+        /** Finalized segment texts and the still-open streamed text, if any. */
         settled: async () => {
           await pump;
-          return delivered;
+          return { delivered, open };
         },
         release: () => streamingChats.delete(chatId),
       };
@@ -419,7 +443,7 @@ async function start(
                 log("error", "Native UI notification could not be delivered."),
               );
         },
-        onTextUpdate: stream?.update,
+        onReplySegments: stream?.update,
         rawBody: {
           message: event.text.trim() || "Attachment",
           metadata: { roleIds: event.roleIds },
@@ -452,7 +476,10 @@ async function start(
           return null;
         })
         .finally(() => stream?.close());
-      const streamed = (await stream?.settled()) ?? null;
+      const progress = (await stream?.settled()) ?? {
+        delivered: [],
+        open: null,
+      };
       try {
         if (!current() || controller.signal.aborted)
           throw new Error("Channel delivery interrupted.");
@@ -470,7 +497,7 @@ async function start(
               "error",
               `Channel execution was rejected (${result.status}): ${result.body.error}`,
             );
-          if (streamed)
+          if (progress.open)
             await adapter.onStreamError(
               event.chatId,
               CHANNEL_EXECUTION_FAILURE_MESSAGE,
@@ -484,7 +511,7 @@ async function start(
             );
           return;
         }
-        if (streamed && result.body.failed) {
+        if (progress.open && result.body.failed) {
           await adapter.onStreamError(
             event.chatId,
             result.body.message,
@@ -492,23 +519,27 @@ async function start(
           );
           return;
         }
-        if (streamed) {
-          // A silent final reply leaves the already visible progress unchanged.
-          const finalText =
-            result.body.delivery === "message" ? result.body.message : streamed;
-          if (
-            await adapter.onStreamComplete(event.chatId, finalText, {
-              ...replyOptions,
-              confirmation: result.body.confirmation,
-            })
-          )
-            return;
-        }
-        if (result.body.delivery === "message")
-          await adapter.sendMessage(event.chatId, result.body.message, {
-            ...replyOptions,
-            confirmation: result.body.confirmation,
-          });
+        const reply =
+          result.body.delivery !== "message"
+            ? ""
+            : result.body.failed
+              ? result.body.message
+              : undeliveredReply(result.body.message, progress.delivered);
+        const finalOptions = {
+          ...replyOptions,
+          confirmation: result.body.confirmation,
+        };
+        // A silent final reply leaves the already visible progress unchanged.
+        if (
+          progress.open &&
+          (await adapter.onStreamComplete(
+            event.chatId,
+            reply || progress.open,
+            finalOptions,
+          ))
+        )
+          return;
+        if (reply) await adapter.sendMessage(event.chatId, reply, finalOptions);
       } finally {
         stream?.release();
       }

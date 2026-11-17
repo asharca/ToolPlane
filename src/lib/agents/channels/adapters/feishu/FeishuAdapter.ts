@@ -459,10 +459,20 @@ export class FeishuAdapter extends ChannelAdapter {
       );
       this.chatReactions.delete(streamKey);
     }
+    return this.onStreamSegment(chatId, finalText, opts);
+  }
+
+  /** Finalizes the card only; the reaction transition belongs to the turn end. */
+  override async onStreamSegment(
+    chatId: string,
+    text: string,
+    opts?: SendMessageOptions,
+  ): Promise<boolean> {
+    const streamKey = this.responseKey(chatId, opts);
     const stream = this.streams.get(streamKey);
     if (!stream) return false;
     try {
-      await stream.complete(finalText);
+      await stream.complete(text);
       return true;
     } catch (error) {
       this.log.warn(

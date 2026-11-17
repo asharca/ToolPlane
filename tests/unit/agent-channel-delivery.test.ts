@@ -109,6 +109,9 @@ class TestAdapter extends EventEmitter {
   onStreamComplete = vi.fn(
     async (_chatId: string, _text: string, _options?: unknown) => true,
   );
+  onStreamSegment = vi.fn(
+    async (_chatId: string, _text: string, _options?: unknown) => true,
+  );
   onStreamError = vi.fn(
     async (_chatId: string, _error: string, _options?: unknown) => {},
   );
@@ -317,7 +320,7 @@ describe("channel upstream execution delivery", () => {
     const progress = "Cloning the repository and reading the README now.";
     const runWithProgress = (body: Record<string, unknown>, text = progress) =>
       mocks.run.mockImplementationOnce(async (input) => {
-        input.onTextUpdate?.(text);
+        input.onReplySegments?.([text]);
         await setImmediate();
         return { status: 200, body };
       });
@@ -334,6 +337,38 @@ describe("channel upstream execution delivery", () => {
       expect(adapter.onStreamComplete).toHaveBeenCalledWith(
         "chat",
         "Actual reply",
+        expect.anything(),
+      );
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("finalizes text before each tool call as its own message", async () => {
+      const before = "Cloning the repository to verify the target commit.";
+      const after = "Repo cloned. The target tip is c4b73cb, all checks pass.";
+      mocks.run.mockImplementationOnce(async (input) => {
+        input.onReplySegments?.([before]);
+        await setImmediate();
+        input.onReplySegments?.([before, after]);
+        await setImmediate();
+        return {
+          status: 200,
+          body: { delivery: "message", message: `${before}\n\n${after}` },
+        };
+      });
+      incoming();
+      await drain();
+      expect(adapter.onTextUpdate.mock.calls.map((call) => call[1])).toEqual([
+        before,
+        after,
+      ]);
+      expect(adapter.onStreamSegment).toHaveBeenCalledWith(
+        "chat",
+        before,
+        expect.anything(),
+      );
+      expect(adapter.onStreamComplete).toHaveBeenCalledWith(
+        "chat",
+        after,
         expect.anything(),
       );
       expect(adapter.sendMessage).not.toHaveBeenCalled();

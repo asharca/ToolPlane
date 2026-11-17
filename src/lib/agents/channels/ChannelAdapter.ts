@@ -159,6 +159,17 @@ export abstract class ChannelAdapter extends EventEmitter {
   ): Promise<boolean> {
     return false;
   }
+  /**
+   * Finalize the streamed message at a tool boundary so later text starts a new
+   * message. Returns false when nothing was finalized; the caller then sends it.
+   */
+  async onStreamSegment(
+    chatId: string,
+    text: string,
+    opts?: SendMessageOptions,
+  ): Promise<boolean> {
+    return this.onStreamComplete(chatId, text, opts);
+  }
   async onStreamError(
     _chatId: string,
     _error: string,

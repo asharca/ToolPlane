@@ -17,6 +17,8 @@ type Capture = {
   output: LiveTaskOutput;
   secrets: readonly string[];
   reasoningId?: string;
+  /** Top-level reply text split at tool calls and consumed interjections; never reset. */
+  reply?: { segments: string[]; open: boolean; size: number };
   sequence: number;
   expires: number;
 };
@@ -131,6 +133,24 @@ export function taskOutput(taskId: string): LiveTaskOutput | null {
     })),
   };
 }
+/** Channel delivery: each segment before the last ended at a tool call or interjection. */
+export function taskReplySegments(taskId: string): string[] | null {
+  const capture = state.tasks.get(taskId);
+  if (!capture || capture.expires <= Date.now()) return null;
+  return (capture.reply?.segments ?? []).map((segment) =>
+    redactText(segment, capture.secrets),
+  );
+}
+function appendReply(capture: Capture, delta: string) {
+  capture.reply ??= { segments: [], open: false, size: 0 };
+  const reply = capture.reply;
+  const text = delta.slice(0, Math.max(0, MAX_TEXT - reply.size));
+  if (!text) return;
+  reply.size += text.length;
+  if (reply.open) reply.segments[reply.segments.length - 1] += text;
+  else reply.segments.push(text);
+  reply.open = true;
+}
 function captureFor(taskId: string) {
   const capture = state.tasks.get(taskId);
   if (!capture?.output.active) return null;
@@ -143,6 +163,7 @@ export function publishTaskText(taskId: string, delta: string) {
   if (capture.output.text.length + delta.length > MAX_TEXT)
     capture.output.truncated = true;
   capture.output.text = (capture.output.text + delta).slice(0, MAX_TEXT);
+  appendReply(capture, delta);
   notify(taskId);
 }
 export function publishTaskStage(taskId: string, stage: AgentExecutionStage) {
@@ -182,6 +203,7 @@ export function resetTaskMessageOutput(taskId: string) {
   capture.output.text = "";
   capture.output.activities = [];
   capture.reasoningId = undefined;
+  if (capture.reply) capture.reply.open = false;
   notify(taskId);
 }
 function safeValue(
@@ -343,6 +365,8 @@ export function publishTaskActivity(
   if (index < 0) {
     if (activities.length >= MAX_ACTIVITIES) activities.shift();
     activities.push({ ...next, textOffset: capture.output.text.length });
+    if (next.type === "tool" && !source && capture.reply)
+      capture.reply.open = false;
   } else activities[index] = next;
   notify(taskId);
 }

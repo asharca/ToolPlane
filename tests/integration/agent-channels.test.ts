@@ -428,7 +428,7 @@ async function piCommandChannel(
   return { agent, channel, run };
 }
 
-it("keeps channel follow-ups durable on an ended-round race and rechecks sender authorization before queueing", async () => {
+it("keeps channel interjections durable on an ended-round race, rechecks sender authorization, and steers them into the running turn", async () => {
   // Exercise durable ingress and sender policy, not revision publication or task
   // admission: piCommandChannel() also prepares the SDK on its cold first use.
   const channel = await db.agentChannelConnection.create({
@@ -525,7 +525,7 @@ it("keeps channel follow-ups durable on an ended-round race and rechecks sender 
     expect(delivered).toEqual([
       expect.objectContaining({
         id: saved.event.id,
-        mode: "follow_up",
+        mode: "steer",
         text: expect.stringContaining("The next message"),
       }),
     ]);

@@ -73,7 +73,7 @@ import {
   taskBudgetWarning,
   type BudgetWarning,
 } from "@/lib/agents/budget-warning";
-import { taskOutput } from "./live-output";
+import { taskOutput, taskReplySegments } from "./live-output";
 import type { AgentMessageQueue } from "./message-queue";
 import { isSilentAgentReply } from "@/lib/agents/messaging";
 
@@ -357,8 +357,8 @@ export async function runAgentEntry(
     onActivity?: (activity: SandboxRuntimeActivity) => void | Promise<void>;
     onBudgetWarning?: (warning: BudgetWarning) => void | Promise<void>;
     onMessageQueue?: (queue: AgentMessageQueue) => void | Promise<void>;
-    /** Latest streamed reply text while the task runs; must not block. */
-    onTextUpdate?: (text: string) => void;
+    /** Latest top-level reply segments while the task runs; must not block. */
+    onReplySegments?: (segments: readonly string[]) => void;
   },
 ) {
   const accepted = await submitAgentEntry(input);
@@ -393,7 +393,7 @@ export async function runAgentEntry(
     }
   };
   let observedQueue = "";
-  let observedText = "";
+  let observedReply = "";
   const observeActivities = async (projection: unknown) => {
     if (!input.onActivity) return;
     for (const activity of nativeUiView(projection).activities) {
@@ -449,11 +449,12 @@ export async function runAgentEntry(
         await input.onMessageQueue(queue);
       }
       await observeActivities(row.uiProjection);
-      if (input.onTextUpdate && !settled(row.state)) {
-        const text = taskOutput(row.id)?.text ?? "";
-        if (text && text !== observedText) {
-          observedText = text;
-          input.onTextUpdate(text);
+      if (input.onReplySegments && !settled(row.state)) {
+        const segments = taskReplySegments(row.id) ?? [];
+        const key = JSON.stringify(segments);
+        if (segments.length && key !== observedReply) {
+          observedReply = key;
+          input.onReplySegments(segments);
         }
       }
       await observePrompts(task);
