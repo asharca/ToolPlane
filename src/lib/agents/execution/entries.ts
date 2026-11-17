@@ -357,6 +357,8 @@ export async function runAgentEntry(
     onActivity?: (activity: SandboxRuntimeActivity) => void | Promise<void>;
     onBudgetWarning?: (warning: BudgetWarning) => void | Promise<void>;
     onMessageQueue?: (queue: AgentMessageQueue) => void | Promise<void>;
+    /** Latest streamed reply text while the task runs; must not block. */
+    onTextUpdate?: (text: string) => void;
   },
 ) {
   const accepted = await submitAgentEntry(input);
@@ -391,6 +393,7 @@ export async function runAgentEntry(
     }
   };
   let observedQueue = "";
+  let observedText = "";
   const observeActivities = async (projection: unknown) => {
     if (!input.onActivity) return;
     for (const activity of nativeUiView(projection).activities) {
@@ -446,6 +449,13 @@ export async function runAgentEntry(
         await input.onMessageQueue(queue);
       }
       await observeActivities(row.uiProjection);
+      if (input.onTextUpdate && !settled(row.state)) {
+        const text = taskOutput(row.id)?.text ?? "";
+        if (text && text !== observedText) {
+          observedText = text;
+          input.onTextUpdate(text);
+        }
+      }
       await observePrompts(task);
       if (settled(row.state)) return { task, path };
       if (input.onUiRequired && row.leaseToken) {

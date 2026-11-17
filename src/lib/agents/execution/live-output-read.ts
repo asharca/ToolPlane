@@ -5,6 +5,7 @@ import { z } from "zod";
 import { settled } from "@/lib/a2a/model";
 import { isLocalGrant, type TaskGrant } from "@/lib/a2a/principal";
 import { redactText } from "@/lib/observability/redaction";
+import { db } from "@/lib/db";
 import { taskOutput } from "./live-output";
 import type { LiveTaskOutput } from "./live-output-types";
 
@@ -124,4 +125,24 @@ export function readTaskOutput(row: A2ATask): LiveTaskOutput {
         }
       : {}),
   };
+}
+
+/** Text a local task streamed before settling; never its status/failure text. */
+export async function recordedTaskOutput(
+  taskId: string,
+): Promise<{ text: string; startedAt?: number }> {
+  const live = taskOutput(taskId);
+  if (live) return { text: live.text, startedAt: live.startedAt };
+  const row = await db.a2ATask.findUnique({
+    where: { id: taskId },
+    select: { snapshot: true, grant: true },
+  });
+  if (!row || !isLocalGrant(row.grant as unknown as TaskGrant))
+    return { text: "" };
+  const replay = replaySchema.safeParse(
+    Task.fromJSON(row.snapshot).metadata?.toolplaneLiveOutput,
+  );
+  return replay.success && replay.data.taskId === taskId
+    ? { text: replay.data.text, startedAt: replay.data.startedAt }
+    : { text: "" };
 }

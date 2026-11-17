@@ -162,3 +162,34 @@ describe("Discord deferred command replies", () => {
     await adapter.disconnect();
   });
 });
+
+describe("Discord streamed replies", () => {
+  it("keeps live progress within one message and delivers the full final reply", async () => {
+    const { adapter } = setup();
+    const posted: string[] = [];
+    const edited: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body ?? "{}"));
+        if (init.method === "PATCH") edited.push(body.content);
+        else posted.push(body.content);
+        return Response.json({ id: "streamed" });
+      }),
+    );
+    const lines = (count: number) =>
+      Array.from({ length: count }, (_, i) => `line-${i}`).join("\n");
+    const progress = lines(400);
+    await adapter.onTextUpdate("channel:42", progress);
+    // Progress shows its latest part, not a frozen first page.
+    expect(posted).toHaveLength(1);
+    expect(posted[0].length).toBeLessThanOrEqual(2000);
+    expect(posted[0]).toContain("line-399");
+    const final = lines(700);
+    expect(await adapter.onStreamComplete("channel:42", final)).toBe(true);
+    const delivered = [edited.at(-1) ?? "", ...posted.slice(1)];
+    expect(delivered.every((text) => text.length <= 2000)).toBe(true);
+    const shown = delivered.join("\n").split("\n");
+    for (let i = 0; i < 700; i++) expect(shown).toContain(`line-${i}`);
+  });
+});

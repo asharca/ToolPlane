@@ -1230,6 +1230,8 @@ function allowTransientStreamRetry(session) {
     const next = config.fallbackModels?.[fallbackIndex++];
     if (!next) return false;
     await session.setModel(next, { persist: false });
+    const selected = modelIdentity(next);
+    if (selected) emit({ type: "model_selected", ...selected });
     session._retryAttempt = 0;
     modelRetried = 0;
     texts = [];

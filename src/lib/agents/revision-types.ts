@@ -2,7 +2,11 @@ import type { Sandbox } from "@prisma/client";
 import type { SkillBundleFile } from "@/lib/skills/bundle";
 import { z } from "zod";
 import { StreamRulesSchema } from "./stream-rules";
-import { AGENT_STEP_BOUNDS, REASONING_LEVELS } from "./constants";
+import {
+  AGENT_STEP_BOUNDS,
+  AGENT_TASK_TIMEOUT_BOUNDS,
+  REASONING_LEVELS,
+} from "./constants";
 import { OMP_VERSION, OmpConfigSnapshotSchema } from "./omp-config";
 import {
   SubagentPinSchema,
@@ -195,6 +199,13 @@ const PiRevisionConfigSchema = z
     // No defaults: historical revision JSON and checksums remain unchanged.
     secretObfuscation: z.boolean().optional(),
     advisor: AgentAdvisorSchema.optional(),
+    // No default: historical revision JSON and checksums remain unchanged.
+    taskTimeoutSeconds: z
+      .number()
+      .int()
+      .min(AGENT_TASK_TIMEOUT_BOUNDS.min)
+      .max(AGENT_TASK_TIMEOUT_BOUNDS.max)
+      .optional(),
     maxSteps: z
       .number()
       .int()

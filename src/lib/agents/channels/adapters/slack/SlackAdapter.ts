@@ -5,7 +5,7 @@ import {
   type ImageAttachment,
   MAX_FILE_SIZE_BYTES,
 } from "../../media";
-import { clampSurrogateBoundary } from "../../text";
+import { streamTail } from "../../text";
 import { channelFetch as fetch, sanitizeRemoteUrl } from "../../http";
 import WebSocket from "ws";
 
@@ -118,16 +118,26 @@ class SlackStreamingController {
 
     await this.flush.waitForFlush();
 
+    // The streamed message becomes the first chunk; the rest follow, nothing is truncated.
+    const [first = "", ...rest] = splitMessage(
+      toSlackMarkdown(finalText),
+      SLACK_MAX_LENGTH,
+    );
     try {
       this.currentText = finalText;
-      await this.editMessage(finalText);
-      return true;
+      await this.editMessage(first);
     } catch (error) {
       this.log.warn("Failed to finalize Slack stream", {
         error: error instanceof Error ? error.message : String(error),
       });
       return false;
     }
+    for (const chunk of rest)
+      await this.apiRequest("chat.postMessage", {
+        channel: this.channelId,
+        text: chunk,
+      });
+    return true;
   }
 
   async error(errorMessage: string): Promise<void> {
@@ -144,7 +154,9 @@ class SlackStreamingController {
       const displayText = this.currentText
         ? `${this.currentText}\n\n---\n**Error**: ${errorMessage}`
         : `**Error**: ${errorMessage}`;
-      await this.editMessage(displayText);
+      await this.editMessage(
+        streamTail(toSlackMarkdown(displayText), SLACK_MAX_LENGTH),
+      );
     } catch {
       // Best-effort error update
     }
@@ -172,7 +184,9 @@ class SlackStreamingController {
     try {
       const data = await this.apiRequest("chat.postMessage", {
         channel: this.channelId,
-        text: toSlackMarkdown(this.currentText) || "...",
+        text:
+          streamTail(toSlackMarkdown(this.currentText), SLACK_MAX_LENGTH) ||
+          "...",
       });
       this.messageTs = (data as { ts?: string }).ts ?? null;
     } catch (error) {
@@ -182,17 +196,9 @@ class SlackStreamingController {
     }
   }
 
-  private async editMessage(text: string): Promise<void> {
+  /** `content` is Slack markdown that already fits one message. */
+  private async editMessage(content: string): Promise<void> {
     if (!this.messageTs) return;
-    const converted = toSlackMarkdown(text);
-    // Keep a surrogate pair at the cut whole so we never send a lone surrogate.
-    const content =
-      converted.length > SLACK_MAX_LENGTH
-        ? `${converted.slice(
-            0,
-            clampSurrogateBoundary(converted, SLACK_MAX_LENGTH - 3),
-          )}...`
-        : converted;
     await this.apiRequest("chat.update", {
       channel: this.channelId,
       ts: this.messageTs,
@@ -203,7 +209,9 @@ class SlackStreamingController {
   private async performFlush(): Promise<void> {
     if (!this.messageTs || !this.currentText) return;
     try {
-      await this.editMessage(this.currentText);
+      await this.editMessage(
+        streamTail(toSlackMarkdown(this.currentText), SLACK_MAX_LENGTH),
+      );
     } catch {
       // Swallow flush errors — FlushController will reflush if needed
     }

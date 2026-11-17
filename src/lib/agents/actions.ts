@@ -60,7 +60,11 @@ import {
   type ModelPrimaryType,
   type ProviderModelValues,
 } from "@/lib/agents/model-catalog";
-import { AGENT_STEP_BOUNDS, REASONING_LEVELS } from "@/lib/agents/constants";
+import {
+  AGENT_STEP_BOUNDS,
+  AGENT_TASK_TIMEOUT_BOUNDS,
+  REASONING_LEVELS,
+} from "@/lib/agents/constants";
 import {
   createAgentChannelConnection,
   deleteAgentChannelConnection,
@@ -233,6 +237,24 @@ function agentSecretObfuscation(formData: FormData): boolean | undefined {
   if (!value.success)
     throw new AgentConfigurationError("Invalid secret obfuscation setting.");
   return value.data === "true";
+}
+
+/** Absent: unchanged; "": system default; otherwise whole seconds within bounds. */
+function agentTaskTimeoutSeconds(
+  formData: FormData,
+): number | null | undefined {
+  if (!formData.has("taskTimeoutSeconds")) return undefined;
+  const value = String(formData.get("taskTimeoutSeconds")).trim();
+  if (!value) return null;
+  const parsed = z.coerce
+    .number()
+    .int()
+    .min(AGENT_TASK_TIMEOUT_BOUNDS.min)
+    .max(AGENT_TASK_TIMEOUT_BOUNDS.max)
+    .safeParse(value);
+  if (!parsed.success)
+    throw new AgentConfigurationError("Invalid task time limit.");
+  return parsed.data;
 }
 
 const piPackagesFormSchema = z
@@ -786,6 +808,7 @@ export async function createAgentAction(
             )
           : undefined,
         secretObfuscation: agentSecretObfuscation(formData),
+        taskTimeoutSeconds: agentTaskTimeoutSeconds(formData),
         advisor: agentAdvisor(formData),
         piPackages: piPackagesFromForm(formData),
       },
@@ -1040,6 +1063,7 @@ export async function updateAgentAction(
             )
           : undefined,
         secretObfuscation: agentSecretObfuscation(formData),
+        taskTimeoutSeconds: agentTaskTimeoutSeconds(formData),
         advisor: agentAdvisor(formData),
         piPackages: piPackagesFromForm(formData),
       });

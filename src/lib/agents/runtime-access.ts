@@ -3,8 +3,16 @@ import { SignJWT, jwtVerify } from "jose";
 import { runtimeEnv } from "@/lib/runtime-env";
 import { getLogContext, enrichLogContext } from "@/lib/observability/context";
 import { AgentModelOverrideSchema, type AgentModelOverride } from "./chat-body";
+import { AGENT_TASK_TIMEOUT_BOUNDS } from "./constants";
 
 export const AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS = 60 * 60;
+/** Task-bound tokens die with their lease (assertLocalRuntimeToken), so they may last the longest task. */
+export const AGENT_TASK_RUNTIME_TOKEN_MAX_TTL_SECONDS =
+  AGENT_TASK_TIMEOUT_BOUNDS.max + 10 * 60;
+const maxTokenTtl = (taskBound: boolean) =>
+  taskBound
+    ? AGENT_TASK_RUNTIME_TOKEN_MAX_TTL_SECONDS
+    : AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS;
 export const AGENT_RUNTIME_TOKEN_HEADER = "x-toolplane-runtime-token";
 
 export type AgentRuntimeTokenPayload = {
@@ -73,7 +81,7 @@ export async function createAgentRuntimeToken(
       !validDeploymentIds(payload.externalSandboxIds)) ||
     !Number.isSafeInteger(payload.exp) ||
     payload.exp <= issuedAt ||
-    payload.exp > issuedAt + AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS
+    payload.exp > issuedAt + maxTokenTtl(payload.a2aTaskId !== undefined)
   ) {
     throw new Error("Agent runtime token payload is invalid.");
   }
@@ -142,7 +150,7 @@ export async function verifyAgentRuntimeToken(
       typeof issuedAt !== "number" ||
       typeof expiresAt !== "number" ||
       issuedAt > Math.floor(now / 1000) + 60 ||
-      expiresAt - issuedAt > AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS ||
+      expiresAt - issuedAt > maxTokenTtl(payload.a2aTaskId !== undefined) ||
       (payload.traceId !== undefined &&
         (typeof payload.traceId !== "string" ||
           !/^[a-f0-9]{32}$/.test(payload.traceId))) ||

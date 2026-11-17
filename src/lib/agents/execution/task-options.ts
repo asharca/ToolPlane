@@ -14,8 +14,12 @@ import {
   DEFAULT_REASONING_LEVEL,
   normalizeReasoningLevel,
 } from "@/lib/agents/constants";
-import type { RunSandboxAgentTurnOptions } from "@/lib/agents/sandbox-runtime";
 import {
+  sandboxTurnTimeoutMs,
+  type RunSandboxAgentTurnOptions,
+} from "@/lib/agents/sandbox-runtime";
+import {
+  AGENT_TASK_RUNTIME_TOKEN_MAX_TTL_SECONDS,
   createAgentRuntimeToken,
   runtimeMcpProxyUrl,
   runtimeModelProxyBase,
@@ -214,11 +218,12 @@ export async function localTaskOptions(
     agentId: agent.id,
     pinned: agent.revisionConfig.externalSandboxes,
   });
+  // Task-bound: revoked with the lease, so it may last until the task deadline.
   const exp = Math.floor(
     Math.min(
       row.deadlineAt.getTime(),
       grant.expiresAt,
-      Date.now() + 55 * 60_000,
+      Date.now() + (AGENT_TASK_RUNTIME_TOKEN_MAX_TTL_SECONDS - 5 * 60) * 1000,
     ) / 1000,
   );
   const token = await createAgentRuntimeToken({
@@ -414,6 +419,7 @@ export async function localTaskOptions(
       },
     ],
     signal,
+    timeoutMs: sandboxTurnTimeoutMs(row.deadlineAt),
     historyRequired,
     onPromptInvocation: async (invocation) => {
       const messageId = history.findLast(

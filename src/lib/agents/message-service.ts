@@ -56,11 +56,40 @@ import {
 } from "./runtime-commands";
 import { AgentRevisionError, resolvePinnedAgent } from "./revisions";
 import { persistAgentPromptInvocation } from "./prompt-invocation";
-import { parseRuntimeFailure } from "./runtime-failure";
-import { notifyTaskOutput, taskOutput } from "./execution/live-output";
+import {
+  describeRuntimeFailure,
+  parseRuntimeFailure,
+  runtimeFailureText,
+  type RuntimeFailure,
+  type RuntimeFailureTranslator,
+} from "./runtime-failure";
+import { createTranslator } from "next-intl";
+import zhMessages from "../../../messages/zh.json";
+import { notifyTaskOutput } from "./execution/live-output";
+import { recordedTaskOutput } from "./execution/live-output-read";
 
 export const CHANNEL_EXECUTION_FAILURE_MESSAGE =
   "本次执行未能完成，未自动重试。请在工作区查看会话执行状态，检查模型或工具连接后再发送新消息。";
+
+const zhRuntimeCommands = createTranslator({
+  locale: "zh",
+  messages: zhMessages.console.runtimeCommands,
+});
+type RuntimeCommandKey = Parameters<typeof zhRuntimeCommands>[0];
+const zhRuntimeFailureTranslator: RuntimeFailureTranslator = Object.assign(
+  (key: string, values?: Record<string, string | number>) =>
+    zhRuntimeCommands(key as RuntimeCommandKey, values),
+  { has: (key: string) => zhRuntimeCommands.has(key as RuntimeCommandKey) },
+);
+
+/** Channel replies are Chinese; only the allowlisted failure token is shown. */
+function runtimeFailureMessage(failure: RuntimeFailure) {
+  const token = runtimeFailureText(failure);
+  const described = describeRuntimeFailure(zhRuntimeFailureTranslator, token);
+  return described
+    ? `本次执行未能完成（${token}）：${described.text}`
+    : `${CHANNEL_EXECUTION_FAILURE_MESSAGE}（${token}）`;
+}
 
 export type AgentMessageResult =
   | { status: number; body: { error: string } }
@@ -72,6 +101,8 @@ export type AgentMessageResult =
         delivery: "message" | "silent";
         message: string;
         rawMessage: string;
+        /** The turn failed; `message` is the safe coded failure text. */
+        failed?: true;
         sessionKey: string;
         source: NormalizedMessagingSource;
         platform: string;
@@ -91,6 +122,7 @@ const ChannelCommandResultSchema: z.ZodType<AgentMessageResult> = z.union([
       delivery: z.enum(["message", "silent"]),
       message: z.string(),
       rawMessage: z.string(),
+      failed: z.literal(true).optional(),
       sessionKey: z.string(),
       platform: z.string(),
       externalUserId: z.string().nullable(),
@@ -157,6 +189,8 @@ export async function runAgentChannelMessage(params: {
   attachmentParts?: UIMessage["parts"];
   signal?: AbortSignal;
   onUiRequired?: (message: string) => Promise<void>;
+  /** Latest streamed reply text while the Agent works; must not block. */
+  onTextUpdate?: (text: string) => void;
   inboundPersisted?: boolean;
   hostedIngress?: boolean;
   inboundDedupeKey?: string;
@@ -767,6 +801,7 @@ export async function runAgentChannelMessage(params: {
     connectionId: channel.id,
     actorId: channel.a2aActorId,
     onUiRequired: params.onUiRequired,
+    onTextUpdate: params.onTextUpdate,
     attachmentParts: params.attachmentParts,
     signal: params.signal,
     channelSessionKey: sessionKey,
@@ -779,6 +814,7 @@ async function runLoadedAgentMessage(params: {
   agent: AgentForRun;
   actorId?: string;
   onUiRequired?: (message: string) => Promise<void>;
+  onTextUpdate?: (text: string) => void;
   rawBody: unknown;
   defaults?: Partial<AgentMessageBody>;
   connectionId?: string;
@@ -838,8 +874,9 @@ async function runLoadedAgentMessage(params: {
   const response = (
     conversationId: string,
     text: string,
+    failed = false,
   ): AgentMessageResult => {
-    const silent = isSilentAgentReply(text);
+    const silent = !failed && isSilentAgentReply(text);
     return {
       status: 200,
       body: {
@@ -848,6 +885,7 @@ async function runLoadedAgentMessage(params: {
         delivery: silent ? "silent" : "message",
         message: silent ? "" : text,
         rawMessage: text,
+        ...(failed ? { failed: true as const } : {}),
         sessionKey: event.sessionKey,
         source: event.source,
         platform: event.source.platform,
@@ -1029,6 +1067,7 @@ async function runLoadedAgentMessage(params: {
         }),
       onUiRequired: (path) =>
         params.onUiRequired?.(`Pi 扩展需要你的输入，请打开会话：${path}`),
+      onTextUpdate: params.onTextUpdate,
     });
     const replyText = await appendBudgetWarningText(
       agentEntryResult(result.task, result.path),
@@ -1064,37 +1103,24 @@ async function runLoadedAgentMessage(params: {
         : replyText,
     );
   } catch (error) {
-    const failureCode =
-      error instanceof Error
-        ? parseRuntimeFailure(error.message)?.code
-        : undefined;
+    const failure =
+      error instanceof Error ? parseRuntimeFailure(error.message) : undefined;
+    const failureCode = failure?.code;
     const failureMessage =
       failureCode === "MODEL_OVERRIDE_UNAVAILABLE"
         ? "MODEL_OVERRIDE_UNAVAILABLE: The session model is no longer available. Ask a channel admin to run /model reset or choose another workspace model."
         : failureCode === "AGENT_BUDGET_EXCEEDED"
           ? "AGENT_BUDGET_EXCEEDED"
-          : CHANNEL_EXECUTION_FAILURE_MESSAGE;
+          : failure
+            ? runtimeFailureMessage(failure)
+            : CHANNEL_EXECUTION_FAILURE_MESSAGE;
     // Aborting a channel observer (including shutdown) is not a failed execution.
     if (params.signal?.aborted) throw error;
     if (persistedConversationId) {
-      let startedAt = persistedTaskId
-        ? taskOutput(persistedTaskId)?.startedAt
-        : undefined;
-      if (persistedTaskId && startedAt === undefined) {
-        const task = await db.a2ATask.findUnique({
-          where: { id: persistedTaskId },
-          select: { snapshot: true },
-        });
-        const replay = z
-          .object({
-            metadata: z.object({
-              toolplaneLiveOutput: z.object({ startedAt: z.number().finite() }),
-            }),
-          })
-          .safeParse(task?.snapshot);
-        if (replay.success)
-          startedAt = replay.data.metadata.toolplaneLiveOutput.startedAt;
-      }
+      const recorded: { text: string; startedAt?: number } = persistedTaskId
+        ? await recordedTaskOutput(persistedTaskId)
+        : { text: "" };
+      const startedAt = recorded.startedAt;
       const previous = await db.message.findFirst({
         where: { conversationId: persistedConversationId },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -1120,17 +1146,16 @@ async function runLoadedAgentMessage(params: {
                   },
                 ]
               : []),
+            ...(recorded.text.trim()
+              ? [{ type: "text", text: recorded.text }]
+              : []),
             { type: "text", text: failureMessage },
             {
               type: "data-agent-execution",
               data: {
                 status: "failed",
                 error: {
-                  code:
-                    failureCode === "MODEL_OVERRIDE_UNAVAILABLE" ||
-                    failureCode === "AGENT_BUDGET_EXCEEDED"
-                      ? failureCode
-                      : "AGENT_EXECUTION_FAILED",
+                  code: failureCode ?? "AGENT_EXECUTION_FAILED",
                   message: failureMessage,
                 },
               },
@@ -1139,7 +1164,7 @@ async function runLoadedAgentMessage(params: {
         },
       });
       if (persistedTaskId) notifyTaskOutput(persistedTaskId);
-      return response(persistedConversationId, failureMessage);
+      return response(persistedConversationId, failureMessage, true);
     }
     if (error instanceof AgentRevisionError)
       return { status: 409, body: { error: error.code } };

@@ -347,6 +347,7 @@ export async function cloneAgent(
           reasoningEffort: true,
           streamRules: true,
           toolApproval: true,
+          taskTimeoutSeconds: true,
           sandboxes: {
             where: { isDefault: true },
             select: { sandbox: { select: { image: true } } },
@@ -385,6 +386,7 @@ export async function cloneAgent(
             ? { streamRules: source.streamRules as Prisma.InputJsonValue }
             : {}),
           ...(source.toolApproval ? { toolApproval: source.toolApproval } : {}),
+          taskTimeoutSeconds: source.taskTimeoutSeconds,
         },
       });
       if (deployments.length) {
@@ -549,6 +551,8 @@ export type AgentConfig = {
   reasoningEffort?: ReasoningLevel | null;
   toolApproval?: ToolApprovalPolicy;
   secretObfuscation?: boolean;
+  /** Seconds; null resets to the system default, undefined leaves it unchanged. */
+  taskTimeoutSeconds?: number | null;
   advisor?: AgentAdvisor | null;
   piPackages?: Array<{ marketInstallId: string; releaseId?: string }>;
 };
@@ -1047,6 +1051,7 @@ export async function createConfiguredAgent(
           reasoningEffort: cfg.reasoningEffort ?? null,
           toolApproval: cfg.toolApproval ?? { mode: "off" },
           secretObfuscation: cfg.secretObfuscation ?? true,
+          taskTimeoutSeconds: cfg.taskTimeoutSeconds ?? null,
           ...(cfg.advisor ? { advisor: cfg.advisor } : {}),
         },
       });
@@ -1164,6 +1169,9 @@ export async function updateAgent(
           ...(cfg.secretObfuscation === undefined
             ? {}
             : { secretObfuscation: cfg.secretObfuscation }),
+          ...(cfg.taskTimeoutSeconds === undefined
+            ? {}
+            : { taskTimeoutSeconds: cfg.taskTimeoutSeconds }),
           ...(cfg.advisor !== undefined
             ? { advisor: cfg.advisor ?? Prisma.DbNull }
             : {}),

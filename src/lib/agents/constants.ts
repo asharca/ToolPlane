@@ -1,6 +1,10 @@
 // A response normally stops when the model emits no tool calls. This cap is a
 // runaway backstop for responses that keep requesting another tool round.
 export const AGENT_STEP_BOUNDS = { min: 1, max: 1000, default: 100 } as const;
+// Per-Agent total task deadline (queueing, preparation and execution), in seconds.
+// Like OMP, long runs are bounded by step limits rather than a tight clock; the
+// ceiling is the 7-day A2A context retention that bounds every task anyway.
+export const AGENT_TASK_TIMEOUT_BOUNDS = { min: 300, max: 604_800 } as const;
 
 /** Concrete levels, lowest first. */
 export const REASONING_LEVELS = [

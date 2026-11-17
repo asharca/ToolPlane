@@ -36,7 +36,11 @@ import type {
   ChannelLogEvent,
   ChannelMessageEvent,
   ChannelStatusEvent,
+  SendMessageOptions,
 } from "./channels/ChannelAdapter";
+
+// Longer than every silent reply token, so a silent reply is never shown as progress.
+const STREAM_MIN_CHARS = 16;
 
 type RunnerState = {
   adapter: ChannelAdapter;
@@ -289,6 +293,56 @@ async function start(
         });
     });
 
+    const streamingChats = new Set<string>();
+    /** Pumps the latest progress text to the adapter without blocking execution. */
+    const channelReplyStream = (chatId: string, opts: SendMessageOptions) => {
+      streamingChats.add(chatId);
+      let pending: string | null = null;
+      let delivered: string | null = null;
+      let failed = false;
+      let closed = false;
+      let pump: Promise<void> | null = null;
+      const drain = async () => {
+        while (pending !== null && !failed) {
+          const text: string = pending;
+          pending = null;
+          try {
+            await adapter.onTextUpdate(chatId, text, opts);
+            delivered = text;
+          } catch {
+            failed = true;
+            log(
+              "info",
+              "Channel progress could not be updated; the final reply is sent separately.",
+            );
+          }
+        }
+        pump = null;
+      };
+      return {
+        update: (text: string) => {
+          // Short text may still become a silent reply token; never show it early.
+          if (
+            closed ||
+            failed ||
+            controller.signal.aborted ||
+            text.trim().length < STREAM_MIN_CHARS
+          )
+            return;
+          pending = text;
+          pump ??= drain();
+        },
+        close: () => {
+          closed = true;
+        },
+        /** The last progress text shown, or null when nothing was streamed. */
+        settled: async () => {
+          await pump;
+          return delivered;
+        },
+        release: () => streamingChats.delete(chatId),
+      };
+    };
     const processEvent = async (
       event: ChannelMessageEvent,
       dedupeKey: string,
@@ -341,6 +395,12 @@ async function start(
           ...("filename" in file ? { filename: String(file.filename) } : {}),
         }),
       );
+      // Progress is edited into one message per chat; concurrent sessions in the
+      // same chat and commands keep the single final reply.
+      const stream =
+        !event.text.trim().startsWith("/") && !streamingChats.has(event.chatId)
+          ? channelReplyStream(event.chatId, replyOptions)
+          : null;
       const result = await runAgentChannelMessage({
         workspaceId,
         connectionId,
@@ -359,6 +419,7 @@ async function start(
                 log("error", "Native UI notification could not be delivered."),
               );
         },
+        onTextUpdate: stream?.update,
         rawBody: {
           message: event.text.trim() || "Attachment",
           metadata: { roleIds: event.roleIds },
@@ -384,39 +445,73 @@ async function start(
             })),
           ],
         },
-      }).catch(() => {
-        if (!controller.signal.aborted)
-          log("error", "Channel execution failed.");
-        return null;
-      });
-      if (!current() || controller.signal.aborted)
-        throw new Error("Channel delivery interrupted.");
-      if (!result || "error" in result.body) {
-        if (result?.status === 403) {
-          await adapter.sendPendingReply(
+      })
+        .catch(() => {
+          if (!controller.signal.aborted)
+            log("error", "Channel execution failed.");
+          return null;
+        })
+        .finally(() => stream?.close());
+      const streamed = (await stream?.settled()) ?? null;
+      try {
+        if (!current() || controller.signal.aborted)
+          throw new Error("Channel delivery interrupted.");
+        if (!result || "error" in result.body) {
+          if (result?.status === 403) {
+            await adapter.sendPendingReply(
+              event.chatId,
+              "This command is not allowed by the channel access policy.",
+              replyOptions,
+            );
+            return;
+          }
+          if (result && "error" in result.body)
+            log(
+              "error",
+              `Channel execution was rejected (${result.status}): ${result.body.error}`,
+            );
+          if (streamed)
+            await adapter.onStreamError(
+              event.chatId,
+              CHANNEL_EXECUTION_FAILURE_MESSAGE,
+              replyOptions,
+            );
+          else
+            await adapter.sendMessage(
+              event.chatId,
+              CHANNEL_EXECUTION_FAILURE_MESSAGE,
+              replyOptions,
+            );
+          return;
+        }
+        if (streamed && result.body.failed) {
+          await adapter.onStreamError(
             event.chatId,
-            "This command is not allowed by the channel access policy.",
+            result.body.message,
             replyOptions,
           );
           return;
         }
-        if (result && "error" in result.body)
-          log(
-            "error",
-            `Channel execution was rejected (${result.status}): ${result.body.error}`,
-          );
-        await adapter.sendMessage(
-          event.chatId,
-          CHANNEL_EXECUTION_FAILURE_MESSAGE,
-          replyOptions,
-        );
-        return;
+        if (streamed) {
+          // A silent final reply leaves the already visible progress unchanged.
+          const finalText =
+            result.body.delivery === "message" ? result.body.message : streamed;
+          if (
+            await adapter.onStreamComplete(event.chatId, finalText, {
+              ...replyOptions,
+              confirmation: result.body.confirmation,
+            })
+          )
+            return;
+        }
+        if (result.body.delivery === "message")
+          await adapter.sendMessage(event.chatId, result.body.message, {
+            ...replyOptions,
+            confirmation: result.body.confirmation,
+          });
+      } finally {
+        stream?.release();
       }
-      if (result.body.delivery === "message")
-        await adapter.sendMessage(event.chatId, result.body.message, {
-          ...replyOptions,
-          confirmation: result.body.confirmation,
-        });
     };
     const unregister = registerChannelInboundHandler(
       connectionId,

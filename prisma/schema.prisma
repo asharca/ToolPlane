@@ -627,6 +627,8 @@ model Agent {
   streamRules             Json?
   toolApproval            Json?
   secretObfuscation       Boolean                  @default(true)
+  // Total task deadline in seconds; null uses the system default.
+  taskTimeoutSeconds      Int?
   advisor                 Json?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt

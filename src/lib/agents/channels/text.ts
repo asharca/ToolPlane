@@ -7,3 +7,11 @@ export function clampSurrogateBoundary(text: string, index: number): number {
     ? index - 1
     : index;
 }
+
+/** The latest part of a growing stream that fits one message, so progress stays visible. */
+export function streamTail(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  // Two-char marker plus at most one extra unit when keeping a surrogate pair whole.
+  const start = clampSurrogateBoundary(text, text.length - (maxLength - 3));
+  return `…\n${text.slice(start)}`;
+}

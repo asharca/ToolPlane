@@ -75,6 +75,7 @@ import {
 import { RevisionFileDiff } from "../RevisionFileDiff";
 import {
   AGENT_STEP_BOUNDS,
+  AGENT_TASK_TIMEOUT_BOUNDS,
   DEFAULT_REASONING_LEVEL,
   REASONING_LEVELS,
   normalizeReasoningEffort,
@@ -190,6 +191,9 @@ type Props = {
   secretObfuscation: boolean;
   advisor?: AgentRevisionConfig["advisor"] | null;
   maxSteps: number;
+  /** Seconds; null uses the system default. */
+  taskTimeoutSeconds: number | null;
+  defaultTaskTimeoutSeconds: number;
   providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
@@ -291,6 +295,11 @@ export function AgentSettingsForm(props: Props) {
   );
   const [advisor, setAdvisor] = useState(props.advisor ?? null);
   const [steps, setSteps] = useState(String(props.maxSteps));
+  const initialTimeoutMinutes =
+    props.taskTimeoutSeconds === null
+      ? ""
+      : String(Math.round(props.taskTimeoutSeconds / 60));
+  const [timeoutMinutes, setTimeoutMinutes] = useState(initialTimeoutMinutes);
   const [disabledTools, setDisabledTools] = useState(
     new Set(props.disabledBuiltinTools ?? []),
   );
@@ -423,8 +432,10 @@ export function AgentSettingsForm(props: Props) {
         ),
       ),
     maxSteps: steps !== String(props.maxSteps),
+    taskTimeout: timeoutMinutes.trim() !== initialTimeoutMinutes,
     advanced:
       steps !== String(props.maxSteps) ||
+      timeoutMinutes.trim() !== initialTimeoutMinutes ||
       fallbackModelsDirty ||
       roleModelDirty("compaction") ||
       roleModelDirty("title") ||
@@ -465,6 +476,7 @@ export function AgentSettingsForm(props: Props) {
     (props.reasoningEffort ?? DEFAULT_REASONING_LEVEL) !==
       (appliedConfig.reasoningEffort ?? DEFAULT_REASONING_LEVEL) ||
     props.maxSteps !== appliedConfig.maxSteps ||
+    props.taskTimeoutSeconds !== (appliedConfig.taskTimeoutSeconds ?? null) ||
     props.secretObfuscation !== (appliedConfig.secretObfuscation ?? true) ||
     JSON.stringify(props.advisor ?? null) !==
       JSON.stringify(appliedConfig.advisor ?? null) ||
@@ -865,10 +877,14 @@ export function AgentSettingsForm(props: Props) {
               onChange={changed}
               onInvalidCapture={(event) => {
                 const target = event.target as HTMLInputElement;
-                if (target.name !== "name" && target.name !== "maxSteps")
+                if (
+                  target.name !== "name" &&
+                  target.name !== "maxSteps" &&
+                  target.name !== "taskTimeoutMinutes"
+                )
                   return;
                 const invalidSection =
-                  target.name === "maxSteps" ? "advanced" : "general";
+                  target.name === "name" ? "general" : "advanced";
                 reveal(invalidSection);
               }}
               data-unsaved-changes={hasUnsavedChanges ? "true" : "false"}
@@ -902,6 +918,15 @@ export function AgentSettingsForm(props: Props) {
                 type="hidden"
                 name="secretObfuscation"
                 value={String(secretObfuscation)}
+              />
+              <input
+                type="hidden"
+                name="taskTimeoutSeconds"
+                value={
+                  timeoutMinutes.trim()
+                    ? String(Math.round(Number(timeoutMinutes) * 60))
+                    : ""
+                }
               />
               <input
                 type="hidden"
@@ -1341,6 +1366,29 @@ export function AgentSettingsForm(props: Props) {
                         max={AGENT_STEP_BOUNDS.max}
                         value={steps}
                         onChange={setSteps}
+                        className="w-24"
+                      />
+                    </DialogField>
+                    <DialogField
+                      label={t("taskTimeout")}
+                      description={t("taskTimeoutDescription")}
+                      htmlFor={`${formId}-task-timeout`}
+                      dirty={fieldDirty.taskTimeout}
+                      layout="row"
+                    >
+                      <Input
+                        id={`${formId}-task-timeout`}
+                        aria-label={t("taskTimeout")}
+                        name="taskTimeoutMinutes"
+                        type="number"
+                        step={1}
+                        min={AGENT_TASK_TIMEOUT_BOUNDS.min / 60}
+                        max={AGENT_TASK_TIMEOUT_BOUNDS.max / 60}
+                        placeholder={String(
+                          Math.round(props.defaultTaskTimeoutSeconds / 60),
+                        )}
+                        value={timeoutMinutes}
+                        onChange={setTimeoutMinutes}
                         className="w-24"
                       />
                     </DialogField>

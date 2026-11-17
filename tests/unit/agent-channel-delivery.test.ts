@@ -103,6 +103,15 @@ class TestAdapter extends EventEmitter {
   sendMessage = vi.fn(
     async (_chatId: string, _text: string, _options?: unknown) => {},
   );
+  onTextUpdate = vi.fn(
+    async (_chatId: string, _text: string, _options?: unknown) => {},
+  );
+  onStreamComplete = vi.fn(
+    async (_chatId: string, _text: string, _options?: unknown) => true,
+  );
+  onStreamError = vi.fn(
+    async (_chatId: string, _error: string, _options?: unknown) => {},
+  );
 }
 let adapter: TestAdapter;
 const incoming = () =>
@@ -302,5 +311,64 @@ describe("channel upstream execution delivery", () => {
     expect(signal?.aborted).toBe(true);
     expect(adapter.sendMessage).not.toHaveBeenCalled();
     expect(mocks.log).not.toHaveBeenCalled();
+  });
+
+  describe("live progress", () => {
+    const progress = "Cloning the repository and reading the README now.";
+    const runWithProgress = (body: Record<string, unknown>, text = progress) =>
+      mocks.run.mockImplementationOnce(async (input) => {
+        input.onTextUpdate?.(text);
+        await setImmediate();
+        return { status: 200, body };
+      });
+
+    it("edits progress into one message and finalizes it with the reply", async () => {
+      runWithProgress({ delivery: "message", message: "Actual reply" });
+      incoming();
+      await drain();
+      expect(adapter.onTextUpdate).toHaveBeenCalledWith(
+        "chat",
+        progress,
+        expect.anything(),
+      );
+      expect(adapter.onStreamComplete).toHaveBeenCalledWith(
+        "chat",
+        "Actual reply",
+        expect.anything(),
+      );
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("sends the reply normally when the platform cannot finalize the stream", async () => {
+      adapter.onStreamComplete.mockResolvedValueOnce(false);
+      runWithProgress({ delivery: "message", message: "Actual reply" });
+      incoming();
+      await drain();
+      expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
+      expect(adapter.sendMessage.mock.calls[0]?.[1]).toBe("Actual reply");
+    });
+
+    it("appends a coded failure to the streamed progress", async () => {
+      const failure =
+        "本次执行未能完成（PI_TASK_MODEL_TIMEOUT）：任务总时限已到。";
+      runWithProgress({ delivery: "message", message: failure, failed: true });
+      incoming();
+      await drain();
+      expect(adapter.onStreamError).toHaveBeenCalledWith(
+        "chat",
+        failure,
+        expect.anything(),
+      );
+      expect(adapter.onStreamComplete).not.toHaveBeenCalled();
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("never shows text that may still become a silent reply", async () => {
+      runWithProgress({ delivery: "silent", message: "" }, "NO_REPLY");
+      incoming();
+      await drain();
+      expect(adapter.onTextUpdate).not.toHaveBeenCalled();
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+    });
   });
 });

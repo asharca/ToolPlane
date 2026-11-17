@@ -3,6 +3,7 @@ import { assertDefined } from "../assert-defined";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS,
+  AGENT_TASK_RUNTIME_TOKEN_MAX_TTL_SECONDS,
   AGENT_RUNTIME_TOKEN_HEADER,
   agentRuntimeTokenFromRequest,
   bindRuntimeLogContext,
@@ -76,6 +77,29 @@ describe("Agent runtime access grants", () => {
         {
           ...payload,
           exp: Math.floor(now / 1000) + AGENT_RUNTIME_TOKEN_MAX_TTL_SECONDS + 1,
+        },
+        now,
+      ),
+    ).rejects.toThrow("payload is invalid");
+  });
+
+  it("lets only lease-bound task grants outlive the short ceiling, up to the task maximum", async () => {
+    const issued = Math.floor(now / 1000);
+    const task = { a2aTaskId: "task-1", a2aLeaseToken: "lease-1" };
+    const long = { ...payload, exp: issued + 2 * 60 * 60 };
+    await expect(createAgentRuntimeToken(long, now)).rejects.toThrow(
+      "payload is invalid",
+    );
+    const token = await createAgentRuntimeToken({ ...long, ...task }, now);
+    await expect(
+      verifyAgentRuntimeToken(token, now + 90 * 60_000),
+    ).resolves.toMatchObject(task);
+    await expect(
+      createAgentRuntimeToken(
+        {
+          ...payload,
+          ...task,
+          exp: issued + AGENT_TASK_RUNTIME_TOKEN_MAX_TTL_SECONDS + 1,
         },
         now,
       ),

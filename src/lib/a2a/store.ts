@@ -698,9 +698,12 @@ export async function submitTaskInTransaction(
         toolplaneFileDelivery: { state: receivingFiles ? "pending" : "ready" },
       },
     });
+    // Local grants carry the pinned Agent limit; remote callers keep the system cap.
+    const timeoutSeconds = isLocalGrant(grant)
+      ? grant.timeoutSeconds
+      : Math.min(grant.timeoutSeconds, A2A_LIMITS.deadlineSeconds);
     const deadline = Math.min(
-      Date.now() +
-        Math.min(grant.timeoutSeconds, A2A_LIMITS.deadlineSeconds) * 1000,
+      Date.now() + timeoutSeconds * 1000,
       grant.expiresAt ?? Infinity,
       context.expiresAt.getTime(),
     );
