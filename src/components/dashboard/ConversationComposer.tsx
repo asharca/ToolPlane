@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Image from "next/image";
 import { useTranslations } from "next-intl";
-import { File as FileIcon, X } from "lucide-react";
+import { File as FileIcon, FileX, X } from "lucide-react";
 import { Button } from "@/components/motion/button";
 import { Tooltip } from "@/components/motion/tooltip";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
 import { previewType } from "@/lib/file-preview";
+import { isDeletedAttachment } from "./attachment-deleted";
+import { notify } from "./Toaster";
 import {
   CONTEXT_CATEGORIES,
   type ContextCategory,
@@ -267,11 +269,13 @@ export function ConversationFilePreview({
   const t = useTranslations("filePreview");
   const agents = useTranslations("console.agents");
   const [open, setOpen] = useState(false);
+  const [deleted, setDeleted] = useState(false);
   const [thumbnail, setThumbnail] = useState<{ file: File; url: string }>();
   const type = previewType(name, file?.type || mimeType);
   const image = type.kind === "image";
   const safeUrl = allowedAttachmentUrl(url);
   const unavailable = t("unavailable");
+  const deletedNotice = t("deletedNotice");
   const size = file
     ? file.size < 1024
       ? `${file.size} B`
@@ -291,10 +295,19 @@ export function ConversationFilePreview({
       if (file) return file;
       if (!safeUrl) throw new Error(unavailable);
       const response = await fetch(safeUrl, { signal, redirect: "error" });
+      if (
+        response.status === 404 &&
+        safeUrl.startsWith("/api/v1/attachments/")
+      ) {
+        setDeleted(true);
+        setOpen(false);
+        notify(deletedNotice, { severity: "warning" });
+        throw new Error(deletedNotice);
+      }
       if (!response.ok) throw new Error(unavailable);
       return response.blob();
     },
-    [file, safeUrl, unavailable],
+    [file, safeUrl, unavailable, deletedNotice],
   );
   const source = file
     ? thumbnail?.file === file
@@ -303,35 +316,53 @@ export function ConversationFilePreview({
     : safeUrl;
   return (
     <div className="flex max-w-full items-center gap-2">
-      <button
-        type="button"
-        aria-label={t("open", { name })}
-        onClick={() => setOpen(true)}
-        className="flex min-w-0 max-w-xs items-center gap-3 rounded-lg border border-border bg-background px-3 py-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {image && source ? (
-          <Image
-            src={source}
-            alt=""
-            width={40}
-            height={40}
-            unoptimized
-            className="size-10 shrink-0 rounded-md object-cover"
-          />
-        ) : (
-          <FileIcon
-            aria-hidden="true"
-            className="size-8 shrink-0 text-muted-foreground"
-          />
-        )}
-        <span className="min-w-0">
-          <span className="block truncate text-sm font-medium">{name}</span>
-          <span className="block truncate text-xs text-muted-foreground">
-            {type.mimeType || file?.type || mimeType || t("file")}
-            {size ? ` · ${size}` : ""}
+      {deleted ? (
+        <span className="flex min-w-0 max-w-xs items-center gap-3 rounded-lg border border-dashed border-border px-3 py-2 text-muted-foreground">
+          <FileX aria-hidden="true" className="size-8 shrink-0" />
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-medium line-through">
+              {name}
+            </span>
+            <span className="block truncate text-xs">{t("deleted")}</span>
           </span>
         </span>
-      </button>
+      ) : (
+        <button
+          type="button"
+          aria-label={t("open", { name })}
+          onClick={() => setOpen(true)}
+          className="flex min-w-0 max-w-xs items-center gap-3 rounded-lg border border-border bg-background px-3 py-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {image && source ? (
+            <Image
+              src={source}
+              alt=""
+              width={40}
+              height={40}
+              unoptimized
+              className="size-10 shrink-0 rounded-md object-cover"
+              onError={() => {
+                if (!file && safeUrl)
+                  void isDeletedAttachment(safeUrl).then(
+                    (gone) => gone && setDeleted(true),
+                  );
+              }}
+            />
+          ) : (
+            <FileIcon
+              aria-hidden="true"
+              className="size-8 shrink-0 text-muted-foreground"
+            />
+          )}
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-medium">{name}</span>
+            <span className="block truncate text-xs text-muted-foreground">
+              {type.mimeType || file?.type || mimeType || t("file")}
+              {size ? ` · ${size}` : ""}
+            </span>
+          </span>
+        </button>
+      )}
       {progress !== undefined ? (
         <span role="status" className="text-xs text-muted-foreground">
           {Math.round(progress * 100)}%

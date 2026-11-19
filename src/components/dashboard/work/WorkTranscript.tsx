@@ -6,6 +6,7 @@ import {
   Bot,
   Clock3,
   FileText,
+  FileX,
   GitBranch,
   Minimize2,
   Pencil,
@@ -13,6 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/motion/button";
 import { notify } from "@/components/dashboard/Toaster";
+import { isDeletedAttachment } from "@/components/dashboard/attachment-deleted";
 import { AgentMessageFeedback } from "@/components/dashboard/agents/AgentMessageFeedback";
 import { AgentPromptProvenance } from "@/components/dashboard/agents/AgentPromptProvenance";
 import { ConversationComposer } from "@/components/dashboard/ConversationComposer";
@@ -268,6 +270,66 @@ function CompactionNote({ message }: { message: WorkMessage }) {
   );
 }
 
+/** A deleted attachment keeps its message slot but no longer downloads. */
+function WorkAttachmentLink({
+  url,
+  name,
+  mediaType,
+}: {
+  url: string;
+  name: string;
+  mediaType?: string;
+}) {
+  const t = useTranslations("filePreview");
+  const [deleted, setDeleted] = useState(false);
+  const image = mediaType?.startsWith("image/");
+  if (deleted)
+    return (
+      <span className="inline-flex min-w-0 max-w-56 flex-nowrap items-center gap-1.5 rounded-lg border border-dashed border-border px-2 py-1.5 text-xs text-muted-foreground">
+        <FileX aria-hidden="true" className="size-3.5 shrink-0" />
+        <span className="min-w-0 truncate line-through">{name}</span>
+        <span className="shrink-0">{t("deleted")}</span>
+      </span>
+    );
+  return (
+    <a
+      href={url}
+      download={name}
+      onClick={async (event) => {
+        if (!url.startsWith("/api/v1/attachments/")) return;
+        event.preventDefault();
+        if (await isDeletedAttachment(url)) {
+          setDeleted(true);
+          notify(t("deletedNotice"), { severity: "warning" });
+          return;
+        }
+        const download = document.createElement("a");
+        download.href = url;
+        download.download = name;
+        download.click();
+      }}
+      className={`inline-flex min-w-0 max-w-56 items-center gap-1.5 rounded-lg bg-muted/70 px-2 py-1.5 text-xs text-foreground hover:bg-muted ${image ? "flex-wrap" : "flex-nowrap"}`}
+    >
+      {image ? (
+        // biome-ignore lint/performance/noImgElement: Authorized attachment URLs and base64 data must render directly without the Next image optimizer or layout sizing changes.
+        <img
+          src={url}
+          alt={name}
+          className="max-h-48 w-full object-contain"
+          onError={() => {
+            void isDeletedAttachment(url).then(
+              (gone) => gone && setDeleted(true),
+            );
+          }}
+        />
+      ) : (
+        <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+      )}
+      <span className="min-w-0 truncate">{name}</span>
+    </a>
+  );
+}
+
 export function WorkTranscript({
   workspaceSlug,
   agentName,
@@ -502,7 +564,7 @@ export function WorkTranscript({
           );
           // A reply's own files are content blocks; these are the user's uploads.
           const fileParts = message.parts.filter(
-            (part) =>
+            (part): part is WorkPart & { url: string } =>
               message.role === "user" &&
               part.type === "file" &&
               typeof part.url === "string" &&
@@ -512,27 +574,13 @@ export function WorkTranscript({
           const attachmentLinks = fileParts.length ? (
             <div className="flex max-w-full flex-wrap gap-1.5">
               {fileParts.map((part, index) => (
-                <a
+                <WorkAttachmentLink
                   // biome-ignore lint/suspicious/noArrayIndexKey: Streamed attachment parts are append-only; retain their positional identity, including duplicate URLs.
                   key={`${part.url}-${index}`}
-                  href={part.url}
-                  download={part.filename ?? agentsT("attachment")}
-                  className={`inline-flex min-w-0 max-w-56 items-center gap-1.5 rounded-lg bg-muted/70 px-2 py-1.5 text-xs text-foreground hover:bg-muted ${part.mediaType?.startsWith("image/") ? "flex-wrap" : "flex-nowrap"}`}
-                >
-                  {part.mediaType?.startsWith("image/") ? (
-                    // biome-ignore lint/performance/noImgElement: Authorized attachment URLs and base64 data must render directly without the Next image optimizer or layout sizing changes.
-                    <img
-                      src={part.url}
-                      alt={part.filename ?? agentsT("attachment")}
-                      className="max-h-48 w-full object-contain"
-                    />
-                  ) : (
-                    <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-                  )}
-                  <span className="min-w-0 truncate">
-                    {part.filename ?? agentsT("attachment")}
-                  </span>
-                </a>
+                  url={part.url}
+                  name={part.filename ?? agentsT("attachment")}
+                  mediaType={part.mediaType}
+                />
               ))}
             </div>
           ) : null;

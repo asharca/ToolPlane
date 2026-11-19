@@ -230,12 +230,6 @@ export async function hydrateWorkspaceAttachmentMessages(
       storagePath: true,
     },
   });
-  if (attachments.length !== ids.length) {
-    throw new AttachmentMessageError(
-      409,
-      "One or more attachments do not belong to this conversation.",
-    );
-  }
   const byId = new Map(
     attachments.map((attachment) => [attachment.id, attachment]),
   );
@@ -254,10 +248,10 @@ export async function hydrateWorkspaceAttachmentMessages(
       }
       const attachment = byId.get(id);
       if (!attachment) {
-        throw new AttachmentMessageError(
-          409,
-          "One or more attachments do not belong to this conversation.",
-        );
+        // New file parts are validated when claimed. Historical parts can
+        // outlive the attachment, but must never hydrate an out-of-scope file.
+        parts.push({ type: "text", text: "[Attachment unavailable]" });
+        continue;
       }
       const mimeType = attachment.mimeType.toLowerCase();
       if (

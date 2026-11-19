@@ -14,7 +14,9 @@
     "zoomOut": "缩小",
     "fit": "适应窗口",
     "file": "文件",
-    "pdfFallback": "当前浏览器无法显示 PDF，请使用下载按钮在本地打开。"
+    "pdfFallback": "当前浏览器无法显示 PDF，请使用下载按钮在本地打开。",
+    "deleted": "已删除",
+    "deletedNotice": "此文件已被删除。"
   },
   "adminOps": {
     "allRoles": "全部角色",
@@ -1187,7 +1189,7 @@
       "attachmentTooLarge": "{name} 超过 10 MB 附件限制。",
       "attachmentLimitReached": "最多可附加 {count} 个文件。",
       "attachmentUploadFailed": "附件上传失败。",
-      "attachmentStorageQuotaExceeded": "存储空间已用完，请联系管理员提高配额。",
+      "attachmentStorageQuotaExceeded": "存储空间已满。请在“文件”中删除不再需要的文件，或联系管理员提高配额。",
       "attachment": "附件",
       "removeAttachment": "移除 {name}",
       "egResearchAssistant": "例如：研究助手",
@@ -3059,8 +3061,56 @@
       "revokePrompt": "撤销 {email} 的邀请？邀请链接将立即失效。",
       "revoked": "已撤销 {email} 的邀请。"
     },
+    "workspaceFiles": {
+      "kind": "文件类型",
+      "kinds": {
+        "all": "全部",
+        "attachment": "附件",
+        "a2a": "A2A 文件"
+      },
+      "sort": "排序方式",
+      "sortCreatedAt": "最新",
+      "sortSize": "最大",
+      "name": "名称",
+      "size": "大小",
+      "source": "来源",
+      "uploadedBy": "{name} 上传",
+      "created": "创建时间",
+      "expiresOn": "{date} 过期",
+      "actions": "操作",
+      "sources": {
+        "conversation": "会话",
+        "chatThread": "聊天",
+        "a2aTask": "A2A 任务",
+        "draft": "未发送"
+      },
+      "download": "下载",
+      "downloadFile": "下载 {name}",
+      "deleteFile": "删除 {name}",
+      "deleteTitle": "删除文件",
+      "deletePrompt": "删除 {name}？引用它的消息会保留文字。",
+      "deleteManyPrompt": "删除 {count} 个文件？引用它们的消息会保留文字。",
+      "deleteSelected": "删除（{count}）",
+      "deleting": "正在删除…",
+      "deletedCount": "已删除 {count} 个文件。",
+      "notDeleted": "{count} 个文件未删除：{reason}",
+      "failure": {
+        "forbidden": "没有权限",
+        "not_found": "文件已不存在",
+        "in_use": "仍被运行中的任务使用",
+        "storage_error": "存储出错，请重试"
+      },
+      "deleteError": "无法删除文件。",
+      "loadError": "无法加载文件。",
+      "retry": "重试",
+      "loadMore": "加载更多",
+      "empty": "暂无文件",
+      "inUse": "使用中"
+    },
     "settings": {
       "title": "设置",
+      "files": "文件",
+      "manageFiles": "管理文件",
       "channels": "频道",
       "general": "常规",
       "modelProviders": "模型提供商",

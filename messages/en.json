@@ -14,7 +14,9 @@
     "zoomOut": "Zoom out",
     "fit": "Fit to view",
     "file": "File",
-    "pdfFallback": "Your browser cannot display this PDF. Use Download to open it locally."
+    "pdfFallback": "Your browser cannot display this PDF. Use Download to open it locally.",
+    "deleted": "Deleted",
+    "deletedNotice": "This file has been deleted."
   },
   "adminOps": {
     "allRoles": "All roles",
@@ -1187,7 +1189,7 @@
       "attachmentTooLarge": "{name} exceeds the 10 MB attachment limit.",
       "attachmentLimitReached": "You can attach up to {count} files.",
       "attachmentUploadFailed": "Attachment upload failed.",
-      "attachmentStorageQuotaExceeded": "Storage quota is full. Ask an administrator to raise it.",
+      "attachmentStorageQuotaExceeded": "Storage is full. Delete files you no longer need in Files, or ask an administrator to raise your quota.",
       "attachment": "Attachment",
       "removeAttachment": "Remove {name}",
       "egResearchAssistant": "e.g. Research assistant",
@@ -3059,8 +3061,56 @@
       "revokePrompt": "Revoke the invitation for {email}? The link stops working immediately.",
       "revoked": "Revoked the invitation for {email}."
     },
+    "workspaceFiles": {
+      "kind": "File type",
+      "kinds": {
+        "all": "All",
+        "attachment": "Attachments",
+        "a2a": "A2A files"
+      },
+      "sort": "Sort by",
+      "sortCreatedAt": "Newest",
+      "sortSize": "Largest",
+      "name": "Name",
+      "size": "Size",
+      "source": "Source",
+      "uploadedBy": "Uploaded by {name}",
+      "created": "Created",
+      "expiresOn": "Expires {date}",
+      "actions": "Actions",
+      "sources": {
+        "conversation": "Conversation",
+        "chatThread": "Chat",
+        "a2aTask": "A2A task",
+        "draft": "Not sent"
+      },
+      "download": "Download",
+      "downloadFile": "Download {name}",
+      "deleteFile": "Delete {name}",
+      "deleteTitle": "Delete files",
+      "deletePrompt": "Delete {name}? Messages that used it keep their text.",
+      "deleteManyPrompt": "Delete {count, plural, one {# file} other {# files}}? Messages that used them keep their text.",
+      "deleteSelected": "Delete ({count})",
+      "deleting": "Deleting…",
+      "deletedCount": "{count, plural, one {Deleted # file.} other {Deleted # files.}}",
+      "notDeleted": "{count, plural, one {# file not deleted} other {# files not deleted}}: {reason}",
+      "failure": {
+        "forbidden": "you don't have permission",
+        "not_found": "already removed",
+        "in_use": "still used by a running task",
+        "storage_error": "storage error, try again"
+      },
+      "deleteError": "Could not delete files.",
+      "loadError": "Could not load files.",
+      "retry": "Retry",
+      "loadMore": "Load more",
+      "empty": "No files",
+      "inUse": "In use"
+    },
     "settings": {
       "title": "Settings",
+      "files": "Files",
+      "manageFiles": "Manage files",
       "channels": "Channels",
       "general": "General",
       "modelProviders": "Model Providers",

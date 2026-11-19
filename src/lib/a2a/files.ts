@@ -28,6 +28,7 @@ import {
 import { db } from "@/lib/db";
 import { runtimeEnv } from "@/lib/runtime-env";
 import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
+import { logSystemEvent } from "@/lib/observability/system";
 import {
   AttachmentTooLargeError,
   deleteWorkspaceAttachmentFile,
@@ -52,6 +53,7 @@ import { assertLocalActor, localTarget, LOCAL_LIMITS } from "./local-policy";
 import { remoteTarget } from "./remote-policy";
 import { assertEntryPolicy } from "@/lib/agents/execution/entry-policy";
 import { getConsoleTaskTree } from "./console-tasks";
+import { terminal } from "./model";
 
 export type TaskFile = A2ATaskFile & {
   taskId: string;
@@ -774,21 +776,105 @@ export async function hydrateTaskParts(
   parts: Part[],
   baseUrl: string,
 ): Promise<Part[]> {
+  let terminalTask: Promise<boolean> | undefined;
+  const isTerminalTask = () => {
+    terminalTask ??= db.a2ATask
+      .findUnique({ where: { id: taskId }, select: { state: true } })
+      .then((task) => !!task && terminal(task.state));
+    return terminalTask;
+  };
   return Promise.all(
     parts.map(async (part) => {
       const id = part.metadata?.toolplaneFileId;
       if (typeof id !== "string") return part;
       const file = await db.a2ATaskFile.findFirst({ where: { id, taskId } });
-      if (!file) throw missing();
+      if (!file) {
+        // Explicit deletion removes the object and row, not historical parts.
+        if (await isTerminalTask()) return part;
+        throw missing();
+      }
       if (file.status !== "ready") return part;
       const value = ready(file);
-      return Part.fromJSON({
-        url: await createTaskFileUrl(taskId, id, baseUrl),
-        filename: value.filename,
-        mediaType: value.mimeType,
-      });
+      try {
+        return Part.fromJSON({
+          url: await createTaskFileUrl(taskId, id, baseUrl),
+          filename: value.filename,
+          mediaType: value.mimeType,
+        });
+      } catch (error) {
+        // A delete may commit between reading the file and signing its URL.
+        if (
+          error instanceof TaskNotFoundError &&
+          (await isTerminalTask()) &&
+          !(await db.a2ATaskFile.count({
+            where: { id, taskId, status: "ready" },
+          }))
+        )
+          return part;
+        throw error;
+      }
     }),
   );
+}
+
+const FILE_DELETION_PENDING = "FILE_DELETION_PENDING";
+type DeletedTaskFile = {
+  id: string;
+  workspaceId: string;
+  storagePath: string;
+};
+
+/** Caller holds the workspace storage lock and has rechecked access. */
+export async function stageWorkspaceTaskFileDeletion(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  id: string,
+  isOwner: boolean,
+): Promise<DeletedTaskFile | "not_found" | "forbidden" | "in_use"> {
+  const where = {
+    id,
+    workspaceId,
+    status: "ready",
+    storagePath: { not: null },
+  };
+  const row = await tx.a2ATaskFile.findFirst({
+    where,
+    select: { id: true, workspaceId: true, storagePath: true, taskId: true },
+  });
+  if (!row?.storagePath) return "not_found";
+  if (!isOwner) return "forbidden";
+  if (row.taskId) {
+    const [task] = await tx.$queryRaw<{ state: number }[]>`
+      SELECT t.state FROM "A2ATask" t
+      JOIN "A2AContext" c ON c.id = t."contextId"
+      WHERE t.id = ${row.taskId} AND c."workspaceId" = ${workspaceId}
+      FOR UPDATE OF t`;
+    if (!task || !terminal(task.state)) return "in_use";
+  }
+  // Detach so neither a task deletion nor an upload retry can replace this
+  // cleanup identity. The path continues to count against storage quota.
+  const staged = await tx.a2ATaskFile.updateMany({
+    where,
+    data: {
+      status: "failed",
+      errorCode: FILE_DELETION_PENDING,
+      taskId: null,
+    },
+  });
+  return staged.count
+    ? { id, workspaceId, storagePath: row.storagePath }
+    : "not_found";
+}
+
+export async function removeDeletedTaskFile(row: DeletedTaskFile) {
+  await deleteWorkspaceAttachmentFile(row.workspaceId, row.storagePath);
+  await db.a2ATaskFile.deleteMany({
+    where: {
+      id: row.id,
+      workspaceId: row.workspaceId,
+      errorCode: FILE_DELETION_PENDING,
+    },
+  });
 }
 
 /** Bounded maintenance; orphan records retain paths until physical deletion succeeds. */
@@ -820,6 +906,27 @@ export async function cleanupTaskFiles(now = new Date(), limit = 100) {
   });
   let cleaned = 0;
   for (const candidate of rows) {
+    if (
+      candidate.errorCode === FILE_DELETION_PENDING &&
+      candidate.storagePath
+    ) {
+      try {
+        await removeDeletedTaskFile({
+          id: candidate.id,
+          workspaceId: candidate.workspaceId,
+          storagePath: candidate.storagePath,
+        });
+        cleaned++;
+      } catch (error) {
+        logSystemEvent("a2a.files.cleanup_failed", {
+          error,
+          level: "warn",
+          workspaceId: candidate.workspaceId,
+          attributes: { fileId: candidate.id },
+        });
+      }
+      continue;
+    }
     const token = randomUUID();
     const reserved = await db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${candidate.workspaceId} FOR UPDATE`;
@@ -828,6 +935,7 @@ export async function cleanupTaskFiles(now = new Date(), limit = 100) {
       });
       if (
         !row ||
+        row.errorCode === FILE_DELETION_PENDING ||
         (row.taskId &&
           row.expiresAt > now &&
           !(

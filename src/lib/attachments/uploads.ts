@@ -8,12 +8,49 @@ import { logSystemEvent } from "@/lib/observability/system";
 const STALE_UPLOAD_MS = 60 * 60_000;
 type Upload = { id: string; workspaceId: string; storagePath: string };
 
+// Caller holds the workspace storage lock. Hide the attachment and keep its
+// charge until the same cleanup path used by abandoned uploads removes it.
+export async function stageAttachmentDeletion(
+  tx: Prisma.TransactionClient,
+  workspace: Prisma.WorkspaceWhereInput,
+  id: string,
+  uploadedById?: string,
+): Promise<Upload | "not_found" | "forbidden"> {
+  const where = { id, workspace, status: "ready" } as const;
+  const attachment = await tx.workspaceAttachment.findFirst({
+    where,
+    select: {
+      id: true,
+      workspaceId: true,
+      storagePath: true,
+      uploadedById: true,
+    },
+  });
+  if (!attachment) return "not_found";
+  if (uploadedById && attachment.uploadedById !== uploadedById)
+    return "forbidden";
+  const result = await tx.workspaceAttachment.updateMany({
+    where: { ...where, uploadedById },
+    data: {
+      status: "uploading",
+      uploadStartedAt: null,
+      conversationId: null,
+      chatThreadId: null,
+    },
+  });
+  return result.count ? attachment : "not_found";
+}
+
+export async function removeAttachmentPendingCleanup(upload: Upload) {
+  await deleteWorkspaceAttachmentFile(upload.workspaceId, upload.storagePath);
+  await db.workspaceAttachment.deleteMany({
+    where: { id: upload.id, status: "uploading", uploadStartedAt: null },
+  });
+}
+
 async function removeUpload(upload: Upload) {
   try {
-    await deleteWorkspaceAttachmentFile(upload.workspaceId, upload.storagePath);
-    await db.workspaceAttachment.deleteMany({
-      where: { id: upload.id, status: "uploading", uploadStartedAt: null },
-    });
+    await removeAttachmentPendingCleanup(upload);
   } catch (error) {
     // Keep the reservation and physical path so the sweeper can retry.
     logSystemEvent("attachments.storage.cleanup_failed", {

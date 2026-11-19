@@ -2,6 +2,19 @@ import { useFormatter } from "next-intl";
 
 const units = ["B", "KiB", "MiB", "GiB", "TiB"] as const;
 
+/** Formats a byte count in binary units with the active locale. */
+export function useFormatBytes() {
+  const format = useFormatter();
+  return (bytes: number) => {
+    let unit = 0;
+    while (bytes >= 1024 && unit < units.length - 1) {
+      bytes /= 1024;
+      unit++;
+    }
+    return `${format.number(bytes, { maximumFractionDigits: 2 })} ${units[unit]}`;
+  };
+}
+
 export function StorageUsage({
   label,
   usedBytes,
@@ -11,15 +24,7 @@ export function StorageUsage({
   usedBytes: number;
   quotaBytes?: number;
 }) {
-  const format = useFormatter();
-  function size(bytes: number) {
-    let unit = 0;
-    while (bytes >= 1024 && unit < units.length - 1) {
-      bytes /= 1024;
-      unit++;
-    }
-    return `${format.number(bytes, { maximumFractionDigits: 2 })} ${units[unit]}`;
-  }
+  const size = useFormatBytes();
   const value =
     quotaBytes === undefined
       ? size(usedBytes)
