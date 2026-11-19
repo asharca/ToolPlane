@@ -16,9 +16,11 @@ import {
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
 import { Button } from "@/components/motion/button";
-import { CodeBlock } from "@/components/agents/code-block";
+import {
+  AIArtifact,
+  type AIArtifactLabels,
+} from "@/components/agents/ai-artifacts";
 import type { AgentCodeLanguage } from "@/components/agents/agent-code";
-import { AssistantMarkdown } from "./ConversationMessage";
 import { previewType, type FilePreviewKind } from "@/lib/file-preview";
 
 export type FilePreviewDialogProps = {
@@ -128,7 +130,13 @@ export function FilePreviewDialog(props: FilePreviewDialogProps) {
         ariaLabel={props.name}
         closeButtonLabel={t("close")}
         onExitComplete={restoreFocus}
-        className="flex h-[min(88dvh,900px)] w-full max-w-6xl flex-col"
+        className={
+          ["text", "markdown"].includes(
+            previewType(props.name, props.mimeType).kind,
+          )
+            ? "flex max-h-[min(88dvh,900px)] w-full max-w-4xl flex-col"
+            : "flex h-[min(88dvh,900px)] w-full max-w-6xl flex-col"
+        }
       >
         {content}
       </CenterMorphModalContent>
@@ -144,6 +152,7 @@ type PreviewState = {
 };
 function PreviewContent({
   name,
+  onOpenChange,
   mimeType,
   size,
   load,
@@ -157,8 +166,6 @@ function PreviewContent({
   const [loadError, setLoadError] = useState("");
   const [operationError, setOperationError] = useState("");
   const [downloading, setDownloading] = useState(false);
-  const [source, setSource] = useState(false);
-  const [wrap, setWrap] = useState(false);
   const [zoom, setZoom] = useState<number | null>(null);
   const [naturalWidth, setNaturalWidth] = useState(0);
   const image = useRef<HTMLImageElement>(null);
@@ -233,7 +240,7 @@ function PreviewContent({
   const codeLanguage = Object.hasOwn(languages, extension)
     ? languages[extension]
     : "text";
-  const code = file?.kind === "text" || (file?.kind === "markdown" && source);
+  const labels = useArtifactLabels();
   const changeZoom = (factor: number) =>
     setZoom(
       Math.min(
@@ -288,78 +295,39 @@ function PreviewContent({
           {error || operationError}
         </p>
       ) : null}
-      {(file?.kind === "markdown" || code || file?.kind === "image") &&
-      !loadError &&
-      file?.blob?.size ? (
+      {file?.kind === "image" && !loadError && file.blob?.size ? (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2">
-          {file.kind === "markdown" ? (
-            <>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-pressed={!source}
-                onClick={() => setSource(false)}
-              >
-                {t("preview")}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-pressed={source}
-                onClick={() => setSource(true)}
-              >
-                {t("source")}
-              </Button>
-            </>
-          ) : null}
-          {code ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              aria-pressed={wrap}
-              onClick={() => setWrap(!wrap)}
-            >
-              {t("wrap")}
-            </Button>
-          ) : null}
-          {file.kind === "image" ? (
-            <>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={t("zoomOut")}
-                onClick={() => changeZoom(0.8)}
-              >
-                <ZoomOut className="size-4" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={t("zoomIn")}
-                onClick={() => changeZoom(1.25)}
-              >
-                <ZoomIn className="size-4" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-pressed={zoom === null}
-                onClick={() => setZoom(null)}
-              >
-                {t("fit")}
-              </Button>
-              {zoom !== null ? (
-                <span className="text-xs text-muted-foreground">
-                  {Math.round(zoom * 100)}%
-                </span>
-              ) : null}
-            </>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={t("zoomOut")}
+            onClick={() => changeZoom(0.8)}
+          >
+            <ZoomOut className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={t("zoomIn")}
+            onClick={() => changeZoom(1.25)}
+          >
+            <ZoomIn className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-pressed={zoom === null}
+            onClick={() => setZoom(null)}
+          >
+            {t("fit")}
+          </Button>
+          {zoom !== null ? (
+            <span className="text-xs text-muted-foreground">
+              {Math.round(zoom * 100)}%
+            </span>
           ) : null}
         </div>
       ) : null}
@@ -425,22 +393,57 @@ function PreviewContent({
               {t("pdfFallback")}
             </p>
           )
-        ) : code ? (
-          <div className="p-4">
-            <CodeBlock
-              code={file.text ?? ""}
-              language={codeLanguage}
-              filename={name.split(/[\\/]/).pop()}
-              wrap={wrap}
-              maxHeight={640}
-            />
-          </div>
         ) : (
-          <div className="mx-auto max-w-4xl break-words p-4 text-sm leading-7 sm:p-8">
-            <AssistantMarkdown text={file.text ?? ""} />
+          <div className="p-4">
+            <AIArtifact
+              kind={file.kind === "markdown" ? "document" : "code"}
+              title={name.split(/[\\/]/).pop() || name}
+              filename={name.split(/[\\/]/).pop() || "file"}
+              language={codeLanguage}
+              versions={[
+                {
+                  id: "current",
+                  label: labels.current,
+                  content: file.text ?? "",
+                },
+              ]}
+              labels={labels.component}
+              onClose={() => onOpenChange(false)}
+            />
           </div>
         )}
       </div>
     </>
   );
+}
+
+/** Read-only previews never pass `onSave`, so editing labels are unreachable. */
+function useArtifactLabels(): {
+  current: string;
+  component: Partial<AIArtifactLabels>;
+} {
+  const t = useTranslations("filePreview.artifact");
+  return {
+    current: t("current"),
+    component: {
+      artifact: (kind) =>
+        t(kind === "code" ? "codeArtifact" : "documentArtifact"),
+      markdownDocument: t("markdownDocument"),
+      copy: () => t("copy"),
+      download: () => t("download"),
+      versionHistory: t("versionHistory"),
+      closeArtifact: t("closeArtifact"),
+      closeVersionHistory: t("closeVersionHistory"),
+      preview: t("preview"),
+      historyHint: t("historyHint"),
+      firstDraft: t("firstDraft"),
+      lines: (count) => t("lines", { count }),
+      words: (count) => t("words", { count }),
+      allChangesSaved: t("readOnly"),
+      copied: t("copied"),
+      downloaded: t("downloaded"),
+      clipboardUnavailable: t("clipboardUnavailable"),
+      copyFailed: t("copyFailed"),
+    },
+  };
 }
