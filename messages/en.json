@@ -33,7 +33,12 @@
       "copied": "Copied",
       "downloaded": "Downloaded",
       "clipboardUnavailable": "Clipboard unavailable. Select the text to copy it.",
-      "copyFailed": "Copy failed"
+      "copyFailed": "Copy failed",
+      "copyCode": "Copy",
+      "codeCopied": "Copied",
+      "plainText": "text",
+      "taskDone": "Done",
+      "taskOpen": "Not done"
     }
   },
   "adminOps": {

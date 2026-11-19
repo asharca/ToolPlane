@@ -397,7 +397,13 @@ function PreviewContent({
           <div className="p-4">
             <AIArtifact
               kind={file.kind === "markdown" ? "document" : "code"}
-              title={name.split(/[\\/]/).pop() || name}
+              title={
+                file.kind === "markdown"
+                  ? name.split(/[\\/]/).pop() || name
+                  : codeLanguage === "text"
+                    ? (labels.component.plainText ?? codeLanguage)
+                    : codeLanguage
+              }
               filename={name.split(/[\\/]/).pop() || "file"}
               language={codeLanguage}
               versions={[
@@ -444,6 +450,11 @@ function useArtifactLabels(): {
       downloaded: t("downloaded"),
       clipboardUnavailable: t("clipboardUnavailable"),
       copyFailed: t("copyFailed"),
+      copyCode: t("copyCode"),
+      codeCopied: t("codeCopied"),
+      plainText: t("plainText"),
+      taskDone: t("taskDone"),
+      taskOpen: t("taskOpen"),
     },
   };
 }

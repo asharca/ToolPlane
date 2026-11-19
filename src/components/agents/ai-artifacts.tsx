@@ -12,7 +12,11 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { CodeBlock } from "@/components/agents/code-block";
+import {
+  ArtifactCodeView,
+  ArtifactMarkdown,
+  type ArtifactMarkdownLabels,
+} from "@/components/agents/ai-artifacts-markdown";
 import type { AgentCodeLanguage } from "@/components/agents/agent-code";
 import { Button } from "@/components/motion/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
@@ -27,7 +31,7 @@ export interface ArtifactVersion {
 }
 type ArtifactKind = "code" | "document";
 /** Every user-visible string; pass a partial object to localize or reword. */
-export interface AIArtifactLabels {
+export interface AIArtifactLabels extends ArtifactMarkdownLabels {
   artifact: (kind: ArtifactKind) => string;
   markdownDocument: string;
   copy: (kind: ArtifactKind) => string;
@@ -61,6 +65,11 @@ export interface AIArtifactLabels {
 export const defaultAIArtifactLabels: AIArtifactLabels = {
   artifact: (kind) => (kind === "code" ? "Code artifact" : "Document artifact"),
   markdownDocument: "Markdown document",
+  copyCode: "Copy",
+  codeCopied: "Copied",
+  plainText: "text",
+  taskDone: "Done",
+  taskOpen: "Not done",
   copy: (kind) => `Copy ${kind}`,
   download: (kind) => `Download ${kind}`,
   versionHistory: "Version history",
@@ -104,36 +113,6 @@ export interface AIArtifactProps {
   onClose?: () => void;
   labels?: Partial<AIArtifactLabels>;
   className?: string;
-}
-
-/** Text-only Markdown: generated HTML and code are never evaluated. */
-function DocumentContent({ content }: { content: string }) {
-  const occurrences = new Map<string, number>();
-  return (
-    <div className="space-y-3 text-sm leading-6">
-      {content.split(/\n\n+/).map((paragraph) => {
-        const occurrence = occurrences.get(paragraph) ?? 0;
-        occurrences.set(paragraph, occurrence + 1);
-        const key = JSON.stringify([paragraph, occurrence]);
-        return paragraph.startsWith("# ") ? (
-          <h2
-            key={key}
-            className="text-xl font-medium leading-tight tracking-tight"
-          >
-            {paragraph.slice(2)}
-          </h2>
-        ) : paragraph.startsWith("## ") ? (
-          <h3 key={key} className="pt-3 text-base font-medium">
-            {paragraph.slice(3)}
-          </h3>
-        ) : (
-          <p key={key} className="whitespace-pre-wrap text-muted-foreground">
-            {paragraph}
-          </p>
-        );
-      })}
-    </div>
-  );
 }
 
 export function AIArtifact({
@@ -339,28 +318,24 @@ export function AIArtifact({
         {!current ? (
           <p className="p-6 text-sm text-muted-foreground">{l.noVersions}</p>
         ) : kind === "code" ? (
-          <CodeBlock
-            code={current.content}
-            language={language}
-            copyable={false}
-            showLineNumbers
-            className="rounded-2xl border-0 bg-transparent"
-          />
+          <div className="max-h-[min(70vh,40rem)] overflow-auto overscroll-contain">
+            <ArtifactCodeView code={current.content} language={language} />
+          </div>
+        ) : editing ? (
+          <div className="h-80 px-5 py-5 sm:px-6">
+            <textarea
+              aria-label={l.documentContent}
+              value={content}
+              disabled={saving}
+              onChange={(event) =>
+                setEdit({ base: current.id, text: event.target.value })
+              }
+              className="h-full min-h-64 w-full resize-none rounded-lg bg-transparent p-2 font-mono text-[13px] leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
         ) : (
-          <div className="h-80 overflow-auto overscroll-contain px-5 py-5 sm:px-6">
-            {editing ? (
-              <textarea
-                aria-label={l.documentContent}
-                value={content}
-                disabled={saving}
-                onChange={(event) =>
-                  setEdit({ base: current.id, text: event.target.value })
-                }
-                className="h-full min-h-64 w-full resize-none rounded-lg bg-transparent p-2 text-sm leading-7 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            ) : (
-              <DocumentContent content={content} />
-            )}
+          <div className="max-h-[min(70vh,40rem)] min-h-48 overflow-auto overscroll-contain px-5 py-6 sm:px-8">
+            <ArtifactMarkdown content={content} labels={l} />
           </div>
         )}
         <AnimatePresence initial={false}>
@@ -422,7 +397,7 @@ export function AIArtifact({
       <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-2.5 text-xs text-muted-foreground">
         <span>
           {kind === "code"
-            ? l.lines(content.split("\n").length)
+            ? l.lines(content.replace(/\n$/, "").split("\n").length)
             : l.words(content.trim().split(/\s+/).filter(Boolean).length)}
         </span>
         {kind === "document" && dirty && onSave ? (
