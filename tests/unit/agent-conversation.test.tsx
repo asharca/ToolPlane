@@ -178,11 +178,10 @@ describe("AgentConversation", () => {
     await waitFor(() =>
       expect(apiMocks.fetch).toHaveBeenCalledWith(
         "/api/v1/chat/threads/conv-1/turns",
-        {
+        expect.objectContaining({
           method: "DELETE",
-          headers: { "content-type": "application/json" },
           body: JSON.stringify({ turnId: "server-turn-1" }),
-        },
+        }),
       ),
     );
     expect(chatMocks.stop).not.toHaveBeenCalled();

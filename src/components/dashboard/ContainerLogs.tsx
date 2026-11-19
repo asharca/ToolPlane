@@ -13,6 +13,7 @@ import {
 } from "react";
 import { useTranslations } from "next-intl";
 import { Input } from "@/components/motion/input";
+import { apiRequest } from "@/lib/client/api";
 import { CopyButton } from "./CopyButton";
 import { StatusBadge } from "./StatusBadge";
 
@@ -150,62 +151,57 @@ export function ContainerLogs({
 
       inFlightRef.current = true;
       if (manual) setRefreshing(true);
-      try {
-        let hasMore = true;
-        while (hasMore) {
-          const query = new URLSearchParams({
-            cursor: String(cursorRef.current),
-            limit: "65536",
-          });
-          if (generationRef.current)
-            query.set("generation", generationRef.current);
+      let hasMore = true;
+      while (hasMore) {
+        const query = new URLSearchParams({
+          cursor: String(cursorRef.current),
+          limit: "65536",
+        });
+        if (generationRef.current)
+          query.set("generation", generationRef.current);
 
-          const response = await fetch(
-            `/api/v1/mcp/${deploymentId}/runtime?${query}`,
-            {
-              cache: "no-store",
-            },
-          );
-          if (!response.ok)
-            throw new Error(`runtime sync failed (${response.status})`);
-          const data = (await response.json()) as RuntimeResponse;
-          const chunk = data.logs;
-          const previousGeneration = generationRef.current;
-          const generationChanged = Boolean(
-            previousGeneration &&
-              chunk.generation &&
-              previousGeneration !== chunk.generation,
-          );
-          const shouldReset = chunk.reset || generationChanged;
-
-          setLogView((previous) => ({
-            text: shouldReset ? chunk.text : `${previous.text}${chunk.text}`,
-            truncated:
-              (shouldReset ? false : previous.truncated) ||
-              Boolean(chunk.truncated),
-          }));
-          generationRef.current = chunk.generation;
-          cursorRef.current = chunk.nextCursor;
-          hasMore = chunk.nextCursor > chunk.cursor;
-          setSnapshot(data.snapshot);
-          setSyncError(false);
-
-          const nextStatus = data.snapshot?.status ?? "stopped";
-          const previousStatus = statusRef.current;
-          statusRef.current = nextStatus;
-          setRuntimeStatus(nextStatus);
-          if (previousStatus !== nextStatus) {
-            // Refresh server-rendered controls and the header as soon as the
-            // supervisor reports a lifecycle status transition.
-            router.refresh();
-          }
+        const result = await apiRequest<RuntimeResponse>(
+          `/api/v1/mcp/${deploymentId}/runtime?${query}`,
+          { cache: "no-store" },
+        );
+        if (!result.ok) {
+          setSyncError(true);
+          break;
         }
-      } catch {
-        setSyncError(true);
-      } finally {
-        inFlightRef.current = false;
-        if (manual) setRefreshing(false);
+        const data = result.data;
+        const chunk = data.logs;
+        const previousGeneration = generationRef.current;
+        const generationChanged = Boolean(
+          previousGeneration &&
+            chunk.generation &&
+            previousGeneration !== chunk.generation,
+        );
+        const shouldReset = chunk.reset || generationChanged;
+
+        setLogView((previous) => ({
+          text: shouldReset ? chunk.text : `${previous.text}${chunk.text}`,
+          truncated:
+            (shouldReset ? false : previous.truncated) ||
+            Boolean(chunk.truncated),
+        }));
+        generationRef.current = chunk.generation;
+        cursorRef.current = chunk.nextCursor;
+        hasMore = chunk.nextCursor > chunk.cursor;
+        setSnapshot(data.snapshot);
+        setSyncError(false);
+
+        const nextStatus = data.snapshot?.status ?? "stopped";
+        const previousStatus = statusRef.current;
+        statusRef.current = nextStatus;
+        setRuntimeStatus(nextStatus);
+        if (previousStatus !== nextStatus) {
+          // Refresh server-rendered controls and the header as soon as the
+          // supervisor reports a lifecycle status transition.
+          router.refresh();
+        }
       }
+      inFlightRef.current = false;
+      if (manual) setRefreshing(false);
     },
     [deploymentId, router],
   );

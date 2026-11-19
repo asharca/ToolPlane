@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
@@ -9,14 +10,13 @@ import {
 import { PluginInstallForm } from "@/components/dashboard/plugins/PluginForms";
 import { PluginAgentChooser } from "@/components/dashboard/plugins/PluginAgentChooser";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { listPluginBindingDeployments } from "@/lib/plugins/binding-deployments";
 import { db } from "@/lib/db";
 import {
   getPlugin,
   PluginError,
   pluginReleaseLabel,
-  requirePluginWorkspace,
 } from "@/lib/plugins/catalog";
 import { previewPluginResource } from "@/lib/plugins/resource-preview";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
@@ -88,20 +88,15 @@ export default async function PluginDetailPage({
   }).toString();
   const linkSuffix = linkQuery ? `&${linkQuery}` : "";
   if (!user) redirect(`/app/login?next=${encodeURIComponent(detail)}`);
-  const workspace = await getWorkspaceForUser(slug, user.id);
+  const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (!workspace) redirect("/app");
-  const plugin = await getPlugin(workspace.id, user.id, listingId).catch(
+  const plugin = await getPlugin(workspace, listingId).catch(
     (error: unknown) => {
       if (error instanceof PluginError && error.status === 404) notFound();
       throw error;
     },
   );
-  const canManage = await requirePluginWorkspace(workspace.id, user.id, true)
-    .then(() => true)
-    .catch((error: unknown) => {
-      if (error instanceof PluginError && error.status === 403) return false;
-      throw error;
-    });
+  const canManage = workspace.role === "owner" || workspace.role === "admin";
   const [deployments, agents] = await Promise.all([
     listPluginBindingDeployments(workspace.id),
     canManage

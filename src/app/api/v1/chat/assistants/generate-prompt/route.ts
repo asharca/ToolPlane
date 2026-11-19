@@ -1,11 +1,10 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveAccountRequestUser } from "@/lib/auth/request-user";
 import { runNativeAgent } from "@/lib/agents/native";
 import { GenerateChatAssistantPromptSchema } from "@/lib/chat/schemas";
-import {
-  ChatServiceError,
-  getChatPromptGenerationModel,
-} from "@/lib/chat/service";
+import { ChatServiceError } from "@/lib/chat/shared";
+import { getChatPromptGenerationModel } from "@/lib/chat/assistants";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -40,7 +39,12 @@ export const POST = withRequestLogging(
       );
 
     try {
-      const provider = await getChatPromptGenerationModel(user.id, parsed.data);
+      const scope = await resolveWorkspaceScope(
+        { id: parsed.data.workspaceId },
+        user.id,
+      );
+      if (!scope) throw new ChatServiceError(404, "Workspace not found");
+      const provider = await getChatPromptGenerationModel(scope, parsed.data);
       const prompt = (
         await runNativeAgent({
           provider,

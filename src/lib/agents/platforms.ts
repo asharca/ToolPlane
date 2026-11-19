@@ -4,7 +4,6 @@ import { normalizeAgentMessageEvent } from "@/lib/agents/messaging";
 export type MessagingPlatformSlug =
   | "api"
   | "webhooks"
-  | "open_webui"
   | "telegram"
   | "discord"
   | "slack"
@@ -44,7 +43,6 @@ export type MessagingPlatformKind =
 
 export type MessagingSetupFlow =
   | "direct_api"
-  | "openai_compatible"
   | "bot_token"
   | "socket_mode"
   | "gateway_bot"
@@ -173,44 +171,13 @@ export const MESSAGING_PLATFORMS: MessagingPlatform[] = [
     ],
     setupSteps: [
       "Create a per-webhook API token and optional HMAC secret.",
-      "Configure the upstream app to POST JSON to the webhook endpoint.",
+      "Configure the upstream app or relay to POST JSON with an Authorization: Bearer header (or X-ToolPlane-Channel-Token).",
       "Map the upstream sender and channel into source.userId and source.chatId.",
     ],
     operatorNotes: [
       "This is the generic escape hatch, not the right first step for native chat platforms that support bot tokens, gateways, or QR pairing.",
     ],
     capabilities: { images: true, files: true, threads: true },
-  },
-  {
-    slug: "open_webui",
-    label: "Open WebUI",
-    kind: "http",
-    summary:
-      "Open WebUI or OpenAI-compatible chat surfaces forward user turns.",
-    requiredEnv: ["TOOLPLANE_API_TOKEN"],
-    setupFlow: "openai_compatible",
-    primaryAction: "Register ToolPlane as a model endpoint",
-    connectionMode: "OpenAI-compatible HTTP client calls ToolPlane.",
-    publicEndpointRequired: false,
-    credentials: [
-      {
-        name: "TOOLPLANE_API_TOKEN",
-        label: "ToolPlane API token",
-        required: true,
-        secret: true,
-      },
-      {
-        name: "OPEN_WEBUI_BASE_URL",
-        label: "ToolPlane base URL",
-        placeholder: "http://localhost:3002/api/v1",
-      },
-    ],
-    setupSteps: [
-      "Create an API token for Open WebUI.",
-      "Add ToolPlane as an OpenAI-compatible provider or function pipeline.",
-      "Route selected conversations to the target agent.",
-    ],
-    capabilities: { images: true, files: true, threads: true, streaming: true },
   },
   {
     slug: "telegram",
@@ -1510,7 +1477,6 @@ const PLATFORM_BY_SLUG = new Map(
   MESSAGING_PLATFORMS.map((platform) => [platform.slug, platform]),
 );
 const PLATFORM_ALIASES = new Map<string, MessagingPlatformSlug>([
-  ["open-webui", "open_webui"],
   ["whatsapp-cloud", "whatsapp_cloud"],
   ["wecom-callback", "wecom_callback"],
   ["teams-meetings", "teams_meetings"],

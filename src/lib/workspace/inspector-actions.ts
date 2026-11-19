@@ -1,9 +1,10 @@
 "use server";
 
+import { actionScope } from "@/lib/workspace/action-scope";
+
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { effectiveStatus } from "@/lib/process/supervisor";
 import type { SpawnSpec } from "@/lib/process/spawn-spec";
 import { resolveMcpConnectionSpawnSpec } from "@/lib/process/mcp-credentials";
@@ -72,10 +73,9 @@ async function inspectorContext(input: {
   if (!input.sandboxId) return { error: "sandboxRequired" };
   if (!input.workspace || !input.deploymentId)
     return { error: "deploymentNotFound" };
-  const user = await getCurrentUser();
-  if (!user) return { error: "notAuthorized" };
-  const workspace = await getWorkspaceForUser(input.workspace, user.id);
-  if (!workspace) return { error: "notAuthorized" };
+  const ctx = await actionScope({ slug: input.workspace });
+  if (!ctx) return { error: "notAuthorized" };
+  const { ws: workspace } = ctx;
   const [deployment, sandbox] = await Promise.all([
     db.deployment.findFirst({
       where: {

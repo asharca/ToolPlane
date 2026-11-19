@@ -1,4 +1,5 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { randomBytes } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
@@ -32,7 +33,7 @@ async function lockedWorkspace(
   const workspace = await tx.workspace.findFirst({
     where: {
       slug,
-      OR: [{ ownerId: actorId }, { members: { some: { userId: actorId } } }],
+      ...workspaceAccessWhere(actorId, "read", true),
     },
   });
   if (!workspace || (ownerOnly && workspace.ownerId !== actorId))
@@ -86,7 +87,15 @@ export async function renameWorkspace(
   const name = workspaceName(value);
   return db.$transaction(async (tx) => {
     const workspace = await lockedWorkspace(tx, slug, actorId);
-    await tx.workspace.update({ where: { id: workspace.id }, data: { name } });
+    const changed = await tx.workspace.updateMany({
+      where: {
+        id: workspace.id,
+        ownerId: actorId,
+        ...workspaceAccessWhere(actorId),
+      },
+      data: { name },
+    });
+    if (!changed.count) invalid("forbidden");
     await writeAudit(tx, {
       actorId,
       workspaceId: workspace.id,
@@ -458,7 +467,11 @@ export async function setWorkspaceMemberRole(
       invalid("memberMissing");
     if (member.role === "owner") invalid("forbidden");
     if (member.role === role) return;
-    await tx.membership.update({ where: { id: member.id }, data: { role } });
+    const changed = await tx.membership.updateMany({
+      where: { id: member.id, workspaceId: workspace.id },
+      data: { role },
+    });
+    if (!changed.count) invalid("memberMissing");
     await writeAudit(tx, {
       actorId,
       workspaceId: workspace.id,
@@ -487,10 +500,15 @@ export async function transferWorkspaceOwnership(
       include: { user: { select: { status: true } } },
     });
     if (member?.user.status !== "active") invalid("memberMissing");
-    await tx.workspace.update({
-      where: { id: workspace.id },
+    const transferred = await tx.workspace.updateMany({
+      where: {
+        id: workspace.id,
+        ownerId: actorId,
+        ...workspaceAccessWhere(actorId),
+      },
       data: { ownerId: memberId },
     });
+    if (!transferred.count) invalid("forbidden");
     await tx.membership.upsert({
       where: {
         workspaceId_userId: { workspaceId: workspace.id, userId: actorId },
@@ -498,10 +516,11 @@ export async function transferWorkspaceOwnership(
       create: { workspaceId: workspace.id, userId: actorId, role: "member" },
       update: { role: "member" },
     });
-    await tx.membership.update({
-      where: { id: member.id },
+    const changed = await tx.membership.updateMany({
+      where: { id: member.id, workspaceId: workspace.id },
       data: { role: "owner" },
     });
+    if (!changed.count) invalid("memberMissing");
     await writeAudit(tx, {
       actorId,
       workspaceId: workspace.id,
@@ -532,10 +551,15 @@ export async function deleteWorkspace(
     workspaceId = await db.$transaction(async (tx) => {
       const workspace = await lockedWorkspace(tx, slug, actorId, true, true);
       if (confirmation !== workspace.name) invalid("confirmName");
-      await tx.workspace.update({
-        where: { id: workspace.id },
+      const marked = await tx.workspace.updateMany({
+        where: {
+          id: workspace.id,
+          ownerId: actorId,
+          ...workspaceAccessWhere(actorId, "read", true),
+        },
         data: { status: "deleting" },
       });
+      if (!marked.count) invalid("forbidden");
       await writeAudit(tx, {
         actorId,
         workspaceId: workspace.id,
@@ -559,7 +583,10 @@ export async function deleteWorkspace(
         where: { workspaceId: deletedWorkspaceId },
         data: { sandboxId: null },
       });
-      await tx.workspace.delete({ where: { id: deletedWorkspaceId } });
+      const deleted = await tx.workspace.deleteMany({
+        where: { id: deletedWorkspaceId, ownerId: actorId, status: "deleting" },
+      });
+      if (!deleted.count) invalid("forbidden");
       await writeAudit(tx, {
         actorId,
         workspaceId: deletedWorkspaceId,

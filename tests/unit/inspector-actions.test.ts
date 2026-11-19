@@ -8,7 +8,7 @@ import type * as McpCredentials from "@/lib/process/mcp-credentials";
 
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
-  getWorkspaceForUser: vi.fn(),
+  resolveWorkspaceScope: vi.fn(),
   deploymentFindFirst: vi.fn(),
   deploymentUpdateMany: vi.fn(),
   deploymentConfigFileFindMany: vi.fn(),
@@ -26,8 +26,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/auth/current-user", () => ({
   getCurrentUser: mocks.getCurrentUser,
 }));
-vi.mock("@/lib/workspace/queries", () => ({
-  getWorkspaceForUser: mocks.getWorkspaceForUser,
+vi.mock("@/lib/workspace/scope", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/workspace/scope")>()),
+  resolveWorkspaceScope: mocks.resolveWorkspaceScope,
 }));
 vi.mock("@/lib/db", () => ({
   db: {
@@ -89,7 +90,7 @@ describe("sandbox-backed MCP Inspector actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getCurrentUser.mockResolvedValue({ id: "user-1" });
-    mocks.getWorkspaceForUser.mockResolvedValue({ id: "workspace-1" });
+    mocks.resolveWorkspaceScope.mockResolvedValue({ id: "workspace-1" });
     const remoteDeployment = {
       id: "remote-dep",
       serverId: "server-1",

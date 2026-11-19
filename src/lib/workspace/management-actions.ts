@@ -1,9 +1,10 @@
 "use server";
 
+import { actionScope } from "@/lib/workspace/action-scope";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getTranslations } from "next-intl/server";
-import { getCurrentUser } from "@/lib/auth/current-user";
+
 import { safeRelativePath } from "@/lib/auth/safe-redirect";
 import { clearSession } from "@/lib/auth/session";
 import { WORKSPACE_MANAGER_HREF } from "./navigation";
@@ -46,7 +47,7 @@ async function perform(
     slug: string,
   ) => Promise<{ redirectTo?: string; invitePath?: string }> | Promise<void>,
 ): Promise<WorkspaceActionState> {
-  const user = await getCurrentUser();
+  const user = await actionScope();
   if (!user) redirect("/app/login");
   const t = await getTranslations("console.workspaces");
   let result: { redirectTo?: string; invitePath?: string } | undefined;
@@ -113,7 +114,7 @@ export async function previewWorkspaceInviteRecipientAction(
   _prev: WorkspaceInvitePreviewState,
   form: FormData,
 ): Promise<WorkspaceInvitePreviewState> {
-  const user = await getCurrentUser();
+  const user = await actionScope();
   const t = await getTranslations("console.workspaces");
   if (!user) return { error: t("errors.forbidden") };
   try {
@@ -158,7 +159,7 @@ export async function switchInvitationAccountAction(form: FormData) {
 }
 
 export async function previewWorkspaceInvitationAction(token: string) {
-  const user = await getCurrentUser();
+  const user = await actionScope();
   if (!user || typeof token !== "string" || token.length !== 64) return null;
   const invitation = await getWorkspaceInvitation(token);
   return invitation

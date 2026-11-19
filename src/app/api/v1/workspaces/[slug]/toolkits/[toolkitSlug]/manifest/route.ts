@@ -1,3 +1,4 @@
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
@@ -28,8 +29,7 @@ export const GET = withRequestLogging(
     const ws = await db.workspace.findFirst({
       where: {
         slug,
-        status: "active",
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        ...workspaceAccessWhere(user.id),
       },
       select: { id: true, slug: true, name: true },
     });

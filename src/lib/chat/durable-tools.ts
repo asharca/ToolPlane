@@ -1,15 +1,22 @@
 import "server-only";
+import { workspaceScopeWhere } from "@/lib/workspace/scope";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import type { AgentToolSet } from "@/lib/agents/agent-tool";
+import { defineFailures } from "@/lib/errors/registry";
+import { logSystemEvent } from "@/lib/observability/system";
 import { McpToolNotDispatchedError } from "@/lib/remote-mcp/pinned-connection";
 import {
-  chatAccessWhere,
   lockChatRun,
   type ChatRunFence,
   type ChatRunScope,
 } from "./run-control";
 import { chatExecutionProgressChunk } from "./execution-stage";
+
+const confirmationFailures = defineFailures({
+  CHAT_TOOL_NOT_DISPATCHED: "The tool call could not be sent.",
+  CHAT_TOOL_OUTCOME_UNKNOWN: "The tool call outcome is unknown. Do not replay.",
+});
 
 function json(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue;
@@ -43,9 +50,9 @@ export function wrapChatTools(tools: AgentToolSet, scope: Scope): AgentToolSet {
               where: {
                 id: scope.turnId,
                 threadId: scope.threadId,
-                actorUserId: scope.userId,
+                actorUserId: scope.workspace.actorUserId,
                 stopRequestedAt: null,
-                thread: chatAccessWhere(scope.userId, scope.workspaceId),
+                thread: { workspace: workspaceScopeWhere(scope.workspace) },
               },
             });
             if (!authorized)
@@ -140,6 +147,14 @@ export function wrapChatTools(tools: AgentToolSet, scope: Scope): AgentToolSet {
             // else may have committed an external mutation, including cancellation.
             const notDispatched = error instanceof McpToolNotDispatchedError;
             const phase = notDispatched ? "failed" : "execution_unknown";
+            const code = notDispatched
+              ? "CHAT_TOOL_NOT_DISPATCHED"
+              : "CHAT_TOOL_OUTCOME_UNKNOWN";
+            logSystemEvent("chat.tool.execution_failed", {
+              domain: "agent",
+              error,
+              errorCode: code,
+            });
             await db.$transaction(async (tx) => {
               const turn = await lockChatRun(tx, scope.turnId, scope.fence);
               await tx.chatToolConfirmation.updateMany({
@@ -149,10 +164,7 @@ export function wrapChatTools(tools: AgentToolSet, scope: Scope): AgentToolSet {
                   ...(notDispatched
                     ? { executionCompletedAt: new Date() }
                     : {}),
-                  error:
-                    error instanceof Error
-                      ? error.message
-                      : "Remote outcome unknown",
+                  error: confirmationFailures.text(code),
                 },
               });
               await tx.chatRunEvent.create({

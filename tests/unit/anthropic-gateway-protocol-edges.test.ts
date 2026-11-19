@@ -331,7 +331,10 @@ describe("Anthropic gateway protocol edge cases", () => {
     );
     expect(response.status).toBe(502);
     expect(await response.json()).toMatchObject({
-      error: { message: "Model stream ended before it started." },
+      error: {
+        code: "ANTHROPIC_STREAM_INCOMPLETE",
+        message: "Model stream ended before completion.",
+      },
     });
   });
 
@@ -395,15 +398,19 @@ describe("Anthropic gateway protocol edge cases", () => {
   });
 
   it.each(["eof", "error", "throw"])(
-    "emits protocol error after committed stream: %s",
+    "emits safe protocol error after committed stream: %s",
     async (failure) => {
-      const partial = message();
+      const partial = {
+        ...message(),
+        errorMessage: "private provider diagnostic",
+      };
       mocks.stream.mockReturnValue({
         async *[Symbol.asyncIterator]() {
           yield { type: "start", partial };
           if (failure === "error")
             yield { type: "error", reason: "error", error: partial };
-          if (failure === "throw") throw "socket closed";
+          if (failure === "throw")
+            throw new Error("private iterator diagnostic");
         },
       });
       const response = await handleAnthropicMessages(
@@ -411,16 +418,20 @@ describe("Anthropic gateway protocol edge cases", () => {
         provider,
       );
       expect(response.status).toBe(200);
-      expect(events(await response.text()).at(-1)).toMatchObject({
+      const sse = await response.text();
+      expect(sse).not.toContain("private");
+      expect(events(sse).at(-1)).toMatchObject({
         event: "error",
         data: {
           error: {
+            code:
+              failure === "eof"
+                ? "ANTHROPIC_STREAM_INCOMPLETE"
+                : "ANTHROPIC_MODEL_FAILED",
             message:
               failure === "eof"
                 ? "Model stream ended before completion."
-                : failure === "throw"
-                  ? "socket closed"
-                  : "Model request failed.",
+                : "Model request failed.",
           },
         },
       });

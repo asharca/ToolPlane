@@ -13,7 +13,7 @@ import { db } from "@/lib/db";
 import { assertLocalActor } from "@/lib/a2a/local-policy";
 import { isLocalGrant, type TaskGrant } from "@/lib/a2a/principal";
 import { settled } from "@/lib/a2a/model";
-import { createConversation } from "./mutations";
+import { createConversation } from "./conversation-mutations";
 import {
   submitAgentEntry,
   agentEntryResult,

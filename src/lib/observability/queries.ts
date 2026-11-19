@@ -1,4 +1,5 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { Prisma } from "@prisma/client";
 import type { LogEvent, LogDetail } from "@prisma/client";
 import { z } from "zod";
@@ -177,11 +178,7 @@ export async function authorizeLogs(scope: LogScope) {
     !(await db.workspace.findFirst({
       where: {
         id: scope.workspaceId,
-        status: "active",
-        OR: [
-          { ownerId: scope.userId },
-          { members: { some: { userId: scope.userId } } },
-        ],
+        ...workspaceAccessWhere(scope.userId),
       },
       select: { id: true },
     }))

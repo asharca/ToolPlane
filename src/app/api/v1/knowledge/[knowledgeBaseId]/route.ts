@@ -1,3 +1,4 @@
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
@@ -6,10 +7,7 @@ async function baseForUser(id: string, userId: string) {
   return db.knowledgeBase.findFirst({
     where: {
       id,
-      workspace: {
-        status: "active",
-        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
-      },
+      workspace: workspaceAccessWhere(userId),
     },
     select: { id: true, workspaceId: true },
   });
@@ -69,8 +67,12 @@ export const PATCH = withRequestLogging(
       0,
       chunkSize - 1,
     );
-    const updated = await db.knowledgeBase.update({
-      where: { id: base.id },
+    const [updated] = await db.knowledgeBase.updateManyAndReturn({
+      where: {
+        id: base.id,
+        workspaceId: base.workspaceId,
+        workspace: workspaceAccessWhere(user.id),
+      },
       data: {
         ...(typeof body.name === "string"
           ? { name: body.name.trim().slice(0, 120) || "Knowledge base" }
@@ -85,6 +87,11 @@ export const PATCH = withRequestLogging(
         threshold: boundedNumber(body.threshold, 0.2, -1, 1),
       },
     });
+    if (!updated)
+      return Response.json(
+        { error: "Knowledge base not found" },
+        { status: 404 },
+      );
     return Response.json(updated);
   },
 );
@@ -104,7 +111,18 @@ export const DELETE = withRequestLogging(
         { error: "Knowledge base not found" },
         { status: 404 },
       );
-    await db.knowledgeBase.delete({ where: { id: base.id } });
+    const deleted = await db.knowledgeBase.deleteMany({
+      where: {
+        id: base.id,
+        workspaceId: base.workspaceId,
+        workspace: workspaceAccessWhere(user.id),
+      },
+    });
+    if (!deleted.count)
+      return Response.json(
+        { error: "Knowledge base not found" },
+        { status: 404 },
+      );
     return new Response(null, { status: 204 });
   },
 );

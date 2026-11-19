@@ -1,3 +1,4 @@
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveAccountRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
@@ -61,13 +62,7 @@ export const POST = withRequestLogging(
       where: {
         id: deploymentId,
         sandbox: { isNot: null },
-        workspace: {
-          status: "active",
-          OR: [
-            { ownerId: user.id },
-            { members: { some: { userId: user.id } } },
-          ],
-        },
+        workspace: workspaceAccessWhere(user.id),
       },
       select: { id: true, sandbox: { select: { id: true } } },
     });

@@ -1,10 +1,11 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { ButtonLink } from "@/components/motion/button";
 
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { Store } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser, getDeployments } from "@/lib/workspace/queries";
+import { getDeployments } from "@/lib/workspace/queries";
 import { effectiveStatus } from "@/lib/process/supervisor";
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import { ProvisioningRefresher } from "@/components/dashboard/ProvisioningRefresher";
@@ -50,7 +51,7 @@ export default async function McpServersPage({
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
-  const ws = await getWorkspaceForUser(slug, user.id);
+  const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app");
   const [deployments, { allowHttp }] = await Promise.all([
     getDeployments(ws.id),

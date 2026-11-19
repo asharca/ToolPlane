@@ -1,4 +1,9 @@
 import "server-only";
+import {
+  type WorkspaceScope,
+  workspaceScopeWhere,
+  resolveWorkspaceScope,
+} from "@/lib/workspace/scope";
 import { db } from "@/lib/db";
 import { logSystemEvent } from "@/lib/observability/system";
 import {
@@ -12,24 +17,26 @@ import { prepareSessionMcpDefinition } from "@/lib/process/mcp-definition";
 import { ensureWorkspaceMcpDeploymentPinned } from "@/lib/process/mcp-pinning";
 import { resolvePiPackageMcpPolicy } from "@/lib/agents/pi-package-mcp";
 import type { AgentPackageMcpConnection } from "@/lib/pi-packages/agent-apply";
-import {
-  PluginError,
-  requirePluginWorkspace,
-  visiblePluginWhere,
-} from "./catalog";
+import { PluginError, visiblePluginWhere } from "./catalog";
 
 /** Drafts have no applied environment to publish; only their selected package pin follows. */
 async function followDraftPlugin(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope<"manage">,
   agentId: string,
   installId: string,
   releaseId: string,
 ) {
+  const { id: workspaceId, actorUserId: userId } = scope;
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
     await tx.$queryRaw`SELECT id FROM "Agent" WHERE id=${agentId} AND "workspaceId"=${workspaceId} FOR UPDATE`;
-    await requirePluginWorkspace(workspaceId, userId, true, tx);
+    if (
+      !(await tx.workspace.findFirst({
+        where: workspaceScopeWhere(scope),
+        select: { id: true },
+      }))
+    )
+      throw new PluginError("not_authorized", "Workspace access denied.", 403);
     const agent = await tx.agent.findFirst({
       where: {
         id: agentId,
@@ -117,7 +124,13 @@ async function syncAgentPlugin(
         "The updating administrator no longer exists.",
         403,
       );
-    await requirePluginWorkspace(workspaceId, requestedBy, true);
+    const scope = await resolveWorkspaceScope(
+      { id: workspaceId },
+      requestedBy,
+      "manage",
+    );
+    if (!scope)
+      throw new PluginError("not_authorized", "Workspace access denied.", 403);
     if (
       !binding.targetRelease ||
       binding.marketInstall.status !== "ready" ||
@@ -144,15 +157,7 @@ async function syncAgentPlugin(
         manifest.package.toolplane?.mcp,
         binding.marketInstall.resourceMap,
       );
-      if (
-        await followDraftPlugin(
-          workspaceId,
-          requestedBy,
-          agentId,
-          installId,
-          release.id,
-        )
-      )
+      if (await followDraftPlugin(scope, agentId, installId, release.id))
         return;
       const connections: AgentPackageMcpConnection[] = [];
       for (const [deploymentId, tools] of Object.entries(policy)) {
@@ -175,9 +180,7 @@ async function syncAgentPlugin(
         });
       }
       const current = await pinCurrentAgentRevision(db, agentId);
-      await applyPiPackageToAgent({
-        workspaceId,
-        userId: requestedBy,
+      await applyPiPackageToAgent(scope, {
         agentId,
         expectedRevisionId: current.id,
         package: {
@@ -278,15 +281,21 @@ export async function runPendingAgentPluginSyncs() {
 }
 
 export async function approveAgentPluginSync(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope<"manage">,
   agentId: string,
   installId: string,
   expectedTargetReleaseId: string,
 ) {
+  const { id: workspaceId, actorUserId: userId } = scope;
   await db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
-    await requirePluginWorkspace(workspaceId, userId, true, tx);
+    if (
+      !(await tx.workspace.findFirst({
+        where: workspaceScopeWhere(scope),
+        select: { id: true },
+      }))
+    )
+      throw new PluginError("not_authorized", "Workspace access denied.", 403);
     const binding = await tx.agentPiPackage.findFirst({
       where: {
         agentId,

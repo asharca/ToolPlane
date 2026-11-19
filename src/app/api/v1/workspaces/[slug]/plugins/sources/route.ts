@@ -18,9 +18,9 @@ export const GET = withRequestLogging(
   async (req: Request, { params }: Context) => {
     try {
       const { slug } = await params;
-      const { user, workspace } = await pluginRequestContext(req, slug);
+      const { workspace } = await pluginRequestContext(req, slug, "read");
       return Response.json({
-        items: await listPluginSources(workspace.id, user.id),
+        items: await listPluginSources(workspace),
       });
     } catch (error) {
       return pluginApiError(error);
@@ -32,13 +32,9 @@ export const POST = withRequestLogging(
   async (req: Request, { params }: Context) => {
     try {
       const { slug } = await params;
-      const { user, workspace } = await pluginRequestContext(req, slug);
+      const { workspace } = await pluginRequestContext(req, slug, "manage");
       return Response.json(
-        await createPluginSource(
-          workspace.id,
-          user.id,
-          await pluginJson(req, sourceBody),
-        ),
+        await createPluginSource(workspace, await pluginJson(req, sourceBody)),
         { status: 201 },
       );
     } catch (error) {

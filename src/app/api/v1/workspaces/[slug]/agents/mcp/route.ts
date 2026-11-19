@@ -1,8 +1,9 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { NextResponse } from "next/server";
 import { Buffer } from "node:buffer";
 import { resolveAgentControlRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { logRequest } from "@/lib/observability/log";
 import { isSameOriginRequest } from "@/lib/http/origin";
 import {
@@ -113,7 +114,7 @@ export const POST = withRequestLogging(
     const user = await resolveAgentControlRequestUser(req);
     if (!user) return rpcError(null, -32001, "unauthorized", 401);
 
-    const workspace = await getWorkspaceForUser(slug, user.id);
+    const workspace = await resolveWorkspaceScope({ slug }, user.id);
     if (!workspace) return rpcError(null, -32004, "workspace not found", 404);
 
     let raw: unknown;
@@ -209,11 +210,7 @@ export const POST = withRequestLogging(
       } else {
         try {
           const result = await executeAgentControlTool(
-            {
-              workspaceId: workspace.id,
-              workspaceSlug: workspace.slug,
-              actorId: user.id,
-            },
+            workspace,
             toolName,
             rpcParams?.arguments,
           );

@@ -1,4 +1,9 @@
 import "server-only";
+import { logSystemEvent } from "@/lib/observability/system";
+import {
+  systemUpdateFailures,
+  type SystemUpdateFailureCode,
+} from "./update-failures";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import {
   permitsTransportProtocol,
@@ -92,6 +97,7 @@ export type SystemUpdateJobStatus = {
   status: "idle" | "downloading" | "applying" | "restarting" | "failed";
   targetVersion: string | null;
   message: string | null;
+  code?: SystemUpdateFailureCode;
   startedAt: string | null;
   updatedAt: string;
 };
@@ -113,7 +119,7 @@ export type SystemUpdateResult =
       currentVersion: string;
       latestVersion: string | null;
       artifactName: string;
-      message: string;
+      code: SystemUpdateFailureCode;
     };
 
 type ReplacementRecord = {
@@ -150,7 +156,10 @@ function currentUpdateJob(): SystemUpdateJobStatus {
 
 function setUpdateJob(
   status: SystemUpdateJobStatus["status"],
-  input: Pick<SystemUpdateJobStatus, "targetVersion" | "message" | "startedAt">,
+  input: Pick<
+    SystemUpdateJobStatus,
+    "targetVersion" | "message" | "startedAt" | "code"
+  >,
 ): void {
   updateGlobals.__toolplaneSystemUpdateJob = {
     status,
@@ -187,8 +196,23 @@ function versionRoot(): string {
   return runtimeRoot() ?? process.cwd();
 }
 
-function displayError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+class SystemUpdateFailure extends Error {
+  constructor(readonly code: SystemUpdateFailureCode) {
+    super(systemUpdateFailures.text(code));
+  }
+}
+
+function recordUpdateFailure(
+  error: unknown,
+  fallback: SystemUpdateFailureCode,
+): SystemUpdateFailureCode {
+  const code = error instanceof SystemUpdateFailure ? error.code : fallback;
+  logSystemEvent("system.update.failed", {
+    level: "error",
+    errorCode: code,
+    error,
+  });
+  return code;
 }
 
 async function pathExists(target: string): Promise<boolean> {
@@ -310,13 +334,16 @@ export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {
       artifactName,
       reason:
         unavailableReason ||
-        (!artifact ? `Release artifact not found: ${artifactName}` : null),
+        (!artifact
+          ? systemUpdateFailures.text("SYSTEM_UPDATE_ARTIFACT_MISSING")
+          : null),
     };
   } catch (error) {
+    const code = recordUpdateFailure(error, "SYSTEM_UPDATE_LOOKUP_FAILED");
     return disabledStatus(
       currentVersion,
       artifactName,
-      unavailableReason || displayError(error),
+      unavailableReason || systemUpdateFailures.text(code),
     );
   }
 }
@@ -378,7 +405,7 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
       currentVersion,
       latestVersion: null,
       artifactName,
-      message: "Updates are disabled.",
+      code: "SYSTEM_UPDATE_DISABLED",
     };
   }
   if (!root) {
@@ -389,7 +416,7 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
       currentVersion,
       latestVersion: null,
       artifactName,
-      message: "Runtime directory is not configured.",
+      code: "SYSTEM_UPDATE_RUNTIME_UNCONFIGURED",
     };
   }
   if (!(await canWriteRuntime(root))) {
@@ -400,7 +427,7 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
       currentVersion,
       latestVersion: null,
       artifactName,
-      message: "Runtime directory is not writable.",
+      code: "SYSTEM_UPDATE_RUNTIME_UNWRITABLE",
     };
   }
 
@@ -427,7 +454,7 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
         currentVersion,
         latestVersion,
         artifactName,
-        message: `Release artifact not found: ${artifactName}`,
+        code: "SYSTEM_UPDATE_ARTIFACT_MISSING",
       };
     }
 
@@ -440,7 +467,7 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
         currentVersion,
         latestVersion,
         artifactName,
-        message: `Release checksum not found: ${artifactName}.sha256`,
+        code: "SYSTEM_UPDATE_CHECKSUM_MISSING",
       };
     }
 
@@ -495,7 +522,7 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
       currentVersion,
       latestVersion: null,
       artifactName,
-      message: displayError(error),
+      code: recordUpdateFailure(error, "SYSTEM_UPDATE_LOOKUP_FAILED"),
     };
   }
 }
@@ -511,8 +538,8 @@ async function runSystemUpdateJob(
     await downloadAndApplyRelease(root, artifact, checksumAsset, async () => {
       const shutdown = updateGlobals.__toolplaneShutdown;
       if (!shutdown || process.listenerCount("SIGTERM") === 0) {
-        throw new Error(
-          "Online updates require the managed production launcher. No runtime files were replaced.",
+        throw new SystemUpdateFailure(
+          "SYSTEM_UPDATE_MANAGED_LAUNCHER_REQUIRED",
         );
       }
       setUpdateJob("applying", {
@@ -523,9 +550,7 @@ async function runSystemUpdateJob(
       });
       // Shutdown imports must still resolve against the running release.
       if (!(await shutdown())) {
-        throw new Error(
-          "Runtime shutdown was not clean. No runtime files were replaced; inspect recovery before restarting.",
-        );
+        throw new SystemUpdateFailure("SYSTEM_UPDATE_DRAIN_FAILED");
       }
     });
     setUpdateJob("restarting", {
@@ -535,9 +560,11 @@ async function runSystemUpdateJob(
     });
     scheduleRestart();
   } catch (error) {
+    const code = recordUpdateFailure(error, "SYSTEM_UPDATE_APPLY_FAILED");
     setUpdateJob("failed", {
       targetVersion,
-      message: displayError(error),
+      code,
+      message: systemUpdateFailures.text(code),
       startedAt,
     });
   }

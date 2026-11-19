@@ -3,7 +3,7 @@ import {
   SubagentDefinitionSchema,
   OmpModelHintSchema,
 } from "@/lib/agents/capability-contracts";
-import { agentRuntimeBuiltinTools } from "@/lib/agents/runtime-kind";
+import { HISTORICAL_OMP_BUILTIN_TOOLS } from "@/lib/agents/runtime-kind";
 import { parseSkillFrontmatter } from "@/lib/skills/frontmatter";
 
 export function parseSubagentMarkdown(path: string, content: string) {
@@ -12,7 +12,7 @@ export function parseSubagentMarkdown(path: string, content: string) {
     metadata.name?.trim() ||
     path.split("/").at(-1)?.replace(/\.md$/i, "") ||
     "Imported subagent";
-  const available = [...agentRuntimeBuiltinTools("omp")];
+  const available = [...HISTORICAL_OMP_BUILTIN_TOOLS];
   let builtinTools = available;
   if (metadata.tools !== undefined) {
     let value: unknown;

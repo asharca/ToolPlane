@@ -18,10 +18,10 @@ export const GET = withRequestLogging(
   async (req: Request, { params }: Context) => {
     try {
       const { slug } = await params;
-      const { user, workspace } = await pluginRequestContext(req, slug);
+      const { workspace } = await pluginRequestContext(req, slug, "read");
       const search = new URL(req.url).searchParams;
       return Response.json(
-        await listPlugins(workspace.id, user.id, {
+        await listPlugins(workspace, {
           sourceId: search.get("sourceId") ?? undefined,
           query: search.get("query") ?? undefined,
           installedOnly: search.get("installed") === "true",
@@ -38,15 +38,10 @@ export const POST = withRequestLogging(
   async (req: Request, { params }: Context) => {
     try {
       const { slug } = await params;
-      const { user, workspace } = await pluginRequestContext(req, slug);
+      const { workspace } = await pluginRequestContext(req, slug, "manage");
       const body = await pluginJson(req, addBody);
       return Response.json(
-        await addPlugin(
-          workspace.id,
-          user.id,
-          body.listingId,
-          body.mcpBindings,
-        ),
+        await addPlugin(workspace, body.listingId, body.mcpBindings),
         { status: 201 },
       );
     } catch (error) {

@@ -1,8 +1,9 @@
 "use server";
 
+import { actionScope } from "@/lib/workspace/action-scope";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
+
 import { AUTO_TIME_ZONE_VALUE, normalizeTimeZone } from "@/lib/timezone";
 
 export type TimeZonePreferenceState = {
@@ -11,7 +12,7 @@ export type TimeZonePreferenceState = {
 };
 
 export async function syncDetectedTimeZone(value: string): Promise<boolean> {
-  const user = await getCurrentUser();
+  const user = await actionScope();
   if (!user) return false;
 
   const timeZone = normalizeTimeZone(value);
@@ -31,7 +32,7 @@ export async function updateTimeZonePreference(
   _previous: TimeZonePreferenceState,
   formData: FormData,
 ): Promise<TimeZonePreferenceState> {
-  const user = await getCurrentUser();
+  const user = await actionScope();
   if (!user) return { error: "unauthorized" };
 
   const selected = String(formData.get("timeZone") ?? "");

@@ -1,8 +1,9 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { parseJson } from "@/lib/agents/public-api/body";
 import {
   StreamRulesSchema,
@@ -32,8 +33,13 @@ async function handle(
       { status: parsed.reason === "too_large" ? 413 : 400 },
     );
   const value = parsed?.ok ? parsed.value : null;
-  const workspace = await getWorkspaceForUser(
-    value?.workspace ?? new URL(req.url).searchParams.get("workspace") ?? "",
+  const workspace = await resolveWorkspaceScope(
+    {
+      slug:
+        value?.workspace ??
+        new URL(req.url).searchParams.get("workspace") ??
+        "",
+    },
     user.id,
   );
   if (!workspace) return Response.json({ error: "notFound" }, { status: 404 });

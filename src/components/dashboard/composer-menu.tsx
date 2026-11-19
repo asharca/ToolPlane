@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
+import { displayErrorText } from "@/components/dashboard/display-error";
 import { composerTrigger } from "@/lib/work/composer-types";
 import { cn } from "@/lib/utils";
 
@@ -190,7 +191,7 @@ export function useComposerMenu({
               setLoaded({
                 key: loadKey,
                 items: [],
-                error: cause instanceof Error ? cause.message : t("loadFailed"),
+                error: displayErrorText(cause, t("loadFailed")),
               });
           });
       },
@@ -421,9 +422,7 @@ export function useComposerMenu({
         setIndex(0);
       } catch (cause) {
         if (!current()) return;
-        const message =
-          cause instanceof Error ? cause.message : t("loadFailed");
-        onError?.(message);
+        onError?.(displayErrorText(cause, t("loadFailed")));
       } finally {
         setBusy(false);
       }
@@ -450,7 +449,7 @@ export function useComposerMenu({
         setFrames([]);
         setTrigger(null);
       } catch (cause) {
-        setFormError(cause instanceof Error ? cause.message : t("loadFailed"));
+        setFormError(displayErrorText(cause, t("loadFailed")));
       } finally {
         setBusy(false);
       }

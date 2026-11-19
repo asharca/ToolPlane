@@ -1,7 +1,10 @@
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
 import { searchKnowledgeBases } from "@/lib/knowledge";
+import { KnowledgeError, knowledgeFailures } from "@/lib/knowledge/errors";
+import { logSystemEvent } from "@/lib/observability/system";
 
 export const POST = withRequestLogging(
   "/api/v1/knowledge/[knowledgeBaseId]/search",
@@ -28,13 +31,7 @@ export const POST = withRequestLogging(
     const base = await db.knowledgeBase.findFirst({
       where: {
         id: knowledgeBaseId,
-        workspace: {
-          status: "active",
-          OR: [
-            { ownerId: user.id },
-            { members: { some: { userId: user.id } } },
-          ],
-        },
+        workspace: workspaceAccessWhere(user.id),
       },
       select: {
         id: true,
@@ -54,8 +51,13 @@ export const POST = withRequestLogging(
         sources: await searchKnowledgeBases([base], body.query),
       });
     } catch (error) {
+      const code =
+        error instanceof KnowledgeError
+          ? error.code
+          : "KNOWLEDGE_SEARCH_FAILED";
+      logSystemEvent("knowledge.search_failed", { error, errorCode: code });
       return Response.json(
-        { error: error instanceof Error ? error.message : "Search failed" },
+        { error: knowledgeFailures.text(code), code },
         { status: 502 },
       );
     }

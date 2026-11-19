@@ -6,7 +6,7 @@ import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
 import * as sandboxRuntime from "@/lib/agents/sandbox-runtime";
 import * as piRuntime from "@/lib/agents/pi-runtime";
 import { publishAgentRevisionInTransaction } from "@/lib/agents/revisions";
-import { createConversation } from "@/lib/agents/mutations";
+import { createConversation } from "@/lib/agents/conversation-mutations";
 import { selectNewSessionRevision } from "@/lib/agents/evolution/rollout-selection";
 import {
   handleEvolution,
@@ -215,9 +215,16 @@ it("persists feedback without crossing workspace, agent, role or private-source 
       )
     ).status,
   ).toBe(404);
-  expect(
-    (await handleEvolution(request("GET"), scope.agentId, "episodes")).status,
-  ).toBe(403);
+  const forbidden = await handleEvolution(
+    request("GET"),
+    scope.agentId,
+    "episodes",
+  );
+  expect(forbidden.status).toBe(403);
+  expect(await forbidden.json()).toEqual({
+    error: "You do not have permission to manage Agent evolution.",
+    code: "FORBIDDEN",
+  });
   auth.id = scope.actorId;
   const saved = await handleMessageFeedback(
     request("PUT", { rating: "positive", comment: "Useful" }),

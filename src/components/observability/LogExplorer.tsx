@@ -5,6 +5,8 @@ import { useTranslations } from "next-intl";
 import { Button, ButtonLink } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import { FormSelect } from "@/components/ui/FormSelect";
+import { ENTRY_KINDS } from "@/lib/agents/entry-kinds";
+import { apiRequest } from "@/lib/client/api";
 import type {
   A2ATaskSummary,
   AgentRunSummary,
@@ -106,25 +108,14 @@ export function LogExplorer({
     setError(null);
     setPage(null);
     async function load() {
-      try {
-        const response = await fetch(requestUrl, {
-          signal: controller.signal,
-          cache: "no-store",
-        });
-        if (!response.ok) {
-          const payload = (await response.json().catch(() => null)) as {
-            error?: string;
-          } | null;
-          throw new Error(payload?.error ?? `${response.status}`);
-        }
-        const result = (await response.json()) as ViewPage<LogItem>;
-        if (!controller.signal.aborted) setPage(result);
-      } catch (cause) {
-        if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : t("loadError"));
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
-      }
+      const result = await apiRequest<ViewPage<LogItem>>(requestUrl, {
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      if (controller.signal.aborted) return;
+      if (result.ok) setPage(result.data);
+      else setError(result.message ?? t("loadError"));
+      setLoading(false);
     }
     void load();
     return () => controller.abort();
@@ -351,12 +342,10 @@ export function LogExplorer({
                   className="w-40"
                   options={[
                     { value: "", label: t("all") },
-                    ...["chat", "work", "channel", "control", "trigger"].map(
-                      (value) => ({
-                        value,
-                        label: t(`entryKinds.${value}`),
-                      }),
-                    ),
+                    ...ENTRY_KINDS.map((value) => ({
+                      value,
+                      label: t(`entryKinds.${value}`),
+                    })),
                   ]}
                 />
               </div>
@@ -440,9 +429,7 @@ export function LogExplorer({
           role="alert"
           className="space-y-3 rounded-lg border border-destructive/30 p-4"
         >
-          <p className="text-sm text-destructive">
-            {t("loadError")}: {error}
-          </p>
+          <p className="text-sm text-destructive">{error}</p>
           <Button
             type="button"
             variant="secondary"

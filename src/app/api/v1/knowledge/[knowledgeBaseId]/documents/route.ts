@@ -1,6 +1,8 @@
-import { logSystemEvent } from "@/lib/observability/system";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
+import { KnowledgeError, knowledgeFailures } from "@/lib/knowledge/errors";
 import { withRequestLogging } from "@/lib/observability/http";
 import { basename } from "node:path";
+import type { Prisma } from "@prisma/client";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
 import { mcpRpc } from "@/lib/process/mcp-client";
@@ -22,16 +24,6 @@ function safeName(name: string) {
       .replace(/[^A-Za-z0-9._ -]/g, "_")
       .slice(0, 160) || "upload.txt"
   );
-}
-
-function resultText(result: Record<string, unknown> | null) {
-  const content = result?.content;
-  return Array.isArray(content) &&
-    typeof content[0] === "object" &&
-    content[0] &&
-    typeof (content[0] as { text?: unknown }).text === "string"
-    ? (content[0] as { text: string }).text
-    : null;
 }
 
 export const POST = withRequestLogging(
@@ -68,13 +60,7 @@ export const POST = withRequestLogging(
     const base = await db.knowledgeBase.findFirst({
       where: {
         id: knowledgeBaseId,
-        workspace: {
-          status: "active",
-          OR: [
-            { ownerId: user.id },
-            { members: { some: { userId: user.id } } },
-          ],
-        },
+        workspace: workspaceAccessWhere(user.id),
       },
       select: { id: true, workspaceId: true },
     });
@@ -109,7 +95,10 @@ export const POST = withRequestLogging(
     );
     if (!write || (write as { isError?: unknown }).isError)
       return Response.json(
-        { error: resultText(write) || "Sandbox write failed" },
+        {
+          error: knowledgeFailures.text("KNOWLEDGE_SOURCE_WRITE_FAILED"),
+          code: "KNOWLEDGE_SOURCE_WRITE_FAILED",
+        },
         { status: 502 },
       );
 
@@ -124,22 +113,22 @@ export const POST = withRequestLogging(
         status: "pending",
       },
     });
+    const where: Prisma.KnowledgeDocumentWhereInput = {
+      id: document.id,
+      knowledgeBaseId,
+      knowledgeBase: {
+        workspace: workspaceAccessWhere(user.id),
+      },
+    };
     try {
-      await indexKnowledgeText(document.id, new TextDecoder().decode(bytes));
+      await indexKnowledgeText(where, new TextDecoder().decode(bytes));
     } catch (error) {
-      logSystemEvent("knowledge.documents.index_failed", {
-        error,
-        level: "warn",
-        workspaceId: base.workspaceId,
-        deploymentId: sandbox.deploymentId,
-        actorId: user.id,
-        attributes: { knowledgeBaseId, documentId: document.id },
-      });
-      // The document keeps its failed status and can be retried after provider configuration is fixed.
+      if (!(error instanceof KnowledgeError)) throw error;
+      // Return the scoped document with its saved failure status, if it is still accessible.
     }
-    const updated = await db.knowledgeDocument.findUnique({
-      where: { id: document.id },
-    });
-    return Response.json(updated, { status: 201 });
+    const updated = await db.knowledgeDocument.findFirst({ where });
+    return updated
+      ? Response.json(updated, { status: 201 })
+      : Response.json({ error: "Document not found" }, { status: 404 });
   },
 );

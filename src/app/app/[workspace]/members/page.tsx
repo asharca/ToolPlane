@@ -1,10 +1,8 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { getLocale } from "next-intl/server";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import {
-  getWorkspaceForUser,
-  getWorkspaceMembers,
-} from "@/lib/workspace/queries";
+import { getWorkspaceMembers } from "@/lib/workspace/queries";
 import { DashboardPage } from "@/components/dashboard/DashboardUI";
 import {
   WorkspaceMembers,
@@ -44,7 +42,7 @@ export default async function MembersPage({
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
-  const ws = await getWorkspaceForUser(slug, user.id);
+  const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app");
   const isOwner = ws.ownerId === user.id;
   const [members, invitations] = await Promise.all([

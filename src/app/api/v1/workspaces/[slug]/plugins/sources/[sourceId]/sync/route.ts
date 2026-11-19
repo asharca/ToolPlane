@@ -10,11 +10,10 @@ export const POST = withRequestLogging(
   ) => {
     try {
       const { slug, sourceId } = await params;
-      const { user, workspace } = await pluginRequestContext(req, slug);
-      return Response.json(
-        await syncPluginSource(workspace.id, user.id, sourceId),
-        { status: 202 },
-      );
+      const { workspace } = await pluginRequestContext(req, slug, "read");
+      return Response.json(await syncPluginSource(workspace, sourceId), {
+        status: 202,
+      });
     } catch (error) {
       return pluginApiError(error);
     }

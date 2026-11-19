@@ -1,3 +1,4 @@
+import { testWorkspaceScope } from "../helpers/workspace-scope";
 // @vitest-environment node
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -9,11 +10,8 @@ import {
   readOmpInstructions,
   saveOmpInstructionsDraft,
 } from "@/lib/agents/omp-config-server";
-import {
-  cloneAgent,
-  createAgent,
-  createConversation,
-} from "@/lib/agents/mutations";
+import { cloneAgent, createAgent } from "@/lib/agents/mutations";
+import { createConversation } from "@/lib/agents/conversation-mutations";
 import {
   publishAgentRevision,
   rollbackAgentRevision,
@@ -155,6 +153,7 @@ it("retains OMP history but refuses creation, publication, rollback and executio
     },
   });
   await expect(
+    // @ts-expect-error Exercise the runtime guard as an untyped caller.
     createAgent(workspaceId, "Forbidden OMP", { runtime: "omp" }),
   ).rejects.toThrow();
   await expect(
@@ -170,20 +169,28 @@ it("retains OMP history but refuses creation, publication, rollback and executio
     requireAgentRevision(db, agentId, revision.id),
   ).rejects.toMatchObject({ code: "AGENT_EXECUTION_RETIRED" });
   await expect(createConversation(workspaceId, agentId)).rejects.toThrow();
-  expect(await readOmpInstructions(workspaceId, userId, agentId)).toMatchObject(
-    {
-      systemPrompt: "Historical primary",
-      files: [
-        {
-          path: "AGENTS.md",
-          content: "Retained append instructions",
-          mode: "append",
-        },
-      ],
-    },
-  );
+  expect(
+    await (async () =>
+      readOmpInstructions(
+        await testWorkspaceScope(workspaceId, userId, "read"),
+        agentId,
+      ))(),
+  ).toMatchObject({
+    systemPrompt: "Historical primary",
+    files: [
+      {
+        path: "AGENTS.md",
+        content: "Retained append instructions",
+        mode: "append",
+      },
+    ],
+  });
   await expect(
-    saveOmpInstructionsDraft({ workspaceId, userId, agentId, files: [] }),
+    (async () =>
+      saveOmpInstructionsDraft(
+        await testWorkspaceScope(workspaceId, userId, "read"),
+        { agentId, files: [] },
+      ))(),
   ).rejects.toMatchObject({ code: "AGENT_EXECUTION_RETIRED", status: 410 });
   for (const [token, status] of [
     [ownerToken, 410],
@@ -258,22 +265,22 @@ it("persists only version-specific local notes and serves unmatched files as imm
       { path: "CHANGELOG.md", content: text },
     ],
   });
-  const first = await createPrivatePlugin(
-    workspaceId,
-    userId,
-    input("1.0.0", "## 1.0.0\nFirst notes"),
-  );
+  const first = await (async () =>
+    createPrivatePlugin(
+      await testWorkspaceScope(workspaceId, userId, "manage"),
+      input("1.0.0", "## 1.0.0\nFirst notes"),
+    ))();
   const original = await db.marketRelease.findUniqueOrThrow({
     where: { id: first.releaseId },
   });
   expect(original.releaseNotes).toBe("First notes");
   const unmatchedText = "## Unreleased\nFuture plans\n\n## 1.0.0\nFirst notes";
-  const unmatched = await appendPrivatePluginVersion(
-    workspaceId,
-    userId,
-    first.installId,
-    input("1.0.1", unmatchedText),
-  );
+  const unmatched = await (async () =>
+    appendPrivatePluginVersion(
+      await testWorkspaceScope(workspaceId, userId, "manage"),
+      first.installId,
+      input("1.0.1", unmatchedText),
+    ))();
   expect(
     (
       await db.marketRelease.findUniqueOrThrow({
@@ -281,12 +288,12 @@ it("persists only version-specific local notes and serves unmatched files as imm
       })
     ).releaseNotes,
   ).toBeNull();
-  const latest = await appendPrivatePluginVersion(
-    workspaceId,
-    userId,
-    first.installId,
-    input("1.0.2", "## 1.0.2\nLatest notes\n\n## 1.0.0\nRewritten history"),
-  );
+  const latest = await (async () =>
+    appendPrivatePluginVersion(
+      await testWorkspaceScope(workspaceId, userId, "manage"),
+      first.installId,
+      input("1.0.2", "## 1.0.2\nLatest notes\n\n## 1.0.0\nRewritten history"),
+    ))();
   expect(
     (
       await db.marketRelease.findUniqueOrThrow({
@@ -294,7 +301,11 @@ it("persists only version-specific local notes and serves unmatched files as imm
       })
     ).releaseNotes,
   ).toBe("Latest notes");
-  const plugin = await getPlugin(workspaceId, userId, original.listingId);
+  const plugin = await (async () =>
+    getPlugin(
+      await testWorkspaceScope(workspaceId, userId, "read"),
+      original.listingId,
+    ))();
   expect(plugin.latestRelease?.changelog).toEqual({
     text: "Latest notes",
     sourceUrl: null,
@@ -313,10 +324,10 @@ it("persists only version-specific local notes and serves unmatched files as imm
     }),
   ).toEqual(original);
   await expect(
-    createPrivatePlugin(
-      workspaceId,
-      userId,
-      input("2.0.0", `## Unreleased\nsk-${"x".repeat(40)}`),
-    ),
+    (async () =>
+      createPrivatePlugin(
+        await testWorkspaceScope(workspaceId, userId, "manage"),
+        input("2.0.0", `## Unreleased\nsk-${"x".repeat(40)}`),
+      ))(),
   ).rejects.toMatchObject({ code: "PLUGIN_CONTAINS_SECRET" });
 });

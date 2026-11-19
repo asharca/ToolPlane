@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ user: vi.fn(), work: vi.fn() }));
 vi.mock("@/lib/auth/request-user", () => ({ resolveRequestUser: mocks.user }));
 vi.mock("@/lib/work/sessions", () => ({ getWorkSessionForUser: mocks.work }));
+vi.mock("@/lib/workspace/scope", () => ({
+  resolveWorkspaceScope: async () => ({ id: "workspace-events" }),
+}));
 vi.mock("@/lib/observability/http", () => ({
   withRequestLogging: (_path: string, handler: unknown) => handler,
 }));

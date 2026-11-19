@@ -14,6 +14,10 @@ import { activeConversationMessages } from "@/lib/agents/conversation-context";
 import { persistAgentPromptInvocation } from "@/lib/agents/prompt-invocation";
 import type { SandboxRuntimeActivity } from "@/lib/agents/sandbox-runtime";
 import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
+import { taskRuntimeFailure } from "@/lib/agents/runtime-failure";
+import { workFailures, type WorkFailureCode } from "./failures";
+import { updateWorkSessionStatus } from "./lifecycle";
+import { finalizeWorkSessionCancellation } from "./sessions";
 import {
   STREAM_RULE_TRIGGER_PART,
   type StreamRuleTrigger,
@@ -268,19 +272,7 @@ async function executeWork(workSessionId: string) {
     conversationId: work.conversationId,
   });
   if (work.status === "cancelling") {
-    await db.workSession.updateMany({
-      where: {
-        id: work.id,
-        workspaceId: work.workspaceId,
-        status: "cancelling",
-      },
-      data: {
-        status: "idle",
-        error: null,
-        waitingQuestion: null,
-        completedAt: new Date(),
-      },
-    });
+    await finalizeWorkSessionCancellation(work.workspaceId, work.id);
     finishWorkOutput(work.id);
     return;
   }
@@ -672,6 +664,7 @@ async function executeWork(workSessionId: string) {
           },
         ];
   };
+  let failureCode: WorkFailureCode = "WORK_EXECUTION_FAILED";
   try {
     const stillRunning = await db.workSession.count({
       where: { id: work.id, status: "running" },
@@ -684,15 +677,17 @@ async function executeWork(workSessionId: string) {
       work.conversation.legacyRevisionUnresolved ||
       work.conversation.agentRevisionId !== work.agentRevisionId
     ) {
-      throw new Error(
-        "Historical Work is read-only. Start a new Work session.",
-      );
+      failureCode = "WORK_READ_ONLY";
+      throw new Error(workFailures.text(failureCode));
     }
     if (!work.sandbox) {
-      throw new Error("Work sandbox is unavailable.");
+      failureCode = "WORK_SANDBOX_UNAVAILABLE";
+      throw new Error(workFailures.text(failureCode));
     }
-    if (!work.a2aActorId)
-      throw new Error("Work execution identity is unavailable.");
+    if (!work.a2aActorId) {
+      failureCode = "WORK_IDENTITY_UNAVAILABLE";
+      throw new Error(workFailures.text(failureCode));
+    }
     // Labels are display metadata, not authority. The admitted worker resolves and
     // intersects the pinned Work resources with current permissions before execution.
     resolvedDeploymentIds = snapshot(work.runtimeSnapshot).deploymentIds ?? [];
@@ -737,8 +732,10 @@ async function executeWork(workSessionId: string) {
               .join("\n")
           : "";
       executedCommand = parseRuntimeCommand(commandText, work.runtimeKind);
-      if (!last?.id || last.role !== "user")
-        throw new Error("Work user message is unavailable.");
+      if (!last?.id || last.role !== "user") {
+        failureCode = "WORK_MESSAGE_UNAVAILABLE";
+        throw new Error(workFailures.text(failureCode));
+      }
       const stopObserving = observeWorkRuntime(work.id, {
         onTextDelta: (delta) => {
           finishReasoning();
@@ -822,7 +819,10 @@ async function executeWork(workSessionId: string) {
               invocation,
             }),
         });
+        const runtimeCode = taskRuntimeFailure(result.task)?.code;
+        if (workFailures.is(runtimeCode)) failureCode = runtimeCode;
         response = agentEntryResult(result.task, result.path);
+        failureCode = "WORK_EXECUTION_FAILED";
         // Durable metadata also covers a task that completed before this observer attached.
         for (const part of agentEntryRuntimeParts(result.task)) {
           if (part.type === RUNTIME_COMMANDS_PART)
@@ -881,16 +881,17 @@ async function executeWork(workSessionId: string) {
         )
         .finally(() => pendingTitles.delete(work.id));
     }
-    await db.workSession.updateMany({
-      where: { id: work.id, status: "running" },
-      data: {
+    await updateWorkSessionStatus(
+      db,
+      { id: work.id, workspaceId: work.workspaceId, status: "running" },
+      {
         status: "idle",
         result: null,
         error: null,
         waitingQuestion: null,
         completedAt: new Date(),
       },
-    });
+    );
   } catch (error) {
     runtimeStatus = controller.signal.aborted ? "cancelled" : "failed";
     await recordEvent({
@@ -929,33 +930,16 @@ async function executeWork(workSessionId: string) {
       }
     }
     if (!controller.signal.aborted) {
-      await db.workSession.updateMany({
-        where: {
-          id: workSessionId,
-          status: { in: ["running"] },
-        },
-        data: {
-          status: "failed",
-          error: (error instanceof Error ? error.message : String(error)).slice(
-            0,
-            500,
-          ),
-          completedAt: new Date(),
-        },
-      });
+      await updateWorkSessionStatus(
+        db,
+        { id: work.id, workspaceId: work.workspaceId, status: "running" },
+        { status: "failed", error: failureCode, completedAt: new Date() },
+      );
     }
   } finally {
     unregisterWorkRun(workSessionId, controller);
     try {
-      await db.workSession.updateMany({
-        where: { id: workSessionId, status: "cancelling" },
-        data: {
-          status: "idle",
-          error: null,
-          waitingQuestion: null,
-          completedAt: new Date(),
-        },
-      });
+      await finalizeWorkSessionCancellation(work.workspaceId, work.id);
     } finally {
       finishWorkOutput(workSessionId);
     }
@@ -1004,15 +988,16 @@ async function claimNextWork(
       select: { id: true, startedAt: true, agentId: true },
     });
     if (!work) return null;
-    const claimed = await db.workSession.updateMany({
-      where: { id: work.id, status: "queued" },
-      data: {
+    const claimed = await updateWorkSessionStatus(
+      db,
+      { id: work.id, status: "queued" },
+      {
         status: "running",
         error: null,
         waitingQuestion: null,
         ...(!work.startedAt ? { startedAt: new Date() } : {}),
       },
-    });
+    );
     if (claimed.count) return { id: work.id, agentId: work.agentId };
   }
 }
@@ -1063,25 +1048,31 @@ export async function startWorkCoordinator() {
   if (!state.reconciled) {
     const now = new Date();
     await db.$transaction(async (tx) => {
-      await tx.workSession.updateMany({
-        where: { status: { in: ["running"] } },
-        data: {
+      await updateWorkSessionStatus(
+        tx,
+        { status: "running" },
+        {
           status: "failed",
-          error:
-            "Work was interrupted by a server restart. Review the transcript, then resume it.",
+          error: "WORK_INTERRUPTED",
           completedAt: now,
           uiLease: null,
         },
-      });
-      await tx.workSession.updateMany({
-        where: { status: "cancelling" },
-        data: {
+      );
+      await updateWorkSessionStatus(
+        tx,
+        { status: "cancelling" },
+        {
           status: "idle",
           error: null,
           waitingQuestion: null,
           completedAt: now,
         },
-      });
+      );
+      await updateWorkSessionStatus(
+        tx,
+        { status: "forking" },
+        { status: "archived" },
+      );
     });
     state.reconciled = true;
   }

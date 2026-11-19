@@ -3,6 +3,8 @@
 import { useMemo } from "react";
 import { useTranslations } from "next-intl";
 import { Database, ScrollText, Server } from "lucide-react";
+import { apiRequest } from "@/lib/client/api";
+import { DisplayError } from "./display-error";
 import type {
   ComposerMenuItem,
   ComposerMenuOutcome,
@@ -41,12 +43,15 @@ function withQuery(path: string, params: Record<string, string>) {
   return `${path}${path.includes("?") ? "&" : "?"}${new URLSearchParams(params)}`;
 }
 
-async function readJson<T>(response: Response, fallback: string): Promise<T> {
-  const body = (await response.json().catch(() => ({}))) as T & {
-    error?: string;
-  };
-  if (!response.ok) throw new Error(body.error || fallback);
-  return body;
+/** Same-origin JSON call whose failure surfaces in the menu as safe text. */
+async function menuRequest<T>(
+  url: string,
+  fallback: string,
+  init?: Parameters<typeof apiRequest>[1],
+): Promise<T> {
+  const result = await apiRequest<T>(url, init);
+  if (!result.ok) throw new DisplayError(result.message ?? fallback);
+  return result.data;
 }
 
 /**
@@ -113,12 +118,10 @@ export function useMcpComposerMenu({
         title: t("mcpServers"),
         empty: t("noMcpServers"),
         load: async (_query, signal) => {
-          const body = await readJson<{ items?: McpServer[] }>(
-            await fetch(withQuery(composerPath, { section: "mcp" }), {
-              cache: "no-store",
-              signal,
-            }),
+          const body = await menuRequest<{ items?: McpServer[] }>(
+            withQuery(composerPath, { section: "mcp" }),
             t("loadMcpServersFailed"),
+            { cache: "no-store", signal },
           );
           return (body.items ?? []).map((server) => ({
             id: `server:${server.id}`,
@@ -140,12 +143,10 @@ export function useMcpComposerMenu({
           title: t("mcpResources"),
           empty: t("noMcpResources"),
           load: async (_query, signal) => {
-            const body = await readJson<{ items?: McpResource[] }>(
-              await fetch(withQuery(composerPath, { section: "resources" }), {
-                cache: "no-store",
-                signal,
-              }),
+            const body = await menuRequest<{ items?: McpResource[] }>(
+              withQuery(composerPath, { section: "resources" }),
               t("loadMcpResourcesFailed"),
+              { cache: "no-store", signal },
             );
             return (body.items ?? [])
               .filter((item) => item?.kind === "resource")
@@ -164,9 +165,10 @@ export function useMcpComposerMenu({
         title: t("mcpPrompts"),
         empty: t("noMcpPrompts"),
         load: async (_query, signal) => {
-          const body = await readJson<{ prompts?: McpPrompt[] }>(
-            await fetch(promptsPath, { cache: "no-store", signal }),
+          const body = await menuRequest<{ prompts?: McpPrompt[] }>(
+            promptsPath,
             t("loadMcpPromptsFailed"),
+            { cache: "no-store", signal },
           );
           return (body.prompts ?? []).map((prompt) => ({
             id: `prompt:${prompt.deploymentId}:${prompt.name}`,
@@ -185,20 +187,20 @@ export function useMcpComposerMenu({
       insertText: (text: string) => void,
     ) {
       if (!promptsPath) return;
-      const body = await readJson<{ text?: string }>(
-        await fetch(promptsPath, {
+      const body = await menuRequest<{ text?: string }>(
+        promptsPath,
+        t("resolveMcpPromptFailed"),
+        {
           method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
+          json: {
             deploymentId: prompt.deploymentId,
             name: prompt.name,
             arguments: values,
-          }),
-        }),
-        t("resolveMcpPromptFailed"),
+          },
+        },
       );
-      if (typeof body.text !== "string")
-        throw new Error(t("resolveMcpPromptFailed"));
+      if (typeof body?.text !== "string")
+        throw new DisplayError(t("resolveMcpPromptFailed"));
       insertText(body.text);
     }
 
@@ -212,22 +214,22 @@ export function useMcpComposerMenu({
         return { view: item.id };
       if (view === "mcp-resources" && composerPath) {
         const resource = item.data as McpResource;
-        const body = await readJson<{ text?: string }>(
-          await fetch(composerPath, {
+        const body = await menuRequest<{ text?: string }>(
+          composerPath,
+          t("resolveMcpResourceFailed"),
+          {
             method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
+            json: {
               kind: "resource",
               id: resource.id,
               deploymentId: resource.deploymentId,
               ...(conversationId ? { conversationId } : {}),
               ...(workSessionId ? { workSessionId } : {}),
-            }),
-          }),
-          t("resolveMcpResourceFailed"),
+            },
+          },
         );
-        if (typeof body.text !== "string")
-          throw new Error(t("resolveMcpResourceFailed"));
+        if (typeof body?.text !== "string")
+          throw new DisplayError(t("resolveMcpResourceFailed"));
         insertText(body.text);
         return undefined;
       }

@@ -1,3 +1,4 @@
+import { testWorkspaceScope } from "../helpers/workspace-scope";
 // @vitest-environment node
 import { assertDefined } from "../assert-defined";
 import {
@@ -24,19 +25,25 @@ import {
   createAgent,
   createConfiguredAgent,
   deleteAgent,
+} from "@/lib/agents/mutations";
+import {
   deleteProvider,
   addProviderModels,
   deleteProviderModel,
+  updateProvider,
+} from "@/lib/agents/provider-mutations";
+import {
   updateAgent,
   updateAgentModelSelection,
   updateAgentOptionalBuiltinTools,
   setAgentTools,
-  updateProvider,
+} from "@/lib/agents/agent-draft-mutations";
+import {
   appendMessage,
   appendConversationTurn,
   createConversation,
   ensureConversationRuntimeSession,
-} from "@/lib/agents/mutations";
+} from "@/lib/agents/conversation-mutations";
 import {
   createAgentChannelConnection,
   deleteAgentChannelConnection,
@@ -556,6 +563,7 @@ describe("agents mutations", () => {
     );
     for (const runtime of ["pi", "omp", "claude-code", "dsh"] as const) {
       await expect(
+        // @ts-expect-error Retired kinds are rejected at both the type and runtime boundaries.
         createAgent(workspaceId, `Retired ${runtime}`, { runtime }),
       ).rejects.toThrow("Only native Pi");
     }
@@ -820,7 +828,10 @@ describe("agents mutations", () => {
         provider: { id: prior.id },
         model: "prior-model",
       });
-      await deleteProvider(workspaceId, prior.id, userId);
+      await deleteProvider(
+        await testWorkspaceScope(workspaceId, userId, "read"),
+        prior.id,
+      );
       await expect(
         resolvePinnedAgent(changed, conversation.agentRevisionId),
       ).rejects.toThrow("AGENT_PROVIDER_REVOKED");
@@ -1124,7 +1135,10 @@ describe("agents mutations", () => {
     ).rejects.toThrow("This model is in use and cannot be removed.");
 
     await deleteAgent(workspaceId, agent.id);
-    await deleteProvider(workspaceId, provider.id);
+    await deleteProvider(
+      await testWorkspaceScope(workspaceId, userId, "read"),
+      provider.id,
+    );
   });
 
   it("clears the model from linked agents when deleting a provider", async () => {
@@ -1149,7 +1163,10 @@ describe("agents mutations", () => {
       maxSteps: 8,
     });
 
-    await deleteProvider(workspaceId, provider.id);
+    await deleteProvider(
+      await testWorkspaceScope(workspaceId, userId, "read"),
+      provider.id,
+    );
 
     const [deletedProvider, rereadAgent] = await Promise.all([
       db.modelProvider.findUnique({ where: { id: provider.id } }),
@@ -1186,11 +1203,15 @@ describe("agents mutations", () => {
       },
     });
 
-    await updateProvider(workspaceId, provider.id, {
-      name: `${provider.name} Renamed`,
-      format: "anthropic",
-      baseUrl: "https://new.example.test/v1",
-    });
+    await updateProvider(
+      await testWorkspaceScope(workspaceId, userId, "read"),
+      provider.id,
+      {
+        name: `${provider.name} Renamed`,
+        format: "anthropic",
+        baseUrl: "https://new.example.test/v1",
+      },
+    );
 
     const reread = await db.modelProvider.findUnique({
       where: { id: provider.id },
@@ -1223,12 +1244,16 @@ describe("agents mutations", () => {
       },
     });
 
-    await updateProvider(workspaceId, provider.id, {
-      name: "Should Not Change",
-      format: "anthropic",
-      baseUrl: "https://changed.example.test/v1",
-      apiKey: "changed-key",
-    });
+    await updateProvider(
+      await testWorkspaceScope(workspaceId, userId, "read"),
+      provider.id,
+      {
+        name: "Should Not Change",
+        format: "anthropic",
+        baseUrl: "https://changed.example.test/v1",
+        apiKey: "changed-key",
+      },
+    );
 
     const reread = await db.modelProvider.findUnique({
       where: { id: provider.id },

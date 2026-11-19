@@ -51,6 +51,7 @@ import { agentSessionWorkspaceRoot } from "./session-paths";
 import { materializeConversationAttachments } from "@/lib/attachments/work";
 import { stopAgentSessionRuntime } from "./sandbox-runtime";
 import { AgentRevisionConfigSchema } from "./revision-types";
+import { conversationEntryFilter, entryConversationIds } from "./entry-kinds";
 
 export type AgentConversationSandboxInput = {
   workspaceId: string;
@@ -120,22 +121,11 @@ async function binding(
     : null;
   if (input.contextId && !context)
     throw new Error("Conversation/context does not belong to this Agent.");
-  const conversationIds = new Set<string>();
-  for (const entry of context?.entryBindings ?? []) {
-    if (["chat", "control", "channel", "trigger"].includes(entry.kind))
-      conversationIds.add(entry.sourceId);
-    if (entry.kind === "work") {
-      const work = await tx.workSession.findFirst({
-        where: {
-          id: entry.sourceId,
-          workspaceId: input.workspaceId,
-          agentId: input.agentId,
-        },
-        select: { conversationId: true },
-      });
-      if (work?.conversationId) conversationIds.add(work.conversationId);
-    }
-  }
+  const conversationIds = await entryConversationIds(
+    tx,
+    input,
+    context?.entryBindings ?? [],
+  );
   if (
     conversationIds.size > 1 ||
     (input.conversationId &&
@@ -457,17 +447,10 @@ export async function ensureAgentConversationSandbox(
               ? { sandboxId: current.sandbox.id }
               : { sandboxId: null }),
             entryBindings: {
-              some: {
-                OR: [
-                  {
-                    kind: {
-                      in: ["chat", "control", "channel", "trigger"],
-                    },
-                    sourceId: latest.conversation.id,
-                  },
-                  ...(work ? [{ kind: "work", sourceId: work.id }] : []),
-                ],
-              },
+              some: conversationEntryFilter({
+                conversation: latest.conversation.id,
+                workSession: work?.id,
+              }),
             },
           },
           data: { sandboxId: sandbox.id },
@@ -816,15 +799,10 @@ export async function deleteAgentConversationSandboxes(
               targetKind: "local",
               sandboxId: found.sandbox?.id,
               entryBindings: {
-                some: {
-                  OR: [
-                    {
-                      kind: { in: ["chat", "control", "channel", "trigger"] },
-                      sourceId: conversation.id,
-                    },
-                    ...(work ? [{ kind: "work", sourceId: work.id }] : []),
-                  ],
-                },
+                some: conversationEntryFilter({
+                  conversation: conversation.id,
+                  workSession: work?.id,
+                }),
               },
             },
           });

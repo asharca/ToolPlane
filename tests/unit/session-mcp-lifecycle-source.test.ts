@@ -35,7 +35,11 @@ vi.mock("node:child_process", async (importOriginal) => ({
 }));
 vi.mock("@/lib/db", () => ({
   db: {
-    deployment: { update: mocks.update, findFirst: mocks.deployment },
+    deployment: {
+      update: mocks.update,
+      updateMany: mocks.update,
+      findFirst: mocks.deployment,
+    },
     workspace: { findFirst: mocks.workspace },
     agentServer: { findMany: async () => [] },
     chatAssistantMcpGrant: { findMany: async () => [] },
@@ -81,8 +85,9 @@ vi.mock("@/lib/process/mcp-runtime-image", () => ({
 vi.mock("@/lib/auth/current-user", () => ({
   getCurrentUser: async () => ({ id: "operator" }),
 }));
-vi.mock("@/lib/workspace/queries", () => ({
-  getWorkspaceForUser: async () => ({ id: "workspace" }),
+vi.mock("@/lib/workspace/scope", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/workspace/scope")>()),
+  resolveWorkspaceScope: async () => ({ id: "workspace" }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
@@ -216,7 +221,7 @@ beforeEach(() => {
     ),
   });
   mocks.spawn.mockReset();
-  mocks.update.mockResolvedValue({});
+  mocks.update.mockResolvedValue({ count: 1 });
   mocks.workspace.mockResolvedValue({ id: "workspace" });
   mocks.materialize
     .mockReset()

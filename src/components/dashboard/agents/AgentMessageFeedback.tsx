@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { MessageSquare, ThumbsDown, ThumbsUp } from "lucide-react";
 import { Button } from "@/components/motion/button";
 import type { FeedbackDto } from "@/lib/agents/evolution/contracts";
-import { evolutionRequest } from "./evolution-client";
+import { evolutionErrorCode, evolutionRequest } from "./evolution-client";
 import { notify } from "../Toaster";
 
 export function AgentMessageFeedback({
@@ -43,8 +43,7 @@ export function AgentMessageFeedback({
         setLoaded(true);
       })
       .catch((cause) => {
-        if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : "EVOLUTION_FAILED");
+        if (!controller.signal.aborted) setError(evolutionErrorCode(cause));
       });
     return () => controller.abort();
   }, [url]);
@@ -61,7 +60,7 @@ export function AgentMessageFeedback({
       setOpen(false);
       notify(t("feedbackSaved"));
     } catch (cause) {
-      const code = cause instanceof Error ? cause.message : "EVOLUTION_FAILED";
+      const code = evolutionErrorCode(cause);
       setError(code);
       notify(
         t.has(`errors.${code}`)

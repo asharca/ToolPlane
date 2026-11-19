@@ -18,6 +18,10 @@ import {
 import { getConsoleTaskTree } from "@/lib/a2a/console-tasks";
 import { sessionActor } from "@/lib/a2a/console-http";
 import { withLogContext } from "@/lib/observability/context";
+import {
+  conversationEntryFilter,
+  entryConversationId,
+} from "@/lib/agents/entry-kinds";
 import { readTaskOutput } from "./live-output-read";
 import {
   executionOutputResponse,
@@ -46,20 +50,20 @@ async function conversationObservation(
 ): Promise<Observation> {
   // Observation does not call readTaskUi/respondTaskUi or create an execution grant.
   if (req.headers.has("authorization"))
-    throw new A2AHttpError(401, "Use the console session.");
+    throw new A2AHttpError(401, "CONSOLE_SESSION_REQUIRED");
   const site = req.headers.get("sec-fetch-site");
   const origin = req.headers.get("origin");
   if (
     (site && !["same-origin", "none"].includes(site)) ||
     (origin !== null && origin !== originFromRequest(req))
   )
-    throw new A2AHttpError(403, "Same-origin request required.");
+    throw new A2AHttpError(403, "SAME_ORIGIN_REQUIRED");
   const principal = await resolveRequestPrincipal(req);
   if (principal?.credential !== "session")
-    throw new A2AHttpError(401, "Unauthorized");
+    throw new A2AHttpError(401, "UNAUTHORIZED");
   const userId = principal.user.id;
   if (!(await db.user.count({ where: { id: userId, status: "active" } })))
-    throw new A2AHttpError(401, "Unauthorized");
+    throw new A2AHttpError(401, "UNAUTHORIZED");
   const agent = await getAgentForRequest(agentId, userId);
   if (!agent) throw new TaskNotFoundError();
   const conversation = await db.conversation.findFirst({
@@ -74,8 +78,7 @@ async function conversationObservation(
   if (!conversation) throw new TaskNotFoundError();
   const binding = await db.a2AEntryBinding.findFirst({
     where: {
-      sourceId: conversation.id,
-      kind: { in: ["chat", "channel", "control", "trigger"] },
+      ...conversationEntryFilter({ conversation: conversation.id }),
       context: { workspaceId: agent.workspaceId, agentId, targetKind: "local" },
     },
     include: { lastTask: true },
@@ -95,13 +98,13 @@ async function conversationObservation(
     grant.workspaceId !== agent.workspaceId ||
     grant.agentId !== agentId ||
     !grant.entryPolicy ||
-    (grant.entryPolicy.conversationId ?? grant.entryPolicy.sourceId) !==
-      conversation.id ||
     grant.entryPolicy.kind !== binding.kind ||
     grant.entryPolicy.sourceAgentId !== agentId ||
     grant.ancestorTaskIds.length ||
     task.parentTaskId ||
-    task.rootTaskId !== task.id
+    task.rootTaskId !== task.id ||
+    (await entryConversationId(db, grant, grant.entryPolicy)) !==
+      conversation.id
   )
     throw new TaskNotFoundError();
   // Channel history and output are workspace-visible. Ordinary private native
@@ -143,7 +146,7 @@ export async function handleConversationOutputEvents(
       if (req.method !== "GET")
         return reply({ error: "Method not allowed." }, 405);
       if (new URL(req.url).search)
-        throw new A2AHttpError(400, "Conversation determines the execution.");
+        throw new A2AHttpError(400, "CONVERSATION_EXECUTION_PINNED");
       const load = () => conversationObservation(req, agentId, conversationId);
       return executionOutputResponse(req, await load(), load, true);
     } catch (error) {
@@ -162,7 +165,7 @@ export async function handleConsoleOutputEvents(
         return reply({ error: "Method not allowed." }, 405);
       const query = new URL(req.url).searchParams;
       if ([...query.keys()].some((key) => query.getAll(key).length !== 1))
-        throw new A2AHttpError(400, "Invalid task query.");
+        throw new A2AHttpError(400, "INVALID_TASK_QUERY");
       const parsed = z
         .object({
           rootTaskId: z.string().min(1).max(200),
@@ -170,7 +173,7 @@ export async function handleConsoleOutputEvents(
         })
         .strict()
         .safeParse(Object.fromEntries(query));
-      if (!parsed.success) throw new A2AHttpError(400, "Invalid task query.");
+      if (!parsed.success) throw new A2AHttpError(400, "INVALID_TASK_QUERY");
       const rootId = parsed.data.rootTaskId,
         selectedId = parsed.data.selectedTaskId ?? rootId;
       const load = async (): Promise<Observation> => {

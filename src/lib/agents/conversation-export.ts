@@ -5,6 +5,7 @@ import { safeAttachmentFilename } from "@/lib/attachments/storage";
 import { redactText, sanitizeLog } from "@/lib/observability/redaction";
 import { decryptSecretText } from "@/lib/security/secrets";
 import { effectiveStatus } from "@/lib/process/supervisor";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import {
   beginAgentConversationSandboxAccess,
   findAgentConversationSandbox,
@@ -13,55 +14,58 @@ import {
   runSandboxSessionExport,
   sandboxRuntimeStateRoot,
 } from "./sandbox-runtime";
+import { projectContent } from "@/lib/conversation/content-projection";
 import {
-  toContentBlocks,
-  workContentParts,
+  assertNever,
+  type ContentBlock,
+  type ContentStep,
 } from "@/lib/conversation/content-blocks";
+import { defineFailures, type FailureCodeOf } from "@/lib/errors/registry";
+import { ADVISOR_SUGGESTIONS_PART } from "./advisor";
 import { assistantSegments } from "./message-segments";
-import { agentTimelineDisplayParts } from "./turn-timeline";
 
 export const SESSION_EXPORT_MAX_BYTES = 8 * 1024 * 1024;
-const errors = {
-  UNAUTHORIZED: [401, "Authentication is required."],
-  NOT_FOUND: [404, "Conversation not found."],
-  SESSION_EXPORT_FORMAT_INVALID: [400, "Choose jsonl, html, or md."],
-  SESSION_EXPORT_NATIVE_UNAVAILABLE: [
-    409,
+const exportFailures = defineFailures({
+  UNAUTHORIZED: "Authentication is required.",
+  NOT_FOUND: "Conversation not found.",
+  SESSION_EXPORT_FORMAT_INVALID: "Choose jsonl, html, or md.",
+  SESSION_EXPORT_NATIVE_UNAVAILABLE:
     "Native export is unavailable for this historical session. Use Markdown.",
-  ],
-  SESSION_EXPORT_SANDBOX_NOT_RUNNING: [
-    409,
+  SESSION_EXPORT_SANDBOX_NOT_RUNNING:
     "Start the Agent sandbox before exporting this format.",
-  ],
-  SESSION_EXPORT_SANDBOX_BUSY: [
-    409,
-    "A sandbox lifecycle operation is in progress.",
-  ],
-  SESSION_EXPORT_NATIVE_MISSING: [
-    409,
+  SESSION_EXPORT_SANDBOX_BUSY: "A sandbox lifecycle operation is in progress.",
+  SESSION_EXPORT_NATIVE_MISSING:
     "No persisted Pi session is available. Use Markdown.",
-  ],
-  SESSION_EXPORT_NATIVE_INVALID: [
-    409,
+  SESSION_EXPORT_NATIVE_INVALID:
     "The persisted Pi session cannot be exported. Use Markdown.",
-  ],
-  SESSION_EXPORT_TOO_LARGE: [
-    413,
-    "The session export exceeds the 8 MiB limit.",
-  ],
-  SESSION_EXPORT_FAILED: [500, "Session export failed."],
-} as const;
-type ErrorCode = keyof typeof errors;
+  SESSION_EXPORT_TOO_LARGE: "The session export exceeds the 8 MiB limit.",
+  SESSION_EXPORT_FAILED: "Session export failed.",
+} as const);
+export type SessionExportFailureCode = FailureCodeOf<typeof exportFailures>;
+const exportFailureStatus: Record<SessionExportFailureCode, number> = {
+  UNAUTHORIZED: 401,
+  NOT_FOUND: 404,
+  SESSION_EXPORT_FORMAT_INVALID: 400,
+  SESSION_EXPORT_NATIVE_UNAVAILABLE: 409,
+  SESSION_EXPORT_SANDBOX_NOT_RUNNING: 409,
+  SESSION_EXPORT_SANDBOX_BUSY: 409,
+  SESSION_EXPORT_NATIVE_MISSING: 409,
+  SESSION_EXPORT_NATIVE_INVALID: 409,
+  SESSION_EXPORT_TOO_LARGE: 413,
+  SESSION_EXPORT_FAILED: 500,
+};
 class SessionExportError extends Error {
-  constructor(readonly code: ErrorCode) {
+  constructor(readonly code: SessionExportFailureCode) {
     super(code);
   }
 }
-function failure(code: ErrorCode) {
-  const [status, error] = errors[code];
+function failure(code: SessionExportFailureCode) {
   return Response.json(
-    { error, code },
-    { status, headers: { "Cache-Control": "no-store" } },
+    { error: exportFailures.text(code), code },
+    {
+      status: exportFailureStatus[code],
+      headers: { "Cache-Control": "no-store" },
+    },
   );
 }
 function assertSize(value: string) {
@@ -117,6 +121,101 @@ function fenced(value: unknown): string {
   const fence = "`".repeat(Math.max(3, ...runs.map((run) => run.length + 1)));
   return `${fence}\n${text}\n${fence}`;
 }
+function field(data: unknown, key: string): unknown {
+  return data && typeof data === "object"
+    ? (data as Record<string, unknown>)[key]
+    : undefined;
+}
+function payloadMarkdown(input: unknown, output: unknown): string[] {
+  return [
+    ...(input === undefined ? [] : [`Input:\n\n${fenced(input)}`]),
+    ...(output === undefined ? [] : [`Output:\n\n${fenced(output)}`]),
+  ];
+}
+function dataStepMarkdown(
+  step: Extract<ContentStep, { kind: "data" }>,
+): string[] {
+  const value = (key: string) => field(step.data, key);
+  switch (step.type) {
+    case "data-subagent-activity": {
+      // Child activity is a transcript summary, not an executable runtime grant.
+      const text = value("text");
+      return [
+        `### Subagent ${value("type") === "reasoning" ? "reasoning" : "tool"}: ${value("toolName") ?? "activity"} — ${value("status") ?? "recorded"}`,
+        ...(text ? [textValue(text)] : []),
+        ...payloadMarkdown(value("input"), value("output")),
+      ];
+    }
+    case "data-hook-activity": {
+      const result = value("result");
+      return [
+        `### Hook: ${value("pluginName") ?? "hook"} — ${value("event") ?? "event"} — ${value("status") ?? "recorded"}${result ? ` (${result})` : ""}`,
+      ];
+    }
+    case "data-work-runtime": {
+      const text = value("text");
+      return [
+        `### Runtime: ${value("status") ?? "recorded"}`,
+        ...(typeof text === "string" && text ? [text] : []),
+      ];
+    }
+    case ADVISOR_SUGGESTIONS_PART: {
+      const model = value("model");
+      const suggestions = value("suggestions");
+      return [
+        `### Advisor${typeof model === "string" ? `: ${model}` : ""}`,
+        (Array.isArray(suggestions) ? suggestions : [])
+          .map(
+            (item) =>
+              `- ${field(item, "severity") ?? "info"}: ${field(item, "message") ?? ""}`,
+          )
+          .join("\n"),
+      ];
+    }
+    default:
+      return assertNever(step.type);
+  }
+}
+function stepMarkdown(step: ContentStep): string[] {
+  switch (step.kind) {
+    case "thinking":
+      return [`### Reasoning\n\n${step.text}`];
+    case "tool":
+      return [
+        `### Tool: ${step.toolName} — ${step.status}`,
+        ...payloadMarkdown(step.input, step.output),
+        ...(step.errorText ? [`Error:\n\n${fenced(step.errorText)}`] : []),
+      ];
+    case "data":
+      return dataStepMarkdown(step);
+    default:
+      return assertNever(step);
+  }
+}
+function blockMarkdown(block: ContentBlock): string[] {
+  switch (block.kind) {
+    case "text":
+      return [block.text];
+    case "file":
+      return [
+        `Attachment: ${block.filename ?? "attachment"} (${block.mediaType})`,
+      ];
+    case "stream-rule":
+      return [
+        `### Stream rule: ${block.trigger.name} — ${block.trigger.action}\n\n${block.trigger.message}`,
+      ];
+    case "context-maintenance":
+      return [
+        block.data.kind === "rewind"
+          ? `### Rewind\n\n${block.data.report}`
+          : `### Handoff\n\n${block.data.summary}`,
+      ];
+    case "process":
+      return block.steps.flatMap(stepMarkdown);
+    default:
+      return assertNever(block);
+  }
+}
 function markdownMessage(message: {
   id: string;
   role: string;
@@ -128,66 +227,18 @@ function markdownMessage(message: {
           !!part && typeof part === "object" && typeof part.type === "string",
       )
     : [];
-  const normalized = agentTimelineDisplayParts(parts).map((part) =>
-    ["work-tool", "tool"].includes(part.type)
-      ? workContentParts([part], true)[0]
-      : part,
+  const blocks = projectContent(message.id, parts, { streaming: false });
+  // Composer references are the user's context, outside the reply content.
+  const content = parts.flatMap((part) =>
+    part.type === "text" && part.reference
+      ? [
+          `### Reference: @${field(part.reference, "label") ?? "reference"}\n\n${fenced(part.text)}`,
+        ]
+      : [],
   );
-  const blocks = toContentBlocks(message.id, normalized, { streaming: false });
-  const content: string[] = [];
-  for (const block of blocks) {
-    if (block.kind === "text") content.push(block.text);
-    else if (block.kind === "file")
-      content.push(
-        `Attachment: ${block.filename ?? "attachment"} (${block.mediaType})`,
-      );
-    else if (block.kind === "stream-rule")
-      content.push(
-        `### Stream rule: ${block.trigger.name} — ${block.trigger.action}\n\n${block.trigger.message}`,
-      );
-    else if (block.kind === "context-maintenance")
-      content.push(
-        block.data.kind === "rewind"
-          ? `### Rewind\n\n${block.data.report}`
-          : `### Handoff\n\n${block.data.summary}`,
-      );
-    else
-      for (const step of block.steps) {
-        if (step.kind === "thinking")
-          content.push(`### Reasoning\n\n${step.text}`);
-        if (step.kind === "tool") {
-          content.push(`### Tool: ${step.toolName} — ${step.status}`);
-          if (step.input !== undefined)
-            content.push(`Input:\n\n${fenced(step.input)}`);
-          if (step.output !== undefined)
-            content.push(`Output:\n\n${fenced(step.output)}`);
-          if (step.errorText)
-            content.push(`Error:\n\n${fenced(step.errorText)}`);
-        }
-      }
-  }
+  content.push(...blocks.flatMap(blockMarkdown));
   if (!blocks.some((block) => block.kind === "text" && block.text)) {
     content.push(...assistantSegments(parts).map((segment) => segment.text));
-  }
-  // Child activity is a transcript summary, not an executable runtime grant.
-  for (const part of parts) {
-    const activity =
-      part.type === "data-subagent-activity"
-        ? part.data
-        : part.source
-          ? part
-          : null;
-    if (activity && typeof activity === "object") {
-      const entry = activity as Record<string, unknown>;
-      content.push(
-        `### Subagent ${entry.type === "reasoning" ? "reasoning" : "tool"}: ${entry.toolName ?? "activity"} — ${entry.status ?? "recorded"}`,
-      );
-      if (entry.text) content.push(textValue(entry.text));
-      if (entry.input !== undefined)
-        content.push(`Input:\n\n${fenced(entry.input)}`);
-      if (entry.output !== undefined)
-        content.push(`Output:\n\n${fenced(entry.output)}`);
-    }
   }
   return `## ${message.role}\n\n${content.join("\n\n")}\n\n`;
 }
@@ -227,10 +278,9 @@ async function nativeExport(
   if (!result || typeof result !== "object")
     throw new SessionExportError("SESSION_EXPORT_FAILED");
   if ("error" in result) {
-    const code =
-      typeof result.error === "string" && Object.hasOwn(errors, result.error)
-        ? (result.error as ErrorCode)
-        : "SESSION_EXPORT_FAILED";
+    const code = exportFailures.is(result.error)
+      ? result.error
+      : "SESSION_EXPORT_FAILED";
     throw new SessionExportError(code);
   }
   if (!("content" in result) || typeof result.content !== "string")
@@ -254,13 +304,7 @@ export async function handleConversationExport(
         agentId,
         publicApiConversation: null,
         agent: {
-          workspace: {
-            status: "active",
-            OR: [
-              { ownerId: user.id },
-              { members: { some: { userId: user.id } } },
-            ],
-          },
+          workspace: workspaceAccessWhere(user.id),
         },
       },
       include: { agent: true, sandbox: { include: { deployment: true } } },
@@ -343,11 +387,7 @@ export async function handleConversationExport(
         agent: {
           workspace: {
             id: conversation.agent.workspaceId,
-            status: "active",
-            OR: [
-              { ownerId: user.id },
-              { members: { some: { userId: user.id } } },
-            ],
+            ...workspaceAccessWhere(currentUser.id),
           },
         },
       },

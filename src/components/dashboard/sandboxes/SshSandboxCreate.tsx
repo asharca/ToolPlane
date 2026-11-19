@@ -1,5 +1,6 @@
 "use client";
 
+import { apiRequest } from "@/lib/client/api";
 import {
   useId,
   useRef,
@@ -92,20 +93,18 @@ export function SshSandboxCreate({ workspaceId }: { workspaceId: string }) {
     clearScan();
     setBusy("scan");
     try {
-      const response = await fetch(
+      const response = await apiRequest<HostKeyScan>(
         `/api/v1/workspaces/${workspaceId}/sandboxes/ssh/host-keys`,
         {
           method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ host: host.trim(), port: Number(port) }),
+          json: { host: host.trim(), port: Number(port) },
         },
       );
-      const result = await response.json();
       if (!response.ok) {
-        setError(errorMessage(result.code));
+        setError(response.message ?? errorMessage(response.code));
         return;
       }
-      setScan(result as HostKeyScan);
+      setScan(response.data);
     } catch {
       setError(t("sshOperationFailed"));
     } finally {
@@ -120,12 +119,11 @@ export function SshSandboxCreate({ workspaceId }: { workspaceId: string }) {
     setBusy("create");
     setError("");
     try {
-      const response = await fetch(
+      const response = await apiRequest<{ consolePath: string }>(
         `/api/v1/workspaces/${workspaceId}/sandboxes/ssh`,
         {
           method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
+          json: {
             name: data.get("name"),
             host: host.trim(),
             port: Number(port),
@@ -141,16 +139,15 @@ export function SshSandboxCreate({ workspaceId }: { workspaceId: string }) {
                 : { type: "password", password },
             hostKeys: scan.hostKeys.map(({ type, key }) => ({ type, key })),
             acknowledgeHostAccess: data.get("ack") === "on",
-          }),
+          },
         },
       );
-      const result = await response.json();
       if (!response.ok) {
-        setError(errorMessage(result.code));
+        setError(response.message ?? errorMessage(response.code));
         setBusy(null);
         return;
       }
-      router.push(result.consolePath);
+      router.push(response.data.consolePath);
       router.refresh();
     } catch {
       setError(t("sshOperationFailed"));

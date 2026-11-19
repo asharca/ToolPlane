@@ -54,7 +54,7 @@ async function clientFor(
   fileReception = false,
 ) {
   const grant = row.grant as unknown as TaskGrant;
-  if (!isRemoteGrant(grant)) throw new RemoteA2AError();
+  if (!isRemoteGrant(grant)) throw new RemoteA2AError("REMOTE_REQUEST_FAILED");
   if (fileReception) await assertTaskFileReadAuthority(row.id);
   else await assertRemoteGrant(grant, db, cancellation);
   const remote = await db.remoteA2AAgent.findFirstOrThrow({
@@ -74,7 +74,8 @@ async function clientFor(
       ]),
     )
     .digest("hex");
-  if (binding !== grant.targetBinding) throw new RemoteA2AError();
+  if (binding !== grant.targetBinding)
+    throw new RemoteA2AError("REMOTE_REQUEST_FAILED");
   return createRemoteClient(
     AgentCard.fromJSON(remote.card),
     remote.rpcUrl,
@@ -116,14 +117,16 @@ async function recordObservation(
     )
       return;
     const grant = row.grant as unknown as TaskGrant;
-    if (!isRemoteGrant(grant)) throw new RemoteA2AError();
+    if (!isRemoteGrant(grant))
+      throw new RemoteA2AError("REMOTE_REQUEST_FAILED");
     await assertRemoteGrant(grant, tx, Boolean(row.cancelRequestedAt));
-    if (row.deadlineAt <= new Date()) throw new RemoteA2AError();
+    if (row.deadlineAt <= new Date())
+      throw new RemoteA2AError("REMOTE_REQUEST_FAILED");
     if (
       (row.remoteTaskId && row.remoteTaskId !== observation.taskId) ||
       (row.remoteContextId && row.remoteContextId !== observation.contextId)
     )
-      throw new RemoteA2AError("Remote task binding changed.");
+      throw new RemoteA2AError("REMOTE_TASK_BINDING_CHANGED");
     const remote = await tx.remoteA2AAgent.findFirstOrThrow({
       where: { id: grant.remoteAgentId, workspaceId: grant.workspaceId },
     });
@@ -144,7 +147,7 @@ async function recordObservation(
           ) || !acceptsOutput(acceptedModes, part.mediaType || "text/plain"),
       )
     )
-      throw new RemoteA2AError("Remote output MIME type was not negotiated.");
+      throw new RemoteA2AError("REMOTE_OUTPUT_MIME_UNNEGOTIATED");
     const context = await tx.a2AContext.findUniqueOrThrow({
       where: { id: row.contextId },
     });
@@ -189,7 +192,7 @@ async function recordObservation(
       else task.artifacts[index] = artifact;
     }
     if (task.artifacts.length > 16)
-      throw new RemoteA2AError("Remote artifact limit exceeded.");
+      throw new RemoteA2AError("REMOTE_ARTIFACT_LIMIT");
     let statusMessage: Message | undefined;
     if (observation.message) {
       const messageId = createHash("sha256")
@@ -223,8 +226,8 @@ async function recordObservation(
         : observation.state;
     const state = receiveFiles ? TaskState.TASK_STATE_WORKING : observedState;
     if (!terminal(observedState) && !observation.taskId)
-      throw new RemoteA2AError();
-    if (!task.status) throw new RemoteA2AError();
+      throw new RemoteA2AError("REMOTE_REQUEST_FAILED");
+    if (!task.status) throw new RemoteA2AError("REMOTE_REQUEST_FAILED");
     if (task.status.state !== state) {
       // A peer may resume externally resolved input/auth without a local model round.
       if (
@@ -276,11 +279,12 @@ async function recordObservation(
 /** Submit exactly once per accepted local message. Subsequent work uses GetTask, not SendMessage retries. */
 export const executeRemoteTask: TaskExecutor = async (row, signal) => {
   const grant = row.grant as unknown as TaskGrant;
-  if (!isRemoteGrant(grant) || !row.leaseToken) throw new RemoteA2AError();
+  if (!isRemoteGrant(grant) || !row.leaseToken)
+    throw new RemoteA2AError("REMOTE_REQUEST_FAILED");
   const client = await clientFor(row);
   const input = SendMessageRequest.fromJSON(row.request);
   const message = input.message;
-  if (!message) throw new RemoteA2AError();
+  if (!message) throw new RemoteA2AError("REMOTE_REQUEST_FAILED");
   const outboundId = createHash("sha256")
     .update(
       JSON.stringify(["a2a-remote-message", grant.ownerKey, message.messageId]),
@@ -297,9 +301,7 @@ export const executeRemoteTask: TaskExecutor = async (row, signal) => {
         !acceptsOutput(card.defaultInputModes, part.mediaType || "text/plain"),
     )
   )
-    throw new RemoteA2AError(
-      "Remote Agent does not accept an input MIME type.",
-    );
+    throw new RemoteA2AError("REMOTE_INPUT_MIME_UNSUPPORTED");
   const parts = await hydrateTaskParts(
     row.id,
     message.parts,
@@ -314,7 +316,7 @@ export const executeRemoteTask: TaskExecutor = async (row, signal) => {
       current.deadlineAt <= new Date() ||
       current.remoteMessageId === outboundId
     )
-      throw new RemoteA2AError();
+      throw new RemoteA2AError("REMOTE_REQUEST_FAILED");
     await tx.a2ATask.update({
       where: { id: row.id },
       data: {
@@ -366,7 +368,7 @@ export async function refreshRemoteTaskFileSources(
     (terminal(row.remoteObservedState) &&
       observation.state !== row.remoteObservedState)
   )
-    throw new RemoteA2AError("Remote file source binding changed.");
+    throw new RemoteA2AError("REMOTE_FILE_BINDING_CHANGED");
   await assertTaskFileReadAuthority(row.id);
   await db.$transaction(async (tx) => {
     const current = await lockTask(tx, row.id);
@@ -375,9 +377,10 @@ export async function refreshRemoteTaskFileSources(
       current.remoteMessageId !== row.remoteMessageId ||
       terminal(current.state)
     )
-      throw new RemoteA2AError();
+      throw new RemoteA2AError("REMOTE_REQUEST_FAILED");
     const grant = current.grant as unknown as TaskGrant;
-    if (!isRemoteGrant(grant)) throw new RemoteA2AError();
+    if (!isRemoteGrant(grant))
+      throw new RemoteA2AError("REMOTE_REQUEST_FAILED");
     const context = await tx.a2AContext.findUniqueOrThrow({
       where: { id: row.contextId },
     });
@@ -457,7 +460,7 @@ export async function reconcileRemoteTasks() {
                   !row.remoteTaskId ||
                   row.deadlineAt <= new Date()
                 )
-                  throw new RemoteA2AError();
+                  throw new RemoteA2AError("REMOTE_REQUEST_FAILED");
                 const client = await clientFor(
                   row,
                   Boolean(row.cancelRequestedAt),

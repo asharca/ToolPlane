@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { getWorkSessionForUser, resumeWorkSession } from "@/lib/work/sessions";
@@ -20,7 +21,12 @@ export const POST = withRequestLogging(
         { error: "Historical Agent sessions are read-only." },
         { status: 410 },
       );
-    const result = await resumeWorkSession(work.workspaceId, work.id, user.id);
+    const scope = await resolveWorkspaceScope(
+      { id: work.workspaceId },
+      user.id,
+    );
+    if (!scope) return Response.json({ error: "Not found" }, { status: 404 });
+    const result = await resumeWorkSession(scope, work.id);
     if (!result.ok) {
       return Response.json(
         {

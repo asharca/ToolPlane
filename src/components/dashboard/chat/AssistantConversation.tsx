@@ -1,5 +1,10 @@
 "use client";
 
+import { apiRequest } from "@/lib/client/api";
+import {
+  DisplayError,
+  displayErrorText,
+} from "@/components/dashboard/display-error";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { FileUIPart, UIMessage } from "ai";
@@ -236,6 +241,7 @@ export function AssistantConversation({
   const composerT = useTranslations("console.agents");
   const common = useTranslations("common");
   const workT = useTranslations("console.work");
+  const processFailedText = workT("processFailed");
   const [editMessageId, setEditMessageId] = useState<string | undefined>();
   const [files, setFiles] = useState<FileUIPart[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -338,10 +344,10 @@ export function AssistantConversation({
     })().catch((cause: Error) => {
       if (!controller.signal.aborted) {
         setConnected(false);
-        setError(cause.message);
+        setError(displayErrorText(cause, processFailedText));
       }
     });
-  }, [api, receiveExecutionProgress]);
+  }, [api, receiveExecutionProgress, processFailedText]);
   const transport = useMemo(
     () =>
       new DefaultChatTransport<AssistantUIMessage>({
@@ -354,7 +360,7 @@ export function AssistantConversation({
               .json()
               .catch(() => null);
             if (failure?.error === "runtime_not_ready")
-              throw new Error("runtime_not_ready");
+              throw new DisplayError("runtime_not_ready");
           }
           if (!response.ok) {
             const failure = await response
@@ -363,9 +369,13 @@ export function AssistantConversation({
               .catch(() => null);
             if (
               typeof failure?.error === "string" &&
-              failure.error.startsWith("CHAT_MODEL_")
+              [
+                "CHAT_MODEL_PROVIDER_UNAVAILABLE",
+                "CHAT_MODEL_NOT_AVAILABLE",
+                "CHAT_MODEL_CAPABILITY_UNSUPPORTED",
+              ].includes(failure.error)
             )
-              throw new Error(failure.error);
+              throw new DisplayError(failure.error);
           }
           const runId = response.headers.get("X-Chat-Run-Id");
           if (runId)
@@ -427,7 +437,7 @@ export function AssistantConversation({
       onConversationChanged();
     },
     onError: (cause) => {
-      setError(cause.message);
+      setError(displayErrorText(cause, workT("processFailed")));
       setConnected(false);
     },
   });
@@ -438,15 +448,15 @@ export function AssistantConversation({
   const restore = useCallback(
     async (subscribe: boolean) => {
       const generation = restoreGeneration.current;
-      const response = await fetch(`${api}/stream?state=1`, {
-        cache: "no-store",
-      });
+      const response = await apiRequest<Snapshot | null>(
+        `${api}/stream?state=1`,
+        {
+          cache: "no-store",
+        },
+      );
       if (!response.ok)
-        throw new Error((await response.json()).error || response.statusText);
-      const candidate =
-        response.status === 204
-          ? null
-          : ((await response.json()) as Snapshot | null);
+        throw new DisplayError(response.message ?? processFailedText);
+      const candidate = response.status === 204 ? null : response.data;
       if (generation !== restoreGeneration.current) return;
       // A poll started during admission may still return the preceding turn.
       // Never let that terminal snapshot replace the newly admitted Run cursor.
@@ -504,7 +514,13 @@ export function AssistantConversation({
       }
       setRestored(true);
     },
-    [api, subscribeSavedProgress, setMessages, receiveExecutionProgress],
+    [
+      api,
+      subscribeSavedProgress,
+      setMessages,
+      receiveExecutionProgress,
+      processFailedText,
+    ],
   );
   useEffect(() => {
     mounted.current = true;
@@ -515,13 +531,13 @@ export function AssistantConversation({
       } catch (cause) {
         if (active) {
           setConnected(false);
-          setError(cause instanceof Error ? cause.message : String(cause));
+          setError(displayErrorText(cause, processFailedText));
         }
       }
     };
     void restore(true).catch((cause: Error) => {
       if (active) {
-        setError(cause.message);
+        setError(displayErrorText(cause, processFailedText));
         setRestored(true);
       }
     });
@@ -534,7 +550,7 @@ export function AssistantConversation({
       subscription.current?.abort();
       clearInterval(timer);
     };
-  }, [restore]);
+  }, [restore, processFailedText]);
   const running =
     snapshot?.status === "pending" ||
     chat.status === "submitted" ||
@@ -614,7 +630,7 @@ export function AssistantConversation({
       }
       await restore(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(displayErrorText(cause, workT("processFailed")));
     }
   };
   const regenerate = async (messageId: string) => {
@@ -656,7 +672,9 @@ export function AssistantConversation({
         });
         const body = await response.json();
         if (!response.ok || !body.url)
-          throw new Error(body.error || composerT("attachmentUploadFailed"));
+          throw new DisplayError(
+            body.error ?? composerT("attachmentUploadFailed"),
+          );
         setFiles((previous) => [
           ...previous,
           {
@@ -668,7 +686,7 @@ export function AssistantConversation({
         ]);
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(displayErrorText(cause, composerT("attachmentUploadFailed")));
     } finally {
       setUploading(false);
     }
@@ -677,20 +695,20 @@ export function AssistantConversation({
     try {
       const turnId = activeRunId;
       if (!turnId) return;
-      const response = await fetch(api, {
-        method: "DELETE",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ turnId }),
-      });
-      if (!response.ok) throw new Error((await response.json()).error);
-      const result = (await response.json()) as {
+      const response = await apiRequest<{
         stopRequested: boolean;
         turnId: string;
-      };
+      }>(api, {
+        method: "DELETE",
+        json: { turnId },
+      });
+      if (!response.ok)
+        throw new DisplayError(response.message ?? t("stopNotAccepted"));
+      const result = response.data;
       if (!result.stopRequested) setError(t("stopNotAccepted"));
       await restore(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(displayErrorText(cause, workT("processFailed")));
     }
   };
   const messages = reconcileAssistantMessages(
@@ -945,7 +963,7 @@ export function AssistantConversation({
                 variant="ghost"
                 onClick={() =>
                   void restore(true).catch((cause: Error) =>
-                    setError(cause.message),
+                    setError(displayErrorText(cause, workT("processFailed"))),
                   )
                 }
               >

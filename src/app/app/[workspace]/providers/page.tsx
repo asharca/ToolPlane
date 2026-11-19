@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import type { ModelCost } from "@earendil-works/pi-ai";
 import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
@@ -5,9 +6,8 @@ import { ProvidersPanel } from "@/components/dashboard/agents/ProvidersPanel";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { listProviders } from "@/lib/agents/queries";
 import { piProviderPresets } from "@/lib/agents/provider-catalog";
-import { backfillProviderModels } from "@/lib/agents/mutations";
+import { backfillProviderModels } from "@/lib/agents/provider-mutations";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +21,7 @@ export default async function ProvidersPage({
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
 
-  const ws = await getWorkspaceForUser(slug, user.id);
+  const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app");
 
   const timeZone = resolveUserTimeZone(user);

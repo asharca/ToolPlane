@@ -1,4 +1,5 @@
 import "server-only";
+import { a2aFailures } from "./errors";
 import { withLogContext } from "@/lib/observability/context";
 import { parseJson } from "@/lib/agents/public-api/body";
 import { sessionActor } from "./console-http";
@@ -50,9 +51,9 @@ export async function handleRemoteRegistry(
       });
     } catch (error) {
       if (error instanceof A2AHttpError)
-        return reply({ error: error.message }, error.status);
+        return reply({ error: a2aFailures.text(error.code) }, error.status);
       if (error instanceof RemoteA2AError)
-        return reply({ error: error.message }, 409);
+        return reply({ error: a2aFailures.text(error.code) }, 409);
       return reply(
         { error: "Remote Agent operation failed. Refresh before retrying." },
         500,

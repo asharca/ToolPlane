@@ -1,9 +1,10 @@
 "use server";
 
+import { actionScope } from "@/lib/workspace/action-scope";
 import { logSystemEvent } from "@/lib/observability/system";
 import { revalidatePath } from "next/cache";
 import { getTranslations } from "next-intl/server";
-import { requireAdmin } from "@/lib/auth/admin";
+
 import { saveAuditedSetting } from "@/lib/admin/audited-setting";
 import type { AdminSettingsActionState } from "@/lib/admin/settings-actions";
 import { TRANSPORT_SETTINGS_KEY } from "@/lib/admin/transport-settings";
@@ -33,7 +34,7 @@ export async function updateTransportSettingsAction(
   _prev: AdminSettingsActionState,
   formData: FormData,
 ): Promise<AdminSettingsActionState> {
-  const admin = await requireAdmin();
+  const admin = await actionScope({ admin: true });
   const t = await getTranslations("admin");
   try {
     if (formData.get("intent") === "reset") {

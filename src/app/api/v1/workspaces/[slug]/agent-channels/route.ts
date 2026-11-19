@@ -1,9 +1,10 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { logSystemEvent } from "@/lib/observability/system";
 import { withRequestLogging } from "@/lib/observability/http";
 import { writeAudit } from "@/lib/observability/audit";
 import { z } from "zod";
 import { resolveAccountRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { db } from "@/lib/db";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
 import {
@@ -111,7 +112,7 @@ const commandSchema = z
 async function authorize(req: Request, slug: string, manage = false) {
   const user = await resolveAccountRequestUser(req);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const workspace = await getWorkspaceForUser(slug, user.id);
+  const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (!workspace)
     return Response.json({ error: "Workspace not found" }, { status: 404 });
   if (

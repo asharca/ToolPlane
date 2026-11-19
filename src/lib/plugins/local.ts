@@ -1,4 +1,8 @@
 import "server-only";
+import {
+  type WorkspaceScope,
+  workspaceScopeWhere,
+} from "@/lib/workspace/scope";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
@@ -16,7 +20,7 @@ import {
 import type { PiPackageManifestV1 } from "@/lib/pi-packages/manifest";
 import { computePluginCapabilities } from "./capabilities";
 import { readPluginChangelog } from "./changelog";
-import { PluginError, requirePluginWorkspace } from "./catalog";
+import { PluginError } from "./catalog";
 import { updatePlugin } from "./installs";
 import { resolveOmpPluginResources } from "../../../scripts/omp-plugin-resources.mjs";
 import { PI_SDK_VERSION } from "@/lib/agents/pi-version";
@@ -246,12 +250,18 @@ export function buildPrivatePluginManifest(input: PrivatePluginInput) {
 /** A private resource uses the same immutable plugin releases and installations. */
 export async function intakePrivatePlugin(
   tx: Prisma.TransactionClient,
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope<"manage">,
   value: unknown,
   preserveExisting = false,
 ) {
-  await requirePluginWorkspace(workspaceId, userId, true, tx);
+  const { id: workspaceId, actorUserId: userId } = scope;
+  if (
+    !(await tx.workspace.findFirst({
+      where: workspaceScopeWhere(scope),
+      select: { id: true },
+    }))
+  )
+    throw new PluginError("not_authorized", "Workspace access denied.", 403);
   const parsed = PrivatePluginInputSchema.safeParse(value);
   if (!parsed.success)
     throw new PluginError("PLUGIN_INVALID", "Invalid private plugin.");
@@ -376,25 +386,25 @@ async function persistPrivatePluginManifest(
 }
 
 export async function createPrivatePlugin(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope<"manage">,
   value: unknown,
 ) {
+  const { id: workspaceId } = scope;
   return db.$transaction(
     async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
-      return intakePrivatePlugin(tx, workspaceId, userId, value);
+      return intakePrivatePlugin(tx, scope, value);
     },
     { timeout: 30_000 },
   );
 }
 
 export async function appendPrivatePluginVersion(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope<"manage">,
   installId: string,
   value: unknown,
 ) {
+  const { id: workspaceId, actorUserId: userId } = scope;
   const parsed = PrivatePluginInputSchema.safeParse(value);
   if (!parsed.success)
     throw new PluginError("PLUGIN_INVALID", "Invalid private plugin.");
@@ -408,7 +418,17 @@ export async function appendPrivatePluginVersion(
   const release = await db.$transaction(
     async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
-      await requirePluginWorkspace(workspaceId, userId, true, tx);
+      if (
+        !(await tx.workspace.findFirst({
+          where: workspaceScopeWhere(scope),
+          select: { id: true },
+        }))
+      )
+        throw new PluginError(
+          "not_authorized",
+          "Workspace access denied.",
+          403,
+        );
       const install = await tx.marketInstall.findFirst({
         where: {
           id: installId,
@@ -472,6 +492,6 @@ export async function appendPrivatePluginVersion(
     },
     { timeout: 30_000 },
   );
-  await updatePlugin(workspaceId, userId, installId, release.id);
+  await updatePlugin(scope, installId, release.id);
   return { installId, releaseId: release.id };
 }

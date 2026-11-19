@@ -1,23 +1,34 @@
-export type AgentApiErrorCode =
-  | "invalid_api_key"
-  | "endpoint_disabled"
-  | "invalid_request"
-  | "request_too_large"
-  | "response_too_large"
-  | "conversation_not_found"
-  | "conversation_busy"
-  | "idempotency_conflict"
-  | "rate_limit_exceeded"
-  | "resource_limit_exceeded"
-  | "concurrency_limit_exceeded"
-  | "runtime_maintenance"
-  | "runtime_unavailable"
-  | "runtime_unsupported"
-  | "upstream_error"
-  | "request_timeout"
-  | "cancelled"
-  | "not_found"
-  | "internal_error";
+import { defineFailures, type FailureCodeOf } from "@/lib/errors/registry";
+
+const agentApiFailures = defineFailures({
+  invalid_api_key: "The API key is invalid or cannot access this endpoint.",
+  endpoint_disabled: "This Agent endpoint is disabled.",
+  invalid_request: "The request body is invalid.",
+  request_too_large: "The request body is too large.",
+  response_too_large: "The Agent response exceeded the output limit.",
+  conversation_not_found: "The conversation was not found.",
+  conversation_busy: "The conversation already has an active response.",
+  idempotency_conflict:
+    "The idempotency key was already used with a different request.",
+  rate_limit_exceeded: "The request rate limit was exceeded.",
+  resource_limit_exceeded: "The Agent endpoint resource limit was exceeded.",
+  concurrency_limit_exceeded: "The concurrent response limit was exceeded.",
+  runtime_maintenance: "The Agent runtime is temporarily under maintenance.",
+  runtime_unavailable: "The Agent runtime is temporarily unavailable.",
+  runtime_unsupported:
+    "This Agent runtime does not support public endpoint execution.",
+  upstream_error: "The Agent could not complete this response.",
+  request_timeout: "The Agent response timed out.",
+  cancelled: "The Agent response was cancelled.",
+  not_found: "The requested resource was not found.",
+  internal_error: "The Agent API request failed.",
+});
+export type AgentApiErrorCode = FailureCodeOf<typeof agentApiFailures>;
+
+const retiredAgentApiFailures = defineFailures({
+  AGENT_EXECUTION_RETIRED:
+    "The legacy Agent execution API has been retired. Retained history is read-only. Create a newly authorized Pi Agent and use its session routes.",
+});
 
 export class AgentApiError extends Error {
   constructor(
@@ -32,81 +43,17 @@ export class AgentApiError extends Error {
 }
 
 export function publicErrorMessage(code: AgentApiErrorCode): string {
-  switch (code) {
-    case "invalid_api_key":
-      return "The API key is invalid or cannot access this endpoint.";
-    case "endpoint_disabled":
-      return "This Agent endpoint is disabled.";
-    case "invalid_request":
-      return "The request body is invalid.";
-    case "request_too_large":
-      return "The request body is too large.";
-    case "response_too_large":
-      return "The Agent response exceeded the output limit.";
-    case "conversation_not_found":
-      return "The conversation was not found.";
-    case "conversation_busy":
-      return "The conversation already has an active response.";
-    case "idempotency_conflict":
-      return "The idempotency key was already used with a different request.";
-    case "rate_limit_exceeded":
-      return "The request rate limit was exceeded.";
-    case "resource_limit_exceeded":
-      return "The Agent endpoint resource limit was exceeded.";
-    case "concurrency_limit_exceeded":
-      return "The concurrent response limit was exceeded.";
-    case "runtime_maintenance":
-      return "The Agent runtime is temporarily under maintenance.";
-    case "runtime_unavailable":
-      return "The Agent runtime is temporarily unavailable.";
-    case "runtime_unsupported":
-      return "This Agent runtime does not support public endpoint execution.";
-    case "upstream_error":
-      return "The Agent could not complete this response.";
-    case "request_timeout":
-      return "The Agent response timed out.";
-    case "cancelled":
-      return "The Agent response was cancelled.";
-    case "not_found":
-      return "The requested resource was not found.";
-    default:
-      return "The Agent API request failed.";
-  }
+  return agentApiFailures.text(code);
 }
-
-const AGENT_API_ERROR_CODES = new Set<AgentApiErrorCode>([
-  "invalid_api_key",
-  "endpoint_disabled",
-  "invalid_request",
-  "request_too_large",
-  "response_too_large",
-  "conversation_not_found",
-  "conversation_busy",
-  "idempotency_conflict",
-  "rate_limit_exceeded",
-  "resource_limit_exceeded",
-  "concurrency_limit_exceeded",
-  "runtime_maintenance",
-  "runtime_unavailable",
-  "runtime_unsupported",
-  "upstream_error",
-  "request_timeout",
-  "cancelled",
-  "not_found",
-  "internal_error",
-]);
 
 /** Restore only stable, public error codes persisted on a durable AgentRun. */
 export function agentApiErrorFromStoredCode(
   code: string | null | undefined,
-  message?: string | null,
 ): AgentApiError {
-  const resolved = AGENT_API_ERROR_CODES.has(code as AgentApiErrorCode)
-    ? (code as AgentApiErrorCode)
-    : "upstream_error";
+  const resolved = agentApiFailures.is(code) ? code : "upstream_error";
   return new AgentApiError(
     resolved,
-    message?.trim() || publicErrorMessage(resolved),
+    publicErrorMessage(resolved),
     statusForCode(resolved),
   );
 }
@@ -133,7 +80,10 @@ export function errorResponse(
   return new Response(
     JSON.stringify({
       error: {
-        message: resolved.message || publicErrorMessage(resolved.code),
+        message:
+          resolved.status === 410 && resolved.code === "runtime_unavailable"
+            ? retiredAgentApiFailures.text("AGENT_EXECUTION_RETIRED")
+            : publicErrorMessage(resolved.code),
         type: resolved.status >= 500 ? "server_error" : "invalid_request_error",
         code: resolved.code,
         ...(requestId ? { request_id: requestId } : {}),

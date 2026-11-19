@@ -1,7 +1,7 @@
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { getAgentForRequest } from "@/lib/agents/queries";
-import { createConversation } from "@/lib/agents/mutations";
+import { createConversation } from "@/lib/agents/conversation-mutations";
 
 export const runtime = "nodejs";
 

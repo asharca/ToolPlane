@@ -1,5 +1,10 @@
 "use client";
 
+import { apiRequest } from "@/lib/client/api";
+import {
+  DisplayError,
+  displayErrorText,
+} from "@/components/dashboard/display-error";
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 
@@ -44,14 +49,19 @@ export function ComposerPromptManager({
   const loadFailed = t("loadFailed");
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(endpoint, { signal: controller.signal, cache: "no-store" })
+    void apiRequest<{ prompts: Prompt[] }>(endpoint, {
+      signal: controller.signal,
+      cache: "no-store",
+    })
       .then(async (response) => {
-        if (!response.ok) throw new Error(loadFailed);
-        const data = await response.json();
+        if (!response.ok)
+          throw new DisplayError(response.message ?? loadFailed);
+        const data = response.data;
         if (!controller.signal.aborted) setPrompts(data.prompts);
       })
-      .catch(() => {
-        if (!controller.signal.aborted) setError(loadFailed);
+      .catch((cause) => {
+        if (!controller.signal.aborted)
+          setError(displayErrorText(cause, loadFailed));
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -63,19 +73,21 @@ export function ComposerPromptManager({
     setSaving(true);
     setError("");
     try {
-      const response = await fetch(endpoint, {
+      const response = await apiRequest(endpoint, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        json: body,
       });
-      if (!response.ok) throw new Error(t("saveFailed"));
-      const listed = await fetch(endpoint, { cache: "no-store" });
-      if (!listed.ok) throw new Error(t("loadFailed"));
-      setPrompts((await listed.json()).prompts);
+      if (!response.ok)
+        throw new DisplayError(response.message ?? t("saveFailed"));
+      const listed = await apiRequest<{ prompts: Prompt[] }>(endpoint, {
+        cache: "no-store",
+      });
+      if (!listed.ok) throw new DisplayError(listed.message ?? t("loadFailed"));
+      setPrompts(listed.data.prompts);
       setEditing(null);
       setDeleting(null);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("saveFailed"));
+      setError(displayErrorText(cause, t("saveFailed")));
     } finally {
       setSaving(false);
     }

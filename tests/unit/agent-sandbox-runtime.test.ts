@@ -18,9 +18,6 @@ import {
   buildSandboxSkillBundles,
   buildSandboxTranscript,
   normalizeSandboxWorkingDirectory,
-  parseClaudeStreamLine,
-  parseDshEventLine,
-  parsePiStreamLine,
   resolveSandboxMcpToolOrigin,
   sandboxRuntimeCanReachProxy,
   sandboxSkillBundleDigest,
@@ -28,6 +25,7 @@ import {
   sandboxRuntimeStateRoot,
   waitForSandboxRuntimeInstall,
 } from "@/lib/agents/sandbox-runtime";
+import { parsePiStreamLine } from "@/lib/agents/sandbox-runtime/pi-stream";
 import type { SkillForPrompt } from "@/lib/agents/resolve";
 import {
   parseRuntimeCommand,
@@ -384,120 +382,6 @@ describe("sandbox Agent runtime helpers", () => {
     );
   });
 
-  it("parses Claude stream-json text and final results", () => {
-    expect(
-      parseClaudeStreamLine(
-        JSON.stringify({
-          type: "stream_event",
-          event: {
-            type: "content_block_delta",
-            delta: { type: "text_delta", text: "hello" },
-          },
-        }),
-      ),
-    ).toEqual({ delta: "hello" });
-    expect(
-      parseClaudeStreamLine(
-        JSON.stringify({
-          type: "result",
-          is_error: false,
-          result: "done",
-          usage: {
-            input_tokens: 80,
-            output_tokens: 10,
-            cache_read_input_tokens: 8,
-            cache_creation_input_tokens: 2,
-          },
-        }),
-      ),
-    ).toEqual({ result: "done", contextTokens: 100 });
-    expect(
-      parseClaudeStreamLine(
-        JSON.stringify({
-          type: "stream_event",
-          event: {
-            type: "content_block_start",
-            content_block: { type: "thinking" },
-          },
-        }),
-      ),
-    ).toEqual({ activities: [{ type: "reasoning", status: "running" }] });
-    expect(
-      parseClaudeStreamLine(
-        JSON.stringify({
-          type: "assistant",
-          message: {
-            content: [
-              {
-                type: "tool_use",
-                id: "call-1",
-                name: "Read",
-                input: { path: "README.md" },
-              },
-            ],
-          },
-        }),
-      ),
-    ).toEqual({
-      activities: [
-        {
-          type: "tool",
-          status: "running",
-          toolCallId: "call-1",
-          toolName: "Read",
-          input: { path: "README.md" },
-        },
-      ],
-    });
-    expect(
-      parseClaudeStreamLine(
-        JSON.stringify({
-          type: "user",
-          message: {
-            content: [
-              {
-                type: "tool_result",
-                tool_use_id: "call-1",
-                content: "contents",
-                is_error: false,
-              },
-            ],
-          },
-        }),
-      ),
-    ).toEqual({
-      activities: [
-        {
-          type: "tool",
-          status: "completed",
-          toolCallId: "call-1",
-          output: "contents",
-          isError: false,
-        },
-      ],
-    });
-    expect(parseClaudeStreamLine("not json")).toBeNull();
-    expect(
-      parseClaudeStreamLine(
-        JSON.stringify({
-          type: "system",
-          subtype: "status",
-          compact_result: "failed",
-          compact_error: "context too large",
-        }),
-      ),
-    ).toEqual({ result: "context too large", isError: true });
-    expect(
-      parseClaudeStreamLine(
-        JSON.stringify({
-          type: "result",
-          is_error: true,
-          errors: ["Native error"],
-        }),
-      ),
-    ).toEqual({ result: "Native error", isError: true });
-  });
-
   it("parses historical Pi JSONL text and failures", () => {
     expect(
       parsePiStreamLine(
@@ -659,40 +543,6 @@ describe("sandbox Agent runtime helpers", () => {
       originalToolName: "write_file",
     });
     expect(resolveSandboxMcpToolOrigin("bash", servers)).toBeNull();
-  });
-
-  it("parses archived DSH text, reasoning, and tool events", () => {
-    expect(
-      parseDshEventLine(
-        '__EVENT__{"type":"text","delta":"hello"}',
-        "__EVENT__",
-      ),
-    ).toEqual({ delta: "hello" });
-    expect(
-      parseDshEventLine(
-        '__EVENT__{"type":"reasoning","status":"running","delta":"checking"}',
-        "__EVENT__",
-      ),
-    ).toEqual({
-      activities: [{ type: "reasoning", status: "running", delta: "checking" }],
-    });
-    expect(
-      parseDshEventLine(
-        '__EVENT__{"type":"tool","status":"running","toolCallId":"call-1","toolName":"bash","input":"{\\"command\\":\\"ls\\"}"}',
-        "__EVENT__",
-      ),
-    ).toEqual({
-      activities: [
-        {
-          type: "tool",
-          status: "running",
-          toolCallId: "call-1",
-          toolName: "bash",
-          input: { command: "ls" },
-          isError: false,
-        },
-      ],
-    });
   });
 
   it("preserves proxy isolation and safe historical state paths", () => {

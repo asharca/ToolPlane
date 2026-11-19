@@ -1,7 +1,11 @@
 import "server-only";
+import {
+  type WorkspaceScope,
+  workspaceScopeWhere,
+} from "@/lib/workspace/scope";
 import { db } from "@/lib/db";
 import { scanMarketArtifact } from "@/lib/pi-packages/secret-scan";
-import { requirePluginWorkspace } from "@/lib/plugins/catalog";
+
 import {
   OmpConfigSnapshotSchema,
   isOmpInstructionPath,
@@ -25,16 +29,14 @@ export function parseOmpConfigSnapshot(value: unknown) {
 }
 /** Instruction files append to the primary Agent prompt, never replace it. */
 export async function readOmpInstructions(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope,
   agentId: string,
 ) {
   return db.$transaction(async (tx) => {
-    await requirePluginWorkspace(workspaceId, userId, false, tx);
     const agent = await tx.agent.findFirst({
       where: {
         id: agentId,
-        workspaceId,
+        workspace: workspaceScopeWhere(scope),
         runtimeKind: "omp",
         publicRuntimeAllocation: null,
       },
@@ -52,17 +54,17 @@ export async function readOmpInstructions(
   });
 }
 
-export async function saveOmpInstructionsDraft(input: {
-  workspaceId: string;
-  userId: string;
-  agentId: string;
-  files: unknown;
-}) {
-  await requirePluginWorkspace(input.workspaceId, input.userId, false);
+export async function saveOmpInstructionsDraft(
+  scope: WorkspaceScope,
+  input: {
+    agentId: string;
+    files: unknown;
+  },
+) {
   const agent = await db.agent.findFirst({
     where: {
       id: input.agentId,
-      workspaceId: input.workspaceId,
+      workspace: workspaceScopeWhere(scope),
       runtimeKind: "omp",
     },
     select: { id: true },

@@ -1,5 +1,5 @@
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { db } from "@/lib/db";
 import { ResourceEnableForm } from "./ResourceEnableForm";
 
@@ -14,7 +14,7 @@ export async function ResourceEnablePanel({
 }) {
   const user = await getCurrentUser();
   const authorized = user
-    ? await getWorkspaceForUser(workspace, user.id)
+    ? await resolveWorkspaceScope({ slug: workspace }, user.id)
     : null;
   if (!authorized || authorized.id !== workspaceId) return null;
   const agents = await db.agent.findMany({

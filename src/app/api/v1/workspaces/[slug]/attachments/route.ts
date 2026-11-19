@@ -1,3 +1,4 @@
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { logSystemEvent } from "@/lib/observability/system";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
@@ -45,8 +46,7 @@ export const POST = withRequestLogging(
     const workspace = await db.workspace.findFirst({
       where: {
         id: workspaceId,
-        status: "active",
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        ...workspaceAccessWhere(user.id),
       },
       select: { id: true },
     });

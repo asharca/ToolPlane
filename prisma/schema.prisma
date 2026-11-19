@@ -28,6 +28,25 @@ enum McpToolExposure {
   allowlist
 }
 
+enum WorkSessionStatus {
+  idle
+  queued
+  running
+  waiting_user
+  cancelling
+  completed
+  failed
+  cancelled
+  archived
+  forking
+}
+
+enum WorkspaceStatus {
+  active
+  deleting
+  delete_failed
+}
+
 
 model Server {
   id            String         @id @default(cuid())
@@ -189,7 +208,7 @@ model Workspace {
   id                     String                   @id @default(cuid())
   slug                   String                   @unique
   name                   String
-  status                 String                   @default("active")
+  status                 WorkspaceStatus          @default(active)
   defaultModelProviderId String?
   defaultModel           String?
   titleModelProviderId   String?
@@ -1116,10 +1135,11 @@ model WorkSession {
   acceptanceCriteria String?
   runtimeKind        String
   runtimeSnapshot    Json?
-  status             String         @default("queued")
+  status             WorkSessionStatus @default(queued)
   waitingQuestion    String?
   result             String?
   artifacts          Json?
+  // Registered Work failure code, not exception text.
   error              String?
   startedAt          DateTime?
   completedAt        DateTime?

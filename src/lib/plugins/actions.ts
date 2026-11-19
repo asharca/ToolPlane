@@ -1,9 +1,11 @@
 "use server";
 
+import { actionScope } from "@/lib/workspace/action-scope";
+
 import { revalidatePath } from "next/cache";
-import { getCurrentUser } from "@/lib/auth/current-user";
+
 import { db } from "@/lib/db";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { listPlugins, PluginError, visiblePluginWhere } from "./catalog";
 import {
   addPlugin,
@@ -27,19 +29,12 @@ export type PluginBatchResult = {
   message: string;
 };
 
-async function context(slug: string) {
-  const user = await getCurrentUser();
-  if (!user) throw new PluginError("not_authorized", "Sign in required.", 401);
-  const workspace = await getWorkspaceForUser(slug, user.id);
-  if (!workspace)
-    throw new PluginError("not_authorized", "Workspace access denied.", 403);
-  return { user, workspace };
-}
-
 export async function pluginUpdateCountAction(slug: string) {
-  const { workspace, user } = await context(slug);
-  return (await listPlugins(workspace.id, user.id, { installedOnly: true }))
-    .updateCount;
+  const ctx = await actionScope({ slug });
+  if (!ctx)
+    throw new PluginError("not_authorized", "Workspace access denied.", 403);
+  const { ws: workspace } = ctx;
+  return (await listPlugins(workspace, { installedOnly: true })).updateCount;
 }
 
 export async function pluginAction(
@@ -48,29 +43,36 @@ export async function pluginAction(
 ): Promise<PluginActionState> {
   const slug = String(form.get("workspace") ?? "");
   try {
-    const { workspace, user } = await context(slug);
     const operation = String(form.get("operation") ?? "");
     const id = String(form.get("id") ?? "");
+    if (operation === "source-sync") {
+      const ctx = await actionScope({ slug });
+      if (!ctx) return { error: "not_authorized" };
+      await syncPluginSource(ctx.ws, id);
+      revalidatePath(`/app/${slug}`, "layout");
+      return { success: true };
+    }
+    const ctx = await actionScope({ slug, capability: "manage" });
+    if (!ctx) return { error: "not_authorized" };
+    const workspace = ctx.ws;
     if (operation === "add" || operation === "update") {
       const bindings = pluginMcpBindingsSchema.parse(
         JSON.parse(String(form.get("mcpBindings") ?? "{}")),
       );
-      if (operation === "add")
-        await addPlugin(workspace.id, user.id, id, bindings);
+      if (operation === "add") await addPlugin(workspace, id, bindings);
       else
         await updatePlugin(
-          workspace.id,
-          user.id,
+          workspace,
           id,
           String(form.get("releaseId") ?? ""),
           bindings,
         );
     } else if (operation === "remove") {
-      await removePlugin(workspace.id, user.id, id);
+      await removePlugin(workspace, id);
     } else if (operation === "source-add") {
       const visibility =
         form.get("visibility") === "private" ? "private" : "public";
-      await createPluginSource(workspace.id, user.id, {
+      await createPluginSource(workspace, {
         name: String(form.get("name") ?? ""),
         repository: String(form.get("repository") ?? ""),
         branch: String(form.get("branch") ?? "main"),
@@ -78,13 +80,11 @@ export async function pluginAction(
         token: String(form.get("token") ?? ""),
       });
     } else if (operation === "source-credentials") {
-      await updatePluginSource(workspace.id, user.id, id, {
+      await updatePluginSource(workspace, id, {
         token: String(form.get("token") ?? ""),
       });
     } else if (operation === "source-delete") {
-      await deletePluginSource(workspace.id, user.id, id);
-    } else if (operation === "source-sync") {
-      await syncPluginSource(workspace.id, user.id, id);
+      await deletePluginSource(workspace, id);
     } else return { error: "invalid_input" };
     revalidatePath(`/app/${slug}`, "layout");
     return { success: true };
@@ -120,14 +120,14 @@ export async function pluginBatchAction(
   )
     throw new Error("Invalid plugin selection (maximum 100 plugins).");
   const ids = [...new Set(installIds)];
-  const ctx = await context(slug).catch(() => null);
+  const ctx = await actionScope({ slug, capability: "manage" });
   if (!ctx)
     return ids.map((installId) => ({
       installId,
       outcome: "error",
       message: "not_authorized",
     }));
-  const { workspace, user } = ctx;
+  const { ws: workspace } = ctx;
   const installs =
     operation === "update"
       ? new Map(
@@ -166,7 +166,7 @@ export async function pluginBatchAction(
     ): PluginBatchResult => ({ installId, outcome, message });
     try {
       if (operation === "remove") {
-        await removePlugin(workspace.id, user.id, installId);
+        await removePlugin(workspace, installId);
         results.push(result("success", "removed"));
         continue;
       }
@@ -181,7 +181,7 @@ export async function pluginBatchAction(
       else if (!latest || latest.id === install.currentReleaseId)
         results.push(result("skipped", "up_to_date"));
       else {
-        await updatePlugin(workspace.id, user.id, installId, latest.id);
+        await updatePlugin(workspace, installId, latest.id);
         results.push(result("success", "updated"));
       }
     } catch (error) {

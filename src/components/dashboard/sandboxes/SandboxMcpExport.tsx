@@ -1,5 +1,10 @@
 "use client";
 
+import { apiRequest } from "@/lib/client/api";
+import {
+  DisplayError,
+  displayErrorText,
+} from "@/components/dashboard/display-error";
 import { Button } from "@/components/motion/button";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
@@ -30,14 +35,15 @@ export function SandboxMcpExport({
     setBusy(true);
     setError("");
     try {
-      const response = await fetch(
+      const response = await apiRequest<{ tokens: Grant[] }>(
         `/api/v1/sandboxes/${sandboxId}/mcp-tokens`,
         { cache: "no-store" },
       );
-      if (!response.ok) throw new Error(t("mcpOperationFailed"));
-      setGrants((await response.json()).tokens);
-    } catch {
-      setError(t("mcpOperationFailed"));
+      if (!response.ok)
+        throw new DisplayError(response.message ?? t("mcpOperationFailed"));
+      setGrants(response.data.tokens);
+    } catch (cause) {
+      setError(displayErrorText(cause, t("mcpOperationFailed")));
     } finally {
       setBusy(false);
     }
@@ -46,11 +52,12 @@ export function SandboxMcpExport({
     setBusy(true);
     setError("");
     try {
-      const response = await fetch(
+      const response = await apiRequest(
         `/api/v1/sandboxes/${sandboxId}/mcp-tokens/${id}`,
         { method: "DELETE" },
       );
-      if (!response.ok) throw new Error(t("mcpOperationFailed"));
+      if (!response.ok)
+        throw new DisplayError(response.message ?? t("mcpOperationFailed"));
       setGrants(
         (items) =>
           items?.map((grant) =>
@@ -59,8 +66,8 @@ export function SandboxMcpExport({
               : grant,
           ) ?? null,
       );
-    } catch {
-      setError(t("mcpOperationFailed"));
+    } catch (cause) {
+      setError(displayErrorText(cause, t("mcpOperationFailed")));
     } finally {
       setBusy(false);
     }

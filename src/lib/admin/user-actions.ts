@@ -1,10 +1,11 @@
 "use server";
 
+import { actionScope } from "@/lib/workspace/action-scope";
 import { logSystemEvent } from "@/lib/observability/system";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
-import { requireAdmin } from "@/lib/auth/admin";
+
 import {
   setUserRole,
   setUserStatus,
@@ -18,7 +19,7 @@ export async function setUserRoleAction(
   _prev: AdminActionState,
   formData: FormData,
 ): Promise<AdminActionState> {
-  const admin = await requireAdmin();
+  const admin = await actionScope({ admin: true });
   const t = await getTranslations("admin");
   const userId = String(formData.get("userId") ?? "");
   const role = String(formData.get("role") ?? "");
@@ -50,7 +51,7 @@ export async function setUserStatusAction(
   _prev: AdminActionState,
   formData: FormData,
 ): Promise<AdminActionState> {
-  const admin = await requireAdmin();
+  const admin = await actionScope({ admin: true });
   const t = await getTranslations("admin");
   const userId = String(formData.get("userId") ?? "");
   const status = String(formData.get("status") ?? "");
@@ -82,7 +83,7 @@ export async function deleteUserAction(
   _prev: AdminActionState,
   formData: FormData,
 ): Promise<AdminActionState> {
-  const admin = await requireAdmin();
+  const admin = await actionScope({ admin: true });
   const t = await getTranslations("admin");
   const userId = String(formData.get("userId") ?? "");
   const confirm = String(formData.get("confirm") ?? "");

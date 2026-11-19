@@ -20,6 +20,14 @@ import {
 } from "./conversation-sandbox";
 import { forkWorkPiSession } from "./sandbox-runtime";
 import { workSessionWorkingDirectory } from "@/lib/work/sessions";
+import {
+  insertWorkSession,
+  updateWorkSessionStatus,
+} from "@/lib/work/lifecycle";
+import {
+  canTransitionWorkSession,
+  isWorkSessionReadOnly,
+} from "@/lib/work/state-machine";
 import { kickWorkCoordinator } from "@/lib/work/coordinator";
 import { startWorkOutput } from "@/lib/work/run-control";
 import { logSystemEvent } from "@/lib/observability/system";
@@ -39,7 +47,6 @@ const contextOnly = {
   filesRewound: false,
   externalEffectsRewound: false,
 } as const;
-const idleStatuses = ["idle", "waiting_user", "completed", "failed"];
 
 /** Only native Work owns a mutable console transcript. Never infer Pi IDs from text/order. */
 export async function mutateWorkConversationTree(input: {
@@ -81,7 +88,7 @@ export async function mutateWorkConversationTree(input: {
     work.runtimeKind !== "pi-sdk" ||
     work.legacyRevisionUnresolved ||
     work.agentRevisionId !== scope.agentRevisionId ||
-    work.status === "archived"
+    isWorkSessionReadOnly(work.status)
   )
     throw new ConversationTreeError("readOnly");
   try {
@@ -121,12 +128,13 @@ export async function mutateWorkConversationTree(input: {
         if (!current) throw new ConversationTreeError("notFound", 404);
         if (
           current.legacyRevisionUnresolved ||
+          isWorkSessionReadOnly(current.status) ||
           current.agentRevisionId !== scope.agentRevisionId ||
           current.conversation.legacyRevisionUnresolved ||
           current.conversation.agentRevisionId !== scope.agentRevisionId
         )
           throw new ConversationTreeError("readOnly");
-        if (!idleStatuses.includes(current.status))
+        if (!canTransitionWorkSession(current.status, "queued"))
           throw new ConversationTreeError("busy");
         const bindings = await tx.a2AEntryBinding.findMany({
           where: {
@@ -234,9 +242,14 @@ export async function mutateWorkConversationTree(input: {
           },
           data: { supersededAt: new Date(), supersededById: replacement.id },
         });
-        await tx.workSession.update({
-          where: { id: work.id },
-          data: {
+        const queued = await updateWorkSessionStatus(
+          tx,
+          {
+            id: work.id,
+            workspaceId: input.workspaceId,
+            status: current.status,
+          },
+          {
             status: "queued",
             a2aActorId: input.actorId,
             result: null,
@@ -248,7 +261,8 @@ export async function mutateWorkConversationTree(input: {
             uiProjection: {},
             uiLease: null,
           },
-        });
+        );
+        if (!queued.count) throw new ConversationTreeError("busy");
         return { kind: "replay" as const, replacement };
       });
       if (prepared.kind === "replay") {
@@ -312,22 +326,19 @@ export async function mutateWorkConversationTree(input: {
             piTurnLeafId: message.piTurnLeafId,
           })),
         });
-        const branchedWork = await tx.workSession.create({
-          data: {
-            workspaceId: input.workspaceId,
-            agentId: input.agentId,
-            agentRevisionId: scope.agentRevisionId,
-            legacyRevisionUnresolved: false,
-            conversationId: conversation.id,
-            sandboxId: current.sandboxId,
-            a2aActorId: input.actorId,
-            title: current.title,
-            task: current.task,
-            acceptanceCriteria: current.acceptanceCriteria,
-            runtimeKind: "pi-sdk",
-            runtimeSnapshot: current.runtimeSnapshot ?? undefined,
-            status: "archived",
-          },
+        const branchedWork = await insertWorkSession(tx, "forking", {
+          workspaceId: input.workspaceId,
+          agentId: input.agentId,
+          agentRevisionId: scope.agentRevisionId,
+          legacyRevisionUnresolved: false,
+          conversationId: conversation.id,
+          sandboxId: current.sandboxId,
+          a2aActorId: input.actorId,
+          title: current.title,
+          task: current.task,
+          acceptanceCriteria: current.acceptanceCriteria,
+          runtimeKind: "pi-sdk",
+          runtimeSnapshot: current.runtimeSnapshot ?? undefined,
         });
         return {
           conversationId: conversation.id,
@@ -352,10 +363,16 @@ export async function mutateWorkConversationTree(input: {
         workingDirectory: workSessionWorkingDirectory(current.runtimeSnapshot),
         signal: input.signal,
       });
-      await db.workSession.update({
-        where: { id: created.workSessionId },
-        data: { status: "idle" },
-      });
+      const ready = await updateWorkSessionStatus(
+        db,
+        {
+          id: created.workSessionId,
+          workspaceId: input.workspaceId,
+          status: "forking",
+        },
+        { status: "idle" },
+      );
+      if (!ready.count) throw new ConversationTreeError("busy");
       createdConversationId = undefined;
       return {
         ...contextOnly,

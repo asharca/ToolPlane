@@ -1,5 +1,9 @@
 "use client";
 
+import {
+  DisplayError,
+  displayErrorText,
+} from "@/components/dashboard/display-error";
 import { useActionState, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -106,7 +110,7 @@ export function NotificationCenter({
     form.set("notificationId", id);
     try {
       const result = await markNotificationReadAction({}, form);
-      if (result.error) throw new Error(result.error);
+      if (result.error) throw new DisplayError(result.error);
       window.dispatchEvent(new Event(CHANGED_EVENT));
     } catch (error) {
       setReadIds((ids) => {
@@ -114,14 +118,9 @@ export function NotificationCenter({
         next.delete(id);
         return next;
       });
-      notify(
-        error instanceof Error && error.message
-          ? error.message
-          : t("errors.failed"),
-        {
-          severity: "error",
-        },
-      );
+      notify(displayErrorText(error, t("errors.failed")), {
+        severity: "error",
+      });
     }
   };
 
@@ -130,18 +129,13 @@ export function NotificationCenter({
     setAllRead(true);
     try {
       const result = await markAllNotificationsReadAction({}, new FormData());
-      if (result.error) throw new Error(result.error);
+      if (result.error) throw new DisplayError(result.error);
       window.dispatchEvent(new Event(CHANGED_EVENT));
     } catch (error) {
       setAllRead(false);
-      notify(
-        error instanceof Error && error.message
-          ? error.message
-          : t("errors.failed"),
-        {
-          severity: "error",
-        },
-      );
+      notify(displayErrorText(error, t("errors.failed")), {
+        severity: "error",
+      });
     } finally {
       setMarkingAll(false);
     }

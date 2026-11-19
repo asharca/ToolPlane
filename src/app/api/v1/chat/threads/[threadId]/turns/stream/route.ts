@@ -1,8 +1,9 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { createUIMessageStreamResponse } from "ai";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { withRequestLogging } from "@/lib/observability/http";
 import { workspaceAccessResponse } from "@/lib/workspace/access-stream";
-import { getChatThreadForUser } from "@/lib/chat/service";
+import { getChatThreadForUser } from "@/lib/chat/threads";
 import {
   chatRunHeaders,
   getChatRunSnapshot,
@@ -35,9 +36,14 @@ export const GET = withRequestLogging(
         { error: "Invalid chat event cursor" },
         { status: 400 },
       );
+    const workspace = await resolveWorkspaceScope(
+      { id: thread.workspaceId },
+      user.id,
+    );
+    if (!workspace)
+      return Response.json({ error: "Chat thread not found" }, { status: 404 });
     const options = {
-      userId: user.id,
-      workspaceId: thread.workspaceId,
+      workspace,
       runId,
       afterSequence,
     };
@@ -59,8 +65,7 @@ export const GET = withRequestLogging(
           stream: output.stream,
           headers: chatRunHeaders(output),
         }),
-        thread.workspaceId,
-        user.id,
+        workspace,
         req.signal,
       );
     } catch (error) {

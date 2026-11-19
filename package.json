@@ -10,7 +10,7 @@
     "hooks:install": "node scripts/install-git-hooks.mjs",
     "check:staged": "node scripts/check-staged.mjs",
     "typecheck": "next typegen && tsc --noEmit",
-    "check": "biome ci . --error-on-warnings && pnpm typecheck",
+    "check": "node scripts/check-invariants.mjs && biome ci . --error-on-warnings && pnpm typecheck",
     "dev": "next dev",
     "build": "next build",
     "runtime:assemble": "node scripts/assemble-runtime.mjs",

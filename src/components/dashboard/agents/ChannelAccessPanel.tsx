@@ -1,5 +1,10 @@
 "use client";
 
+import { apiRequest } from "@/lib/client/api";
+import {
+  DisplayError,
+  displayErrorText,
+} from "@/components/dashboard/display-error";
 import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Button } from "@/components/motion/button/base";
@@ -75,14 +80,18 @@ export function ChannelAccessPanel({
       const version = revision.current;
       try {
         if (!document.hidden && !pendingRef.current && !mutating.current) {
-          const response = await fetch(
-            `${endpoint}?access=${encodeURIComponent(connectionId)}`,
-            { cache: "no-store", signal: controller.signal },
-          );
-          const snapshot = (await response.json()) as AccessData & {
-            error?: string;
-          };
-          if (!response.ok) throw new Error(snapshot.error || requestFailed);
+          const response = await apiRequest<
+            AccessData & {
+              error?: string;
+            }
+          >(`${endpoint}?access=${encodeURIComponent(connectionId)}`, {
+            cache: "no-store",
+            signal: controller.signal,
+          });
+          if (!response.ok)
+            throw new DisplayError(response.message ?? requestFailed);
+          const snapshot = response.data;
+
           if (!controller.signal.aborted && version === revision.current) {
             setData(snapshot);
             setError("");
@@ -90,7 +99,7 @@ export function ChannelAccessPanel({
         }
       } catch (cause) {
         if (!controller.signal.aborted && version === revision.current)
-          setError(cause instanceof Error ? cause.message : requestFailed);
+          setError(displayErrorText(cause, requestFailed));
       } finally {
         active = false;
         if (!controller.signal.aborted) timer = setTimeout(refresh, 3000);

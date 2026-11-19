@@ -3,11 +3,9 @@
 import { useTranslations } from "next-intl";
 import type { LiveTaskOutput } from "@/lib/agents/execution/live-output-types";
 import { StreamingResponse } from "@/components/agents/streaming-response";
-import { WorkContentBlocks } from "@/components/dashboard/ConversationContentBlocks";
-import {
-  formatContentDuration,
-  interleaveLiveText,
-} from "@/lib/conversation/content-blocks";
+import { ConversationContentBlocks } from "@/components/dashboard/ConversationContentBlocks";
+import { formatContentDuration } from "@/lib/conversation/content-blocks";
+import { liveTurnParts } from "@/lib/conversation/content-projection";
 import { agentTurnTimeline } from "@/lib/agents/turn-timeline";
 import { WorkTurnTrace } from "./WorkTurnTrace";
 import type { LiveOutputConnection } from "./useLiveTaskOutput";
@@ -86,13 +84,12 @@ export function LiveOutputView({
         copyText={!hideText ? output.text : undefined}
         announce={false}
       >
-        <WorkContentBlocks
+        <ConversationContentBlocks
           messageId={`live-${output.taskId}`}
-          parts={
-            hideText
-              ? output.activities
-              : interleaveLiveText(output.activities, output.text)
-          }
+          parts={liveTurnParts({
+            activities: output.activities,
+            text: hideText ? "" : output.text,
+          })}
           streaming={active}
           activeLabel={stage}
         />

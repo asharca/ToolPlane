@@ -1,4 +1,5 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { effectiveStatuses } from "@/lib/process/supervisor";
@@ -7,7 +8,10 @@ import { skillLabel } from "@/lib/workspace/skill-label";
 import { AGENT_ENDPOINT_RUNTIME_MANAGED_BY } from "@/lib/agents/public-api/tool-policy";
 import { AgentRevisionConfigSchema } from "./revision-types";
 import { AGENT_PI_PACKAGES_INCLUDE } from "./pi-package-includes";
-import { agentOptionalBuiltinToolOptions } from "./runtime-kind";
+import {
+  agentOptionalBuiltinToolOptions,
+  isExecutableAgentRuntimeKind,
+} from "./runtime-kind";
 
 export type AgentResourceOption = {
   id: string;
@@ -295,10 +299,14 @@ export async function getAgentOptionalBuiltinTools(
   return agent
     ? {
         optionalBuiltinTools: agent.optionalBuiltinTools,
-        optionalBuiltinToolOptions: agentOptionalBuiltinToolOptions(
+        optionalBuiltinToolOptions: isExecutableAgentRuntimeKind(
           agent.runtimeKind,
-          agent.optionalBuiltinTools,
-        ),
+        )
+          ? agentOptionalBuiltinToolOptions(
+              agent.runtimeKind,
+              agent.optionalBuiltinTools,
+            )
+          : [],
         readOnly: agent.retiredAt !== null || agent.runtimeKind !== "pi-sdk",
       }
     : null;
@@ -364,10 +372,7 @@ export async function getAgentForRequest(agentId: string, userId: string) {
     where: {
       id: agentId,
       ...ORDINARY_AGENT_FILTER,
-      workspace: {
-        status: "active",
-        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
-      },
+      workspace: workspaceAccessWhere(userId),
     },
     include: { provider: true, ...TOOL_INCLUDE },
   });

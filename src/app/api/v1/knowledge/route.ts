@@ -1,17 +1,10 @@
+import {
+  resolveWorkspaceScope,
+  workspaceScopeWhere,
+} from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
-
-async function workspaceForUser(slug: string, userId: string) {
-  return db.workspace.findFirst({
-    where: {
-      slug,
-      status: "active",
-      OR: [{ ownerId: userId }, { members: { some: { userId } } }],
-    },
-    select: { id: true },
-  });
-}
 
 export const GET = withRequestLogging(
   "/api/v1/knowledge",
@@ -21,12 +14,12 @@ export const GET = withRequestLogging(
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
     if (!slug)
       return Response.json({ error: "workspace is required" }, { status: 400 });
-    const workspace = await workspaceForUser(slug, user.id);
+    const workspace = await resolveWorkspaceScope({ slug }, user.id);
     if (!workspace)
       return Response.json({ error: "Not found" }, { status: 404 });
     return Response.json(
       await db.knowledgeBase.findMany({
-        where: { workspaceId: workspace.id },
+        where: { workspace: workspaceScopeWhere(workspace) },
         orderBy: { updatedAt: "desc" },
         include: {
           provider: { select: { id: true, name: true } },
@@ -73,11 +66,14 @@ export const POST = withRequestLogging(
         { status: 400 },
       );
     }
-    const workspace = await workspaceForUser(body.workspace.trim(), user.id);
+    const workspace = await resolveWorkspaceScope(
+      { slug: body.workspace.trim() },
+      user.id,
+    );
     if (!workspace)
       return Response.json({ error: "Not found" }, { status: 404 });
     const provider = await db.modelProvider.findFirst({
-      where: { id: body.providerId, workspaceId: workspace.id },
+      where: { id: body.providerId, workspace: workspaceScopeWhere(workspace) },
       select: { id: true },
     });
     if (!provider)

@@ -126,6 +126,27 @@ describe("strict A2A 1.0 remote profile", () => {
       text: "Remote review result",
     });
   });
+  it("does not retain diagnostics in a failed remote task's status message", () => {
+    const task = remoteTask("TASK_STATE_FAILED");
+    const result = remoteResult(
+      Task.fromJSON({
+        ...task,
+        status: {
+          state: "TASK_STATE_FAILED",
+          message: {
+            messageId: "peer-failure",
+            role: "ROLE_AGENT",
+            parts: [{ text: "private peer diagnostic" }],
+          },
+        },
+      }),
+    );
+    expect(result.detail).toBe("The remote Agent task failed.");
+    expect(result.message?.parts[0].content).toEqual({
+      $case: "text",
+      value: "The remote Agent task failed.",
+    });
+  });
   it.each([
     {
       raw: "YQ==",

@@ -1,11 +1,9 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { db } from "@/lib/db";
-import {
-  getWorkspaceForUser,
-  getWorkspaceMembers,
-} from "@/lib/workspace/queries";
+import { getWorkspaceMembers } from "@/lib/workspace/queries";
 import {
   ModelRetrySetting,
   WorkspaceModelSettings,
@@ -36,7 +34,7 @@ export default async function SettingsPage({
   ]);
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
-  const ws = await getWorkspaceForUser(slug, user.id);
+  const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app?view=workspaces&notice=unavailable");
   const isOwner = ws.ownerId === user.id;
   const [providers, members, impact, running] = await Promise.all([

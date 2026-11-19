@@ -1,4 +1,5 @@
 "use client";
+import { apiRequest } from "@/lib/client/api";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
@@ -164,7 +165,7 @@ export function ConversationExecution({
       flight = controller;
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
       try {
-        const response = await fetch(url, {
+        const response = await apiRequest(url, {
           credentials: "same-origin",
           cache: "no-store",
           signal: controller.signal,
@@ -179,7 +180,7 @@ export function ConversationExecution({
           return;
         }
         if (!response.ok) throw new Error();
-        const parsed = ExecutionResponse.safeParse(await response.json());
+        const parsed = ExecutionResponse.safeParse(response.data);
         if (!parsed.success) throw new Error();
         const next = parsed.data.execution;
         if (!alive) return;
@@ -278,22 +279,16 @@ export function ConversationExecution({
     setBusyRequestId(card.id);
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const response = await fetch(toolApprovalEndpoint, {
+      const response = await apiRequest(toolApprovalEndpoint, {
         method: "POST",
         credentials: "same-origin",
         cache: "no-store",
         signal: controller.signal,
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(decision),
+        json: decision,
       });
       if (!owned()) return;
       if (!response.ok) {
-        const payload: unknown = await response.json().catch(() => null);
-        const code =
-          payload && typeof payload === "object" && "error" in payload
-            ? payload.error
-            : null;
-        if (!owned()) return;
+        const code = response.message;
         if (
           response.status === 401 ||
           response.status === 403 ||
@@ -358,13 +353,12 @@ export function ConversationExecution({
     setDecisionFailed(false);
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const response = await fetch(url, {
+      const response = await apiRequest(url, {
         method: "POST",
         credentials: "same-origin",
         cache: "no-store",
         signal: controller.signal,
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(result),
+        json: result,
       });
       if (!owned()) return;
       if (REVOKED_STATUSES.has(response.status)) {

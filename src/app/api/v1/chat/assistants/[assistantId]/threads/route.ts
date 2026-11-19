@@ -1,7 +1,8 @@
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { CreateChatThreadSchema } from "@/lib/chat/schemas";
-import { ChatServiceError, createChatThread } from "@/lib/chat/service";
+import { ChatServiceError } from "@/lib/chat/shared";
+import { createChatThread } from "@/lib/chat/threads";
 
 export const runtime = "nodejs";
 

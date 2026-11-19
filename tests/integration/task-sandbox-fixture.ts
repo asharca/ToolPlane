@@ -33,7 +33,7 @@ export async function mapTaskSandbox(row: A2ATask) {
             where: { id: entry.sourceId },
           })
         ).conversationId
-      : entry?.sourceId;
+      : (entry?.conversationId ?? entry?.sourceId);
   const conversation = conversationId
     ? await db.conversation.findUniqueOrThrow({ where: { id: conversationId } })
     : null;

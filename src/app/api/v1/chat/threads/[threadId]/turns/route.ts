@@ -1,3 +1,8 @@
+import {
+  resolveWorkspaceScope,
+  workspaceAccessWhere,
+  workspaceScopeWhere,
+} from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { workspaceAccessResponse } from "@/lib/workspace/access-stream";
 import { enrichLogContext } from "@/lib/observability/context";
@@ -25,18 +30,20 @@ import {
 } from "@/lib/chat/schemas";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import type { AgentUIMessage } from "@/lib/agents/message-segments";
+import { ChatServiceError } from "@/lib/chat/shared";
 import {
-  ChatServiceError,
   beginChatTurn,
-  completeChatTurn,
-  finishChatTurn,
-  getChatHistoryForExecution,
   getChatThreadForExecution,
-  getChatThreadForUser,
   getChatTurnReplay,
   type ChatTurnAdmission,
   resolveChatTurnModel,
-} from "@/lib/chat/service";
+} from "@/lib/chat/admission";
+import {
+  completeChatTurn,
+  finishChatTurn,
+  getChatHistoryForExecution,
+} from "@/lib/chat/history";
+import { getChatThreadForUser } from "@/lib/chat/threads";
 import { buildKeylessWebSearchToolSet } from "@/lib/chat/keyless-web-search";
 import {
   startChatRun,
@@ -86,6 +93,18 @@ export const POST = withRequestLogging(
       reasoningEffort: input.reasoningEffort ?? null,
       modelOverride: input.modelOverride ?? null,
     });
+    const authorizedThread = await db.chatThread.findFirst({
+      where: { id: threadId, workspace: workspaceAccessWhere(user.id) },
+      select: { workspaceId: true },
+    });
+    const scope =
+      authorizedThread &&
+      (await resolveWorkspaceScope(
+        { id: authorizedThread.workspaceId },
+        user.id,
+      ));
+    if (!scope)
+      return Response.json({ error: "Chat thread not found" }, { status: 404 });
     let thread: Awaited<ReturnType<typeof getChatThreadForExecution>>;
     try {
       await recoverStaleChatRuns(threadId);
@@ -97,8 +116,7 @@ export const POST = withRequestLogging(
       );
       if (replay) {
         const output = await subscribeChatRun(threadId, null, {
-          userId: user.id,
-          workspaceId: replay.workspaceId,
+          workspace: scope,
           runId: replay.runId,
         });
         return output
@@ -152,7 +170,7 @@ export const POST = withRequestLogging(
             modalities.add(modality);
         }
         ({ provider, modelId } = await resolveChatTurnModel(
-          thread.workspaceId,
+          scope,
           input.modelOverride,
           {
             tools:
@@ -188,12 +206,11 @@ export const POST = withRequestLogging(
         ? input.reasoningEffort
         : (assistant.reasoningEffort ?? DEFAULT_REASONING_LEVEL);
     const modelRecord = requestedReasoning
-      ? await db.providerModel.findUnique({
+      ? await db.providerModel.findFirst({
           where: {
-            providerId_modelId: {
-              providerId: effectiveProvider.id,
-              modelId: effectiveModel,
-            },
+            providerId: effectiveProvider.id,
+            modelId: effectiveModel,
+            provider: { workspace: workspaceScopeWhere(scope) },
           },
           select: { capabilities: true },
         })
@@ -214,7 +231,7 @@ export const POST = withRequestLogging(
       turn = await beginChatTurn(
         threadId,
         last.parts as unknown as Array<Record<string, unknown>>,
-        { workspaceId: thread.workspaceId, userId: user.id },
+        scope,
         {
           trigger: input.trigger,
           messageId: targetMessageId,
@@ -258,8 +275,7 @@ export const POST = withRequestLogging(
       threadId,
       turnId: turn.id,
       assistantMessageId: turn.assistantMessageId,
-      workspaceId: thread.workspaceId,
-      userId: user.id,
+      workspace: scope,
     };
     try {
       output = await startChatRun(
@@ -302,8 +318,7 @@ export const POST = withRequestLogging(
                   await Promise.allSettled([
                     buildChatToolSet({
                       assistantId: assistant.id,
-                      workspaceId: thread.workspaceId,
-                      userId: user.id,
+                      workspace: scope,
                       config: thread.revisionConfig,
                       signal,
                     }),
@@ -347,8 +362,7 @@ export const POST = withRequestLogging(
                     threadId,
                     turnId: turn.id,
                     assistantMessageId: turn.assistantMessageId,
-                    workspaceId: thread.workspaceId,
-                    userId: user.id,
+                    workspace: scope,
                     fence,
                     signal,
                     onUnknownOutcome: (error) => unknownEffect.abort(error),
@@ -477,8 +491,7 @@ export const POST = withRequestLogging(
         stream: output.stream,
         headers: chatRunHeaders(output),
       }),
-      thread.workspaceId,
-      user.id,
+      scope,
       req.signal,
     );
   },
@@ -511,8 +524,14 @@ export const DELETE = withRequestLogging(
     ) {
       return Response.json({ error: "A turn ID is required" }, { status: 400 });
     }
+    const scope = await resolveWorkspaceScope(
+      { id: thread.workspaceId },
+      user.id,
+    );
+    if (!scope)
+      return Response.json({ error: "Chat thread not found" }, { status: 404 });
     // A delayed stop must never cancel a newer turn.
-    const requested = await cancelChatRun(threadId, input.turnId);
+    const requested = await cancelChatRun(scope, threadId, input.turnId);
     return Response.json(
       { stopRequested: requested, turnId: input.turnId },
       { status: requested ? 202 : 200 },

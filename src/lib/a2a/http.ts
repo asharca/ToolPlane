@@ -1,4 +1,5 @@
 import "server-only";
+import { a2aFailures } from "./errors";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { a2aTransportBodyBytes } from "@/lib/transport-policy";
 import { A2A_QUOTA_ERROR } from "./quotas";
@@ -151,7 +152,7 @@ async function readBody(req: Request) {
     a2aTransportBodyBytes(await getTransportSettings()),
   );
   if (Number(req.headers.get("content-length")) > bodyBytes)
-    throw new A2AHttpError(413, "Request body too large.");
+    throw new A2AHttpError(413, "REQUEST_TOO_LARGE");
   if (!req.body) return "";
   const reader = req.body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -171,7 +172,7 @@ async function readBody(req: Request) {
       size += chunk.value.byteLength;
       if (size > bodyBytes) {
         await reader.cancel();
-        throw new A2AHttpError(413, "Request body too large.");
+        throw new A2AHttpError(413, "REQUEST_TOO_LARGE");
       }
       text += decoder.decode(chunk.value, { stream: true });
     }
@@ -211,7 +212,7 @@ function httpFailure(error: unknown, id: RpcId, headers: Headers) {
           code: -32000,
           message:
             error instanceof A2AHttpError
-              ? error.message
+              ? a2aFailures.text(error.code)
               : "Agent service request unavailable.",
         },
       },
@@ -385,7 +386,7 @@ export async function handleA2ARpc(
         req.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !==
         "application/json"
       )
-        throw new A2AHttpError(415, "Content-Type must be application/json.");
+        throw new A2AHttpError(415, "JSON_CONTENT_TYPE_REQUIRED");
       let raw: unknown, text: string | undefined;
       try {
         text = await readBody(req);
@@ -428,10 +429,7 @@ export async function handleA2ARpc(
         retryFiles !== null &&
         (retryFiles !== "true" || rpc.method !== "GetTask")
       )
-        throw new A2AHttpError(
-          400,
-          "A2A-Retry-Files: true is only valid with GetTask.",
-        );
+        throw new A2AHttpError(400, "FILE_RETRY_GET_TASK_ONLY");
       const requested = req.headers.get("a2a-version") ?? "";
       // Spec patch numbers do not participate in protocol negotiation.
       const version = /^\d+\.\d+(?:\.\d+)?$/.test(requested)
@@ -447,7 +445,7 @@ export async function handleA2ARpc(
             ? "cancel"
             : "read";
       if (!permits(grant, operation))
-        throw new A2AHttpError(403, "Required A2A permission is missing.");
+        throw new A2AHttpError(403, "REQUIRED_PERMISSION_MISSING");
       validateParams(
         rpc.method,
         rpc.params,

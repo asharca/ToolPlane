@@ -1,5 +1,10 @@
 "use client";
 
+import { apiRequest } from "@/lib/client/api";
+import {
+  DisplayError,
+  displayErrorText,
+} from "@/components/dashboard/display-error";
 import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { ChevronLeft, ChevronRight, Plus, Trash2 } from "lucide-react";
@@ -241,7 +246,7 @@ export function AssistantEditor({
             parameter.type === "json" && !hasValidJson(String(parameter.value)),
         )
       ) {
-        throw new Error(t("invalidCustomParameter"));
+        throw new DisplayError(t("invalidCustomParameter"));
       }
       const modelParameters: AssistantModelParameters = {
         ...(temperatureEnabled ? { temperature } : {}),
@@ -251,14 +256,16 @@ export function AssistantEditor({
           ? { customParameters: selectedCustomParameters }
           : {}),
       };
-      const response = await fetch(
+      const response = await apiRequest<{
+        assistant?: { id?: string };
+        id?: string;
+      }>(
         assistant
           ? `/api/v1/chat/assistants/${assistant.id}`
           : "/api/v1/chat/assistants",
         {
           method: assistant ? "PATCH" : "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
+          json: {
             ...(!assistant ? { workspaceId } : {}),
             ...(assistant ? { expectedRevision: assistant.revision } : {}),
             name: String(formData.get("name") ?? "").trim(),
@@ -275,21 +282,19 @@ export function AssistantEditor({
               formData.get("maxSteps") ?? AGENT_STEP_BOUNDS.default,
             ),
             mcpGrants,
-          }),
+          },
         },
       );
-      const body = (await response.json().catch(() => ({}))) as {
-        assistant?: { id?: string };
-        id?: string;
-        error?: string;
-      };
-      if (!response.ok) throw new Error(body.error || t("saveError"));
+      if (!response.ok)
+        throw new DisplayError(response.message ?? t("saveError"));
+      const body = response.data;
+
       const assistantId = body.assistant?.id ?? body.id ?? assistant?.id;
-      if (!assistantId) throw new Error(t("saveError"));
+      if (!assistantId) throw new DisplayError(t("saveError"));
       await onSaved(assistantId, !assistant);
       resetNativeDirty();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("saveError"));
+      setError(displayErrorText(cause, t("saveError")));
     } finally {
       setSaving(false);
     }

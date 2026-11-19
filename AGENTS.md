@@ -61,8 +61,10 @@ invent incidents or counts. Follow its promotion rules for recurring lessons.
 
 ## Security invariants
 
-- Verify workspace ownership on every workspace-scoped query and mutation,
-  including gateway calls, manifests, toolkits, and agent tools.
+- Resolve workspace authority with `resolveWorkspaceScope` (or `actionScope`
+  in server actions). Include `workspaceScopeWhere(scope)` or the appropriate
+  shared access predicate in the final workspace-scoped read or write. Do not
+  widen a manage-only operation to ordinary membership.
 - Persist a chat turn only if its conversation belongs to the agent in the URL.
 - Preserve the route's auth policy: `resolveRequestUser()` accepts personal API tokens
   and session cookies, never Toolkit tokens; Toolkit endpoints use
@@ -172,9 +174,11 @@ sandboxes, and agents. Route groups do not appear in URLs:
 | Toolkit retirement and client registration | `src/lib/toolkits/cutover.ts`; [runtime operations](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS); `src/lib/plugins/installs.ts`. Legacy execution/tokens are retired; conversion does not grant new authority. |
 | GitHub Plugin Center | `src/lib/plugins/github.ts`, `indexer.ts`, `sources.ts`; [GitHub plugin center](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS#user-content-github-插件中心). Catalog contents only come from indexed fixed GitHub commits; preserve immutable pins and workspace-private authoring/uploads. No manual catalog publish/ZIP/npm intake paths. |
 | Agent revisions and turns | `src/lib/agents/revisions.ts`, `sandbox-turn.ts`, `conversation-sandbox.ts`; Pi (`pi-sdk`) is the only executable kernel. OMP and other retired runtimes retain read-only history. Sessions pin applied revisions and own separate directories in one persistent sandbox per Agent; package pins remain conversation/context-scoped. |
-| Assistant chat and tools | `src/lib/chat/service.ts`, `run-control.ts`, `tools.ts`; independent Assistant revisions and durable Runs, remote MCP only, no Agent/Skill/package/stdio/A2A execution. |
+| Assistant chat and tools | `src/lib/chat/assistants.ts`, `threads.ts`, `admission.ts`, `run-control.ts`, `tools.ts`; independent Assistant revisions and durable Runs, remote MCP only, no Agent/Skill/package/stdio/A2A execution. |
 | Agent chat and tools | `src/app/api/v1/agents/[agentId]/chat/route.ts`; `src/lib/agents/resolve.ts`, `tools.ts`, `mutations.ts` |
+| Console JSON requests | `src/lib/client/api.ts`; use `apiRequest` and a translated fallback. Native `fetch` is reserved for stream, upload, and binary paths listed in `scripts/check-invariants.mjs`. |
 | Sandboxes and PTY | [Sandboxes](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/SANDBOXES); conversation-scoped routes under `src/app/api/v1/agents/[agentId]/conversations/[conversationId]/` |
+| Work lifecycle and conversation display | `src/lib/work/lifecycle.ts`, `state-machine.ts`; `src/lib/conversation/content-projection.ts` is shared by live, saved, and exported output. |
 | Messaging channels | [Messaging platforms](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/AGENT_MESSAGING_PLATFORMS); `src/lib/agents/channel-*.ts` |
 | Public agent API | [Agent public API](https://asharca.github.io/toolplane-docs/docs/zh/api/docs/AGENT_PUBLIC_API); `src/lib/agents/public-api/` |
 | Workspace control MCP | [Agent Control MCP](https://asharca.github.io/toolplane-docs/docs/zh/api/docs/AGENT_CONTROL_MCP); `src/lib/agents/control-mcp.ts`, `control-service.ts`; creation accepts `pi-sdk` and produces an unauthorized draft requiring explicit revision review/application. |

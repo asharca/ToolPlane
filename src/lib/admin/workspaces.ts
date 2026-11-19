@@ -1,5 +1,5 @@
 import "server-only";
-import type { Prisma } from "@prisma/client";
+import { WorkspaceStatus, type Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { normalizeAdminPage } from "@/lib/admin/pagination";
 import { effectiveStatuses } from "@/lib/process/supervisor";
@@ -7,6 +7,7 @@ import { killWorkspaceProcesses } from "@/lib/workspace/teardown";
 import { writeAudit } from "@/lib/observability/audit";
 
 const PAGE_SIZE = 25;
+const workspaceStatuses = Object.values(WorkspaceStatus);
 
 export async function listWorkspaces({
   page = 1,
@@ -20,6 +21,7 @@ export async function listWorkspaces({
   status?: string;
 }) {
   const currentPage = normalizeAdminPage(page);
+  const workspaceStatus = workspaceStatuses.find((value) => value === status);
   const where: Prisma.WorkspaceWhereInput = {
     ...(q
       ? {
@@ -40,9 +42,7 @@ export async function listWorkspaces({
           },
         }
       : {}),
-    ...(["active", "deleting", "delete_failed"].includes(status ?? "")
-      ? { status }
-      : {}),
+    ...(workspaceStatus ? { status: workspaceStatus } : {}),
   };
   const skip = (currentPage - 1) * PAGE_SIZE;
   const [items, total] = await Promise.all([

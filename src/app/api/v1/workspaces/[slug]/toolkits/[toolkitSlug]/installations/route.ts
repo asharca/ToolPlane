@@ -1,3 +1,4 @@
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
@@ -29,8 +30,7 @@ async function resolve(req: Request, ctx: Context) {
       slug: toolkitSlug,
       workspace: {
         slug,
-        status: "active",
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+        ...workspaceAccessWhere(user.id),
       },
     },
     select: { id: true, workspaceId: true },
@@ -84,13 +84,7 @@ export const POST = withRequestLogging(
       const stillAllowed = await tx.toolkit.findFirst({
         where: {
           id: auth.toolkit.id,
-          workspace: {
-            status: "active",
-            OR: [
-              { ownerId: auth.user.id },
-              { members: { some: { userId: auth.user.id } } },
-            ],
-          },
+          workspace: workspaceAccessWhere(auth.user.id),
         },
         select: { id: true },
       });

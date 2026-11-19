@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mcpDefinitionChecksum } from "@/lib/process/mcp-definition";
@@ -23,6 +24,13 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/db", () => ({
   db: {
+    workspace: {
+      findFirst: async () => ({
+        id: "workspace",
+        ownerId: "actor",
+        members: [],
+      }),
+    },
     chatAssistant: { findFirst: state.assistant },
     chatAssistantMcpGrant: { findMany: state.grants, findFirst: state.current },
   },
@@ -56,7 +64,7 @@ vi.mock("@/lib/remote-mcp/pinned-connection", async (importOriginal) => ({
     return state.execute(context, name, args, approved, options);
   },
 }));
-vi.mock("@/lib/chat/service", () => ({
+vi.mock("@/lib/chat/shared", () => ({
   ChatServiceError: class extends Error {
     constructor(
       readonly status: number,
@@ -95,10 +103,11 @@ const config: ChatAssistantRevisionConfig = {
     },
   ],
 };
+const workspace = await resolveWorkspaceScope({ id: "workspace" }, "actor");
+if (!workspace) throw new Error("Workspace scope not resolved");
 const scope = {
   assistantId: "assistant",
-  workspaceId: "workspace",
-  userId: "actor",
+  workspace,
   config,
 };
 const grant = {
@@ -165,7 +174,7 @@ describe("Assistant revision-bounded remote tools", () => {
     await tools[readToolKey].execute({ query: "test" }, { toolCallId: "call" });
     expect(state.execute).toHaveBeenCalledWith(
       {
-        workspaceId: scope.workspaceId,
+        workspaceId: scope.workspace.id,
         deploymentId: deployment.id,
         definitionChecksum: config.mcpGrants[0].definitionChecksum,
       },
@@ -180,7 +189,7 @@ describe("Assistant revision-bounded remote tools", () => {
           assistantId: scope.assistantId,
           deploymentId: deployment.id,
           assistant: expect.objectContaining({
-            workspaceId: scope.workspaceId,
+            workspaceId: scope.workspace.id,
           }),
         }),
       }),
@@ -193,7 +202,7 @@ describe("Assistant revision-bounded remote tools", () => {
     expect(Object.keys(tools)).toEqual([readToolKey]);
     expect(state.tools).toHaveBeenCalledWith(
       {
-        workspaceId: scope.workspaceId,
+        workspaceId: scope.workspace.id,
         deploymentId: deployment.id,
         definitionChecksum: config.mcpGrants[0].definitionChecksum,
       },
@@ -309,7 +318,7 @@ describe("Assistant revision-bounded remote tools", () => {
     });
     expect(logRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        workspaceId: scope.workspaceId,
+        workspaceId: scope.workspace.id,
         deploymentId: deployment.id,
         statusCode: 403,
         outcome: "denied",

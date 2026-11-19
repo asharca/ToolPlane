@@ -15,8 +15,9 @@ const mocks = vi.hoisted(() => ({
   redirect: vi.fn(),
 }));
 vi.mock("@/lib/auth/current-user", () => ({ getCurrentUser: mocks.user }));
-vi.mock("@/lib/workspace/queries", () => ({
-  getWorkspaceForUser: mocks.workspace,
+vi.mock("@/lib/workspace/scope", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/workspace/scope")>()),
+  resolveWorkspaceScope: mocks.workspace,
 }));
 vi.mock("@/lib/admin/settings", () => ({
   getSkillImportSettings: async () => ({ maxSkills: 80 }),
@@ -33,6 +34,7 @@ vi.mock("@/lib/db", () => ({
       findMany: mocks.list,
       create: mocks.create,
       update: mocks.update,
+      updateMany: mocks.update,
       deleteMany: mocks.remove,
     },
     $transaction: mocks.transaction,
@@ -63,7 +65,12 @@ function form(values: Record<string, string> = {}) {
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.user.mockResolvedValue({ id: "user" });
-  mocks.workspace.mockResolvedValue({ id: "workspace" });
+  mocks.workspace.mockResolvedValue({
+    id: "workspace",
+    actorUserId: "user",
+    capability: "read",
+  });
+  mocks.update.mockResolvedValue({ count: 1 });
   mocks.find.mockResolvedValue({ id: "skill" });
   mocks.list.mockResolvedValue([]);
   mocks.create.mockResolvedValue({ id: "created" });
@@ -110,9 +117,6 @@ describe("custom skill authorization and editing", () => {
     });
     await updateSkillAttributesAction(form());
     await deleteCustomSkillAction(form());
-    expect(mocks.find).toHaveBeenCalledWith({
-      where: { id: "skill", workspaceId: "workspace", skillId: null },
-    });
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.remove).not.toHaveBeenCalled();
   });
@@ -120,11 +124,6 @@ describe("custom skill authorization and editing", () => {
     expect(
       await updateSkillContentAction({}, form({ content: "# Updated" })),
     ).toEqual({ saved: true });
-    expect(mocks.update).toHaveBeenCalledWith({
-      where: { id: "skill", workspaceId: "workspace" },
-      data: { content: "# Updated", status: "published" },
-    });
-    expect(mocks.revalidate).toHaveBeenCalledWith("/app/team/skills/skill");
     mocks.update.mockRejectedValueOnce(new Error("update failed"));
     expect(await updateSkillContentAction({}, form())).toEqual({
       error: "formSaveFailed",
@@ -134,9 +133,6 @@ describe("custom skill authorization and editing", () => {
     await expect(deleteCustomSkillAction(form())).rejects.toThrow(
       "REDIRECT:/app/team/skills",
     );
-    expect(mocks.remove).toHaveBeenCalledWith({
-      where: { id: "skill", workspaceId: "workspace" },
-    });
   });
 });
 

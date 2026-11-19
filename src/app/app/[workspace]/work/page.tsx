@@ -1,8 +1,9 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { notFound, redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import {
   getConversation,
   listAgents,
@@ -142,7 +143,7 @@ export default async function WorkspaceWorkPage({
     getTranslations("console.work"),
   ]);
   if (!user) redirect("/app/login");
-  const workspace = await getWorkspaceForUser(slug, user.id);
+  const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (!workspace) redirect("/app");
   if (mode === "a2a") return notFound();
   const titlePending = Boolean(w && !c && !a2a && isWorkSessionTitlePending(w));

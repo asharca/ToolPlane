@@ -27,12 +27,12 @@ import {
   AgentSecretObfuscator,
   restoreModelResponse,
 } from "@/lib/agents/secret-obfuscation";
+import { buildPiMcpConfig } from "@/lib/agents/sandbox-runtime";
 import {
-  buildPiMcpConfig,
   nativePiMcpToolName,
-  parsePiStreamLine,
   piMcpExtensionSource,
-} from "@/lib/agents/sandbox-runtime";
+} from "@/lib/agents/sandbox-runtime/mcp-extension";
+import { parsePiStreamLine } from "@/lib/agents/sandbox-runtime/pi-stream";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {

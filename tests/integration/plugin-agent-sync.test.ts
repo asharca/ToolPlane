@@ -1,9 +1,11 @@
+import { testWorkspaceScope } from "../helpers/workspace-scope";
 // @vitest-environment node
 import { AsyncResource } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
-import { createAgent, setAgentPiPackages } from "@/lib/agents/mutations";
+import { createAgent } from "@/lib/agents/mutations";
+import { setAgentPiPackages } from "@/lib/agents/agent-draft-mutations";
 import { resolvePiSessionPackages } from "@/lib/agents/pi-session-packages";
 import {
   withAgentExecutionLease,
@@ -186,7 +188,13 @@ beforeAll(async () => {
     })
   ).id;
   v1 = (await release(1)).id;
-  installId = (await addPlugin(workspaceId, userId, listingId)).id;
+  installId = (
+    await (async () =>
+      addPlugin(
+        await testWorkspaceScope(workspaceId, userId, "manage"),
+        listingId,
+      ))()
+  ).id;
   agentId = (
     await createAgent(workspaceId, "Following plugin", {
       piPackages: [{ marketInstallId: installId }],
@@ -234,7 +242,11 @@ it("derives legacy changelogs read-only from each frozen release and keeps lates
     where: { listingId },
     orderBy: { version: "desc" },
   });
-  const plugin = await getPlugin(workspaceId, userId, listingId);
+  const plugin = await (async () =>
+    getPlugin(
+      await testWorkspaceScope(workspaceId, userId, "read"),
+      listingId,
+    ))();
   expect(plugin.latestRelease).toEqual(plugin.releases[0]);
   expect(plugin.releases.map((item) => item.changelog)).toEqual([
     {
@@ -265,7 +277,13 @@ it("auto-publishes unchanged capabilities during active execution while existing
   });
   await withAgentExecutionLease(
     { agentId, sessionId: oldSession.conversationId },
-    () => updatePlugin(workspaceId, userId, installId, v2),
+    () =>
+      (async () =>
+        updatePlugin(
+          await testWorkspaceScope(workspaceId, userId, "manage"),
+          installId,
+          v2,
+        ))(),
   );
   await db.workSession.update({
     where: { id: running.id },
@@ -315,18 +333,34 @@ it("auto-publishes unchanged capabilities during active execution while existing
 });
 
 it("rejects a stale approval target without changing the binding or publishing a revision", async () => {
-  await updatePlugin(workspaceId, userId, installId, v3);
+  await (async () =>
+    updatePlugin(
+      await testWorkspaceScope(workspaceId, userId, "manage"),
+      installId,
+      v3,
+    ))();
   const before = await binding();
   const revisionVersion = (await agent()).currentRevisionVersion;
   await expect(
-    approveAgentPluginSync(workspaceId, userId, agentId, installId, v2),
+    (async () =>
+      approveAgentPluginSync(
+        await testWorkspaceScope(workspaceId, userId, "manage"),
+        agentId,
+        installId,
+        v2,
+      ))(),
   ).rejects.toMatchObject({ code: "plugin_review_conflict", status: 409 });
   expect(await binding()).toEqual(before);
   expect((await agent()).currentRevisionVersion).toBe(revisionVersion);
 });
 
 it("pauses code changes without a revision, preserves review through draft edits, and applies approval", async () => {
-  await updatePlugin(workspaceId, userId, installId, v3);
+  await (async () =>
+    updatePlugin(
+      await testWorkspaceScope(workspaceId, userId, "manage"),
+      installId,
+      v3,
+    ))();
   expect(await binding()).toMatchObject({
     releaseId: v2,
     syncStatus: "review_required",
@@ -347,22 +381,34 @@ it("pauses code changes without a revision, preserves review through draft edits
   ]);
   expect((await binding()).syncStatus).toBe("review_required");
   await expect(
-    approveAgentPluginSync(workspaceId, memberId, agentId, installId, v3),
+    (async () =>
+      approveAgentPluginSync(
+        await testWorkspaceScope(workspaceId, memberId, "manage"),
+        agentId,
+        installId,
+        v3,
+      ))(),
   ).rejects.toMatchObject({ code: "not_authorized" });
-  await approveAgentPluginSync(workspaceId, userId, agentId, installId, v3);
+  await (async () =>
+    approveAgentPluginSync(
+      await testWorkspaceScope(workspaceId, userId, "manage"),
+      agentId,
+      installId,
+      v3,
+    ))();
   expect(await binding()).toMatchObject({
     releaseId: v3,
     syncStatus: "synced",
     targetReleaseId: null,
   });
   expect((await agent()).currentRevisionVersion).toBe(3);
-  await approveAgentPluginSync(
-    workspaceId,
-    userId,
-    draftAgentId,
-    installId,
-    v3,
-  );
+  await (async () =>
+    approveAgentPluginSync(
+      await testWorkspaceScope(workspaceId, userId, "manage"),
+      draftAgentId,
+      installId,
+      v3,
+    ))();
   expect(
     await db.agentPiPackage.findFirstOrThrow({
       where: { agentId: draftAgentId, marketInstallId: installId },
@@ -380,7 +426,13 @@ it("pauses code changes without a revision, preserves review through draft edits
     (await resolvePiSessionPackages(oldSession)).packages[0].releaseId,
   ).toBe(v1);
   await expect(
-    approveAgentPluginSync(workspaceId, userId, agentId, installId, v3),
+    (async () =>
+      approveAgentPluginSync(
+        await testWorkspaceScope(workspaceId, userId, "manage"),
+        agentId,
+        installId,
+        v3,
+      ))(),
   ).rejects.toMatchObject({ code: "plugin_review_conflict", status: 409 });
 });
 
@@ -389,7 +441,12 @@ it("queues syncs blocked by agent maintenance and retries with the updating admi
   try {
     await withAgentMaintenanceLease(agentId, () =>
       unrelated.runInAsyncScope(() =>
-        updatePlugin(workspaceId, userId, installId, v3),
+        (async () =>
+          updatePlugin(
+            await testWorkspaceScope(workspaceId, userId, "manage"),
+            installId,
+            v3,
+          ))(),
       ),
     );
   } finally {
@@ -418,7 +475,12 @@ it("fails a queued update if its requesting user loses administrator access", as
   try {
     await withAgentMaintenanceLease(agentId, () =>
       unrelated.runInAsyncScope(() =>
-        updatePlugin(workspaceId, memberId, installId, v3),
+        (async () =>
+          updatePlugin(
+            await testWorkspaceScope(workspaceId, memberId, "manage"),
+            installId,
+            v3,
+          ))(),
       ),
     );
   } finally {
@@ -442,32 +504,68 @@ it("fails a queued update if its requesting user loses administrator access", as
 
 it("isolates reads and install mutations by workspace and denies ordinary members", async () => {
   expect(
-    (await listPlugins(workspaceId, memberId)).items.some(
-      (item) => item.id === listingId,
-    ),
+    (
+      await (async () =>
+        listPlugins(await testWorkspaceScope(workspaceId, memberId, "read")))()
+    ).items.some((item) => item.id === listingId),
   ).toBe(true);
-  expect((await listPlugins(otherWorkspaceId, userId)).items).toEqual([]);
+  expect(
+    (
+      await (async () =>
+        listPlugins(
+          await testWorkspaceScope(otherWorkspaceId, userId, "read"),
+        ))()
+    ).items,
+  ).toEqual([]);
   await expect(
-    getPlugin(otherWorkspaceId, userId, listingId),
+    (async () =>
+      getPlugin(
+        await testWorkspaceScope(otherWorkspaceId, userId, "read"),
+        listingId,
+      ))(),
   ).rejects.toMatchObject({ code: "not_found" });
   await expect(
-    updatePlugin(otherWorkspaceId, userId, installId, v2),
+    (async () =>
+      updatePlugin(
+        await testWorkspaceScope(otherWorkspaceId, userId, "manage"),
+        installId,
+        v2,
+      ))(),
   ).rejects.toMatchObject({ code: "not_found" });
   await expect(
-    removePlugin(otherWorkspaceId, userId, installId),
+    (async () =>
+      removePlugin(
+        await testWorkspaceScope(otherWorkspaceId, userId, "manage"),
+        installId,
+      ))(),
   ).rejects.toMatchObject({ code: "not_found" });
   await expect(
-    approveAgentPluginSync(otherWorkspaceId, userId, agentId, installId, v3),
+    (async () =>
+      approveAgentPluginSync(
+        await testWorkspaceScope(otherWorkspaceId, userId, "manage"),
+        agentId,
+        installId,
+        v3,
+      ))(),
   ).rejects.toMatchObject({ code: "not_found" });
   await expect(
-    updatePlugin(workspaceId, memberId, installId, v2),
+    (async () =>
+      updatePlugin(
+        await testWorkspaceScope(workspaceId, memberId, "manage"),
+        installId,
+        v2,
+      ))(),
   ).rejects.toMatchObject({ code: "not_authorized" });
   expect((await binding()).releaseId).toBe(v3);
 });
 
 it("uninstalls by narrowing agent defaults without deleting session snapshots", async () => {
   const previousVersion = (await agent()).currentRevisionVersion;
-  await removePlugin(workspaceId, userId, installId);
+  await (async () =>
+    removePlugin(
+      await testWorkspaceScope(workspaceId, userId, "manage"),
+      installId,
+    ))();
   expect(
     await db.agentPiPackage.count({
       where: { agentId, marketInstallId: installId },
@@ -497,6 +595,11 @@ it("uninstalls by narrowing agent defaults without deleting session snapshots", 
     (await resolvePiSessionPackages(oldSession)).packages[0].releaseId,
   ).toBe(v1);
   expect(
-    (await listPlugins(workspaceId, userId, { installedOnly: true })).items,
+    (
+      await (async () =>
+        listPlugins(await testWorkspaceScope(workspaceId, userId, "read"), {
+          installedOnly: true,
+        }))()
+    ).items,
   ).toEqual([]);
 });

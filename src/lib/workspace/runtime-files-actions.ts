@@ -1,10 +1,10 @@
 "use server";
 
+import { actionScope } from "@/lib/workspace/action-scope";
 import type { DeploymentConfigFile, Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { killProcess, restartProcess } from "@/lib/process/supervisor";
 import { resolveMcpConnectionSpawnSpec } from "@/lib/process/mcp-credentials";
 import { decryptSecretText, encryptSecretText } from "@/lib/security/secrets";
@@ -62,13 +62,6 @@ function assertRuntimeFileCapacity(
     size;
   if (totalBytes > MAX_RUNTIME_TEXT_FILES_BYTES)
     throw new RuntimeFileLimitError("Runtime files are too large.");
-}
-
-async function authorizedWorkspace(slug: string) {
-  const user = await getCurrentUser();
-  if (!user) return null;
-  const ws = await getWorkspaceForUser(slug, user.id);
-  return ws ? { user, ws } : null;
 }
 
 async function editableDeployment(deploymentId: string, workspaceId: string) {
@@ -131,7 +124,7 @@ export async function revealDeploymentRuntimeFileAction({
   content?: string;
   error?: "notAuthorized" | "deploymentNotFound" | "fileNotFound";
 }> {
-  const ctx = await authorizedWorkspace(workspace);
+  const ctx = await actionScope({ slug: workspace });
   if (!ctx) return { error: "notAuthorized" };
   const deployment = await editableDeployment(deploymentId, ctx.ws.id);
   if (!deployment) return { error: "deploymentNotFound" };
@@ -173,7 +166,7 @@ export async function upsertDeploymentRuntimeFileAction(
     return { error: "invalidFile" };
   }
   if (!file) return { error: "invalidFile" };
-  const ctx = await authorizedWorkspace(workspace);
+  const ctx = await actionScope({ slug: workspace });
   if (!ctx) return { error: "notAuthorized" };
   const operation = await runMcpDeploymentOperation(
     ctx.ws.id,
@@ -267,7 +260,7 @@ export async function deleteDeploymentRuntimeFileAction(
   const deploymentId = String(formData.get("deploymentId") ?? "");
   const fileId = String(formData.get("fileId") ?? "");
   if (!workspace || !deploymentId || !fileId) return { error: "fileNotFound" };
-  const ctx = await authorizedWorkspace(workspace);
+  const ctx = await actionScope({ slug: workspace });
   if (!ctx) return { error: "notAuthorized" };
   const operation = await runMcpDeploymentOperation(
     ctx.ws.id,

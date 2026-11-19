@@ -12,7 +12,7 @@ export const POST = withRequestLogging(
   ) {
     try {
       const { slug, installId } = await params;
-      const { workspace, user } = await pluginRequestContext(req, slug);
+      const { workspace } = await pluginRequestContext(req, slug, "manage");
       const input = await parseJson(
         req,
         PrivatePluginInputSchema,
@@ -24,12 +24,7 @@ export const POST = withRequestLogging(
           { status: input.reason === "too_large" ? 413 : 400 },
         );
       return Response.json(
-        await appendPrivatePluginVersion(
-          workspace.id,
-          user.id,
-          installId,
-          input.value,
-        ),
+        await appendPrivatePluginVersion(workspace, installId, input.value),
       );
     } catch (error) {
       return pluginApiError(error);

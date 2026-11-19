@@ -2,6 +2,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
+import type { WorkSessionStatus } from "@prisma/client";
 import {
   afterAll,
   beforeAll,
@@ -78,7 +79,7 @@ async function volumeShell(
 
 async function workFixture(
   options: {
-    status?: string;
+    status?: WorkSessionStatus;
     workspace?: string;
     agent?: string;
     conversationAgent?: string;
@@ -307,7 +308,7 @@ describe.sequential("Work conversation deletion", () => {
     expect((await remove(target.id)).status).toBe(204);
   });
 
-  it.each(["queued", "running", "cancelling", "waiting_user"])(
+  it.each(["queued", "running", "cancelling", "waiting_user"] as const)(
     "retains %s work with a displayable conflict",
     async (status) => {
       const target = await workFixture({ status });

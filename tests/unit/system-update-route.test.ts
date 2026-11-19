@@ -61,6 +61,27 @@ describe("system update route", () => {
     expect(mocks.applySystemUpdate).not.toHaveBeenCalled();
   });
 
+  it("returns an allowlisted failure in the client error envelope", async () => {
+    mocks.isSameOriginRequest.mockReturnValue(true);
+    mocks.applySystemUpdate.mockResolvedValue({
+      ok: false,
+      status: "failed",
+      code: "SYSTEM_UPDATE_LOOKUP_FAILED",
+      message: "private upstream response",
+    });
+    const response = await POST(
+      new Request("https://toolplane.test/api/v1/admin/system/update", {
+        method: "POST",
+      }),
+    );
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "Could not look up the latest system release.",
+      code: "SYSTEM_UPDATE_LOOKUP_FAILED",
+    });
+  });
+
   it("lets an authenticated member check for updates", async () => {
     mocks.getCurrentUser.mockResolvedValue({ role: "user" });
     mocks.getSystemUpdateStatus.mockResolvedValue({ updateAvailable: false });

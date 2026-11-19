@@ -3,16 +3,161 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmod, readFile, unlink } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 
-// Native Pi SDK stays alive between turns; console output is never a protocol channel.
-const inputPath = process.argv[2];
-const input = JSON.parse(await readFile(inputPath, "utf8"));
-if (input.kind !== "pi-sdk") throw new Error("AGENT_RUNTIME_RETIRED");
-const socketPath = `/tmp/toolplane-runtime-${createHash("sha256").update(input.statePath).digest("hex").slice(0, 32)}.sock`;
+const string = (value) => (typeof value === "string" ? value : undefined);
+const nullableString = (value) => (value === null ? null : string(value));
+const number = (value) => (Number.isFinite(value) ? value : undefined);
+const boolean = (value) => (typeof value === "boolean" ? value : undefined);
+const oneOf =
+  (...values) =>
+  (value) =>
+    values.includes(value) ? value : undefined;
+const record = (value) =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+const object = (fields) => {
+  const entries = Object.entries(fields);
+  return (value) => {
+    if (!record(value)) return undefined;
+    const result = {};
+    for (const [key, project] of entries) {
+      const field = project(value[key]);
+      if (field !== undefined) result[key] = field;
+    }
+    return result;
+  };
+};
+const array = (project) => (value) => {
+  if (!Array.isArray(value)) return undefined;
+  const result = [];
+  for (const item of value) {
+    const projected = project(item);
+    if (projected !== undefined) result.push(projected);
+  }
+  return result;
+};
 
-if (process.argv[3] === "serve") await serve();
-else await request();
+const model = { providerId: string, model: string };
+const tokens = {
+  inputTokens: number,
+  outputTokens: number,
+  cacheReadTokens: number,
+  cacheWriteTokens: number,
+};
+// The host also returns private session state on fd 3. Only these fields (and
+// their declared nested fields) cross the broker socket, even on a failed turn.
+export const RESULT_FIELDS = {
+  text: string,
+  commands: array(object({ name: string, description: string })),
+  usage: object({
+    ...tokens,
+    costUsd: number,
+    actualModel: object(model),
+    modelUsage: array(object({ ...model, ...tokens, costUsd: number })),
+  }),
+  sessionEntries: object({
+    userEntryId: string,
+    userParentEntryId: nullableString,
+    leafEntryId: nullableString,
+  }),
+  fork: object({
+    forked: boolean,
+    entryId: string,
+    contextOnly: boolean,
+    filesRewound: boolean,
+    externalEffectsRewound: boolean,
+  }),
+  actualModel: object(model),
+  advisories: array(
+    object({
+      id: string,
+      ...model,
+      cadence: oneOf("each_tool_batch", "final"),
+      suggestions: array(
+        object({
+          severity: oneOf("info", "warning", "critical"),
+          message: string,
+        }),
+      ),
+    }),
+  ),
+  advisorUsage: object(tokens),
+  contextBreakdown: object({
+    usedTokens: number,
+    estimated: boolean,
+    categories: object({
+      systemPrompt: number,
+      systemTools: number,
+      systemContext: number,
+      instructionFiles: number,
+      skills: number,
+      messages: number,
+    }),
+  }),
+  streamRuleTriggers: array(
+    object({
+      id: string,
+      ruleId: string,
+      name: string,
+      target: oneOf("assistant_text", "tool_call"),
+      action: oneOf("remind", "block"),
+      message: string,
+      toolName: string,
+      toolCallId: string,
+      timestamp: number,
+    }),
+  ),
+  commandResult: object({
+    command: string,
+    text: string,
+    status: oneOf("completed", "failed"),
+  }),
+  disposition: oneOf("queued", "handled", "cleared"),
+  queue: object({
+    messages: array(
+      object({ id: string, mode: oneOf("steer", "follow_up"), text: string }),
+    ),
+    pendingMessageCount: number,
+  }),
+};
+const projectResult = object(RESULT_FIELDS);
+const failureReason =
+  /^(HTTP_[1-5]\d\d|UNREACHABLE|TIMEOUT|EMPTY_STREAM|STREAM_INCOMPLETE|CONTENT_FILTER|PROVIDER_ERROR|GATEWAY_ERROR)( RETRIED_\d{1,2})?$/;
 
-async function request() {
+function projectResponse(event) {
+  const success = event.success === true;
+  const result = projectResult(event.result);
+  const response = {
+    type: "toolplane_sdk_response",
+    id: event.id,
+    success,
+    ...(result !== undefined ? { result } : {}),
+  };
+  if (success) return response;
+  const error = event.error;
+  const code =
+    typeof error?.code === "string" && /^PI_[A-Z0-9_]{1,80}$/.test(error.code)
+      ? error.code
+      : "PI_SDK_RUNTIME_FAILED";
+  const reason =
+    typeof error?.reason === "string" && failureReason.test(error.reason)
+      ? error.reason
+      : undefined;
+  return {
+    ...response,
+    error: { code, message: code, ...(reason ? { reason } : {}) },
+  };
+}
+
+if (import.meta.main) {
+  // Native Pi SDK stays alive between turns; console output is never a protocol channel.
+  const inputPath = process.argv[2];
+  const input = JSON.parse(await readFile(inputPath, "utf8"));
+  if (input.kind !== "pi-sdk") throw new Error("AGENT_RUNTIME_RETIRED");
+  const socketPath = `/tmp/toolplane-runtime-${createHash("sha256").update(input.statePath).digest("hex").slice(0, 32)}.sock`;
+  if (process.argv[3] === "serve") await serve(input, socketPath);
+  else await request(input, socketPath, inputPath);
+}
+
+async function request(input, socketPath, inputPath) {
   let launched = false;
   for (let attempt = 0; attempt < 100; attempt++) {
     const result = await new Promise((resolve, reject) => {
@@ -72,7 +217,7 @@ async function request() {
   throw new Error("Native runtime session did not start.");
 }
 
-async function serve() {
+async function serve(input, socketPath) {
   let child, active, sdkRequestId, idle;
   let activeRunId;
   const controls = new Map();
@@ -238,104 +383,20 @@ async function serve() {
         }
         const controlSocket = controls.get(event.id);
         if (!controlSocket && (!active || event.id !== sdkRequestId)) continue;
-        const result = event.result && {
-          text: event.result.text,
-          commands: event.result.commands,
-          ...(event.result.usage ? { usage: event.result.usage } : {}),
-          ...(event.result.sessionEntries
-            ? { sessionEntries: event.result.sessionEntries }
-            : {}),
-          ...(event.result.fork ? { fork: event.result.fork } : {}),
-          ...(event.result.actualModel
-            ? { actualModel: event.result.actualModel }
-            : {}),
-          ...(event.result.advisories
-            ? { advisories: event.result.advisories }
-            : {}),
-          ...(event.result.advisorUsage
-            ? { advisorUsage: event.result.advisorUsage }
-            : {}),
-          ...(event.result.contextBreakdown
-            ? { contextBreakdown: event.result.contextBreakdown }
-            : {}),
-          ...(event.result.streamRuleTriggers
-            ? { streamRuleTriggers: event.result.streamRuleTriggers }
-            : {}),
-          ...(event.result.commandResult
-            ? { commandResult: event.result.commandResult }
-            : {}),
-          ...(event.result.disposition
-            ? { disposition: event.result.disposition }
-            : {}),
-          ...(event.result.queue ? { queue: event.result.queue } : {}),
-        };
-        const code = /^PI_[A-Z0-9_]{1,80}$/.test(event.error?.code)
-          ? event.error.code
-          : "PI_SDK_RUNTIME_FAILED";
-        const reason =
-          /^(HTTP_[1-5]\d\d|UNREACHABLE|TIMEOUT|EMPTY_STREAM|STREAM_INCOMPLETE|CONTENT_FILTER|PROVIDER_ERROR|GATEWAY_ERROR)( RETRIED_\d{1,2})?$/.test(
-            event.error?.reason,
-          )
-            ? event.error.reason
-            : undefined;
+        const response = projectResponse(event);
         if (controlSocket) {
           controls.delete(event.id);
-          controlSocket.end(
-            `${JSON.stringify({
-              type: event.type,
-              id: event.id,
-              success: event.success === true,
-              ...(event.success === true
-                ? { result }
-                : { error: { code, message: code } }),
-            })}\n`,
-          );
+          controlSocket.end(`${JSON.stringify(response)}\n`);
           continue;
         }
         // Tool discovery runs before the model request. Reload the persisted
         // session with fresh definitions instead of failing this user's turn.
-        if (!event.success && code === "PI_SDK_TOOLSET_CHANGED") {
+        if (response.error?.code === "PI_SDK_TOOLSET_CHANGED") {
           send({ type: "toolplane_session_restart" });
           void stop();
           return;
         }
-        send({
-          type: event.type,
-          id: event.id,
-          success: event.success === true,
-          ...(event.success === true
-            ? { result }
-            : {
-                error: { code, message: code, ...(reason ? { reason } : {}) },
-                ...(result
-                  ? {
-                      result: {
-                        ...(event.result?.usage
-                          ? { usage: event.result.usage }
-                          : {}),
-                        ...(event.result?.actualModel
-                          ? { actualModel: event.result.actualModel }
-                          : {}),
-                        ...(event.result?.streamRuleTriggers
-                          ? {
-                              streamRuleTriggers:
-                                event.result.streamRuleTriggers,
-                            }
-                          : {}),
-                        ...(event.result?.sessionEntries
-                          ? { sessionEntries: event.result.sessionEntries }
-                          : {}),
-                        ...(event.result?.advisories
-                          ? { advisories: event.result.advisories }
-                          : {}),
-                        ...(event.result?.advisorUsage
-                          ? { advisorUsage: event.result.advisorUsage }
-                          : {}),
-                      },
-                    }
-                  : {}),
-              }),
-        });
+        send(response);
         const socket = active;
         active = undefined;
         sdkRequestId = undefined;

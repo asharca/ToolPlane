@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { FormSelect } from "@/components/ui/FormSelect";
 
 import { Input } from "@/components/motion/input";
@@ -6,7 +7,7 @@ import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { getObservability } from "@/lib/observability/log";
 import { db } from "@/lib/db";
 import { LogExplorer } from "@/components/observability/LogExplorer";
@@ -89,7 +90,7 @@ export default async function ObservabilityPage({
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
-  const ws = await getWorkspaceForUser(slug, user.id);
+  const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app");
   const base = `/app/${slug}/observability`;
   if (current === "channels") {

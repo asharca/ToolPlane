@@ -1,6 +1,7 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { redirect, notFound } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { listSandboxes } from "@/lib/sandboxes/queries";
 import {
   isExternalSandboxAccess,
@@ -52,7 +53,7 @@ export default async function AgentDetailPage({
   const { c, settings, tab, task } = await searchParams;
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
-  const ws = await getWorkspaceForUser(slug, user.id);
+  const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app");
   const agent = await getAgentPageData(ws.id, agentId);
   if (!agent) notFound();
@@ -92,8 +93,8 @@ export default async function AgentDetailPage({
     listAgentDeploymentOptions(ws.id, selectedDeps),
     listAgentSkillOptions(ws.id, selectedSkills),
     listSandboxes(ws.id),
-    listPlugins(ws.id, user.id, { installedOnly: true }),
-    listPlugins(ws.id, user.id),
+    listPlugins(ws, { installedOnly: true }),
+    listPlugins(ws),
     listPluginBindingDeployments(ws.id),
     db.agent.findFirst({
       where: { id: agentId, workspaceId: ws.id },

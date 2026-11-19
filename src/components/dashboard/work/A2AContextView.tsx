@@ -1,5 +1,6 @@
 "use client";
 
+import { apiRequest } from "@/lib/client/api";
 import {
   useCallback,
   useEffect,
@@ -92,7 +93,7 @@ export function useA2AContexts(
       const timeout = window.setTimeout(() => controller.abort(), 15_000);
       try {
         const query = new URLSearchParams(cursor ? { cursor } : {});
-        const response = await fetch(
+        const response = await apiRequest(
           `${a2aConsoleBase(slug, agentId)}/contexts?${query}`,
           {
             credentials: "same-origin",
@@ -115,7 +116,7 @@ export function useA2AContexts(
           return;
         }
         if (!response.ok) throw new Error("Contexts unavailable");
-        const page = (await response.json()) as A2AContextPage;
+        const page = response.data as A2AContextPage;
         if (controller.signal.aborted) return;
         if (!Array.isArray(page.items)) throw new Error("Invalid contexts");
         setLists((current) => {
@@ -202,7 +203,7 @@ export function useA2AContexts(
       const timeout = window.setTimeout(() => controller.abort(), 15_000);
       try {
         const query = new URLSearchParams({ taskId: selectedTaskId });
-        const response = await fetch(
+        const response = await apiRequest(
           `${a2aConsoleBase(slug, selectedAgentId)}/contexts?${query}`,
           {
             credentials: "same-origin",
@@ -216,7 +217,7 @@ export function useA2AContexts(
           return;
         }
         if (!response.ok) throw new Error("Context unavailable");
-        const page = (await response.json()) as A2AContextPage;
+        const page = response.data as A2AContextPage;
         if (!Array.isArray(page.items)) throw new Error("Invalid contexts");
         if (!stopped)
           setSelection({
@@ -385,7 +386,7 @@ function A2AContextTask({
           selectedTaskId: taskId,
           historyLength: "32",
         });
-        const response = await fetch(`${base}/tasks?${query}`, {
+        const response = await apiRequest(`${base}/tasks?${query}`, {
           credentials: "same-origin",
           cache: "no-store",
           signal: controller.signal,
@@ -398,7 +399,7 @@ function A2AContextTask({
           return;
         }
         if (!response.ok) throw new Error("Task unavailable");
-        const value = (await response.json()) as ConsoleTaskTree;
+        const value = response.data as ConsoleTaskTree;
         if (stopped || controller.signal.aborted) return;
         if (
           value.rootTaskId !== rootTaskId ||

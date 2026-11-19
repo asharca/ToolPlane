@@ -1,4 +1,5 @@
 import "server-only";
+import { ENTRY_KINDS } from "@/lib/agents/entry-kinds";
 import { Role, SendMessageRequest, Task } from "@a2a-js/sdk";
 import { TaskNotFoundError } from "@a2a-js/sdk/errors";
 import type { Prisma } from "@prisma/client";
@@ -44,7 +45,7 @@ function decodeCursor(value?: string): ContextCursor | undefined {
       JSON.parse(Buffer.from(value, "base64url").toString("utf8")),
     );
   } catch {
-    throw new A2AHttpError(400, "Invalid context query.");
+    throw new A2AHttpError(400, "INVALID_CONTEXT_QUERY");
   }
 }
 
@@ -80,7 +81,7 @@ export async function getConsoleContexts(
       // children execute in separate contexts and remain eligible.
       entryBindings: {
         none: {
-          kind: { in: ["chat", "channel", "work", "trigger", "control"] },
+          kind: { in: [...ENTRY_KINDS] },
         },
       },
     },

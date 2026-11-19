@@ -1,8 +1,9 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import {
   listPlatformSubagents,
   savePlatformSubagents,
@@ -24,8 +25,13 @@ async function handle(
     const user = await resolveRequestUser(req);
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
     const value = req.method === "GET" ? null : await pluginJson(req, input);
-    const workspace = await getWorkspaceForUser(
-      value?.workspace ?? new URL(req.url).searchParams.get("workspace") ?? "",
+    const workspace = await resolveWorkspaceScope(
+      {
+        slug:
+          value?.workspace ??
+          new URL(req.url).searchParams.get("workspace") ??
+          "",
+      },
       user.id,
     );
     const { agentId } = await params;
@@ -36,13 +42,22 @@ async function handle(
       }))
     )
       return Response.json({ error: "notFound" }, { status: 404 });
-    const result = value
-      ? await savePlatformSubagents(workspace.id, user.id, agentId, {
-          native: value.native,
-          agentIds: value.agentIds,
-          nativePolicy: value.nativePolicy,
-        })
-      : await listPlatformSubagents(workspace.id, user.id, agentId);
+    const manageScope = value
+      ? await resolveWorkspaceScope({ id: workspace.id }, user.id, "manage")
+      : null;
+    if (value && !manageScope)
+      return Response.json(
+        { error: "Workspace access denied.", code: "not_authorized" },
+        { status: 403 },
+      );
+    const result =
+      value && manageScope
+        ? await savePlatformSubagents(manageScope, agentId, {
+            native: value.native,
+            agentIds: value.agentIds,
+            nativePolicy: value.nativePolicy,
+          })
+        : await listPlatformSubagents(workspace, agentId);
     return Response.json(result, {
       headers: { "Cache-Control": "private, no-store" },
     });

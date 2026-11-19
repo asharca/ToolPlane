@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { ResourceEnablePanel } from "@/components/dashboard/ResourceEnablePanel";
 /* DashboardTable consumes cell arrays as indexed values. */
 
@@ -23,7 +24,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { db } from "@/lib/db";
 import {
   buildInstalledSkillMarkdown,
@@ -215,7 +216,7 @@ export default async function SkillInspectorPage({
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
-  const ws = await getWorkspaceForUser(slug, user.id);
+  const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app");
 
   const install = await db.installedSkill.findFirst({

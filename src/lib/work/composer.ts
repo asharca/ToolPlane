@@ -15,6 +15,7 @@ import { buildInstalledSkillMarkdown } from "@/lib/skills/artifact";
 import { mcpRpc } from "@/lib/process/mcp-client";
 import type { ComposerItem, ComposerReference } from "./composer-types";
 import { normalizeWorkDirectory } from "./sessions";
+import { READ_ONLY_WORK_SESSION_STATUSES } from "./state-machine";
 import { requireAgentRevision } from "@/lib/agents/revisions";
 import {
   AgentReferenceError,
@@ -166,13 +167,22 @@ async function sessionScope(
     agent: { workspaceId: agent.workspaceId, ...ORDINARY_AGENT_FILTER },
     publicApiConversation: { is: null },
     OR: [
-      { agentId: agent.id, sandboxId },
+      {
+        agentId: agent.id,
+        sandboxId,
+        OR: [
+          { workSession: null },
+          {
+            workSession: { status: { notIn: READ_ONLY_WORK_SESSION_STATUSES } },
+          },
+        ],
+      },
       {
         workSession: {
           is: {
             workspaceId: agent.workspaceId,
             sandboxId,
-            status: { not: "archived" },
+            status: { notIn: READ_ONLY_WORK_SESSION_STATUSES },
           },
         },
       },

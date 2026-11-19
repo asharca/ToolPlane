@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { resolveAccountRequestUser } from "@/lib/auth/request-user";
 import { withRequestLogging } from "@/lib/observability/http";
-import { ChatServiceError, copyChatAssistant } from "@/lib/chat/service";
+import { ChatServiceError } from "@/lib/chat/shared";
+import { copyChatAssistant } from "@/lib/chat/assistants";
 import { CreateChatAssistantSchema } from "@/lib/chat/schemas";
 
 export const runtime = "nodejs";

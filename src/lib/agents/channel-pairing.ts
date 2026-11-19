@@ -1,4 +1,6 @@
 import "server-only";
+import { defineFailures } from "@/lib/errors/registry";
+import { logSystemEvent } from "@/lib/observability/system";
 import { db } from "@/lib/db";
 import { updateAgentChannelConnectionCredentials } from "@/lib/agents/channel-connections";
 import {
@@ -11,6 +13,13 @@ import {
   decryptSecretRecord,
   encryptSecretRecord,
 } from "@/lib/security/secrets";
+
+const pairingFailures = defineFailures({
+  CHANNEL_PAIRING_REQUEST_FAILED: "Failed to request a pairing QR code.",
+  CHANNEL_PAIRING_CHECK_FAILED: "Failed to check the pairing QR code.",
+  CHANNEL_PAIRING_AUTH_FAILED:
+    "The QR authorization failed. Request a new QR code.",
+});
 
 const WECOM_QR_GENERATE_URL = "https://work.weixin.qq.com/ai/qc/generate";
 const WECOM_QR_QUERY_URL = "https://work.weixin.qq.com/ai/qc/query_result";
@@ -181,7 +190,7 @@ async function checkWeComPairing(
     status:
       Date.parse(pairing.expiresAt ?? "") < Date.now() ? "expired" : "waiting",
     lastCheckedAt: new Date().toISOString(),
-    message: status ? `WeCom status: ${status}` : "Waiting for WeCom scan.",
+    message: "Waiting for WeCom scan.",
     error: undefined,
   });
 }
@@ -413,13 +422,21 @@ async function checkDingTalkPairing(
     return;
   }
 
-  const reason = text(raw.fail_reason) || status || "unknown status";
+  const code = "CHANNEL_PAIRING_AUTH_FAILED";
+  logSystemEvent("channel.pairing.authorization_failed", {
+    domain: "channel",
+    channelId: row.id,
+    workspaceId: row.workspaceId,
+    errorCode: code,
+    error: text(raw.fail_reason) || status,
+  });
+  const message = pairingFailures.text(code);
   await updatePairing(row, {
     ...pairing,
     status: "error",
     lastCheckedAt: new Date().toISOString(),
-    message: `DingTalk authorization failed: ${reason}`,
-    error: reason,
+    message,
+    error: message,
   });
 }
 
@@ -581,8 +598,13 @@ export async function requestAgentChannelPairing(
     const pairing = requested.pairing;
     return { pairing };
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to request QR.";
+    logSystemEvent("channel.pairing.request_failed", {
+      domain: "channel",
+      workspaceId,
+      channelId: connectionId,
+      error,
+    });
+    const message = pairingFailures.text("CHANNEL_PAIRING_REQUEST_FAILED");
     const pairing: AgentChannelPairingState = {
       provider: platform.pairing.provider,
       status: "error",
@@ -640,8 +662,13 @@ export async function checkAgentChannelPairing(
     }
     return {};
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to check QR scan.";
+    logSystemEvent("channel.pairing.check_failed", {
+      domain: "channel",
+      workspaceId,
+      channelId: connectionId,
+      error,
+    });
+    const message = pairingFailures.text("CHANNEL_PAIRING_CHECK_FAILED");
     await updatePairing(row, {
       ...pairing,
       status: "error",

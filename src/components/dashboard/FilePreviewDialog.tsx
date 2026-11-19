@@ -197,9 +197,8 @@ function PreviewContent({
         );
       }
       setFile({ blob, text, url: objectUrl, kind: type.kind });
-    })().catch((reason: unknown) => {
-      if (!controller.signal.aborted)
-        setLoadError(reason instanceof Error ? reason.message : unavailable);
+    })().catch(() => {
+      if (!controller.signal.aborted) setLoadError(unavailable);
     });
     return () => {
       controller.abort();
@@ -224,8 +223,8 @@ function PreviewContent({
         anchor.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       }
-    } catch (reason) {
-      setOperationError(reason instanceof Error ? reason.message : unavailable);
+    } catch {
+      setOperationError(unavailable);
     } finally {
       setDownloading(false);
     }

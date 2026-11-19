@@ -1,16 +1,19 @@
 import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
+import { defineFailures, type FailureCodeOf } from "@/lib/errors/registry";
 
 /** Browser-safe contracts. Never includes runtime credentials or exception text. */
-export type EvolutionErrorCode =
-  | "UNAUTHORIZED"
-  | "NOT_FOUND"
-  | "FORBIDDEN"
-  | "INVALID_REQUEST"
-  | "CONFLICT"
-  | "BUDGET_EXCEEDED"
-  | "MODEL_PRICING_UNAVAILABLE"
-  | "RUNTIME_UNAVAILABLE"
-  | "EVOLUTION_FAILED";
+export const evolutionFailures = defineFailures({
+  UNAUTHORIZED: "Sign in to continue.",
+  NOT_FOUND: "Evolution resource not found.",
+  FORBIDDEN: "You do not have permission to manage Agent evolution.",
+  INVALID_REQUEST: "The evolution request is invalid.",
+  CONFLICT: "The Agent evolution state changed. Refresh and try again.",
+  BUDGET_EXCEEDED: "The evolution budget was exceeded.",
+  MODEL_PRICING_UNAVAILABLE: "Configure pricing for the evolution model.",
+  RUNTIME_UNAVAILABLE: "The evolution runtime is unavailable.",
+  EVOLUTION_FAILED: "The evolution request failed.",
+});
+export type EvolutionErrorCode = FailureCodeOf<typeof evolutionFailures>;
 export interface RecordedEvolutionTool {
   name: string;
   description: string;
@@ -173,7 +176,7 @@ export interface EvolutionOverviewDto {
 }
 export type EvolutionResponse<T> =
   | { data: T }
-  | { error: { code: EvolutionErrorCode; message: string } };
+  | { error: string; code: EvolutionErrorCode };
 export const EVOLUTION_ENDPOINTS = {
   settings: { methods: ["GET", "PUT"] },
   episodes: { methods: ["GET"] },

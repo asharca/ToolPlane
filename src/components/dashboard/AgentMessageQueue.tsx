@@ -6,6 +6,7 @@ import { ListPlus, MessageSquarePlus, Trash2 } from "lucide-react";
 import { Button } from "@/components/motion/button";
 import { Tooltip } from "@/components/motion/tooltip";
 import { notify } from "@/components/dashboard/Toaster";
+import { apiRequest } from "@/lib/client/api";
 import type {
   AgentMessageQueue,
   QueuedAgentMessage,
@@ -105,61 +106,52 @@ export function useAgentMessageQueue({
       scope.current === endpoint && flight.current === controller;
     setState((current) => ({ ...current, pending: true }));
     const timeout = setTimeout(() => controller.abort(), 15_000);
-    try {
-      const response = await fetch(endpoint, {
+    const result = await apiRequest<{ queue?: unknown; disposition?: string }>(
+      endpoint,
+      {
         method: mode ? "POST" : "DELETE",
-        credentials: "same-origin",
         signal: controller.signal,
-        ...(mode
-          ? {
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ mode, text }),
-            }
-          : {}),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!owned()) return false;
-      if (!response.ok) {
-        const code =
-          typeof result.error === "string" && t.has(result.error)
-            ? result.error
-            : "AGENT_QUEUE_FAILED";
-        notify(t(code), { severity: "error" });
-        if ([401, 403, 404, 410].includes(response.status))
-          setState((current) => ({ ...current, forbidden: true }));
-        if (response.status === 409)
-          setState((current) => ({
-            ...current,
-            queue: emptyQueue,
-            fallback: true,
-          }));
-        onRefresh?.();
-        return false;
-      }
-      const queue = parseMessageQueue(result.queue);
-      if (
-        !queue ||
-        !["queued", "handled", "cleared"].includes(result.disposition)
-      )
-        throw new Error();
-      // A stream observation arriving during the request supersedes its response.
-      if (version === observation.current) observe(queue);
-      if (result.disposition !== "queued") notify(t(result.disposition));
+        json: mode ? { mode, text } : undefined,
+      },
+    );
+    clearTimeout(timeout);
+    if (!owned()) return false;
+    flight.current = null;
+    setState((current) => ({ ...current, pending: false }));
+    if (!result.ok) {
+      const code =
+        result.message && t.has(result.message)
+          ? result.message
+          : "AGENT_QUEUE_FAILED";
+      notify(t(code), { severity: "error" });
+      if ([401, 403, 404, 410].includes(result.status))
+        setState((current) => ({ ...current, forbidden: true }));
+      if (result.status === 409)
+        setState((current) => ({
+          ...current,
+          queue: emptyQueue,
+          fallback: true,
+        }));
       onRefresh?.();
-      return true;
-    } catch {
-      if (owned()) {
-        notify(t("AGENT_QUEUE_FAILED"), { severity: "error" });
-        onRefresh?.();
-      }
       return false;
-    } finally {
-      clearTimeout(timeout);
-      if (owned()) {
-        flight.current = null;
-        setState((current) => ({ ...current, pending: false }));
-      }
     }
+    const queue = parseMessageQueue(result.data?.queue);
+    const disposition = result.data?.disposition;
+    if (
+      !queue ||
+      (disposition !== "queued" &&
+        disposition !== "handled" &&
+        disposition !== "cleared")
+    ) {
+      notify(t("AGENT_QUEUE_FAILED"), { severity: "error" });
+      onRefresh?.();
+      return false;
+    }
+    // A stream observation arriving during the request supersedes its response.
+    if (version === observation.current) observe(queue);
+    if (disposition !== "queued") notify(t(disposition));
+    onRefresh?.();
+    return true;
   }
   return {
     queue: state.scope === endpoint && active ? state.queue : emptyQueue,

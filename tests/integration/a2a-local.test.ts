@@ -1,3 +1,4 @@
+import { testWorkspaceScope } from "../helpers/workspace-scope";
 // @vitest-environment node
 import { assertDefined } from "../assert-defined";
 import {
@@ -13,6 +14,7 @@ import {
 } from "@/lib/agents/tool-approval-policy";
 import { handleConversationToolApprovals } from "@/lib/agents/execution/tool-approval-http";
 import * as channelRuntime from "@/lib/agents/channel-runtime";
+import { piMcpExtensionSource } from "@/lib/agents/sandbox-runtime/mcp-extension";
 import { encryptSecretRecord } from "@/lib/security/secrets";
 vi.mock("next-intl/server", () => ({
   getTranslations: async () => (key: string) => key,
@@ -4272,7 +4274,7 @@ describe("unified native ingress mappings", () => {
     await Promise.all([workspace, agentDir].map((path) => mkdir(path)));
     const configPath = join(directory, "config.json");
     const factoryPath = join(directory, "mcp.mjs");
-    const { piMcpExtensionSource, buildPiMcpConfig } = await vi.importActual<
+    const { buildPiMcpConfig } = await vi.importActual<
       typeof AgentSandboxRuntime
     >("@/lib/agents/sandbox-runtime");
     await writeFile(factoryPath, piMcpExtensionSource({ eventFd: 3 }));
@@ -5488,11 +5490,16 @@ describe("unified native ingress mappings", () => {
 describe("independent platform and native subagents", () => {
   const nativePolicy = { maxConcurrency: 4, maxDepth: 3 };
   const save = (native: boolean, agentIds: string[] = []) =>
-    savePlatformSubagents(ws, user, agents[0], {
-      native,
-      agentIds,
-      nativePolicy,
-    });
+    (async () =>
+      savePlatformSubagents(
+        await testWorkspaceScope(ws, user, "manage"),
+        agents[0],
+        {
+          native,
+          agentIds,
+          nativePolicy,
+        },
+      ))();
   type Option = {
     id: string;
     checked: boolean;
@@ -5518,8 +5525,13 @@ describe("independent platform and native subagents", () => {
       data: { network: "none" },
     });
     try {
-      const options = (await listPlatformSubagents(ws, user, agents[0]))
-        .agents as Option[];
+      const options = (
+        await (async () =>
+          listPlatformSubagents(
+            await testWorkspaceScope(ws, user, "read"),
+            agents[0],
+          ))()
+      ).agents as Option[];
       expect(options).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -5587,18 +5599,28 @@ describe("independent platform and native subagents", () => {
       code: "SUBAGENT_SELF",
     });
     await expect(
-      savePlatformSubagents(ws, user, agents[4], {
-        native: false,
-        agentIds: [agents[0]],
-        nativePolicy,
-      }),
+      (async () =>
+        savePlatformSubagents(
+          await testWorkspaceScope(ws, user, "manage"),
+          agents[4],
+          {
+            native: false,
+            agentIds: [agents[0]],
+            nativePolicy,
+          },
+        ))(),
     ).rejects.toMatchObject({ code: "SUBAGENT_CYCLE" });
     await expect(
-      savePlatformSubagents(ws, otherUser, agents[0], {
-        native: false,
-        agentIds: [],
-        nativePolicy,
-      }),
+      (async () =>
+        savePlatformSubagents(
+          await testWorkspaceScope(ws, otherUser, "manage"),
+          agents[0],
+          {
+            native: false,
+            agentIds: [],
+            nativePolicy,
+          },
+        ))(),
     ).rejects.toMatchObject({ code: "not_authorized" });
     const foreign = await db.workspace.create({
       data: {
@@ -5620,10 +5642,18 @@ describe("independent platform and native subagents", () => {
         code: "SUBAGENT_FORBIDDEN",
       });
       await expect(
-        listPlatformSubagents(ws, user, target.id),
+        (async () =>
+          listPlatformSubagents(
+            await testWorkspaceScope(ws, user, "read"),
+            target.id,
+          ))(),
       ).rejects.toMatchObject({ code: "not_found" });
       await expect(
-        listPlatformSubagents(foreign.id, user, target.id),
+        (async () =>
+          listPlatformSubagents(
+            await testWorkspaceScope(foreign.id, user, "read"),
+            target.id,
+          ))(),
       ).rejects.toMatchObject({ code: "not_authorized" });
     } finally {
       await db.workspace.delete({ where: { id: foreign.id } });

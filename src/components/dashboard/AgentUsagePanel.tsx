@@ -6,6 +6,7 @@ import { Button, ButtonLink } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
 import { DashboardPanel, DashboardTable } from "./DashboardUI";
 import { notify } from "./Toaster";
+import { apiRequest } from "@/lib/client/api";
 
 export type UsageTotals = {
   costUsd: number;
@@ -68,24 +69,23 @@ export function AgentUsagePanel({
   const [busy, setBusy] = useState(false);
   const flight = useRef(false);
   const base = `/api/v1/agents/${encodeURIComponent(agentId)}`;
-  const load = useEffectEvent((url: string, signal: AbortSignal) => {
-    void fetch(`${url}/usage?days=30`, { signal, cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error();
-        const body: AgentUsage = await response.json();
-        if (!signal.aborted) {
-          setData(body);
-          setMonthlyUsd(body.budget.monthlyUsd?.toString() ?? "");
-          setError(null);
-        }
-      })
-      .catch(() => {
-        if (!signal.aborted) setError(t("loadFailed"));
-      });
+  const load = useEffectEvent(async (url: string, signal: AbortSignal) => {
+    const result = await apiRequest<AgentUsage>(`${url}/usage?days=30`, {
+      signal,
+      cache: "no-store",
+    });
+    if (signal.aborted) return;
+    if (!result.ok) {
+      setError(result.message ?? t("loadFailed"));
+      return;
+    }
+    setData(result.data);
+    setMonthlyUsd(result.data.budget.monthlyUsd?.toString() ?? "");
+    setError(null);
   });
   useEffect(() => {
     const controller = new AbortController();
-    load(base, controller.signal);
+    void load(base, controller.signal);
     return () => controller.abort();
   }, [base]);
   return (
@@ -135,26 +135,27 @@ export function AgentUsagePanel({
               if (flight.current) return;
               flight.current = true;
               setBusy(true);
-              try {
-                const response = await fetch(`${base}/budget`, {
+              const result = await apiRequest<{ budget: BudgetDTO }>(
+                `${base}/budget`,
+                {
                   method: "PUT",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
+                  json: {
                     monthlyUsd:
                       monthlyUsd.trim() === "" ? null : Number(monthlyUsd),
-                  }),
+                  },
+                },
+              );
+              flight.current = false;
+              setBusy(false);
+              if (!result.ok) {
+                notify(result.message ?? t("saveFailed"), {
+                  severity: "error",
                 });
-                if (!response.ok) throw new Error();
-                const body: { budget: BudgetDTO } = await response.json();
-                setData({ ...data, budget: body.budget });
-                setMonthlyUsd(body.budget.monthlyUsd?.toString() ?? "");
-                notify(t("saved"));
-              } catch {
-                notify(t("saveFailed"), { severity: "error" });
-              } finally {
-                flight.current = false;
-                setBusy(false);
+                return;
               }
+              setData({ ...data, budget: result.data.budget });
+              setMonthlyUsd(result.data.budget.monthlyUsd?.toString() ?? "");
+              notify(t("saved"));
             }}
           >
             <label
@@ -223,23 +224,24 @@ export function WorkspaceAgentUsage({ slug }: { slug: string }) {
   const [data, setData] = useState<WorkspaceUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const url = `/api/v1/workspaces/${encodeURIComponent(slug)}/agent-usage?days=30`;
-  const load = useEffectEvent((requestUrl: string, signal: AbortSignal) => {
-    void fetch(requestUrl, { signal, cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error();
-        const body: WorkspaceUsage = await response.json();
-        if (!signal.aborted) {
-          setData(body);
-          setError(null);
-        }
-      })
-      .catch(() => {
-        if (!signal.aborted) setError(t("loadFailed"));
+  const load = useEffectEvent(
+    async (requestUrl: string, signal: AbortSignal) => {
+      const result = await apiRequest<WorkspaceUsage>(requestUrl, {
+        signal,
+        cache: "no-store",
       });
-  });
+      if (signal.aborted) return;
+      if (!result.ok) {
+        setError(result.message ?? t("loadFailed"));
+        return;
+      }
+      setData(result.data);
+      setError(null);
+    },
+  );
   useEffect(() => {
     const controller = new AbortController();
-    load(url, controller.signal);
+    void load(url, controller.signal);
     return () => controller.abort();
   }, [url]);
   if (error)

@@ -6,10 +6,11 @@ import {
   UnsupportedOperationError,
 } from "@a2a-js/sdk/errors";
 import { workSessionWorkingDirectory } from "@/lib/work/sessions";
+import { isWorkSessionReadOnly } from "@/lib/work/state-machine";
 import type { LocalA2AGrant } from "@/lib/a2a/principal";
+import type { EntryKind } from "@/lib/agents/entry-kinds";
 
 type Tx = Prisma.TransactionClient;
-export type EntryKind = "chat" | "work" | "channel" | "control" | "trigger";
 export type EntryIdentity = {
   kind: EntryKind;
   sourceId: string;
@@ -48,7 +49,9 @@ export async function createEntryPolicy(
       work.legacyRevisionUnresolved ||
       work.runtimeKind !== "pi-sdk" ||
       work.cancelRequestedAt ||
-      ["archived", "cancelling", "cancelled"].includes(work.status)
+      isWorkSessionReadOnly(work.status) ||
+      work.status === "cancelling" ||
+      work.status === "cancelled"
     )
       throw missing();
     workingDirectory = workSessionWorkingDirectory(work.runtimeSnapshot);

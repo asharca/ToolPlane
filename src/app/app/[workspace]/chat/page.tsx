@@ -1,16 +1,15 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { cookies } from "next/headers";
 import { getLocale, getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { listProviders } from "@/lib/agents/queries";
 import { listChatDeploymentOptions } from "@/lib/chat/resources";
-import {
-  getChatThreadForWorkspace,
-  listChatAssistantsForWorkspace,
-  listRunningChatThreadIds,
-} from "@/lib/chat/service";
+import { getChatThreadForWorkspace } from "@/lib/chat/threads";
+import { listChatAssistantsForWorkspace } from "@/lib/chat/assistants";
+import { listRunningChatThreadIds } from "@/lib/chat/admission";
 import { parseChatAssistantModelParameters } from "@/lib/chat/schemas";
 import { ChatAssistantRevisionConfigSchema } from "@/lib/chat/revision-types";
 import { diffRevisionMcpGrants } from "@/lib/revisions/upgrade-diff";
@@ -61,7 +60,7 @@ export default async function WorkspaceChatPage({
     getTranslations("console.agents"),
   ]);
   if (!user) redirect("/app/login");
-  const workspace = await getWorkspaceForUser(slug, user.id);
+  const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (!workspace) redirect("/app");
   const cookieStore = await cookies();
   const initialSidebarOpen =
@@ -84,10 +83,10 @@ export default async function WorkspaceChatPage({
 
   const [assistants, providers, deployments, runningThreadIds] =
     await Promise.all([
-      listChatAssistantsForWorkspace(workspace.id),
+      listChatAssistantsForWorkspace(workspace),
       listProviders(workspace.id),
-      listChatDeploymentOptions(user.id, workspace.id),
-      listRunningChatThreadIds(user.id, workspace.id),
+      listChatDeploymentOptions(workspace),
+      listRunningChatThreadIds(workspace),
     ]);
   // The MCP change notice shows until the first thread runs on that revision.
   const usedRevisions = new Set(
@@ -123,14 +122,14 @@ export default async function WorkspaceChatPage({
   let activeThread =
     activeAssistant && requestedThreadId
       ? await getChatThreadForWorkspace(
-          workspace.id,
+          workspace,
           activeAssistant.id,
           requestedThreadId,
         )
       : null;
   if (!activeThread && query.thread && activeAssistant?.threads[0]) {
     activeThread = await getChatThreadForWorkspace(
-      workspace.id,
+      workspace,
       activeAssistant.id,
       activeAssistant.threads[0].id,
     );

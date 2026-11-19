@@ -11,8 +11,10 @@ import {
   streamRuleValidationCode,
   type StreamRule,
 } from "@/lib/agents/stream-rules";
+import { apiRequest } from "@/lib/client/api";
 import { DashboardEmptyState } from "../DashboardUI";
 import { DialogField } from "../dialog";
+import { DisplayError } from "../display-error";
 
 export type StreamRulesDraft = {
   rules: StreamRule[] | null;
@@ -46,32 +48,25 @@ export function useStreamRulesDraft(
     setSaved(null);
     setLoadError("");
     void (async () => {
-      try {
-        const response = await fetch(
-          `${url}?workspace=${encodeURIComponent(slug)}`,
-          {
-            cache: loadAttempt > 0 ? "reload" : "no-store",
-            signal: controller.signal,
-          },
-        );
-        const body = await response.json();
-        if (!response.ok) {
-          if (!controller.signal.aborted)
-            setLoadError(body.error ?? "loadFailed");
-          return;
-        }
-        const parsed = StreamRulesSchema.safeParse(body.streamRules);
-        if (!parsed.success) {
-          if (!controller.signal.aborted) setLoadError("loadFailed");
-          return;
-        }
-        if (!controller.signal.aborted) {
-          setRules(parsed.data);
-          setSaved(parsed.data);
-        }
-      } catch {
-        if (!controller.signal.aborted) setLoadError("loadFailed");
+      const result = await apiRequest<{ streamRules?: unknown }>(
+        `${url}?workspace=${encodeURIComponent(slug)}`,
+        {
+          cache: loadAttempt > 0 ? "reload" : "no-store",
+          signal: controller.signal,
+        },
+      );
+      if (controller.signal.aborted) return;
+      if (!result.ok) {
+        setLoadError(result.message ?? "loadFailed");
+        return;
       }
+      const parsed = StreamRulesSchema.safeParse(result.data?.streamRules);
+      if (!parsed.success) {
+        setLoadError("loadFailed");
+        return;
+      }
+      setRules(parsed.data);
+      setSaved(parsed.data);
     })();
     return () => controller.abort();
   }, [enabled, slug, url, loadAttempt]);
@@ -80,23 +75,18 @@ export function useStreamRulesDraft(
     if (!dirty || rules === null) return;
     const parsed = StreamRulesSchema.safeParse(rules);
     if (!parsed.success)
-      throw new Error(errorText(streamRuleValidationCode(parsed.error)));
-    let response: Response;
-    let body: { error?: string; streamRules?: unknown };
-    try {
-      response = await fetch(url, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workspace: slug, streamRules: parsed.data }),
-      });
-      body = await response.json();
-    } catch {
-      throw new Error(errorText("STREAM_RULES_SAVE_FAILED"));
-    }
+      throw new DisplayError(errorText(streamRuleValidationCode(parsed.error)));
+    const response = await apiRequest<{ streamRules?: unknown }>(url, {
+      method: "PUT",
+      json: { workspace: slug, streamRules: parsed.data },
+    });
     if (!response.ok)
-      throw new Error(errorText(body.error ?? "STREAM_RULES_SAVE_FAILED"));
-    const result = StreamRulesSchema.safeParse(body.streamRules);
-    if (!result.success) throw new Error(errorText("STREAM_RULES_SAVE_FAILED"));
+      throw new DisplayError(
+        errorText(response.message ?? "STREAM_RULES_SAVE_FAILED"),
+      );
+    const result = StreamRulesSchema.safeParse(response.data?.streamRules);
+    if (!result.success)
+      throw new DisplayError(errorText("STREAM_RULES_SAVE_FAILED"));
     setRules(result.data);
     setSaved(result.data);
   }

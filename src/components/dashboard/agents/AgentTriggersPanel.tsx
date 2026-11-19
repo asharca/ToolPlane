@@ -11,6 +11,8 @@ import { CopyButton } from "../CopyButton";
 import { ConfirmSubmitButton } from "../ConfirmSubmitButton";
 import { notify } from "../Toaster";
 import { useRuntimeErrorText } from "../useRuntimeErrorText";
+import { DisplayError, displayErrorText } from "../display-error";
+import { apiRequest } from "@/lib/client/api";
 
 type TriggerDTO = {
   id: string;
@@ -93,74 +95,67 @@ export function AgentTriggersPanel({
   const flight = useRef(false);
   const base = `/api/v1/agents/${encodeURIComponent(agentId)}/triggers`;
   const load = useEffectEvent(
-    (url: string, signal: AbortSignal, options: { cache: "no-store" }) => {
+    async (
+      url: string,
+      signal: AbortSignal,
+      options: { cache: "no-store" },
+    ) => {
       setLoading(true);
-      void fetch(url, { ...options, signal })
-        .then(async (response) => {
-          if (!response.ok) throw new Error();
-          const body: { triggers: TriggerDTO[] } = await response.json();
-          if (!signal.aborted) {
-            setTriggers(body.triggers);
-            setError(null);
-          }
-        })
-        .catch(() => {
-          if (!signal.aborted) setError(t("loadFailed"));
-        })
-        .finally(() => {
-          if (!signal.aborted) setLoading(false);
-        });
+      const result = await apiRequest<{ triggers: TriggerDTO[] }>(url, {
+        ...options,
+        signal,
+      });
+      if (signal.aborted) return;
+      if (result.ok) {
+        setTriggers(result.data.triggers);
+        setError(null);
+      } else setError(result.message ?? t("loadFailed"));
+      setLoading(false);
     },
   );
   useEffect(() => {
     const controller = new AbortController();
-    load(base, controller.signal, requestOptions);
+    void load(base, controller.signal, requestOptions);
     return () => controller.abort();
   }, [base, requestOptions]);
 
   const draftKey = draft ? (draft.id ?? "new") : null;
-  const loadTargets = useEffectEvent((url: string, signal: AbortSignal) => {
-    setTargets(null);
-    setTargetsFailed(false);
-    void fetch(url, { cache: "no-store", signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error();
-        const body: { connections: DeliveryConnection[] } =
-          await response.json();
-        if (!signal.aborted) setTargets(body.connections);
-      })
-      .catch(() => {
-        if (!signal.aborted) setTargetsFailed(true);
-      });
-  });
+  const loadTargets = useEffectEvent(
+    async (url: string, signal: AbortSignal) => {
+      setTargets(null);
+      setTargetsFailed(false);
+      const result = await apiRequest<{ connections: DeliveryConnection[] }>(
+        url,
+        { cache: "no-store", signal },
+      );
+      if (signal.aborted) return;
+      if (result.ok) setTargets(result.data.connections);
+      else setTargetsFailed(true);
+    },
+  );
   useEffect(() => {
     if (draftKey === null) return;
     const controller = new AbortController();
-    loadTargets(`${base}/targets`, controller.signal);
+    void loadTargets(`${base}/targets`, controller.signal);
     return () => controller.abort();
   }, [base, draftKey]);
 
   async function mutate(path: string, method: string, data?: unknown) {
-    const response = await fetch(path, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      ...(data === undefined ? {} : { body: JSON.stringify(data) }),
-    });
-    const body = response.status === 204 ? {} : await response.json();
-    if (!response.ok)
-      throw new Error(
-        runtimeError(body.error)?.text ??
-          (body.error === "INVALID_TRIGGER"
-            ? t("invalidTrigger")
-            : body.error === "INVALID_TRIGGER_DELIVERY"
-              ? t("invalidTriggerDelivery")
-              : t("operationFailed")),
-      );
-    return body as {
+    const result = await apiRequest<{
       trigger?: TriggerDTO;
       secret?: string;
       conversationId?: string;
-    };
+    }>(path, { method, json: data });
+    if (!result.ok)
+      throw new DisplayError(
+        runtimeError(result.message)?.text ??
+          (result.message === "INVALID_TRIGGER"
+            ? t("invalidTrigger")
+            : result.message === "INVALID_TRIGGER_DELIVERY"
+              ? t("invalidTriggerDelivery")
+              : t("operationFailed")),
+      );
+    return result.data ?? {};
   }
   async function operation(run: () => Promise<void>, success: string) {
     if (flight.current) return;
@@ -170,7 +165,7 @@ export function AgentTriggersPanel({
       await run();
       notify(success);
     } catch (cause) {
-      notify(cause instanceof Error ? cause.message : t("operationFailed"), {
+      notify(displayErrorText(cause, t("operationFailed")), {
         severity: "error",
       });
     } finally {

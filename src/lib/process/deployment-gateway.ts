@@ -1,4 +1,5 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { NextResponse } from "next/server";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
@@ -19,10 +20,7 @@ export async function resolveLiveDeployment(
   const dep = await db.deployment.findFirst({
     where: {
       id: deploymentId,
-      workspace: {
-        status: "active",
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
-      },
+      workspace: workspaceAccessWhere(user.id),
     },
     select: { id: true, workspaceId: true, sandbox: { select: { id: true } } },
   });

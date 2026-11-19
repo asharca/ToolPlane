@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
@@ -13,7 +14,7 @@ import {
   PluginWebhook,
 } from "@/components/dashboard/plugins/PluginForms";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { db } from "@/lib/db";
 import { listPluginSources } from "@/lib/plugins/sources";
 
@@ -38,10 +39,10 @@ export default async function PluginSourcesPage({
   const base = `/app/${encodeURIComponent(slug)}/plugins`;
   if (!user)
     redirect(`/app/login?next=${encodeURIComponent(`${base}/sources`)}`);
-  const workspace = await getWorkspaceForUser(slug, user.id);
+  const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (!workspace) redirect("/app");
   const [sources, membership] = await Promise.all([
-    listPluginSources(workspace.id, user.id),
+    listPluginSources(workspace),
     db.membership.findUnique({
       where: {
         workspaceId_userId: { workspaceId: workspace.id, userId: user.id },

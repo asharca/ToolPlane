@@ -1,7 +1,7 @@
 "use server";
 
-import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+import { actionScope } from "@/lib/workspace/action-scope";
+
 import { getProvider } from "@/lib/agents/queries";
 import { matchingPiModelReferences } from "@/lib/agents/provider-catalog";
 import type { PiModelReference } from "@/lib/agents/model-catalog";
@@ -11,7 +11,6 @@ export async function lookupProviderModelReferencesAction(
   providerId: string,
   queries: string[],
 ): Promise<{ matches: PiModelReference[]; error?: string }> {
-  const user = await getCurrentUser();
   if (
     typeof slug !== "string" ||
     !slug ||
@@ -20,10 +19,9 @@ export async function lookupProviderModelReferencesAction(
   ) {
     return { matches: [], error: "Invalid provider query." };
   }
-  if (!user) return { matches: [], error: "Not authorized." };
-  const workspace = await getWorkspaceForUser(slug, user.id);
-  if (!workspace || workspace.ownerId !== user.id)
-    return { matches: [], error: "Not authorized." };
+  const ctx = await actionScope({ slug, ownerOnly: true });
+  if (!ctx) return { matches: [], error: "Not authorized." };
+  const { ws: workspace } = ctx;
   const provider = await getProvider(workspace.id, providerId);
   if (!provider) return { matches: [], error: "Provider not found." };
   if (

@@ -1,7 +1,8 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { resolveAccountRequestUser } from "@/lib/auth/request-user";
 import { withRequestLogging } from "@/lib/observability/http";
 import { listChatDeploymentOptions } from "@/lib/chat/resources";
-import { ChatServiceError } from "@/lib/chat/service";
+import { ChatServiceError } from "@/lib/chat/shared";
 
 export const runtime = "nodejs";
 export const GET = withRequestLogging(
@@ -16,8 +17,10 @@ export const GET = withRequestLogging(
         { status: 400 },
       );
     try {
+      const scope = await resolveWorkspaceScope({ id: workspaceId }, user.id);
+      if (!scope) throw new ChatServiceError(404, "Workspace not found");
       return Response.json(
-        { deployments: await listChatDeploymentOptions(user.id, workspaceId) },
+        { deployments: await listChatDeploymentOptions(scope) },
         { headers: { "Cache-Control": "private, no-store" } },
       );
     } catch (error) {

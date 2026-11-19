@@ -1,4 +1,5 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { TaskState } from "@a2a-js/sdk";
@@ -61,14 +62,8 @@ export async function assertLocalActor(
     !(await tx.workspace.count({
       where: {
         id: workspaceId,
-        status: "active",
         owner: { status: "active" },
-        OR: [
-          { ownerId: actorId },
-          {
-            members: { some: { userId: actorId, user: { status: "active" } } },
-          },
-        ],
+        ...workspaceAccessWhere(actorId),
       },
     })) ||
     !(await tx.user.count({ where: { id: actorId, status: "active" } }))

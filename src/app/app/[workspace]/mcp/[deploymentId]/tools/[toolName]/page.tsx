@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
@@ -10,7 +11,7 @@ import {
   readMcpToolCatalog,
 } from "@/lib/process/mcp-tool-catalog";
 import { effectiveStatus } from "@/lib/process/supervisor";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { DashboardPage } from "@/components/dashboard/DashboardUI";
 import { McpToolCatalog } from "@/components/dashboard/McpToolCatalog";
 import { ToolPlayground } from "@/components/dashboard/ToolPlayground";
@@ -33,7 +34,7 @@ export default async function DeploymentToolPage({
   const user = await getCurrentUser();
   const requestedPath = `/app/${slug}/mcp/${deploymentId}/tools/${toolName}`;
   if (!user) redirect(`/app/login?next=${encodeURIComponent(requestedPath)}`);
-  const workspace = await getWorkspaceForUser(slug, user.id);
+  const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (!workspace) redirect("/app");
 
   const deployment = await db.deployment.findFirst({

@@ -1,5 +1,6 @@
 "use client";
 
+import { apiRequest } from "@/lib/client/api";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 
 import { useEffect, useRef, useState } from "react";
@@ -64,12 +65,12 @@ export function SandboxConnectorStatus({
 
     async function check() {
       try {
-        const res = await fetch(
+        const res = await apiRequest<Status>(
           `/api/v1/workspaces/${encodeURIComponent(workspace)}/sandboxes/${encodeURIComponent(sandboxId)}/connector-status`,
           { cache: "no-store" },
         );
-        const body = (await res.json()) as Status;
-        commitStatus(body);
+        if (!res.ok) throw new Error();
+        commitStatus(res.data);
       } catch {
         commitStatus({
           connected: false,

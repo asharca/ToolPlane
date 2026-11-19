@@ -1,12 +1,13 @@
+import { testWorkspaceScope } from "../helpers/workspace-scope";
 // @vitest-environment node
 import { randomUUID, createHash } from "node:crypto";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
+import { createAgent } from "@/lib/agents/mutations";
 import {
-  createAgent,
   updateAgent,
   setAgentPiPackages,
-} from "@/lib/agents/mutations";
+} from "@/lib/agents/agent-draft-mutations";
 import { withSandboxExecutionLease } from "@/lib/agents/sandbox-execution-gate";
 
 import { resolvePiSessionPackages } from "@/lib/agents/pi-session-packages";
@@ -386,7 +387,11 @@ it("restores original session code after default changes/uninstall and rejects r
   await expect(
     db.marketRelease.delete({ where: { id: v1 } }),
   ).rejects.toThrow();
-  await removePlugin(workspaceId, userId, installId);
+  await (async () =>
+    removePlugin(
+      await testWorkspaceScope(workspaceId, userId, "manage"),
+      installId,
+    ))();
   expect(
     await db.deployment.findUnique({ where: { id: shared.id } }),
   ).not.toBeNull();
@@ -396,7 +401,7 @@ it("restores original session code after default changes/uninstall and rejects r
   ).toEqual([]);
   await db.workspace.update({
     where: { id: workspaceId },
-    data: { status: "suspended" },
+    data: { status: "deleting" },
   });
   await expect(resolvePiSessionPackages(old)).rejects.toThrow(
     "AGENT_EXECUTION_RETIRED",

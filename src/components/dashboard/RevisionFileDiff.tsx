@@ -7,6 +7,7 @@ import { Button } from "@/components/motion/button";
 import { notify } from "./Toaster";
 import { copyText } from "./CopyButton";
 import type { AgentRevisionDiff } from "@/lib/revisions/config-diff";
+import { apiRequest } from "@/lib/client/api";
 
 function binaryBytes(document: string) {
   if (!document.trim()) return 0;
@@ -171,18 +172,14 @@ export function RevisionDiffLoader({ url }: { url: string }) {
     }
     setBusy(true);
     setError("");
-    try {
-      const response = await fetch(url);
-      const body = await response.json();
-      if (!response.ok || !Array.isArray(body.files))
-        throw new Error(t("loadFailed"));
-      setDiff(body);
-      setOpen(true);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("loadFailed"));
-    } finally {
-      setBusy(false);
+    const result = await apiRequest<AgentRevisionDiff>(url);
+    setBusy(false);
+    if (!result.ok || !Array.isArray(result.data?.files)) {
+      setError((!result.ok && result.message) || t("loadFailed"));
+      return;
     }
+    setDiff(result.data);
+    setOpen(true);
   }
   return (
     <div className="min-w-0 space-y-3">

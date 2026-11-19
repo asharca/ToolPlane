@@ -1,7 +1,17 @@
+import { testWorkspaceScope } from "../helpers/workspace-scope";
 // @vitest-environment node
 import { AsyncResource } from "node:async_hooks";
+import type { WorkSessionStatus } from "@prisma/client";
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vi,
+} from "vitest";
 import {
   SendMessageRequest,
   Task,
@@ -25,7 +35,11 @@ import {
 import { getAgentForRun } from "@/lib/agents/queries";
 import {
   createWorkSession,
+  cancelWorkSession,
   appendWorkSessionInput,
+  getWorkSession,
+  getWorkSessionForUser,
+  listWorkSessions,
   resumeWorkSession,
 } from "@/lib/work/sessions";
 import { createLocalRootGrant, assertLocalGrant } from "@/lib/a2a/local-policy";
@@ -53,7 +67,8 @@ import { withAgentMaintenanceLease } from "@/lib/agents/agent-execution-gate";
 import type * as SandboxRuntimeModule from "@/lib/agents/sandbox-runtime";
 import { mutateWorkConversationTree } from "@/lib/agents/conversation-tree";
 import * as workCoordinator from "@/lib/work/coordinator";
-import { getWorkSession } from "@/lib/work/sessions";
+import { updateWorkSessionStatus } from "@/lib/work/lifecycle";
+import { workFailures, type WorkFailureCode } from "@/lib/work/failures";
 import { conversationTreePost } from "@/lib/agents/conversation-tree-http";
 import type { ComposerReference } from "@/lib/work/composer-types";
 
@@ -583,6 +598,97 @@ describe.sequential("Work and local A2A owner revisions", () => {
     ).toBe(1);
   });
 
+  it("keeps archived Work and an unfinished branch read-only", async () => {
+    expectTypeOf<"undeclared">().not.toExtend<WorkSessionStatus>();
+    const { agent } = await fixture();
+    const work = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      a2aActorId: userId,
+      task: "branch history",
+    });
+    if (!work) throw new Error("Work fixture unavailable");
+    const scope = { id: work.id, workspaceId };
+    await db.workSession.update({
+      where: { id: work.id },
+      data: { status: "forking" },
+    });
+    expect(await getWorkSession(workspaceId, work.id)).toMatchObject({
+      status: "forking",
+      readOnly: true,
+    });
+    expect(
+      await updateWorkSessionStatus(db, scope, { status: "running" }),
+    ).toEqual({ count: 0 });
+    expect(
+      await updateWorkSessionStatus(db, scope, { status: "archived" }),
+    ).toEqual({ count: 1 });
+    expect(await getWorkSessionForUser(userId, work.id)).toMatchObject({
+      status: "archived",
+      readOnly: true,
+    });
+    expect(await listWorkSessions(workspaceId, agent.id)).toEqual([]);
+    expect(
+      await appendWorkSessionInput(workspaceId, work.id, "continue"),
+    ).toMatchObject({
+      ok: false,
+      reason: "invalid_transition",
+      status: "archived",
+    });
+    expect(await cancelWorkSession(workspaceId, work.id)).toMatchObject({
+      ok: false,
+      reason: "invalid_transition",
+      status: "archived",
+    });
+    expect(
+      await updateWorkSessionStatus(db, scope, { status: "idle" }),
+    ).toEqual({
+      count: 0,
+    });
+  });
+
+  it("persists a registered failure code and returns its safe text", async () => {
+    const { agent } = await fixture();
+    const work = await createWorkSession({
+      workspaceId,
+      agentId: agent.id,
+      a2aActorId: userId,
+      task: "fail this Work",
+    });
+    if (!work) throw new Error("Work fixture unavailable");
+    const scope = { id: work.id, workspaceId };
+    const raw = "Example private exception detail";
+    expect(() =>
+      updateWorkSessionStatus(db, scope, {
+        status: "failed",
+        error: raw as WorkFailureCode,
+      }),
+    ).toThrow("Unregistered Work failure code");
+    const code = "WORK_INTERRUPTED";
+    expect(
+      await updateWorkSessionStatus(db, scope, {
+        status: "failed",
+        error: code,
+      }),
+    ).toEqual({ count: 1 });
+    expect(
+      await db.workSession.findUniqueOrThrow({ where: { id: work.id } }),
+    ).toMatchObject({
+      status: "failed",
+      error: code,
+    });
+    expect(await getWorkSessionForUser(userId, work.id)).toMatchObject({
+      error: workFailures.text(code),
+    });
+    await db.workSession.update({
+      where: { id: work.id },
+      data: { error: raw },
+    });
+    expect(await getWorkSession(workspaceId, work.id)).toMatchObject({
+      error: workFailures.text("WORK_EXECUTION_FAILED"),
+    });
+  });
+
   it("does not expose or mutate another workspace or Agent through the conversation tree API", async () => {
     const { agent } = await fixture();
     const other = await fixture();
@@ -807,7 +913,9 @@ describe.sequential("Work and local A2A owner revisions", () => {
       await withAgentMaintenanceLease(agent.id, () =>
         requester.runInAsyncScope(async () => {
           await expect(
-            resumeWorkSession(workspaceId, work.id),
+            testWorkspaceScope(workspaceId, userId, "read").then((scope) =>
+              resumeWorkSession(scope, work.id),
+            ),
           ).resolves.toMatchObject({
             ok: false,
             reason: "invalid_transition",
@@ -1398,7 +1506,9 @@ describe.sequential("Work and local A2A owner revisions", () => {
       },
     });
     await expect(
-      resumeWorkSession(workspaceId, work.id),
+      testWorkspaceScope(workspaceId, userId, "read").then((scope) =>
+        resumeWorkSession(scope, work.id),
+      ),
     ).resolves.toMatchObject({ ok: false, reason: "invalid_transition" });
     await expect(
       appendWorkSessionInput(workspaceId, work.id, "Continue"),

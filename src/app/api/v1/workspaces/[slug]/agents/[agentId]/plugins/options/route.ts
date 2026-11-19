@@ -1,13 +1,10 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { NextResponse } from "next/server";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { getAgentPageData } from "@/lib/agents/queries";
 import { buildAgentPluginOptions } from "@/lib/plugins/agent-options";
-import {
-  listPlugins,
-  PluginError,
-  requirePluginWorkspace,
-} from "@/lib/plugins/catalog";
+import { listPlugins, PluginError } from "@/lib/plugins/catalog";
 import { withRequestLogging } from "@/lib/observability/http";
 
 export const runtime = "nodejs";
@@ -24,7 +21,7 @@ export const GET = withRequestLogging(
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
     const { slug, agentId } = await params;
-    const workspace = await getWorkspaceForUser(slug, user.id);
+    const workspace = await resolveWorkspaceScope({ slug }, user.id);
     if (!workspace)
       return NextResponse.json(
         { error: "workspace not found" },
@@ -36,9 +33,13 @@ export const GET = withRequestLogging(
       return NextResponse.json({ error: "agent not found" }, { status: 404 });
 
     try {
-      // Match plugin editing authority without changing the page's read policy.
-      await requirePluginWorkspace(workspace.id, user.id, true);
-      const installs = await listPlugins(workspace.id, user.id, {
+      if (workspace.role === "member")
+        throw new PluginError(
+          "not_authorized",
+          "Workspace access denied.",
+          403,
+        );
+      const installs = await listPlugins(workspace, {
         installedOnly: true,
       });
       return NextResponse.json(

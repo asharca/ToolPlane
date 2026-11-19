@@ -73,13 +73,13 @@ describe("release metadata boundaries", () => {
         latestVersion: "v2",
         releaseName: "v2",
         updateAvailable: null,
-        reason: `Release artifact not found: ${artifact}`,
+        reason: "The release does not contain the runtime artifact.",
       });
       expect(await applySystemUpdate()).toMatchObject({
         ok: false,
         status: "unavailable",
         latestVersion: "v2",
-        message: `Release artifact not found: ${artifact}`,
+        code: "SYSTEM_UPDATE_ARTIFACT_MISSING",
       });
     },
   );
@@ -136,26 +136,26 @@ describe("release metadata boundaries", () => {
     expect(await applySystemUpdate()).toMatchObject({
       ok: false,
       status: "unavailable",
-      message: `Release checksum not found: ${artifact}.sha256`,
+      code: "SYSTEM_UPDATE_CHECKSUM_MISSING",
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it.each([new Error("lookup offline"), "lookup failure"])(
-    "exposes lookup failures as status instead of throwing",
+    "does not expose raw release lookup failures",
     async (error) => {
       fetchMock.mockRejectedValue(error);
       expect(await getSystemUpdateStatus()).toMatchObject({
         canUpdate: false,
-        reason: error instanceof Error ? error.message : error,
+        reason: "Could not look up the latest system release.",
       });
       expect(await applySystemUpdate()).toMatchObject({
         ok: false,
         status: "failed",
-        message: error instanceof Error ? error.message : error,
+        code: "SYSTEM_UPDATE_LOOKUP_FAILED",
       });
     },
   );
-  it("bounds failed GitHub response details", async () => {
+  it("does not reflect a failed GitHub response body", async () => {
     fetchMock.mockImplementation(
       async () =>
         new Response("x".repeat(1000), {
@@ -164,9 +164,7 @@ describe("release metadata boundaries", () => {
         }),
     );
     const status = await getSystemUpdateStatus();
-    expect(status.reason).toBe(
-      `GitHub release lookup failed: 403 Forbidden ${"x".repeat(300)}`,
-    );
+    expect(status.reason).toBe("Could not look up the latest system release.");
   });
   it.each(["disabled", "unconfigured", "unwritable"])(
     "shows release information without allowing installation when runtime is %s",

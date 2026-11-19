@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import { ButtonLink } from "@/components/motion/button";
@@ -7,7 +8,7 @@ import {
 } from "@/components/dashboard/DashboardUI";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getToolkitBySlug } from "@/lib/toolkits/queries";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import { skillLabel } from "@/lib/workspace/skill-label";
 
@@ -24,7 +25,7 @@ export default async function ToolkitHistoryPage({
     getTranslations("console.toolkits"),
   ]);
   if (!user) redirect("/app/login");
-  const workspace = await getWorkspaceForUser(slug, user.id);
+  const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (!workspace) redirect("/app");
   const toolkit = await getToolkitBySlug(workspace.id, toolkitSlug);
   if (!toolkit) notFound();

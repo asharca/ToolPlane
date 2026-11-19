@@ -11,15 +11,6 @@ import {
   McpToolsUpdatedNote,
 } from "@/components/dashboard/RevisionUpgradeNotice";
 import type { RevisionMcpToolChange } from "@/lib/revisions/upgrade-diff";
-import { ComposerToolbarCustomizer } from "@/components/dashboard/ComposerToolbarCustomizer";
-import { ComposerToolsButton } from "@/components/dashboard/ComposerToolsButton";
-import {
-  ComposerMenu,
-  type ComposerMenuItem,
-  type ComposerMenuOutcome,
-  useComposerMenu,
-} from "@/components/dashboard/composer-menu";
-import { useMcpComposerMenu } from "@/components/dashboard/composer-mcp-menu";
 import {
   MessageBubble,
   MessageBubbleContent,
@@ -32,7 +23,6 @@ import {
   ConversationComposer as PromptInput,
   conversationComposerDockClassName,
 } from "@/components/dashboard/ConversationComposer";
-import { createPortal } from "react-dom";
 import {
   ConversationMessageShell,
   conversationUserBubbleClassName,
@@ -47,50 +37,42 @@ import { useLiveTaskOutput } from "@/components/dashboard/work/useLiveTaskOutput
 import { LiveOutputView } from "@/components/dashboard/work/LiveOutputView";
 import { ConversationContentBlocks } from "@/components/dashboard/ConversationContentBlocks";
 import { WorkTurnTrace } from "@/components/dashboard/work/WorkTurnTrace";
-import {
-  formatContentDuration,
-  workContentParts,
-} from "@/lib/conversation/content-blocks";
+import { formatContentDuration } from "@/lib/conversation/content-blocks";
 import {
   AGENT_TURN_TIMELINE_PART,
-  agentTimelineDisplayParts,
   parseAgentTurnTimeline,
 } from "@/lib/agents/turn-timeline";
+import { apiRequest } from "@/lib/client/api";
+import {
+  DisplayError,
+  displayErrorText,
+} from "@/components/dashboard/display-error";
+import { ConversationTools } from "./AgentConversationTools";
+import {
+  useAgentAttachments,
+  type DraftAttachment,
+} from "./useAgentAttachments";
 import { CopyButton } from "@/components/dashboard/CopyButton";
 
 import { AgentPromptProvenance } from "@/components/dashboard/agents/AgentPromptProvenance";
 import {
   useCallback,
   useEffect,
-  useEffectEvent,
-  useId,
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
-  type ChangeEvent,
   type ReactNode,
 } from "react";
 import { useTranslations } from "next-intl";
 import { useChat } from "@ai-sdk/react";
-import {
-  DefaultChatTransport,
-  generateId,
-  type CreateUIMessage,
-  type FileUIPart,
-} from "ai";
+import { DefaultChatTransport, type CreateUIMessage } from "ai";
 import {
   Bot,
   ChevronLeft,
   ChevronRight,
   GitBranch,
   Pencil,
-  Eraser,
-  Globe2,
-  Paperclip,
-  SlidersHorizontal,
   RotateCcw,
-  TerminalSquare,
 } from "lucide-react";
 
 import { ConversationContextUsage } from "@/components/dashboard/ConversationComposer";
@@ -106,23 +88,10 @@ import {
 import {
   parseRuntimeCommand,
   sessionRuntimeCommands,
-  type RuntimeCommand,
 } from "@/lib/agents/runtime-commands";
 import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
-import { SubagentActivity, SubagentActivitySchema } from "./SubagentActivity";
-import { HookActivity, HookActivitySchema } from "./HookActivity";
-import { AdvisorSuggestionsCard } from "./AdvisorSuggestionsCard";
-import {
-  ADVISOR_SUGGESTIONS_PART,
-  AdvisorSuggestionsSchema,
-} from "@/lib/agents/advisor";
+import { ADVISOR_SUGGESTIONS_PART } from "@/lib/agents/advisor";
 
-const MAX_ATTACHMENTS = 5;
-
-type DraftAttachment = {
-  id: string;
-  file: File;
-};
 type DraftSnapshot = {
   text: string;
   attachments: DraftAttachment[];
@@ -134,447 +103,6 @@ function mergeDraftText(current: string, restored: string) {
   if (current === restored || current.startsWith(`${restored}\n`))
     return current;
   return `${restored}\n${current}`;
-}
-
-const TOOLBAR_STORAGE_KEY = "toolplane.conversation.composer.toolbar";
-const TOOLBAR_EVENT = "toolplane:conversation-composer-toolbar";
-
-function subscribeToolbar(listener: () => void) {
-  window.addEventListener("storage", listener);
-  window.addEventListener(TOOLBAR_EVENT, listener);
-  return () => {
-    window.removeEventListener("storage", listener);
-    window.removeEventListener(TOOLBAR_EVENT, listener);
-  };
-}
-
-function readToolbar() {
-  try {
-    return window.localStorage.getItem(TOOLBAR_STORAGE_KEY) ?? "[]";
-  } catch {
-    return "[]";
-  }
-}
-
-function ConversationTools({
-  attachmentsEnabled,
-  composerText,
-  disabled,
-  mcpPromptApiPath,
-  mcpResourceApiPath,
-  onAddAttachment,
-  onError,
-  onNewConversation,
-  runtimeCommands,
-  onTextChange,
-  webSearchAvailable,
-  webSearchEnabled,
-  onWebSearchChange,
-}: {
-  attachmentsEnabled: boolean;
-  composerText: string;
-  disabled: boolean;
-  mcpPromptApiPath?: string;
-  mcpResourceApiPath?: string;
-  onAddAttachment: (file: File) => void;
-  onError: (message: string | null) => void;
-  onNewConversation?: () => void | Promise<void>;
-  runtimeCommands: readonly RuntimeCommand[];
-  onTextChange: (text: string) => void;
-  webSearchAvailable: boolean;
-  webSearchEnabled: boolean;
-  onWebSearchChange: (enabled: boolean) => void;
-}) {
-  const t = useTranslations("console.runtimeCommands");
-  const agentsT = useTranslations("console.agents");
-  const [customizing, setCustomizing] = useState(false);
-  const [container, setContainer] = useState<HTMLElement | null>(null);
-  const attachmentInputId = useId();
-  const toolsButtonRef = useRef<HTMLButtonElement>(null);
-  const containerRef = useRef<HTMLElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const toolbarValue = useSyncExternalStore(
-    subscribeToolbar,
-    readToolbar,
-    () => "[]",
-  );
-  useEffect(() => {
-    const element =
-      toolsButtonRef.current?.closest<HTMLElement>(
-        '[data-ui="chat.composer"]',
-      ) ?? null;
-    containerRef.current = element;
-    textareaRef.current = element?.querySelector("textarea") ?? null;
-    setContainer(element);
-  }, []);
-
-  const addAttachments = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(event.currentTarget.files ?? []);
-      event.currentTarget.value = "";
-      for (const file of files) {
-        try {
-          onAddAttachment(file);
-        } catch (cause) {
-          onError(
-            cause instanceof Error
-              ? cause.message
-              : agentsT("attachmentUploadFailed"),
-          );
-        }
-      }
-      textareaRef.current?.focus();
-    },
-    [agentsT, onAddAttachment, onError],
-  );
-  const openAttachmentPicker = useCallback(() => {
-    if (!attachmentsEnabled) {
-      onError(agentsT("attachmentRuntimeRequired"));
-      return;
-    }
-    document.getElementById(attachmentInputId)?.click();
-  }, [agentsT, attachmentInputId, attachmentsEnabled, onError]);
-
-  const resourceParams = mcpResourceApiPath
-    ? new URLSearchParams(mcpResourceApiPath.split("?")[1])
-    : undefined;
-  const mcp = useMcpComposerMenu({
-    composerPath: mcpResourceApiPath,
-    promptsPath: mcpPromptApiPath,
-    resourceContext: {
-      conversationId: resourceParams?.get("conversationId") ?? undefined,
-      workSessionId: resourceParams?.get("workSessionId") ?? undefined,
-    },
-  });
-  const clearRuntimeCommand = runtimeCommands.find(
-    (command) => command.name === "clear",
-  );
-  const items: ComposerMenuItem[] = [
-    {
-      id: "attachments",
-      label: agentsT("addAttachment"),
-      description: attachmentsEnabled
-        ? undefined
-        : agentsT("attachmentRuntimeRequired"),
-      disabled: !attachmentsEnabled,
-      icon: Paperclip,
-    },
-    ...(webSearchAvailable
-      ? [
-          {
-            id: "web-search",
-            label: webSearchEnabled
-              ? agentsT("disableWebSearch")
-              : agentsT("enableWebSearch"),
-            icon: Globe2,
-            pressed: webSearchEnabled,
-          },
-        ]
-      : []),
-    ...(clearRuntimeCommand || onNewConversation
-      ? [
-          {
-            id: "clear-context",
-            label: agentsT("clearContext"),
-            description: agentsT("clearContextDescription"),
-            icon: Eraser,
-          },
-        ]
-      : []),
-    ...mcp.rootItems,
-    ...runtimeCommands
-      .filter((command) => command.name !== "clear")
-      .map((command) => ({
-        id: `runtime:${command.name}`,
-        label: `/${command.name}`,
-        description: t.has(`descriptions.${command.name}`)
-          ? t(`descriptions.${command.name}`)
-          : command.description,
-        icon: TerminalSquare,
-        group: t("title"),
-        data: command.name,
-      })),
-  ];
-
-  async function runItem(
-    item: ComposerMenuItem,
-    view: string,
-    insertText: (text: string) => void,
-  ): Promise<ComposerMenuOutcome> {
-    const handled = await mcp.activate(item, view, insertText);
-    if (handled !== null) return handled;
-    if (typeof item.data === "string") insertText(`/${item.data} `);
-    if (item.id === "attachments") openAttachmentPicker();
-    if (item.id === "web-search") onWebSearchChange(!webSearchEnabled);
-    if (item.id === "clear-context") {
-      if (clearRuntimeCommand) insertText("/clear ");
-      else await onNewConversation?.();
-    }
-    return undefined;
-  }
-
-  const menu = useComposerMenu({
-    text: composerText,
-    setText: onTextChange,
-    textareaRef,
-    containerRef,
-    disabled,
-    rootItems: items,
-    views: mcp.views,
-    onActivate: runItem,
-    onError,
-  });
-
-  const syncMenu = useEffectEvent((value: string) => {
-    const input = textareaRef.current;
-    if (input && document.activeElement === input)
-      menu.sync(value, input.selectionStart, input.selectionEnd);
-  });
-  useEffect(() => {
-    syncMenu(composerText);
-  }, [composerText]);
-
-  // PromptInput submits on Enter; the menu claims navigation keys first.
-  const menuKeyDown = useEffectEvent((event: globalThis.KeyboardEvent) => {
-    const input = textareaRef.current;
-    if (!input) return;
-    const handled = menu.onKeyDown({
-      key: event.key,
-      shiftKey: event.shiftKey,
-      ctrlKey: event.ctrlKey,
-      metaKey: event.metaKey,
-      altKey: event.altKey,
-      keyCode: event.keyCode,
-      nativeEvent: event,
-      currentTarget: input,
-      preventDefault: () => event.preventDefault(),
-      stopPropagation: () => event.stopPropagation(),
-    });
-    if (handled) event.stopPropagation();
-  });
-  useEffect(() => {
-    const input = container?.querySelector("textarea");
-    if (!input) return;
-    const keyDown = (event: globalThis.KeyboardEvent) => menuKeyDown(event);
-    input.addEventListener("keydown", keyDown, true);
-    return () => input.removeEventListener("keydown", keyDown, true);
-  }, [container]);
-
-  let pinnedIds: string[] = [];
-  try {
-    const stored: unknown = JSON.parse(toolbarValue);
-    if (Array.isArray(stored))
-      pinnedIds = [...new Set(stored)].filter(
-        (id): id is string =>
-          typeof id === "string" && items.some((item) => item.id === id),
-      );
-  } catch {
-    /* Ignore obsolete or invalid browser preferences. */
-  }
-  const toolbarItems = [
-    ...pinnedIds.flatMap((id) => items.find((item) => item.id === id) ?? []),
-    ...items.filter((item) => item.pressed && !pinnedIds.includes(item.id)),
-  ];
-
-  const saveToolbar = useCallback(
-    (ids: string[]) => {
-      try {
-        window.localStorage.setItem(TOOLBAR_STORAGE_KEY, JSON.stringify(ids));
-        window.dispatchEvent(new Event(TOOLBAR_EVENT));
-      } catch {
-        onError(agentsT("toolbarSaveFailed"));
-      }
-    },
-    [agentsT, onError],
-  );
-
-  return (
-    <>
-      <ComposerToolsButton
-        ref={toolsButtonRef}
-        open={menu.open}
-        disabled={disabled}
-        aria-label={agentsT("openComposerTools")}
-        title={agentsT("openComposerTools")}
-        onMouseDown={(event) => event.preventDefault()}
-        onClick={menu.openFromButton}
-      />
-      {container
-        ? createPortal(
-            <ComposerMenu
-              menu={menu}
-              footer={{
-                label: agentsT("customizeToolbar"),
-                icon: SlidersHorizontal,
-                onSelect: () => setCustomizing(true),
-              }}
-            />,
-            container,
-          )
-        : null}
-      <input
-        id={attachmentInputId}
-        type="file"
-        multiple
-        hidden
-        disabled={disabled || !attachmentsEnabled}
-        onChange={addAttachments}
-      />
-      {toolbarItems.map((item) => {
-        const Icon = item.icon;
-        return (
-          <Button
-            key={item.id}
-            type="button"
-            data-composer-shortcut={item.id}
-            disabled={disabled || item.disabled}
-            aria-label={item.label}
-            aria-pressed={item.pressed}
-            title={item.label}
-            onClick={() => {
-              if (item.drill) {
-                menu.openView(item.id);
-                return;
-              }
-              onError(null);
-              void runItem(item, "root", menu.insertText).catch((cause) =>
-                onError(
-                  cause instanceof Error
-                    ? cause.message
-                    : agentsT("clearContextFailed"),
-                ),
-              );
-            }}
-            variant={item.pressed ? "primary" : "ghost"}
-            size="icon"
-            className="flex shrink-0 items-center justify-center"
-          >
-            <Icon className="size-[17px]" />
-          </Button>
-        );
-      })}
-      <ComposerToolbarCustomizer
-        open={customizing}
-        onOpenChange={setCustomizing}
-        title={agentsT("customizeToolbar")}
-        resetLabel={agentsT("resetToolbar")}
-        options={items}
-        pinnedIds={pinnedIds}
-        onChange={saveToolbar}
-      />
-    </>
-  );
-}
-
-function useAgentAttachments(attachmentUploadUrl?: string) {
-  const t = useTranslations("console.agents");
-  const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const attachmentsRef = useRef(attachments);
-  const updateAttachments = useCallback((next: DraftAttachment[]) => {
-    attachmentsRef.current = next;
-    setAttachments(next);
-  }, []);
-  const addAttachment = useCallback(
-    (file: File) => {
-      if (!attachmentUploadUrl) throw new Error(t("attachmentRuntimeRequired"));
-      if (attachmentsRef.current.length >= MAX_ATTACHMENTS)
-        throw new Error(
-          t("attachmentLimitReached", { count: MAX_ATTACHMENTS }),
-        );
-      updateAttachments([
-        ...attachmentsRef.current,
-        { id: generateId(), file },
-      ]);
-    },
-    [attachmentUploadUrl, t, updateAttachments],
-  );
-  const removeAttachment = useCallback(
-    (id: string) => {
-      updateAttachments(
-        attachmentsRef.current.filter((item) => item.id !== id),
-      );
-    },
-    [updateAttachments],
-  );
-  const takeAttachments = useCallback(() => {
-    const snapshot = attachmentsRef.current;
-    updateAttachments([]);
-    return snapshot;
-  }, [updateAttachments]);
-  const restoreAttachments = useCallback(
-    (snapshot: DraftAttachment[]) => {
-      const fileKey = ({ file }: DraftAttachment) =>
-        `${file.name}:${file.size}:${file.lastModified}`;
-      const existingFiles = new Set(attachmentsRef.current.map(fileKey));
-      const restored = snapshot.filter((attachment) => {
-        const key = fileKey(attachment);
-        if (existingFiles.has(key)) return false;
-        existingFiles.add(key);
-        return true;
-      });
-      updateAttachments([...restored, ...attachmentsRef.current]);
-    },
-    [updateAttachments],
-  );
-  const uploadAttachments = useCallback(
-    async (snapshot: DraftAttachment[]): Promise<FileUIPart[]> => {
-      if (!snapshot.length) return [];
-      setUploading(true);
-      try {
-        if (!attachmentUploadUrl)
-          throw new Error(t("attachmentRuntimeRequired"));
-        const parts: FileUIPart[] = [];
-        for (const { file } of snapshot) {
-          const url = new URL(attachmentUploadUrl, window.location.origin);
-          url.searchParams.set("filename", file.name);
-          const response = await fetch(`${url.pathname}${url.search}`, {
-            method: "POST",
-            headers: {
-              "content-type": file.type || "application/octet-stream",
-            },
-            body: file,
-          });
-          const result = (await response.json().catch(() => ({}))) as {
-            name?: string;
-            mimeType?: string;
-            url?: string;
-            error?: string;
-          };
-          if (!response.ok || !result.url)
-            throw new Error(result.error || t("attachmentUploadFailed"));
-          parts.push({
-            type: "file",
-            url: result.url,
-            filename: result.name || file.name,
-            mediaType:
-              result.mimeType || file.type || "application/octet-stream",
-          });
-        }
-        return parts;
-      } catch (cause) {
-        throw new Error(
-          cause instanceof Error
-            ? cause.message === "conversation"
-              ? t("couldNotCreateConversation")
-              : cause.message
-            : t("attachmentUploadFailed"),
-        );
-      } finally {
-        setUploading(false);
-      }
-    },
-    [attachmentUploadUrl, t],
-  );
-  return {
-    attachments,
-    addAttachment,
-    removeAttachment,
-    takeAttachments,
-    restoreAttachments,
-    uploadAttachments,
-    uploading,
-  };
 }
 
 export function AgentConversation({
@@ -771,32 +299,27 @@ export function AgentConversation({
       return;
     }
     if (!apiPath) return;
-    try {
-      const response = await getServerResponse();
-      const turnId = response?.headers.get("X-Chat-Turn-Id");
-      if (!turnId) {
-        await stopLocalChat();
-        return;
-      }
-      const stopped = await fetch(apiPath, {
-        method: "DELETE",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ turnId }),
-      });
-      if (!stopped.ok)
-        throw new Error((await stopped.json()).error || work("processFailed"));
-      // Keep observing until the server settles and persists the stopped turn.
-    } catch (error) {
-      setSubmitError(
-        error instanceof Error ? error.message : work("processFailed"),
-      );
+    // The turn ID header arrives with the streaming response the transport opened.
+    const response = await getServerResponse()?.catch(() => null);
+    const turnId = response?.headers.get("X-Chat-Turn-Id");
+    if (!turnId) {
+      await stopLocalChat();
+      return;
     }
+    const stopped = await apiRequest(apiPath, {
+      method: "DELETE",
+      json: { turnId },
+    });
+    // On success, keep observing until the server settles and persists the stopped turn.
+    if (!stopped.ok) setSubmitError(stopped.message ?? work("processFailed"));
   }, [apiPath, getServerResponse, serverManaged, stopLocalChat, work]);
   const chatBusy = chat.status === "submitted" || chat.status === "streaming";
   const describeRuntimeError = useRuntimeErrorText();
-  const runtimeError = describeRuntimeError(submitError || chat.error?.message);
+  // The SDK error's text is matched against known failure codes, never shown raw.
+  const chatErrorCode = chat.error?.message;
+  const runtimeError = describeRuntimeError(submitError || chatErrorCode);
   const configurationError = /no configured model/i.test(
-    submitError || chat.error?.message || "",
+    submitError || chatErrorCode || "",
   );
   const busy = chatBusy || commandBusy || submitting;
   const nativeLive = useLiveTaskOutput({
@@ -969,42 +492,36 @@ export function AgentConversation({
           !isExecutableAgentRuntimeKind(runtimeKind) &&
           !runtimeCommands.some((item) => item.name === command.name)
         )
-          throw new Error(commandsT("unsupportedCommand"));
+          throw new DisplayError(commandsT("unsupportedCommand"));
         if (message.parts.some((part) => part.type !== "text"))
-          throw new Error(commandsT("noAttachments"));
+          throw new DisplayError(commandsT("noAttachments"));
       }
       let nextConversationId: string;
       try {
         nextConversationId =
           activeConversationId ?? (await ensureConversation());
       } catch {
-        throw new Error(t("couldNotCreateConversation"));
+        throw new DisplayError(t("couldNotCreateConversation"));
       }
       if (command) {
         setCommandBusy(true);
         try {
-          const response = await fetch(
+          const result = await apiRequest(
             `/api/v1/agents/${encodeURIComponent(agentId)}/conversations/${encodeURIComponent(nextConversationId)}/commands`,
             {
               method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
+              json: {
                 line: commandLine.trim(),
                 ...(modelOverride ? { modelOverride } : {}),
-              }),
+              },
             },
           );
-          const result = (await response.json().catch(() => ({}))) as {
-            error?: unknown;
-          };
-          if (!response.ok) {
-            const error = typeof result.error === "string" ? result.error : "";
-            throw new Error(
-              error && commandsT.has(error)
-                ? commandsT(error)
-                : error || commandsT("failed"),
+          if (!result.ok)
+            throw new DisplayError(
+              result.message && commandsT.has(result.message)
+                ? commandsT(result.message)
+                : result.message || commandsT("failed"),
             );
-          }
           void onConversationChanged?.();
         } finally {
           setCommandBusy(false);
@@ -1142,9 +659,7 @@ export function AgentConversation({
     try {
       await action();
     } catch (cause) {
-      setSubmitError(
-        cause instanceof Error ? cause.message : work("processFailed"),
-      );
+      setSubmitError(displayErrorText(cause, work("processFailed")));
     }
   };
   const submitQueuedDraft = async (mode: QueueMode) => {
@@ -1189,7 +704,7 @@ export function AgentConversation({
         runtimeCommands.length &&
         parseRuntimeCommand(snapshot.text, runtimeKind ?? "")
       )
-        throw new Error(commandsT("noAttachments"));
+        throw new DisplayError(commandsT("noAttachments"));
       const files = await uploadAttachments(snapshot.attachments);
       await sendMessage({
         role: "user",
@@ -1203,9 +718,7 @@ export function AgentConversation({
     } catch (cause) {
       setComposerText((current) => mergeDraftText(current, snapshot.text));
       restoreAttachments(snapshot.attachments);
-      setSubmitError(
-        cause instanceof Error ? cause.message : work("processFailed"),
-      );
+      setSubmitError(displayErrorText(cause, work("processFailed")));
     } finally {
       submissionInFlight.current = false;
       setSubmitting(false);
@@ -1233,9 +746,7 @@ export function AgentConversation({
     } catch (cause) {
       setEditingId(message.id);
       setEditText(submittedText);
-      setSubmitError(
-        cause instanceof Error ? cause.message : work("processFailed"),
-      );
+      setSubmitError(displayErrorText(cause, work("processFailed")));
     } finally {
       submissionInFlight.current = false;
       setSubmitting(false);
@@ -1319,14 +830,6 @@ export function AgentConversation({
               const text = message.parts
                 .flatMap((part) => (part.type === "text" ? [part.text] : []))
                 .join("\n");
-              // Recorded tool steps use Work's activity shape.
-              const processParts = streaming
-                ? message.parts
-                : agentTimelineDisplayParts(message.parts).map((part) =>
-                    part.type === "tool" || "source" in part
-                      ? workContentParts([part], false)[0]
-                      : part,
-                  );
               const branch = branchNavigation.find(
                 (item) => item.messageId === sourceMessage.id,
               );
@@ -1430,38 +933,8 @@ export function AgentConversation({
                   ) : (
                     <ConversationContentBlocks
                       messageId={message.id}
-                      parts={processParts}
+                      parts={message.parts}
                       streaming={streaming}
-                      processDataTypes={[
-                        "data-subagent-activity",
-                        "data-hook-activity",
-                        ADVISOR_SUGGESTIONS_PART,
-                      ]}
-                      renderDataStep={(step) => {
-                        if (step.type === ADVISOR_SUGGESTIONS_PART) {
-                          const parsed = AdvisorSuggestionsSchema.safeParse(
-                            step.data,
-                          );
-                          return parsed.success ? (
-                            <AdvisorSuggestionsCard advisory={parsed.data} />
-                          ) : null;
-                        }
-                        if (step.type === "data-hook-activity") {
-                          const hook = HookActivitySchema.safeParse(step.data);
-                          return hook.success ? (
-                            <HookActivity value={hook.data} />
-                          ) : null;
-                        }
-                        if (step.type === "data-subagent-activity") {
-                          const activity = SubagentActivitySchema.safeParse(
-                            step.data,
-                          );
-                          return activity.success ? (
-                            <SubagentActivity value={activity.data} />
-                          ) : null;
-                        }
-                        return null;
-                      }}
                     />
                   )}
                 </>
@@ -1644,7 +1117,7 @@ export function AgentConversation({
               renderedActivityIds,
             )
           : composerNotice}
-        {submitError || chat.error?.message ? (
+        {submitError || chat.error ? (
           <div
             role="alert"
             className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
@@ -1654,7 +1127,8 @@ export function AgentConversation({
                 ? work("configureAgent")
                 : runtimeError
                   ? runtimeError.text
-                  : submitError || chat.error?.message}
+                  : (submitError ??
+                    displayErrorText(chat.error, work("processFailed")))}
             </span>
             {(configurationError ||
               runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE") &&

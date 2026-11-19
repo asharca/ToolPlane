@@ -1,3 +1,7 @@
+import {
+  resolveWorkspaceScope,
+  type WorkspaceScope,
+} from "@/lib/workspace/scope";
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ findFirst: vi.fn() }));
@@ -9,8 +13,14 @@ import {
   workspaceAccessStream,
 } from "@/lib/workspace/access-stream";
 
-beforeEach(() => {
-  mocks.findFirst.mockReset().mockResolvedValue({ id: "workspace" });
+let scope: WorkspaceScope;
+beforeEach(async () => {
+  mocks.findFirst
+    .mockReset()
+    .mockResolvedValue({ id: "workspace", ownerId: "member", members: [] });
+  const resolved = await resolveWorkspaceScope({ id: "workspace" }, "member");
+  if (!resolved) throw new Error("Workspace scope was not resolved");
+  scope = resolved;
 });
 afterEach(() => {
   revokeWorkspaceStreams("workspace");
@@ -27,8 +37,7 @@ describe("workspace live access", () => {
     });
     const reader = workspaceAccessStream(
       body,
-      "workspace",
-      "member",
+      scope,
       new AbortController().signal,
     ).getReader();
     source.enqueue(new Uint8Array([1]));
@@ -44,8 +53,7 @@ describe("workspace live access", () => {
     vi.useFakeTimers();
     const reader = workspaceAccessStream(
       new ReadableStream(),
-      "workspace",
-      "member",
+      scope,
       new AbortController().signal,
     ).getReader();
     await vi.advanceTimersByTimeAsync(1);
@@ -59,16 +67,14 @@ describe("workspace live access", () => {
     mocks.findFirst.mockRejectedValue(new Error("database unavailable"));
     const reader = workspaceAccessStream(
       new ReadableStream(),
-      "workspace",
-      "member",
+      scope,
       new AbortController().signal,
     ).getReader();
     expect((await reader.read()).done).toBe(true);
     vi.useFakeTimers();
     const stopped = workspaceAccessStream(
       new ReadableStream(),
-      "workspace",
-      "member",
+      scope,
       AbortSignal.abort(),
     ).getReader();
     expect((await stopped.read()).done).toBe(true);

@@ -2,7 +2,7 @@ import "server-only";
 import { db } from "@/lib/db";
 import type { Prisma } from "@prisma/client";
 import { getAgentForRun } from "@/lib/agents/queries";
-import { createConversation } from "@/lib/agents/mutations";
+import { createConversation } from "@/lib/agents/conversation-mutations";
 import { resolvePinnedAgent } from "./revisions";
 import {
   upgradeAgentConversationRevision,

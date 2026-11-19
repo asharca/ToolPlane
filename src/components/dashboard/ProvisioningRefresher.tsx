@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { apiRequest } from "@/lib/client/api";
 
 // Poll server-owned runtime state until the caller observes readiness.
 export function ProvisioningRefresher({
@@ -36,32 +37,26 @@ export function ProvisioningRefresher({
       timer = window.setTimeout(() => void poll(), intervalMs);
     };
     async function poll() {
-      try {
-        const response = await fetch(
-          `/api/v1/mcp/${deploymentId}/runtime?cursor=0&limit=1`,
-          { cache: "no-store" },
-        );
-        if (cancelled) return;
-        if (!response.ok) {
-          scheduleNext(observedStatus);
-          return;
-        }
-        const payload = (await response.json()) as {
-          snapshot?: { status?: string } | null;
-        };
-        // A missing runtime record means there is no supervised process to
-        // provision, which matches effectiveStatus's stopped fallback.
-        const status = payload.snapshot?.status ?? "stopped";
-        if (status !== observedStatus) {
-          observedStatus = status;
-          router.refresh();
-        }
-        scheduleNext(status);
-      } catch {
-        // The next interval is enough to recover from a transient request
-        // failure; avoid forcing full-page refreshes while the API is down.
+      const result = await apiRequest<{
+        snapshot?: { status?: string } | null;
+      }>(`/api/v1/mcp/${deploymentId}/runtime?cursor=0&limit=1`, {
+        cache: "no-store",
+      });
+      if (cancelled) return;
+      // A failed poll waits for the next interval; forcing full-page refreshes
+      // while the API is down would not help it recover.
+      if (!result.ok) {
         scheduleNext(observedStatus);
+        return;
       }
+      // A missing runtime record means there is no supervised process to
+      // provision, which matches effectiveStatus's stopped fallback.
+      const status = result.data?.snapshot?.status ?? "stopped";
+      if (status !== observedStatus) {
+        observedStatus = status;
+        router.refresh();
+      }
+      scheduleNext(status);
     }
 
     void poll();

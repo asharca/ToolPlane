@@ -1,5 +1,10 @@
 "use client";
 
+import { apiRequest } from "@/lib/client/api";
+import {
+  DisplayError,
+  displayErrorText,
+} from "@/components/dashboard/display-error";
 import { Button } from "@/components/motion/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { useTheme } from "next-themes";
@@ -139,7 +144,7 @@ function decodeBase64File(
   mimeType = "application/octet-stream",
 ) {
   if (payload.encoding !== "base64" || typeof payload.content !== "string") {
-    throw new Error(invalidMessage);
+    throw new DisplayError(invalidMessage);
   }
   const binary = atob(payload.content);
   const bytes = new Uint8Array(binary.length);
@@ -175,27 +180,24 @@ export async function callSandboxTool(
   fallbackError: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  const res = await fetch(rpcApiBase, {
-    method: "POST",
-    signal,
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: Date.now(),
-      method: "tools/call",
-      params: { name, arguments: args },
-    }),
-  });
-  const json = await res.json();
-  if (json.error || !res.ok)
-    throw new Error(
-      typeof json.error === "string"
-        ? json.error
-        : (json.error?.message ?? fallbackError),
-    );
-  const result = json.result as RpcResult | null;
+  const res = await apiRequest<{ error?: unknown; result?: RpcResult }>(
+    rpcApiBase,
+    {
+      method: "POST",
+      signal,
+      json: {
+        jsonrpc: "2.0",
+        id: Date.now(),
+        method: "tools/call",
+        params: { name, arguments: args },
+      },
+    },
+  );
+  if (!res.ok) throw new DisplayError(res.message ?? fallbackError);
+  if (res.data.error) throw new DisplayError(fallbackError);
+  const result = res.data.result ?? null;
   const text = textFromResult(result);
-  if (result?.isError) throw new Error(text);
+  if (result?.isError) throw new DisplayError(fallbackError);
   return text;
 }
 
@@ -205,10 +207,9 @@ async function postTerminal(
   action: "input" | "resize",
   body: unknown,
 ) {
-  return fetch(`${terminalApiBase}/${sessionId}/${action}`, {
+  return apiRequest(`${terminalApiBase}/${sessionId}/${action}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    json: body,
     keepalive: action === "input",
   });
 }
@@ -303,7 +304,7 @@ export function SandboxConsole({
         t("toolCallFailed"),
       );
       const parsed = parseSandboxDirectoryText(raw, normalized);
-      if (!parsed) throw new Error(raw);
+      if (!parsed) throw new DisplayError(t("toolCallFailed"));
       return {
         path: normalizePath(parsed.path || normalized),
         entries: sortedEntries(parsed.entries),
@@ -324,11 +325,11 @@ export function SandboxConsole({
       const listing = await loadDirectory(rootPath);
       setEntriesByPath({ [rootPath]: listing.entries });
     } catch (error) {
-      setFileError(String(error instanceof Error ? error.message : error));
+      setFileError(displayErrorText(error, t("toolCallFailed")));
     } finally {
       setLoadingPath(null);
     }
-  }, [loadDirectory, rootPath]);
+  }, [loadDirectory, rootPath, t]);
 
   useEffect(() => {
     const key = `${rpcBase}:${rootPath}`;
@@ -357,7 +358,7 @@ export function SandboxConsole({
       const response = await postTerminal(terminalBase, sessionId, "input", {
         data,
       });
-      if (!response.ok) throw new Error(t("terminalError"));
+      if (!response.ok) throw new DisplayError(t("terminalError"));
     });
     inputWritesRef.current = write;
     void write.catch(() => {
@@ -415,7 +416,7 @@ export function SandboxConsole({
       let terminal: XtermTerminal | null = null;
       let ownedSessionId: string | null = null;
       const closeSession = (sessionId: string) =>
-        fetch(`${terminalBase}/${sessionId}`, {
+        apiRequest(`${terminalBase}/${sessionId}`, {
           method: "DELETE",
           keepalive: true,
         }).catch(() => {
@@ -462,14 +463,13 @@ export function SandboxConsole({
           return;
         }
 
-        const sessionRes = await fetch(terminalBase, {
+        const sessionRes = await apiRequest<TerminalSession>(terminalBase, {
           method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
+          json: {
             cols: terminal.cols,
             rows: terminal.rows,
             cwd: normalizePath(initialPath),
-          }),
+          },
         });
         if (!sessionRes.ok) {
           if (disposed) return;
@@ -479,7 +479,7 @@ export function SandboxConsole({
           setTerminalStatus(t("terminalError"));
           return;
         }
-        const session = (await sessionRes.json()) as TerminalSession;
+        const session = sessionRes.data;
         if (disposed) {
           void closeSession(session.id);
           return;
@@ -609,7 +609,7 @@ export function SandboxConsole({
       );
       const payload = JSON.parse(raw) as { content?: unknown };
       if (typeof payload.content !== "string")
-        throw new Error(filePreviewUnavailable);
+        throw new DisplayError(filePreviewUnavailable);
       return new Blob([payload.content], { type: "text/plain;charset=utf-8" });
     },
     [
@@ -637,7 +637,7 @@ export function SandboxConsole({
         t("invalidDownloadResponse"),
       );
     } catch (error) {
-      setFileError(String(error instanceof Error ? error.message : error));
+      setFileError(displayErrorText(error, t("toolCallFailed")));
     } finally {
       setLoadingPath(null);
     }
@@ -666,7 +666,7 @@ export function SandboxConsole({
         [directory]: listing.entries,
       }));
     } catch (error) {
-      setFileError(String(error instanceof Error ? error.message : error));
+      setFileError(displayErrorText(error, t("toolCallFailed")));
     } finally {
       setLoadingPath(null);
     }
@@ -693,7 +693,7 @@ export function SandboxConsole({
             file.name.includes("/") ||
             file.name.includes("\\")
           ) {
-            throw new Error(t("invalidUploadFilename"));
+            throw new DisplayError(t("invalidUploadFilename"));
           }
           if (rpcApiBase) {
             const content = await new Promise<string>((resolve, reject) => {
@@ -728,11 +728,11 @@ export function SandboxConsole({
             const payload = (await response.json().catch(() => ({}))) as {
               error?: string;
             };
-            throw new Error(payload.error || t("toolCallFailed"));
+            throw new DisplayError(payload.error ?? t("toolCallFailed"));
           }
         } catch (error) {
           errors.push(
-            `${file.name}: ${String(error instanceof Error ? error.message : error)}`,
+            `${file.name}: ${displayErrorText(error, t("toolCallFailed"))}`,
           );
         }
       }
@@ -743,7 +743,7 @@ export function SandboxConsole({
       }));
       if (errors.length) setFileError(errors.join("\n"));
     } catch (error) {
-      setFileError(String(error instanceof Error ? error.message : error));
+      setFileError(displayErrorText(error, t("toolCallFailed")));
     } finally {
       setUploading(false);
       if (uploadInputRef.current) uploadInputRef.current.value = "";
@@ -765,7 +765,7 @@ export function SandboxConsole({
       setEntriesByPath((current) => ({ ...current, [path]: listing.entries }));
     } catch (error) {
       setExpandedPaths((current) => current.filter((entry) => entry !== path));
-      setFileError(String(error instanceof Error ? error.message : error));
+      setFileError(displayErrorText(error, t("toolCallFailed")));
     } finally {
       setLoadingPath(null);
     }

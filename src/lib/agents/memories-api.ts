@@ -1,8 +1,10 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { parseJson } from "./public-api/body";
 import { ORDINARY_AGENT_FILTER } from "./queries";
 import {
@@ -42,8 +44,8 @@ export async function handleAgentMemories(
   const url = new URL(req.url);
   const { agentId, memoryId } = await params;
   try {
-    const workspace = await getWorkspaceForUser(
-      value?.workspace ?? url.searchParams.get("workspace") ?? "",
+    const workspace = await resolveWorkspaceScope(
+      { slug: value?.workspace ?? url.searchParams.get("workspace") ?? "" },
       user.id,
     );
     if (!workspace)
@@ -57,13 +59,7 @@ export async function handleAgentMemories(
           id: agentId,
           workspaceId: workspace.id,
           ...ORDINARY_AGENT_FILTER,
-          workspace: {
-            status: "active",
-            OR: [
-              { ownerId: user.id },
-              { members: { some: { userId: user.id } } },
-            ],
-          },
+          workspace: workspaceAccessWhere(user.id),
         },
         select: { id: true },
       });

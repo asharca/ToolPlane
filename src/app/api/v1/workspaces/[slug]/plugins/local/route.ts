@@ -11,9 +11,10 @@ export const POST = withRequestLogging(
     { params }: { params: Promise<{ slug: string }> },
   ) {
     try {
-      const { workspace, user } = await pluginRequestContext(
+      const { workspace } = await pluginRequestContext(
         req,
         (await params).slug,
+        "manage",
       );
       const input = await parseJson(
         req,
@@ -25,9 +26,7 @@ export const POST = withRequestLogging(
           { error: "PLUGIN_INVALID" },
           { status: input.reason === "too_large" ? 413 : 400 },
         );
-      return Response.json(
-        await createPrivatePlugin(workspace.id, user.id, input.value),
-      );
+      return Response.json(await createPrivatePlugin(workspace, input.value));
     } catch (error) {
       return pluginApiError(error);
     }

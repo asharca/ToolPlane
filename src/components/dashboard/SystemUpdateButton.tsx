@@ -11,6 +11,7 @@ import {
   MorphPopoverContent,
   MorphPopoverTrigger,
 } from "@/components/motion/popover-morph";
+import { apiRequest } from "@/lib/client/api";
 
 export const SYSTEM_UPDATE_LOCAL_STATUS_PATH =
   "/api/v1/admin/system/update?local=1";
@@ -110,7 +111,6 @@ export async function waitForSystemUpdateReady(
   options: {
     previousRuntimeId?: string | null;
     signal?: AbortSignal;
-    fetchImpl?: typeof fetch;
     pollIntervalMs?: number;
     timeoutMs?: number;
     onProgress?: (status: LocalUpdateStatus["updateJob"]) => void;
@@ -118,53 +118,48 @@ export async function waitForSystemUpdateReady(
     requestNotStartedMessage?: string;
   } = {},
 ): Promise<UpdateWaitResult> {
-  const fetchImpl = options.fetchImpl ?? fetch;
   const pollIntervalMs = options.pollIntervalMs ?? RESTART_POLL_INTERVAL_MS;
   const timeoutMs = options.timeoutMs ?? RESTART_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
     if (options.signal?.aborted) return { status: "timeout" };
-    try {
-      const response = await fetchImpl(SYSTEM_UPDATE_LOCAL_STATUS_PATH, {
-        cache: "no-store",
-        signal: options.signal,
-      });
-      if (response.ok) {
-        const data = (await response.json()) as LocalUpdateStatus;
-        options.onProgress?.(data.updateJob);
-        if (data.updateJob?.status === "failed") {
-          return {
-            status: "failed",
-            message:
-              data.updateJob.message ??
-              options.fallbackFailureMessage ??
-              "System update failed.",
-          };
-        }
-        const versionReady = expectedVersion
-          ? versionsMatch(data.currentVersion, expectedVersion)
-          : Boolean(options.previousRuntimeId);
-        const runtimeReplaced = options.previousRuntimeId
-          ? Boolean(
-              data.runtimeId && data.runtimeId !== options.previousRuntimeId,
-            )
-          : true;
-        if (versionReady && runtimeReplaced) {
-          // A new HTTP process can still be recovering or blocked by ownership.
-          if (data.runtimeReady === true) return { status: "ready" };
-        } else if (data.updateJob?.status === "idle") {
-          return {
-            status: "failed",
-            message:
-              options.requestNotStartedMessage ??
-              "The update request did not start.",
-          };
-        }
+    const result = await apiRequest<LocalUpdateStatus>(
+      SYSTEM_UPDATE_LOCAL_STATUS_PATH,
+      { cache: "no-store", signal: options.signal },
+    );
+    if (!result.ok && result.code === "aborted") return { status: "timeout" };
+    if (result.ok) {
+      const data = result.data;
+      options.onProgress?.(data.updateJob);
+      if (data.updateJob?.status === "failed") {
+        return {
+          status: "failed",
+          message:
+            data.updateJob.message ??
+            options.fallbackFailureMessage ??
+            "System update failed.",
+        };
       }
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError")
-        return { status: "timeout" };
+      const versionReady = expectedVersion
+        ? versionsMatch(data.currentVersion, expectedVersion)
+        : Boolean(options.previousRuntimeId);
+      const runtimeReplaced = options.previousRuntimeId
+        ? Boolean(
+            data.runtimeId && data.runtimeId !== options.previousRuntimeId,
+          )
+        : true;
+      if (versionReady && runtimeReplaced) {
+        // A new HTTP process can still be recovering or blocked by ownership.
+        if (data.runtimeReady === true) return { status: "ready" };
+      } else if (data.updateJob?.status === "idle") {
+        return {
+          status: "failed",
+          message:
+            options.requestNotStartedMessage ??
+            "The update request did not start.",
+        };
+      }
     }
     await wait(
       Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())),
@@ -198,21 +193,19 @@ export function SystemUpdateButton({
         : "checking",
     );
     setMessage(null);
-    try {
-      const response = await fetch("/api/v1/admin/system/update", {
-        cache: "no-store",
-      });
-      if (!response.ok)
-        throw new Error(`${response.status} ${response.statusText}`);
-      const data = (await response.json()) as UpdateStatus;
-      setStatus(data);
-      setMessage(data.reason);
-      setUiState("idle");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+    const result = await apiRequest<UpdateStatus>(
+      "/api/v1/admin/system/update",
+      { cache: "no-store" },
+    );
+    if (!result.ok) {
+      setMessage(result.message ?? t("checkFailed"));
       setUiState("error");
+      return;
     }
-  }, []);
+    setStatus(result.data);
+    setMessage(result.data.reason);
+    setUiState("idle");
+  }, [t]);
 
   useEffect(() => {
     return () => restartPollRef.current?.abort();
@@ -286,60 +279,50 @@ export function SystemUpdateButton({
     setMessage(null);
     const targetVersion = status?.latestVersion ?? null;
     const previousRuntimeId = status?.runtimeId ?? null;
-    try {
-      const response = await fetch("/api/v1/admin/system/update", {
-        method: "POST",
-      });
-      const result = (await response
-        .json()
-        .catch(() => null)) as UpdateResult | null;
-      if (!response.ok) {
-        if (result && !result.ok) {
-          setMessage(
-            result.message ?? `${response.status} ${response.statusText}`,
-          );
-          setUiState("error");
-          return;
-        }
-        void waitForRestart(
-          targetVersion,
-          previousRuntimeId,
-          `${response.status} ${response.statusText}`,
-        );
-        return;
-      }
-      if (!result?.ok) {
-        void waitForRestart(
-          targetVersion,
-          previousRuntimeId,
-          t("invalidUpdateResponse"),
-        );
-        return;
-      }
-      if (result.status === "updating" || result.status === "restarting") {
-        setUiState(result.status === "restarting" ? "restarting" : "updating");
-        setMessage(
-          result.status === "restarting" ? t("restarting") : t("updating"),
-        );
-        void waitForRestart(
-          result.latestVersion ?? targetVersion,
-          result.runtimeId ?? previousRuntimeId,
-        );
-        return;
-      }
-      setUiState("idle");
-      setMessage(t("upToDate"));
-      await refresh();
-    } catch (error) {
+    const response = await apiRequest<UpdateResult>(
+      "/api/v1/admin/system/update",
+      { method: "POST" },
+    );
+    if (!response.ok) {
       // The reverse proxy can drop this request while the app is replacing its
-      // runtime or restarting. Poll the authenticated local status endpoint to
-      // distinguish that expected outage from a real update failure.
+      // runtime or restarting, so only an explicit refusal ends the update;
+      // otherwise poll the authenticated local status endpoint to tell that
+      // expected outage from a real failure.
+      if (response.message !== null) {
+        setMessage(response.message);
+        setUiState("error");
+        return;
+      }
       void waitForRestart(
         targetVersion,
         previousRuntimeId,
-        error instanceof Error ? error.message : String(error),
+        t("systemUpdateFailed"),
       );
+      return;
     }
+    const result = response.data;
+    if (!result?.ok) {
+      void waitForRestart(
+        targetVersion,
+        previousRuntimeId,
+        t("invalidUpdateResponse"),
+      );
+      return;
+    }
+    if (result.status === "updating" || result.status === "restarting") {
+      setUiState(result.status === "restarting" ? "restarting" : "updating");
+      setMessage(
+        result.status === "restarting" ? t("restarting") : t("updating"),
+      );
+      void waitForRestart(
+        result.latestVersion ?? targetVersion,
+        result.runtimeId ?? previousRuntimeId,
+      );
+      return;
+    }
+    setUiState("idle");
+    setMessage(t("upToDate"));
+    await refresh();
   };
 
   const busy =

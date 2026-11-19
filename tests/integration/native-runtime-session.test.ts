@@ -5,17 +5,234 @@ import { existsSync } from "node:fs";
 import { once } from "node:events";
 import { createServer as createHttpServer } from "node:http";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createConnection } from "node:net";
+import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
 import { expect, it, vi } from "vitest";
 import { stopNativeSessionHosts } from "../../scripts/native-runtime-stop.mjs";
+import { RESULT_FIELDS } from "../../scripts/native-runtime-session.mjs";
 import {
   createAdvisor,
   ADVISOR_REVIEW_TIMEOUT_MS,
 } from "../../scripts/pi-sdk-advisor.mjs";
+
+it("projects the entire result contract and safe failure reasons on both broker lanes", async () => {
+  const model = { providerId: "provider", model: "fixture" };
+  const tokens = {
+    inputTokens: 12,
+    outputTokens: 3,
+    cacheReadTokens: 2,
+    cacheWriteTokens: 0,
+  };
+  const result = {
+    text: "", // Empty text and false values are part of the contract.
+    commands: [{ name: "compact", description: "Compact session" }],
+    usage: {
+      ...tokens,
+      costUsd: 0,
+      actualModel: model,
+      modelUsage: [{ ...model, ...tokens, costUsd: 0 }],
+    },
+    sessionEntries: {
+      userEntryId: "user-entry",
+      userParentEntryId: null,
+      leafEntryId: "leaf-entry",
+    },
+    fork: {
+      forked: true,
+      entryId: "source-entry",
+      contextOnly: true,
+      filesRewound: false,
+      externalEffectsRewound: false,
+    },
+    actualModel: model,
+    advisories: [
+      {
+        id: "review",
+        ...model,
+        cadence: "final",
+        suggestions: [{ severity: "warning", message: "Review the result" }],
+      },
+    ],
+    advisorUsage: tokens,
+    contextBreakdown: {
+      usedTokens: 15,
+      estimated: false,
+      categories: {
+        systemPrompt: 4,
+        systemTools: 3,
+        systemContext: 2,
+        instructionFiles: 1,
+        skills: 0,
+        messages: 5,
+      },
+    },
+    streamRuleTriggers: [
+      {
+        id: "trigger",
+        ruleId: "rule",
+        name: "Rule",
+        target: "tool_call",
+        action: "block",
+        message: "Blocked",
+        toolName: "read",
+        toolCallId: "call",
+        timestamp: 1,
+      },
+    ],
+    commandResult: { command: "compact", text: "", status: "completed" },
+    disposition: "queued",
+    queue: {
+      messages: [{ id: "queued", mode: "steer", text: "Follow these notes" }],
+      pendingMessageCount: 1,
+    },
+  } satisfies Record<keyof typeof RESULT_FIELDS, unknown>;
+  expect(Object.keys(result).sort()).toEqual(Object.keys(RESULT_FIELDS).sort());
+  const hostResult = JSON.parse(
+    JSON.stringify(result, (_key, value) =>
+      value && typeof value === "object" && !Array.isArray(value)
+        ? { ...value, privateState: "not on the wire" }
+        : value,
+    ),
+  );
+  hostResult.state = { sessionFile: "host-only" };
+  const reasons = [
+    "HTTP_503",
+    "UNREACHABLE",
+    "TIMEOUT",
+    "EMPTY_STREAM",
+    "STREAM_INCOMPLETE",
+    "CONTENT_FILTER",
+    "PROVIDER_ERROR",
+    "GATEWAY_ERROR",
+    "EMPTY_STREAM RETRIED_2",
+  ];
+  const dir = await mkdtemp(join(tmpdir(), "toolplane-broker-contract-"));
+  const driver = join(process.cwd(), "scripts/native-runtime-session.mjs");
+  const host = join(dir, "fixture.mjs");
+  const inputPath = join(dir, "input.json");
+  const statePath = join(dir, "state.json");
+  const socketPath = `/tmp/toolplane-runtime-${createHash("sha256").update(statePath).digest("hex").slice(0, 32)}.sock`;
+  const job = {
+    kind: "pi-sdk",
+    runId: "wire-contract",
+    binary: process.execPath,
+    args: [host],
+    signature: "wire-contract",
+    statePath,
+  };
+  await writeFile(
+    host,
+    `
+    import { writeSync } from "node:fs";
+    import { createInterface } from "node:readline";
+    for await (const line of createInterface({ input: process.stdin })) {
+      const { id, context, response } = JSON.parse(line);
+      if (context?.hold) {
+        writeSync(3, JSON.stringify({ type: "fixture_ready" }) + "\\n");
+        continue;
+      }
+      if (context?.response || response) writeSync(3, JSON.stringify({
+        type: "toolplane_sdk_response", id, ...(context?.response ?? response),
+      }) + "\\n");
+    }
+  `,
+  );
+  await writeFile(inputPath, JSON.stringify(job));
+  const daemon = spawn(process.execPath, [driver, inputPath, "serve"], {
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      NODE_CHANNEL_FD: undefined,
+      NODE_CHANNEL_SERIALIZATION_MODE: undefined,
+    },
+  });
+  const connect = async (payload: Record<string, unknown>) => {
+    const socket = createConnection(socketPath);
+    await once(socket, "connect");
+    socket.write(`${JSON.stringify({ ...job, ...payload })}\n`);
+    return socket;
+  };
+  let held: Socket | undefined;
+  try {
+    await vi.waitFor(() => expect(existsSync(socketPath)).toBe(true));
+    for (const lane of ["turn", "control"]) {
+      if (lane === "control") {
+        held = await connect({ context: { hold: true } });
+        const [ready] = await once(held, "data");
+        expect(JSON.parse(String(ready))).toEqual({ type: "fixture_ready" });
+      }
+      const exchange = async (response: Record<string, unknown>) => {
+        const socket = await connect(
+          lane === "turn"
+            ? { context: { response } }
+            : { control: { type: "clear_queue", response } },
+        );
+        let data = "";
+        for await (const chunk of socket) data += chunk;
+        return JSON.parse(data);
+      };
+      const envelope = {
+        type: "toolplane_sdk_response",
+        id: expect.any(String),
+      };
+      expect(await exchange({ success: true, result: hostResult })).toEqual({
+        ...envelope,
+        success: true,
+        result,
+      });
+      for (const reason of reasons)
+        expect(
+          await exchange({
+            success: false,
+            result: hostResult,
+            error: {
+              code: "PI_SDK_MODEL_FAILED",
+              message: "Private diagnostic",
+              reason,
+            },
+          }),
+        ).toEqual({
+          ...envelope,
+          success: false,
+          result,
+          error: {
+            code: "PI_SDK_MODEL_FAILED",
+            message: "PI_SDK_MODEL_FAILED",
+            reason,
+          },
+        });
+      expect(
+        await exchange({
+          success: false,
+          result: {
+            text: { privatePayload: "not on the wire" },
+            commands: [false],
+          },
+          error: { code: ["PI_SDK_MODEL_FAILED"], reason: ["TIMEOUT"] },
+        }),
+      ).toEqual({
+        ...envelope,
+        success: false,
+        result: { commands: [] },
+        error: {
+          code: "PI_SDK_RUNTIME_FAILED",
+          message: "PI_SDK_RUNTIME_FAILED",
+        },
+      });
+    }
+  } finally {
+    held?.destroy();
+    if (daemon.exitCode === null && daemon.signalCode === null) {
+      const stopped = once(daemon, "exit");
+      daemon.kill("SIGTERM");
+      await stopped;
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 it.each(["deadline", "cancel"] as const)(
   "releases a nonresponsive advisor on %s",

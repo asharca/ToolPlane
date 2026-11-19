@@ -1,10 +1,11 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
-import { agentRuntimeCapabilities } from "@/lib/agents/runtime-kind";
+
 import {
   requireAgentRevision,
   publishAgentRevisionInTransaction,
@@ -40,20 +41,8 @@ async function canManage(tx: Tx, ctx: ConsoleActor) {
     (await tx.workspace.count({
       where: {
         id: ctx.workspaceId,
-        status: "active",
         owner: { status: "active" },
-        OR: [
-          { ownerId: ctx.actorId },
-          {
-            members: {
-              some: {
-                userId: ctx.actorId,
-                role: "admin",
-                user: { status: "active" },
-              },
-            },
-          },
-        ],
+        ...workspaceAccessWhere(ctx.actorId, "manage"),
       },
     })) &&
       (await tx.user.count({ where: { id: ctx.actorId, status: "active" } })),
@@ -83,7 +72,7 @@ export async function getA2AConsoleView(
       },
     },
   });
-  if (!agent) throw new A2AHttpError(404, "Agent unavailable.");
+  if (!agent) throw new A2AHttpError(404, "AGENT_UNAVAILABLE");
   const manager = await canManage(db, ctx);
   const endpoint = await db.agentEndpoint.findFirst({
     where: { workspaceId: ctx.workspaceId, sourceAgentId: ctx.agentId },
@@ -158,12 +147,7 @@ export async function getA2AConsoleView(
       ? {
           id: endpoint.publicId,
           enabled: endpoint.a2aEnabled,
-          ready:
-            Boolean(
-              agentRuntimeCapabilities(agent.runtimeKind)?.publicEndpoint,
-            ) &&
-            endpoint.status === "active" &&
-            Boolean(endpoint.currentRevision),
+          ready: false,
           revision: endpoint.currentRevision?.version ?? null,
           clients: clients
             .filter((client) => isA2AClient(client.scopes))
@@ -191,10 +175,7 @@ export async function mutateA2AConsole(
     async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${ctx.workspaceId} FOR UPDATE`;
       if (!(await canManage(tx, ctx)))
-        throw new A2AHttpError(
-          403,
-          "Workspace owner or administrator required.",
-        );
+        throw new A2AHttpError(403, "WORKSPACE_OWNER_OR_ADMIN_REQUIRED");
       const agent = await tx.agent.findFirst({
         where: {
           ...ORDINARY_AGENT_FILTER,
@@ -210,10 +191,10 @@ export async function mutateA2AConsole(
           nativeSubagentMaxDepth: true,
         },
       });
-      if (!agent) throw new A2AHttpError(404, "Agent unavailable.");
+      if (!agent) throw new A2AHttpError(404, "AGENT_UNAVAILABLE");
       if (input.action === "set-inbound" || input.action === "set-outbound") {
         if (agent.runtimeKind !== "pi-sdk")
-          throw new A2AHttpError(409, "Retired Agent execution is read-only.");
+          throw new A2AHttpError(409, "RETIRED_AGENT_READ_ONLY");
         const inbound = input.action === "set-inbound";
         await tx.agent.update({
           where: { id: agent.id },
@@ -274,7 +255,7 @@ export async function mutateA2AConsole(
         select: { id: true },
       });
       if (!endpoint)
-        throw new A2AHttpError(404, "Retained endpoint unavailable.");
+        throw new A2AHttpError(404, "RETAINED_ENDPOINT_UNAVAILABLE");
       await tx.$queryRaw`SELECT id FROM "AgentEndpoint" WHERE id=${endpoint.id} FOR UPDATE`;
       const key = await tx.agentApiKey.findFirst({
         where: { id: input.keyId, client: { endpointId: endpoint.id } },
@@ -285,7 +266,7 @@ export async function mutateA2AConsole(
         },
       });
       if (!key || !isA2AClient(key.client.scopes))
-        throw new A2AHttpError(404, "A2A key unavailable.");
+        throw new A2AHttpError(404, "KEY_UNAVAILABLE");
       if (!key.revokedAt) {
         await tx.agentApiKey.update({
           where: { id: key.id },

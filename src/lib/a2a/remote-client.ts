@@ -3,6 +3,7 @@ import { getTransportSettings } from "@/lib/admin/transport-settings";
 import {
   AgentCard,
   type Message,
+  Part,
   type Task,
   TaskState,
   type SendMessageResult,
@@ -17,6 +18,7 @@ import {
   remoteRpcFetch,
 } from "./remote-network";
 import { validateCardWire } from "./remote-wire";
+import { a2aFailures } from "./errors";
 import { A2A_LIMITS, textArtifact } from "./model";
 
 function decodeRemoteCard(raw: unknown): AgentCard {
@@ -25,11 +27,11 @@ function decodeRemoteCard(raw: unknown): AgentCard {
     typeof raw !== "object" ||
     Buffer.byteLength(JSON.stringify(raw)) > 65_536
   )
-    throw new RemoteA2AError("Invalid or oversized Agent Card.");
+    throw new RemoteA2AError("INVALID_CARD_SIZE");
   try {
     validateCardWire(raw);
   } catch {
-    throw new RemoteA2AError("Invalid remote Agent Card structure.");
+    throw new RemoteA2AError("INVALID_CARD_STRUCTURE");
   }
   return AgentCard.fromJSON(raw);
 }
@@ -53,9 +55,7 @@ export function validateRemoteCard(
         !/^(?:\*|[a-z0-9!#$&^_.+-]+)\/(?:\*|[a-z0-9!#$&^_.+-]+)$/i.test(mode),
     )
   )
-    throw new RemoteA2AError(
-      "Remote Agent must declare valid input and output MIME capabilities.",
-    );
+    throw new RemoteA2AError("CARD_MIME_REQUIRED");
   const selected = card.supportedInterfaces.filter(
     (item) =>
       item.url === rpcUrl &&
@@ -66,11 +66,9 @@ export function validateRemoteCard(
     selected.length !== 1 ||
     (selected[0].tenant && selected[0].tenant.length > 200)
   )
-    throw new RemoteA2AError(
-      "Card must declare the exact approved A2A 1.0 JSONRPC address.",
-    );
+    throw new RemoteA2AError("CARD_RPC_ADDRESS_REQUIRED");
   if (card.capabilities?.extensions.some((extension) => extension.required))
-    throw new RemoteA2AError("Required remote extensions are not supported.");
+    throw new RemoteA2AError("CARD_EXTENSION_UNSUPPORTED");
   const alternatives = card.securityRequirements;
   if (
     alternatives.length &&
@@ -87,9 +85,7 @@ export function validateRemoteCard(
       );
     })
   )
-    throw new RemoteA2AError(
-      "The remote Agent requires an unsupported authentication flow.",
-    );
+    throw new RemoteA2AError("CARD_AUTH_UNSUPPORTED");
   // A local transport selection, not a signed-card verification or republication of the peer's identity.
   return { ...card, supportedInterfaces: selected };
 }
@@ -117,7 +113,7 @@ export async function discoverRemoteConnection(
   try {
     raw = await response.json();
   } catch {
-    throw new RemoteA2AError("Remote Agent Card is not valid JSON.");
+    throw new RemoteA2AError("INVALID_CARD_JSON");
   }
   let pair = explicitPair;
   if (!pair) {
@@ -139,9 +135,7 @@ export async function discoverRemoteConnection(
     );
     if (candidates.length !== 1)
       throw new RemoteA2AError(
-        candidates.length
-          ? "Multiple compatible RPC addresses. Specify an advanced RPC URL."
-          : "Card has no compatible same-origin A2A 1.0 JSONRPC address.",
+        candidates.length ? "CARD_RPC_AMBIGUOUS" : "CARD_RPC_UNAVAILABLE",
       );
     pair = remotePair(approvedCardUrl, candidates[0].url, policy);
   }
@@ -176,13 +170,13 @@ export function remoteText(parts: Message["parts"]) {
         !part.content || !["text", "raw", "url"].includes(part.content.$case),
     )
   )
-    throw new RemoteA2AError("Remote output contains an unsupported Part.");
+    throw new RemoteA2AError("REMOTE_PART_UNSUPPORTED");
   const text = parts
     .filter((part) => part.content?.$case === "text")
     .map((part) => part.content?.value ?? "")
     .join("\n");
   if (text.length > A2A_LIMITS.outputCharacters)
-    throw new RemoteA2AError("Remote output limit exceeded.");
+    throw new RemoteA2AError("REMOTE_OUTPUT_LIMIT");
   return text;
 }
 /** Remote task IDs remain private execution bindings; local tasks retain their own identity and history. */
@@ -190,7 +184,7 @@ export function remoteResult(result: SendMessageResult | Task) {
   if (!("id" in result)) {
     const message = result as Message;
     if (message.role !== 2 || !message.messageId)
-      throw new RemoteA2AError("Invalid remote message.");
+      throw new RemoteA2AError("INVALID_REMOTE_MESSAGE");
     return {
       state: TaskState.TASK_STATE_COMPLETED,
       text: remoteText(message.parts),
@@ -214,15 +208,24 @@ export function remoteResult(result: SendMessageResult | Task) {
     ![1, 2, 3, 4, 5, 6, 7, 8].includes(task.status.state) ||
     task.artifacts.length > 16
   )
-    throw new RemoteA2AError("Invalid remote task.");
+    throw new RemoteA2AError("INVALID_REMOTE_TASK");
   const text = task.artifacts
     .map((artifact) => remoteText(artifact.parts))
     .join("\n\n");
-  const detail = task.status.message
-    ? remoteText(task.status.message.parts)
-    : "";
+  const reason =
+    task.status.state === TaskState.TASK_STATE_FAILED
+      ? "REMOTE_TASK_FAILED"
+      : task.status.state === TaskState.TASK_STATE_REJECTED
+        ? "REMOTE_TASK_REJECTED"
+        : undefined;
+  const message = task.status.message;
+  const detail = reason
+    ? a2aFailures.text(reason)
+    : message
+      ? remoteText(message.parts)
+      : "";
   if (text.length + detail.length > A2A_LIMITS.outputCharacters)
-    throw new RemoteA2AError("Remote output limit exceeded.");
+    throw new RemoteA2AError("REMOTE_OUTPUT_LIMIT");
   return {
     state: task.status.state,
     text,
@@ -230,7 +233,10 @@ export function remoteResult(result: SendMessageResult | Task) {
     taskId: task.id,
     contextId: task.contextId,
     artifacts: task.artifacts,
-    message: task.status.message,
+    message:
+      reason && message
+        ? { ...message, parts: [Part.fromJSON({ text: detail })] }
+        : message,
   };
 }
 export { textArtifact };

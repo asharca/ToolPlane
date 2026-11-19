@@ -1,4 +1,5 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { resolveRequestUser } from "@/lib/auth/request-user";
@@ -10,6 +11,7 @@ import {
 import { parseJson } from "@/lib/agents/public-api/body";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 import { EvolutionError, evolutionErrorStatus } from "./errors";
+import { evolutionFailures } from "./contracts";
 import {
   changeRollout,
   createProposal,
@@ -65,10 +67,7 @@ async function authorize(req: Request, agentId: string, feedback = false) {
     where: {
       id: agentId,
       ...ORDINARY_AGENT_FILTER,
-      workspace: {
-        status: "active",
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
-      },
+      workspace: workspaceAccessWhere(user.id),
     },
     include: {
       workspace: { include: { members: { where: { userId: user.id } } } },
@@ -101,7 +100,7 @@ function safeFailure(error: unknown) {
           ? "CONFLICT"
           : "EVOLUTION_FAILED";
   return Response.json(
-    { error: { code, message: code } },
+    { error: evolutionFailures.text(code), code },
     { status: evolutionErrorStatus[code] },
   );
 }

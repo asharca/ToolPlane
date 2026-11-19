@@ -1,4 +1,5 @@
 import "server-only";
+import type { WorkspaceScope } from "@/lib/workspace/scope";
 import { channelToolApprovalReply } from "./execution/tool-approvals";
 import { createHash, randomUUID } from "node:crypto";
 import type { UIMessage } from "ai";
@@ -32,7 +33,7 @@ import type { NormalizedMessagingSource } from "./messaging";
 import { appendBudgetWarningText } from "./budget-warning";
 import type { AgentForRun } from "./queries";
 import { getAgent, getAgentForRequest } from "./queries";
-import { createConversation } from "./mutations";
+import { createConversation } from "./conversation-mutations";
 import { parseAgentMessageBody, type AgentMessageBody } from "./chat-body";
 import { isSilentAgentReply, normalizeAgentMessageEvent } from "./messaging";
 import {
@@ -163,17 +164,20 @@ export async function runAgentMessage(params: {
 }
 
 export async function runWorkspaceAgentMessage(params: {
-  userId?: string;
-  workspaceId: string;
+  workspace: WorkspaceScope;
   agentId: string;
   rawBody: unknown;
   defaults?: Partial<AgentMessageBody>;
 }): Promise<AgentMessageResult> {
-  const agent = await getAgent(params.workspaceId, params.agentId);
-  if (!agent) return { status: 404, body: { error: "Agent not found" } };
+  const agent = await getAgentForRequest(
+    params.agentId,
+    params.workspace.actorUserId,
+  );
+  if (!agent || agent.workspaceId !== params.workspace.id)
+    return { status: 404, body: { error: "Agent not found" } };
   return runLoadedAgentMessage({
     agent,
-    actorId: params.userId,
+    actorId: params.workspace.actorUserId,
     rawBody: params.rawBody,
     defaults: params.defaults,
   });

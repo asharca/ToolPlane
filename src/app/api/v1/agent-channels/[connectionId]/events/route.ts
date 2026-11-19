@@ -18,11 +18,7 @@ function bearerToken(req: Request): string | null {
 }
 
 async function resolveConnection(req: Request, connectionId: string) {
-  const url = new URL(req.url);
-  const token =
-    bearerToken(req) ||
-    url.searchParams.get("token") ||
-    url.searchParams.get("access_token");
+  const token = bearerToken(req);
   if (!token) return null;
   return findAgentChannelByInboundToken(connectionId, token);
 }

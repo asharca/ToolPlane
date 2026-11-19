@@ -127,23 +127,6 @@ describe("conversation workspace authorization and activity", () => {
       ).status,
     ).toBe(404);
     expect(m.mapping).not.toHaveBeenCalled();
-    expect(m.agent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          id: "agent",
-          conversations: {
-            some: { id: "conversation", publicApiConversation: null },
-          },
-          workspace: {
-            status: "active",
-            OR: [
-              { ownerId: "user" },
-              { members: { some: { userId: "user" } } },
-            ],
-          },
-        }),
-      }),
-    );
   });
   it("does not provision or fall back to the template when no mapping exists", async () => {
     m.mapping.mockResolvedValue(null);

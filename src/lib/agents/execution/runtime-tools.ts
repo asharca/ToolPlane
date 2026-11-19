@@ -195,7 +195,7 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
         : undefined;
       try {
         if (!known && agentOptionalBuiltinTool(request.params.name))
-          throw new A2AHttpError(403, optionalBuiltinDeniedMessage);
+          throw new A2AHttpError(403, "OPTIONAL_BUILTIN_DISABLED");
         if (!known) throw new Error("Unknown runtime tool");
         const result = await executeRuntimeTool(
           token,
@@ -244,7 +244,7 @@ export async function handleRuntimeTools(req: Request, taskId: string) {
         const optionalDenied =
           error instanceof A2AHttpError &&
           error.status === 403 &&
-          error.message === optionalBuiltinDeniedMessage;
+          error.code === "OPTIONAL_BUILTIN_DISABLED";
         const webFailure = error instanceof WebToolError ? error : undefined;
         const memoryError = error instanceof AgentMemoryError ? error : null;
         const response = {
@@ -345,7 +345,7 @@ async function executeRuntimeTool(
       !(revision.config.optionalBuiltinTools ?? []).includes(name) ||
       !live?.optionalBuiltinTools.includes(name)
     )
-      throw new A2AHttpError(403, optionalBuiltinDeniedMessage);
+      throw new A2AHttpError(403, "OPTIONAL_BUILTIN_DISABLED");
     const handler = optionalBuiltinPlatformHandlers[name];
     if (!handler)
       throw new Error("Optional built-in tool implementation unavailable.");
@@ -372,7 +372,7 @@ async function executeRuntimeTool(
       },
     }))
   )
-    throw new A2AHttpError(403, "Communication is disabled.");
+    throw new A2AHttpError(403, "COMMUNICATION_DISABLED");
   // Static loading initializes collaboration dispatch/worker dependencies even
   // for artifact-only channel execution; load that optional adapter on use.
   const { executePiCommunicationTool } = await import("@/lib/a2a/pi-tools");

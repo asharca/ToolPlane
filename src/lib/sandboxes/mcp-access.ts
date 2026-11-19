@@ -1,4 +1,5 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { createHash, randomBytes } from "node:crypto";
 import { db } from "@/lib/db";
@@ -26,13 +27,7 @@ export async function ownedSandbox(sandboxId: string, userId: string) {
   return db.sandbox.findFirst({
     where: {
       id: sandboxId,
-      workspace: {
-        status: "active",
-        OR: [
-          { ownerId: userId, owner: { status: "active" } },
-          { members: { some: { userId, user: { status: "active" } } } },
-        ],
-      },
+      workspace: workspaceAccessWhere(userId),
     },
     select: {
       id: true,

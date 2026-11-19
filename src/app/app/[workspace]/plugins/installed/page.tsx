@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { DashboardPage } from "@/components/dashboard/DashboardUI";
@@ -6,7 +7,7 @@ import {
   type InstalledPluginFilter,
 } from "@/components/dashboard/plugins/InstalledPluginsTable";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { db } from "@/lib/db";
 import { listPlugins, pluginReleaseLabel } from "@/lib/plugins/catalog";
 import { releaseContents } from "@/lib/plugins/release-contents";
@@ -37,14 +38,14 @@ export default async function InstalledPluginsPage({
   const base = `/app/${encodeURIComponent(slug)}/plugins`;
   if (!user)
     redirect(`/app/login?next=${encodeURIComponent(`${base}/installed`)}`);
-  const workspace = await getWorkspaceForUser(slug, user.id);
+  const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (!workspace) redirect("/app");
   const requested = Array.isArray(query.filter)
     ? query.filter[0]
     : query.filter;
   const filter = filters.find((item) => item === requested) ?? ("all" as const);
   const [{ items }, membership] = await Promise.all([
-    listPlugins(workspace.id, user.id, { installedOnly: true }),
+    listPlugins(workspace, { installedOnly: true }),
     db.membership.findUnique({
       where: {
         workspaceId_userId: { workspaceId: workspace.id, userId: user.id },

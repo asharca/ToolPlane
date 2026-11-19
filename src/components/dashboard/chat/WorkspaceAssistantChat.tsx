@@ -1,4 +1,9 @@
 "use client";
+import { apiRequest } from "@/lib/client/api";
+import {
+  DisplayError,
+  displayErrorText,
+} from "@/components/dashboard/display-error";
 import { SidebarToolbar } from "@/components/dashboard/SidebarToolbar";
 import { useSidebarScroll } from "@/components/dashboard/useSidebarScroll";
 import { notify } from "@/components/dashboard/Toaster";
@@ -240,12 +245,12 @@ export function WorkspaceAssistantChat({
       if (checking || document.hidden) return;
       checking = true;
       try {
-        const response = await fetch(
+        const response = await apiRequest<{ runningThreadIds?: string[] }>(
           `/api/v1/chat/assistants?workspaceId=${encodeURIComponent(workspaceId)}&running=1`,
           { signal: controller.signal, cache: "no-store" },
         );
         if (!response.ok) return;
-        const body = (await response.json()) as { runningThreadIds?: string[] };
+        const body = response.data;
         if (
           !controller.signal.aborted &&
           Array.isArray(body.runningThreadIds)
@@ -383,18 +388,19 @@ export function WorkspaceAssistantChat({
     setBranchMutating(true);
     setError(null);
     try {
-      const response = await fetch(`/api/v1/chat/threads/${activeThread.id}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ activeMessageId: messageId }),
-      });
-      const body = (await response.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      if (!response.ok) throw new Error(body.error || t("branchSwitchError"));
+      const response = await apiRequest(
+        `/api/v1/chat/threads/${activeThread.id}`,
+        {
+          method: "PATCH",
+          json: { activeMessageId: messageId },
+        },
+      );
+      if (!response.ok)
+        throw new DisplayError(response.message ?? t("branchSwitchError"));
+
       refreshChat();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("branchSwitchError"));
+      setError(displayErrorText(cause, t("branchSwitchError")));
     } finally {
       setBranchMutating(false);
     }
@@ -405,25 +411,22 @@ export function WorkspaceAssistantChat({
     setBranchMutating(true);
     setError(null);
     try {
-      const response = await fetch(
-        `/api/v1/chat/threads/${activeThread.id}/branches`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ messageId }),
-        },
-      );
-      const body = (await response.json().catch(() => ({}))) as {
+      const response = await apiRequest<{
         branch?: { activeMessageId?: string | null; activated?: boolean };
-        error?: string;
-      };
-      if (!response.ok) throw new Error(body.error || t("branchCreateError"));
+      }>(`/api/v1/chat/threads/${activeThread.id}/branches`, {
+        method: "POST",
+        json: { messageId },
+      });
+      if (!response.ok)
+        throw new DisplayError(response.message ?? t("branchCreateError"));
+      const body = response.data;
+
       if (body.branch?.activated && body.branch.activeMessageId) {
         focusBranchMessageIdRef.current = body.branch.activeMessageId;
       }
       refreshChat();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("branchCreateError"));
+      setError(displayErrorText(cause, t("branchCreateError")));
     } finally {
       setBranchMutating(false);
     }
@@ -434,21 +437,19 @@ export function WorkspaceAssistantChat({
     setBranchMutating(true);
     setError(null);
     try {
-      const response = await fetch(
+      const response = await apiRequest(
         `/api/v1/chat/threads/${activeThread.id}/branches`,
         {
           method: "DELETE",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ messageId }),
+          json: { messageId },
         },
       );
-      const body = (await response.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      if (!response.ok) throw new Error(body.error || t("branchDeleteError"));
+      if (!response.ok)
+        throw new DisplayError(response.message ?? t("branchDeleteError"));
+
       refreshChat();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("branchDeleteError"));
+      setError(displayErrorText(cause, t("branchDeleteError")));
     } finally {
       setBranchMutating(false);
     }
@@ -459,46 +460,39 @@ export function WorkspaceAssistantChat({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(
-        `/api/v1/chat/assistants/${assistantId}/threads`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({}),
-        },
-      );
-      const body = (await response.json().catch(() => ({}))) as {
+      const response = await apiRequest<{
         thread?: { id?: string };
         id?: string;
-        error?: string;
-      };
+      }>(`/api/v1/chat/assistants/${assistantId}/threads`, {
+        method: "POST",
+        json: {},
+      });
+      if (!response.ok)
+        throw new DisplayError(
+          response.message ===
+            "Publish an Assistant revision before creating a thread"
+            ? t("revisionRequired")
+            : (response.message ?? t("threadCreateError")),
+        );
+      const body = response.data;
       const threadId = body.thread?.id ?? body.id;
-      if (!response.ok || !threadId)
-        throw new Error(body.error || t("threadCreateError"));
+      if (!threadId) throw new DisplayError(t("threadCreateError"));
       setExpandedAssistants((current) => ({ ...current, [assistantId]: true }));
       openAssistantGroup(assistantId);
       window.location.assign(chatHref(slug, assistantId, threadId));
     } catch (cause) {
-      setError(
-        cause instanceof Error &&
-          cause.message ===
-            "Publish an Assistant revision before creating a thread"
-          ? t("revisionRequired")
-          : cause instanceof Error
-            ? cause.message
-            : t("threadCreateError"),
-      );
+      setError(displayErrorText(cause, t("threadCreateError")));
       setBusy(false);
     }
   }
 
   async function deleteThread(threadId: string) {
     if (!window.confirm(t("deleteThreadConfirm"))) return;
-    const response = await fetch(`/api/v1/chat/threads/${threadId}`, {
+    const response = await apiRequest(`/api/v1/chat/threads/${threadId}`, {
       method: "DELETE",
     });
     if (!response.ok) {
-      setError(t("deleteError"));
+      setError(response.message ?? t("deleteError"));
       return;
     }
     window.location.assign(
@@ -510,11 +504,14 @@ export function WorkspaceAssistantChat({
 
   async function deleteAssistant(assistantId: string) {
     if (!window.confirm(t("deleteAssistantConfirm"))) return;
-    const response = await fetch(`/api/v1/chat/assistants/${assistantId}`, {
-      method: "DELETE",
-    });
+    const response = await apiRequest(
+      `/api/v1/chat/assistants/${assistantId}`,
+      {
+        method: "DELETE",
+      },
+    );
     if (!response.ok) {
-      setError(t("deleteError"));
+      setError(response.message ?? t("deleteError"));
       return;
     }
     window.location.assign(`/app/${encodeURIComponent(slug)}/chat`);
@@ -534,22 +531,23 @@ export function WorkspaceAssistantChat({
     setOverride(pinned);
     setError(null);
     try {
-      const response = await fetch(`/api/v1/chat/assistants/${assistant.id}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          pinned,
-          expectedRevision: assistant.revision,
-        }),
-      });
-      const body = (await response.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      if (!response.ok) throw new Error(body.error || t("saveError"));
+      const response = await apiRequest(
+        `/api/v1/chat/assistants/${assistant.id}`,
+        {
+          method: "PATCH",
+          json: {
+            pinned,
+            expectedRevision: assistant.revision,
+          },
+        },
+      );
+      if (!response.ok)
+        throw new DisplayError(response.message ?? t("saveError"));
+
       refreshChat();
     } catch (cause) {
       setOverride();
-      setError(cause instanceof Error ? cause.message : t("saveError"));
+      setError(displayErrorText(cause, t("saveError")));
     }
   }
 

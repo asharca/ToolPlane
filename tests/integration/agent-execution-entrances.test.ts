@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
-import { createConversation } from "@/lib/agents/mutations";
+import { createConversation } from "@/lib/agents/conversation-mutations";
 import { getAgentForRun, getConversation } from "@/lib/agents/queries";
 import { resolveAgentRequestSession } from "@/lib/agents/request-session";
 import { isAgentRuntimeGrantCurrent } from "@/lib/agents/runtime-grant";
@@ -34,6 +34,12 @@ import {
 } from "@/lib/agents/triggers";
 import { createApiToken } from "@/lib/auth/tokens";
 import type * as SandboxRuntimeModule from "@/lib/agents/sandbox-runtime";
+import { ENTRY_KINDS } from "@/lib/agents/entry-kinds";
+import {
+  createAgentRuntimeToken,
+  verifyAgentRuntimeToken,
+} from "@/lib/agents/runtime-access";
+import { mapTaskSandbox } from "./task-sandbox-fixture";
 
 // Entrance authorization exercises real revisions without Docker SDK preparation.
 vi.mock("@/lib/agents/pi-runtime", () => ({
@@ -133,6 +139,124 @@ async function fixture() {
 }
 
 describe.sequential("Agent execution entrance revision boundaries", () => {
+  it("keeps the migrated PostgreSQL entry kind constraint in sync", async () => {
+    const [constraint] = await db.$queryRaw<{ definition: string }[]>`
+      SELECT pg_get_constraintdef(oid) AS definition
+      FROM pg_constraint
+      WHERE conrelid = '"A2AEntryBinding"'::regclass
+        AND conname = 'A2AEntryBinding_kind_check'
+        AND contype = 'c'
+        AND convalidated
+    `;
+    if (!constraint) throw new Error("Missing validated entry kind check");
+    // PostgreSQL normalizes a text column's IN list to = ANY (ARRAY[...]).
+    const list =
+      /^CHECK \(\(kind = ANY \(ARRAY\[((?:'[a-z0-9_]+'::text, )*'[a-z0-9_]+'::text)\]\)\)\)$/.exec(
+        constraint.definition,
+      );
+    if (!list)
+      throw new Error(`Unexpected entry kind check: ${constraint.definition}`);
+    const kinds = [...list[1].matchAll(/'([a-z0-9_]+)'/g)].map(
+      (match) => match[1],
+    );
+    expect(kinds.sort()).toEqual([...ENTRY_KINDS].sort());
+  });
+
+  it.each(ENTRY_KINDS)(
+    "grants runtime access to the %s entry",
+    async (kind) => {
+      const { agent, sandbox, revision, conversation } = await fixture();
+      const scope = { workspaceId, agentId: agent.id };
+      let sourceId = conversation.id;
+      let channelId: string | undefined;
+      if (kind === "work") {
+        const work = await db.workSession.create({
+          data: {
+            ...scope,
+            conversationId: conversation.id,
+            agentRevisionId: revision.id,
+            legacyRevisionUnresolved: false,
+            a2aActorId: userId,
+            runtimeKind: "pi-sdk",
+            runtimeSnapshot: { workingDirectory: "." },
+          },
+        });
+        sourceId = work.id;
+      } else if (kind === "channel") {
+        const channel = await db.agentChannelConnection.create({
+          data: {
+            ...scope,
+            sandboxId: sandbox.id,
+            a2aActorId: userId,
+            name: "Runtime grant fixture",
+            platform: "weixin",
+            status: "running",
+            inboundTokenHash: randomUUID(),
+            inboundTokenSecret: {},
+            inboundTokenPrefix: "fixture",
+          },
+        });
+        channelId = channel.id;
+        await db.conversation.update({
+          where: { id: conversation.id },
+          data: { runtimeSessionKey: `channel:${channel.id}:fixture` },
+        });
+      } else if (kind === "trigger") {
+        const trigger = await db.agentTrigger.create({
+          data: {
+            ...scope,
+            actorId: userId,
+            kind: "webhook",
+            name: "Runtime grant fixture",
+            prompt: "Run",
+            secretHash: newTriggerSecret().secretHash,
+          },
+        });
+        sourceId = trigger.id;
+      }
+      const admitted = await submitAgentEntry(
+        {
+          ...scope,
+          kind,
+          sourceId,
+          channelId,
+          ...(kind === "trigger" ? { conversationId: conversation.id } : {}),
+          actorId: userId,
+          messageId: randomUUID(),
+          text: "Entry contract",
+        },
+        () => {},
+      );
+      const claimed = await claimTask(admitted.row.id);
+      if (!claimed?.leaseToken) throw new Error("Missing task lease");
+      // Provisioning is the only fixture boundary: the mapping, lease, and grant
+      // are checked against real persisted data by the sandbox and grant resolvers.
+      const mapping = await mapTaskSandbox(claimed);
+      const token = await verifyAgentRuntimeToken(
+        await createAgentRuntimeToken({
+          ...scope,
+          agentRevisionId: revision.id,
+          sandboxId: mapping.sandboxId,
+          conversationId: conversation.id,
+          a2aContextId: claimed.contextId,
+          a2aTaskId: claimed.id,
+          a2aLeaseToken: claimed.leaseToken,
+          providerId,
+          deploymentIds: [],
+          exp: Math.floor(Date.now() / 1000) + 300,
+        }),
+      );
+      if (!token) throw new Error("Missing signed runtime token");
+      await expect(isAgentRuntimeGrantCurrent(token)).resolves.toBe(true);
+      await expect(
+        isAgentRuntimeGrantCurrent({ ...token, a2aLeaseToken: randomUUID() }),
+      ).resolves.toBe(false);
+      await expect(
+        isAgentRuntimeGrantCurrent({ ...token, conversationId: randomUUID() }),
+      ).resolves.toBe(false);
+    },
+  );
+
   it("rejects new admission at the monthly budget and meters a settled task only once", async () => {
     const { agent, conversation } = await fixture();
     const input = {

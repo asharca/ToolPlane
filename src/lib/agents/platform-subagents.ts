@@ -1,4 +1,8 @@
 import "server-only";
+import {
+  type WorkspaceScope,
+  workspaceScopeWhere,
+} from "@/lib/workspace/scope";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { TaskNotFoundError } from "@a2a-js/sdk/errors";
@@ -8,7 +12,7 @@ import {
   localTargetReason,
   LOCAL_LIMITS,
 } from "@/lib/a2a/local-policy";
-import { PluginError, requirePluginWorkspace } from "@/lib/plugins/catalog";
+import { PluginError } from "@/lib/plugins/catalog";
 import { AgentRevisionError } from "./revisions";
 import {
   AgentA2APolicySchema,
@@ -145,26 +149,32 @@ async function platformChildren(
 }
 
 export async function listPlatformSubagents(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope,
   agentId: string,
 ) {
-  await requirePluginWorkspace(workspaceId, userId);
+  const { id: workspaceId } = scope;
+
   const { parent, options } = await platformChildren(db, workspaceId, agentId);
   return settings(parent, options);
 }
 
 /** Selection is a draft; the parent's reviewed edge authorizes delegation to each child. */
 export async function savePlatformSubagents(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope<"manage">,
   agentId: string,
   value: z.infer<typeof SubagentSettingsSchema>,
 ) {
+  const { id: workspaceId } = scope;
   const { native, agentIds, nativePolicy } =
     SubagentSettingsSchema.parse(value);
   return db.$transaction(async (tx) => {
-    await requirePluginWorkspace(workspaceId, userId, true, tx);
+    if (
+      !(await tx.workspace.findFirst({
+        where: workspaceScopeWhere(scope),
+        select: { id: true },
+      }))
+    )
+      throw new PluginError("not_authorized", "Workspace access denied.", 403);
     // Serialize graph changes so concurrent inverse edges cannot both pass cycle validation.
     await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
     await tx.$queryRaw`SELECT id FROM "Agent" WHERE id=${agentId} AND "workspaceId"=${workspaceId} FOR UPDATE`;

@@ -2,10 +2,8 @@ import { logSystemEvent } from "@/lib/observability/system";
 import { withRequestLogging } from "@/lib/observability/http";
 import { z } from "zod";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import {
-  ChatServiceError,
-  getChatThreadForExecution,
-} from "@/lib/chat/service";
+import { ChatServiceError } from "@/lib/chat/shared";
+import { getChatThreadForExecution } from "@/lib/chat/admission";
 import {
   getMcpPromptSources,
   McpPromptRequestError,

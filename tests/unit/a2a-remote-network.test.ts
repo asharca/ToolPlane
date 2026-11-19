@@ -667,7 +667,7 @@ describe("remote HTTPS egress boundary", () => {
       body = "unsafe rejected body";
       await expect(call()).rejects.toMatchObject({
         httpStatus: code,
-        message: new RemoteA2AError().message,
+        message: new RemoteA2AError("REMOTE_REQUEST_FAILED").message,
       });
       expect(mocks.request).toHaveBeenCalledOnce();
       expect(mocks.create).toHaveBeenCalledOnce();

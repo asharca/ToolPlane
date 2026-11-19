@@ -1,4 +1,5 @@
 import "server-only";
+import { defineFailures, type FailureCodeOf } from "@/lib/errors/registry";
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
@@ -21,18 +22,21 @@ import {
   sshEnvironment,
 } from "../../../scripts/ssh-sandbox-adapter.mjs";
 
-export type SshServerErrorCode =
-  | "SSH_INVALID_INPUT"
-  | "SSH_HOST_UNRESOLVED"
-  | "SSH_HOST_FORBIDDEN"
-  | "SSH_HOST_PRIVATE_NOT_ALLOWED"
-  | "SSH_HOST_UNREACHABLE"
-  | "SSH_HOST_KEY_MISMATCH"
-  | "SSH_AUTH_FAILED"
-  | "SSH_CREDENTIAL_INVALID"
-  | "SSH_REMOTE_NOT_READY"
-  | "SSH_CONNECT_FAILED"
-  | "SSH_NOT_CONFIGURED";
+const sshServerFailures = defineFailures({
+  SSH_INVALID_INPUT: "The SSH server configuration is invalid.",
+  SSH_HOST_UNRESOLVED: "The SSH host could not be resolved.",
+  SSH_HOST_FORBIDDEN: "The SSH host is not allowed.",
+  SSH_HOST_PRIVATE_NOT_ALLOWED:
+    "Private SSH hosts require administrator approval.",
+  SSH_HOST_UNREACHABLE: "The SSH host could not be reached.",
+  SSH_HOST_KEY_MISMATCH: "The SSH host key did not match.",
+  SSH_AUTH_FAILED: "SSH authentication failed.",
+  SSH_CREDENTIAL_INVALID: "The SSH credential is invalid.",
+  SSH_REMOTE_NOT_READY: "The remote SSH environment is not ready.",
+  SSH_CONNECT_FAILED: "The SSH connection failed.",
+  SSH_NOT_CONFIGURED: "No SSH server is configured.",
+});
+export type SshServerErrorCode = FailureCodeOf<typeof sshServerFailures>;
 
 const STATUS: Record<SshServerErrorCode, number> = {
   SSH_INVALID_INPUT: 400,
@@ -51,7 +55,7 @@ const STATUS: Record<SshServerErrorCode, number> = {
 export class SshServerError extends Error {
   readonly status: number;
   constructor(readonly code: SshServerErrorCode) {
-    super(code);
+    super(sshServerFailures.text(code));
     this.name = "SshServerError";
     this.status = STATUS[code];
   }

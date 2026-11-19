@@ -1,7 +1,8 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { getLocale, getTranslations } from "next-intl/server";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { listToolkits } from "@/lib/toolkits/queries";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { ToolkitsBrowser } from "@/components/dashboard/ToolkitsBrowser";
@@ -35,7 +36,7 @@ export default async function ToolkitsPage({
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
-  const ws = await getWorkspaceForUser(slug, user.id);
+  const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app");
   const toolkits = await listToolkits(ws.id);
 

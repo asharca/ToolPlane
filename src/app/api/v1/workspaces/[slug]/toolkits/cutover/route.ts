@@ -1,7 +1,8 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import {
   privateJson,
   readSandboxJson,
@@ -37,7 +38,10 @@ export const POST = withRequestLogging(
     try {
       const user = await resolveRequestUser(req);
       if (!user) return privateJson({ error: "Unauthorized" }, 401);
-      const workspace = await getWorkspaceForUser((await params).slug, user.id);
+      const workspace = await resolveWorkspaceScope(
+        { slug: (await params).slug },
+        user.id,
+      );
       if (!workspace) return privateJson({ error: "Workspace not found" }, 404);
       const context = { workspaceId: workspace.id, userId: user.id };
       const input = inputSchema.parse(await readSandboxJson(req));
