@@ -1187,6 +1187,7 @@
       "attachmentTooLarge": "{name} 超过 10 MB 附件限制。",
       "attachmentLimitReached": "最多可附加 {count} 个文件。",
       "attachmentUploadFailed": "附件上传失败。",
+      "attachmentStorageQuotaExceeded": "存储空间已用完，请联系管理员提高配额。",
       "attachment": "附件",
       "removeAttachment": "移除 {name}",
       "egResearchAssistant": "例如：研究助手",

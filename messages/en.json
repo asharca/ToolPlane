@@ -1187,6 +1187,7 @@
       "attachmentTooLarge": "{name} exceeds the 10 MB attachment limit.",
       "attachmentLimitReached": "You can attach up to {count} files.",
       "attachmentUploadFailed": "Attachment upload failed.",
+      "attachmentStorageQuotaExceeded": "Storage quota is full. Ask an administrator to raise it.",
       "attachment": "Attachment",
       "removeAttachment": "Remove {name}",
       "egResearchAssistant": "e.g. Research assistant",

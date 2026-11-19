@@ -194,7 +194,10 @@ export function useWorkComposer({
       if (!result.ok || !result.data?.id) {
         await discardUploaded(uploaded);
         throw new DisplayError(
-          (!result.ok && result.message) || tAgents("attachmentUploadFailed"),
+          !result.ok && result.code === "STORAGE_QUOTA_EXCEEDED"
+            ? tAgents("attachmentStorageQuotaExceeded")
+            : (!result.ok && result.message) ||
+                tAgents("attachmentUploadFailed"),
         );
       }
       uploaded.push(result.data.id);
