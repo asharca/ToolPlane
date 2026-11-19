@@ -5,6 +5,11 @@ import { getCurrentUser } from "@/lib/auth/current-user";
 import { db } from "@/lib/db";
 import { getWorkspaceMembers } from "@/lib/workspace/queries";
 import {
+  getUserQuotaSummary,
+  getWorkspaceStorageBytes,
+} from "@/lib/storage/user-quota";
+import { StorageUsage } from "@/components/ui/StorageUsage";
+import {
   ModelRetrySetting,
   WorkspaceModelSettings,
 } from "@/components/dashboard/models/WorkspaceModelSettings";
@@ -37,38 +42,41 @@ export default async function SettingsPage({
   const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app?view=workspaces&notice=unavailable");
   const isOwner = ws.ownerId === user.id;
-  const [providers, members, impact, running] = await Promise.all([
-    listProviders(ws.id),
-    getWorkspaceMembers(ws.id),
-    isOwner
-      ? db.workspace.findUnique({
-          where: { id: ws.id },
-          select: {
-            _count: {
-              select: {
-                deployments: true,
-                agents: true,
-                chatThreads: true,
-                workSessions: true,
-                installedSkills: true,
-                toolkits: true,
-                knowledgeBases: true,
+  const [providers, members, impact, running, workspaceBytes, ownerQuota] =
+    await Promise.all([
+      listProviders(ws.id),
+      getWorkspaceMembers(ws.id),
+      isOwner
+        ? db.workspace.findUnique({
+            where: { id: ws.id },
+            select: {
+              _count: {
+                select: {
+                  deployments: true,
+                  agents: true,
+                  chatThreads: true,
+                  workSessions: true,
+                  installedSkills: true,
+                  toolkits: true,
+                  knowledgeBases: true,
+                },
               },
             },
-          },
-        })
-      : null,
-    isOwner
-      ? db.workSession.count({
-          where: {
-            workspaceId: ws.id,
-            status: {
-              in: ["queued", "running", "waiting_user", "cancelling"],
+          })
+        : null,
+      isOwner
+        ? db.workSession.count({
+            where: {
+              workspaceId: ws.id,
+              status: {
+                in: ["queued", "running", "waiting_user", "cancelling"],
+              },
             },
-          },
-        })
-      : 0,
-  ]);
+          })
+        : 0,
+      getWorkspaceStorageBytes(ws.id),
+      isOwner ? getUserQuotaSummary(user.id) : null,
+    ]);
   const modelSelection = (providerId: string | null, model: string | null) =>
     providerId &&
     model &&
@@ -94,6 +102,21 @@ export default async function SettingsPage({
               name={ws.name}
               canManage={isOwner}
             />
+          </DashboardPanel>
+          <DashboardPanel title={t("storageUsage")}>
+            <div className="space-y-3">
+              {ownerQuota && (
+                <StorageUsage
+                  label={t("ownedWorkspaceStorage")}
+                  usedBytes={ownerQuota.usedBytes}
+                  quotaBytes={ownerQuota.storageQuotaBytes}
+                />
+              )}
+              <StorageUsage
+                label={t("thisWorkspaceStorage")}
+                usedBytes={workspaceBytes}
+              />
+            </div>
           </DashboardPanel>
           <DashboardPanel
             title={t("modelPreferences")}

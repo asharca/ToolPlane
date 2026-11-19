@@ -11,7 +11,10 @@ import {
   MorphPopoverTrigger,
 } from "@/components/motion/popover-morph";
 import { Tooltip } from "@/components/motion/tooltip";
-import { CreateWorkspaceForm } from "./WorkspaceForms";
+import {
+  CreateWorkspaceForm,
+  type WorkspaceCreationQuota,
+} from "./WorkspaceForms";
 import {
   workspaceInitials,
   workspaceSwitchHref,
@@ -22,12 +25,14 @@ export function WorkspaceSwitcher({
   slug,
   workspaceName,
   workspaces,
+  quota,
   compact = false,
 }: {
   slug: string;
   workspaceName: string;
   userLabel: string;
   workspaces: WorkspaceSummary[];
+  quota: WorkspaceCreationQuota;
   isAdmin?: boolean;
   compact?: boolean;
 }) {
@@ -36,6 +41,7 @@ export function WorkspaceSwitcher({
   const pathname = usePathname() ?? "";
   const [creating, setCreating] = useState(false);
   const [open, setOpen] = useState(false);
+  const atLimit = quota.ownedWorkspaces >= quota.maxOwnedWorkspaces;
   return (
     <MorphPopover
       open={open}
@@ -123,16 +129,22 @@ export function WorkspaceSwitcher({
           </ButtonLink>
           {creating ? (
             <div className="p-3">
-              <CreateWorkspaceForm autoFocus />
+              <CreateWorkspaceForm autoFocus quota={quota} />
             </div>
           ) : (
             <button
               type="button"
-              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs text-foreground outline-none transition-colors hover:bg-muted/60 focus-visible:bg-muted/60"
+              disabled={atLimit}
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs text-foreground outline-none transition-colors enabled:hover:bg-muted/60 focus-visible:bg-muted/60 disabled:opacity-60"
               onClick={() => setCreating(true)}
             >
               <Plus className="size-3.5 text-muted-foreground" />
               {t("createWorkspace")}
+              {atLimit && (
+                <span className="ml-auto tabular-nums">
+                  {quota.ownedWorkspaces} / {quota.maxOwnedWorkspaces}
+                </span>
+              )}
             </button>
           )}
         </div>

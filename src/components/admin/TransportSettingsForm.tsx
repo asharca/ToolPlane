@@ -18,23 +18,14 @@ import {
   type A2AFileLimits,
 } from "@/lib/transport-policy";
 
-const FILE_LIMIT_FIELDS = [
-  { key: "a2aFileBytes", name: "a2aFileMiB", unit: 1024 ** 2 },
-  { key: "a2aTaskInputBytes", name: "a2aTaskInputMiB", unit: 1024 ** 2 },
-  { key: "a2aTaskFiles", name: "a2aTaskFiles", unit: 1 },
-  {
-    key: "a2aWorkspaceFileBytes",
-    name: "a2aWorkspaceFileGiB",
-    unit: 1024 ** 3,
-  },
-] as const;
+const [minTaskFiles, maxTaskFiles] = A2A_FILE_LIMIT_RANGES.a2aTaskFiles;
 
 export function TransportSettingsForm({
   allowHttp: initialAllowHttp,
   a2aInlineBytes,
   source,
-  ...limits
-}: A2AFileLimits & {
+  a2aTaskFiles,
+}: Pick<A2AFileLimits, "a2aTaskFiles"> & {
   allowHttp: boolean;
   a2aInlineBytes: number;
   source: "database" | "default";
@@ -50,7 +41,6 @@ export function TransportSettingsForm({
   return (
     <AdminPanel
       title={t("transportSettings")}
-      description={t("transportSettingsDescription")}
       actions={
         <AdminBadge tone={source === "database" ? "info" : "neutral"}>
           {t(
@@ -110,35 +100,27 @@ export function TransportSettingsForm({
             })}
           </p>
         </div>
-        {FILE_LIMIT_FIELDS.map(({ key, name, unit }) => {
-          const [min, max] = A2A_FILE_LIMIT_RANGES[key];
-          return (
-            <div key={key} className="space-y-1.5">
-              <label htmlFor={name} className="block text-sm font-medium">
-                {t(name)}
-              </label>
-              <Input
-                id={name}
-                name={name}
-                type="number"
-                min={min / unit}
-                max={max / unit}
-                step={1}
-                required
-                defaultValue={String(limits[key] / unit)}
-                disabled={pending}
-                aria-describedby={`${name}-hint`}
-              />
-              <p id={`${name}-hint`} className="text-sm text-muted-foreground">
-                {t(`${name}Hint`, {
-                  min: min / unit,
-                  max: max / unit,
-                  default: DEFAULT_A2A_FILE_LIMITS[key] / unit,
-                })}
-              </p>
-            </div>
-          );
-        })}
+        <div className="space-y-1.5">
+          <Input
+            name="a2aTaskFiles"
+            label={t("a2aTaskFiles")}
+            type="number"
+            min={minTaskFiles}
+            max={maxTaskFiles}
+            step={1}
+            required
+            defaultValue={String(a2aTaskFiles)}
+            disabled={pending}
+            aria-describedby="a2a-task-files-hint"
+          />
+          <p id="a2a-task-files-hint" className="text-sm text-muted-foreground">
+            {t("a2aTaskFilesHint", {
+              min: minTaskFiles,
+              max: maxTaskFiles,
+              default: DEFAULT_A2A_FILE_LIMITS.a2aTaskFiles,
+            })}
+          </p>
+        </div>
         <p className="text-sm text-muted-foreground">
           {t("transportSettingsSafety")}
         </p>

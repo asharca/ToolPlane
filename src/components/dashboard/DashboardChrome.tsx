@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { Menu } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { DashboardSidebar } from "./DashboardSidebar";
+import type { WorkspaceCreationQuota } from "./WorkspaceForms";
 import { DashboardLogo } from "./DashboardLogo";
 import { DashboardRuntimeConfigProvider } from "./DashboardRuntimeConfig";
 import { Toaster } from "./Toaster";
@@ -27,6 +28,7 @@ export function DashboardChrome({
   workspaceName,
   userLabel,
   workspaces,
+  quota,
   supportEmail,
   isAdmin = false,
   initialSidebarCollapsed = false,
@@ -38,6 +40,7 @@ export function DashboardChrome({
   workspaceName: string;
   userLabel: string;
   workspaces: Workspace[];
+  quota: WorkspaceCreationQuota;
   supportEmail: string;
   isAdmin?: boolean;
   initialSidebarCollapsed?: boolean;
@@ -127,6 +130,7 @@ export function DashboardChrome({
             workspaceName={workspaceName}
             userLabel={userLabel}
             workspaces={workspaces}
+            quota={quota}
             isAdmin={isAdmin}
           />
         }

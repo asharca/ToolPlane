@@ -9,6 +9,7 @@ import {
   getDefaultWorkspace,
   listWorkspacesForUser,
 } from "@/lib/workspace/queries";
+import { getUserQuotaSummary } from "@/lib/storage/user-quota";
 import {
   ACCOUNT_SETTINGS_HREF,
   WORKSPACE_MANAGER_HREF,
@@ -57,8 +58,10 @@ export async function WorkspaceAccountPage({
     user.id,
     cookieStore.get(lastWorkspaceCookieName(user.id))?.value,
   );
-  const workspaces =
-    view === "workspaces" ? await listWorkspacesForUser(user.id) : [];
+  const [workspaces, quota] = await Promise.all([
+    view === "workspaces" ? listWorkspacesForUser(user.id) : [],
+    view === "workspaces" ? getUserQuotaSummary(user.id) : null,
+  ]);
 
   return (
     <NextIntlClientProvider
@@ -240,7 +243,15 @@ export async function WorkspaceAccountPage({
                     title={t("create")}
                     description={t("createDescription")}
                   >
-                    <CreateWorkspaceForm intent={intent} />
+                    {quota && (
+                      <CreateWorkspaceForm
+                        intent={intent}
+                        quota={{
+                          ownedWorkspaces: quota.ownedWorkspaces,
+                          maxOwnedWorkspaces: quota.maxOwnedWorkspaces,
+                        }}
+                      />
+                    )}
                   </DashboardPanel>
                 </div>
               </>

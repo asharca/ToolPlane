@@ -82,6 +82,7 @@ export async function prepareWorkAttachments(input: {
         id: { in: ids },
         workspaceId: input.workspaceId,
         uploadedById: input.userId,
+        status: "ready",
         chatThreadId: null,
         OR: [
           { conversationId: null },
@@ -198,6 +199,7 @@ export async function materializeConversationAttachments(input: {
     where: {
       conversationId: input.conversationId,
       workspaceId: input.workspaceId,
+      status: "ready",
       chatThreadId: null,
     },
     select: { id: true, name: true, storagePath: true },
@@ -272,6 +274,7 @@ export async function claimWorkAttachments(
         id: attachment.id,
         workspaceId: input.workspaceId,
         uploadedById: input.userId,
+        status: "ready",
         chatThreadId: null,
         OR: [
           { conversationId: null },

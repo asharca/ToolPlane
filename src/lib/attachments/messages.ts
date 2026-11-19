@@ -99,6 +99,7 @@ export async function claimWorkspaceAttachments(
         id,
         workspaceId: input.workspaceId,
         uploadedById: input.uploadedById,
+        status: "ready",
         OR: [
           { chatThreadId: null, conversationId: null },
           scopeQuery(input.scope),
@@ -109,7 +110,7 @@ export async function claimWorkspaceAttachments(
     if (claimed.count) continue;
 
     const attachment = await tx.workspaceAttachment.findUnique({
-      where: { id },
+      where: { id, status: "ready" },
       select: {
         workspaceId: true,
         uploadedById: true,
@@ -217,6 +218,7 @@ export async function hydrateWorkspaceAttachmentMessages(
     where: {
       id: { in: ids },
       workspaceId: input.workspaceId,
+      status: "ready",
       ...scopeQuery(input.scope),
     },
     select: {

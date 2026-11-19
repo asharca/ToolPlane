@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { listWorkspacesForUser } from "@/lib/workspace/queries";
+import { getUserQuotaSummary } from "@/lib/storage/user-quota";
 import { DashboardChrome } from "@/components/dashboard/DashboardChrome";
 import { UserTimeZoneProvider } from "@/components/timezone/UserTimeZoneProvider";
 import { NextIntlClientProvider } from "next-intl";
@@ -27,10 +28,11 @@ export default async function WorkspaceLayout({
     redirect(`/app/login?next=${encodeURIComponent(`/app/${slug}/work`)}`);
   const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app?view=workspaces&notice=unavailable");
-  const [workspaces, messages, cookieStore] = await Promise.all([
+  const [workspaces, messages, cookieStore, quota] = await Promise.all([
     listWorkspacesForUser(user.id),
     getMessages(),
     cookies(),
+    getUserQuotaSummary(user.id),
   ]);
   const initialSidebarCollapsed =
     cookieStore.get(dashboardSidebarCookieName(ws.id))?.value === "true";
@@ -55,6 +57,10 @@ export default async function WorkspaceLayout({
           workspaceId={ws.id}
           workspaceName={ws.name}
           userLabel={user.name ?? user.email}
+          quota={{
+            ownedWorkspaces: quota.ownedWorkspaces,
+            maxOwnedWorkspaces: quota.maxOwnedWorkspaces,
+          }}
           workspaces={workspaces.filter(
             (workspace) => workspace.status === "active",
           )}

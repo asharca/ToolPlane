@@ -20,6 +20,8 @@ import { PrivateHostsSettingsForm } from "@/components/admin/PrivateHostsSetting
 import { RuntimeSettingsForm } from "@/components/admin/RuntimeSettingsForm";
 import { SkillImportSettingsForm } from "@/components/admin/SkillImportSettingsForm";
 import { TransportSettingsForm } from "@/components/admin/TransportSettingsForm";
+import { UserLimitsSettingsForm } from "@/components/admin/UserLimitsSettingsForm";
+import { getUserLimitDefaults } from "@/lib/storage/user-quota";
 import { LogSettings } from "@/components/admin/LogSettings";
 import { getLogSettings, LOG_SETTINGS_KEY } from "@/lib/observability/settings";
 import {
@@ -56,6 +58,7 @@ export default async function AdminSettingsPage() {
     agentConcurrency,
     agentSandboxAutoStop,
     transportSettings,
+    userLimitDefaults,
     logSettings,
   ] = await Promise.all([
     getTranslations("admin"),
@@ -66,6 +69,7 @@ export default async function AdminSettingsPage() {
     getAgentConcurrencySettings(),
     getAgentSandboxAutoStopSettings(),
     getTransportSettings(),
+    getUserLimitDefaults(),
     getLogSettings(),
   ]);
   const [ops, locale, changes] = await Promise.all([
@@ -79,6 +83,7 @@ export default async function AdminSettingsPage() {
       PRIVATE_HOSTS_SETTING_KEY,
       SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
       TRANSPORT_SETTINGS_KEY,
+      "user.limits",
       LOG_SETTINGS_KEY,
     ]),
   ]);
@@ -121,6 +126,10 @@ export default async function AdminSettingsPage() {
     <AdminPage className="max-w-5xl">
       <AdminPageHeader title={t("systemSettings")} />
       <SettingsChanges>
+        {section(
+          "user.limits",
+          <UserLimitsSettingsForm defaults={userLimitDefaults} />,
+        )}
         <fieldset className="min-w-0 space-y-6">
           <legend className="mb-1 text-base font-semibold">
             {t("settingsAgentExecution")}
@@ -176,7 +185,12 @@ export default async function AdminSettingsPage() {
           </legend>
           {section(
             TRANSPORT_SETTINGS_KEY,
-            <TransportSettingsForm {...transportSettings} />,
+            <TransportSettingsForm
+              allowHttp={transportSettings.allowHttp}
+              a2aInlineBytes={transportSettings.a2aInlineBytes}
+              a2aTaskFiles={transportSettings.a2aTaskFiles}
+              source={transportSettings.source}
+            />,
           )}
         </fieldset>
         {section(

@@ -42,7 +42,6 @@ import { retryTaskFileReception } from "@/lib/a2a/store";
 import { stageTaskFileTransfers } from "@/lib/a2a/task-files";
 import { listTaskFiles, openTaskFile } from "@/lib/a2a/files";
 import { taskFileLimitError } from "@/lib/a2a/file-limits";
-import { DEFAULT_A2A_FILE_BYTES } from "@/lib/transport-policy";
 import {
   requestLocalWait,
   reconcileLocalWaits,
@@ -442,7 +441,7 @@ describe("registered remote Agents in the native task core", () => {
       }),
     );
     network.files.mockRejectedValueOnce(
-      taskFileLimitError("FILE_TOO_LARGE", DEFAULT_A2A_FILE_BYTES),
+      taskFileLimitError("FILE_TOO_LARGE", 10 * 1024 ** 2),
     );
     expect(await stageTaskFileTransfers(row.id)).toBe(false);
     const failed = await db.a2ATask.findUniqueOrThrow({

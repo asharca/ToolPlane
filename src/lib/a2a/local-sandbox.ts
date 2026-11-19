@@ -28,7 +28,7 @@ import {
 } from "@/lib/agents/conversation-sandbox";
 import { assertLiveGrant, isLocalGrant, type TaskGrant } from "./principal";
 import { settled } from "./model";
-import { getTransportSettings } from "@/lib/admin/transport-settings";
+import { attachmentHardLimit } from "@/lib/agents/attachment-limits";
 export class SandboxFileStagingError extends Error {
   readonly code = "A2A_SANDBOX_FILE_STAGING_FAILED";
   constructor(cause: unknown) {
@@ -183,9 +183,13 @@ export async function storeSandboxTaskFile(
   signal?: AbortSignal,
 ) {
   return trackRuntimeOperation(async () => {
-    // Sandbox output becomes new task storage: the current administrator limit applies.
-    const { a2aFileBytes } = await getTransportSettings();
-    const transfer = await fileProcess(row, "read", path, a2aFileBytes, signal);
+    const transfer = await fileProcess(
+      row,
+      "read",
+      path,
+      attachmentHardLimit(),
+      signal,
+    );
     transfer.child.stdin.end();
     async function* bytes() {
       for await (const chunk of transfer.child.stdout) yield chunk as Buffer;

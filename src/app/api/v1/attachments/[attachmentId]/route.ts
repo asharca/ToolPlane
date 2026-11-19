@@ -19,6 +19,7 @@ async function authorizedAttachment(req: Request, attachmentId: string) {
   const attachment = await db.workspaceAttachment.findFirst({
     where: {
       id: attachmentId,
+      status: "ready",
       workspace: workspaceAccessWhere(user.id),
     },
     select: {
@@ -121,6 +122,7 @@ export const DELETE = withRequestLogging(
       where: {
         id: attachment.id,
         workspaceId: attachment.workspaceId,
+        status: "ready",
         uploadedById: user.id,
         chatThreadId: null,
         conversationId: null,

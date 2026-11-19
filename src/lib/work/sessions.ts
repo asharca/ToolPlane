@@ -841,7 +841,11 @@ export async function deleteWorkSession(
       },
       async () => {
         const attachments = await db.workspaceAttachment.findMany({
-          where: { workspaceId, conversationId: work.conversationId },
+          where: {
+            workspaceId,
+            conversationId: work.conversationId,
+            status: "ready",
+          },
           select: { storagePath: true },
         });
         for (const attachment of attachments)

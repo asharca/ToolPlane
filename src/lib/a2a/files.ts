@@ -1,9 +1,12 @@
 import "server-only";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
+import { attachmentHardLimit } from "@/lib/agents/attachment-limits";
 import {
-  DEFAULT_A2A_FILE_BYTES,
-  permitsTransportProtocol,
-} from "@/lib/transport-policy";
+  lockStorageWorkspace,
+  reserveWorkspaceStorage,
+  StorageQuotaExceededError,
+} from "@/lib/storage/user-quota";
+import { permitsTransportProtocol } from "@/lib/transport-policy";
 import {
   createHash,
   createHmac,
@@ -34,10 +37,8 @@ import {
 } from "@/lib/attachments/storage";
 import {
   TASK_FILE_LIMITS,
-  TASK_INPUT_SOURCE_PREFIX,
   taskFileLimit,
   taskFileLimitError,
-  type TaskFileLimit,
 } from "./file-limits";
 import {
   assertLiveGrant,
@@ -191,14 +192,15 @@ async function lockFileTask(tx: Prisma.TransactionClient, taskId: string) {
     include: { context: true },
   });
   if (!initial) throw missing();
-  await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${initial.context.workspaceId} FOR UPDATE`;
+  const workspace = await lockStorageWorkspace(tx, initial.context.workspaceId);
+  if (!workspace) throw missing();
   await tx.$queryRaw`SELECT id FROM "A2ATask" WHERE id=${taskId} FOR UPDATE`;
   const row = await tx.a2ATask.findUnique({
     where: { id: taskId },
     include: { context: true },
   });
   if (!row || row.context.expiresAt <= new Date()) throw missing();
-  return row;
+  return { task: row, workspace };
 }
 
 /** Only already-admitted input descriptors may be written with send-only authority. */
@@ -301,6 +303,33 @@ async function storeAuthorizedTaskFile(
   authorize: () => Promise<AuthorizedFileTask>,
   signal?: AbortSignal,
 ): Promise<TaskFile> {
+  try {
+    return await writeAuthorizedTaskFile(
+      taskId,
+      sourceKey,
+      filename,
+      mimeType,
+      stream,
+      authorize,
+      signal,
+    );
+  } catch (error) {
+    // A rejected reservation may never have consumed the remote stream.
+    if (stream instanceof ReadableStream && !stream.locked)
+      await stream.cancel().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function writeAuthorizedTaskFile(
+  taskId: string,
+  sourceKey: string,
+  filename: string,
+  mimeType: string,
+  stream: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>,
+  authorize: () => Promise<AuthorizedFileTask>,
+  signal?: AbortSignal,
+): Promise<TaskFile> {
   if (
     !sourceKey ||
     Buffer.byteLength(sourceKey) > 512 ||
@@ -311,13 +340,14 @@ async function storeAuthorizedTaskFile(
     throw new UnsupportedOperationError("Invalid file media type.");
   const authority = await authorize();
   const settings = await getTransportSettings();
-  const fileBytes = settings.a2aFileBytes;
+  const fileBytes = attachmentHardLimit();
   const token = randomUUID();
   // Protocol metadata retains the caller's filename; only disk paths use ASCII.
   const safeName = safeAttachmentFilename(filename);
   const path = `objects/${token}-${safeName}`;
   const reservation = await db.$transaction(async (tx) => {
-    const task = await lockFileTask(tx, taskId);
+    const { task, workspace } = await lockFileTask(tx, taskId);
+    if (workspace.status !== "active") throw missing();
     const existing = await tx.a2ATaskFile.findUnique({
       where: { taskId_sourceKey: { taskId, sourceKey } },
     });
@@ -327,41 +357,23 @@ async function storeAuthorizedTaskFile(
       throw new UnsupportedOperationError(
         "File transfer is already in progress.",
       );
-    const [usage] = await tx.$queryRaw<
-      { taskCount: bigint; taskInputBytes: bigint; workspaceBytes: bigint }[]
-    >`
-      SELECT COUNT(*) FILTER (WHERE "taskId"=${taskId}) AS "taskCount",
-        COALESCE(SUM(CASE WHEN "taskId"=${taskId} AND starts_with("sourceKey", ${TASK_INPUT_SOURCE_PREFIX}) AND "storagePath" IS NOT NULL THEN COALESCE("size", ${DEFAULT_A2A_FILE_BYTES}) ELSE 0 END), 0) AS "taskInputBytes",
-        COALESCE(SUM(CASE WHEN "storagePath" IS NOT NULL THEN COALESCE("size", ${DEFAULT_A2A_FILE_BYTES}) ELSE 0 END), 0) AS "workspaceBytes"
-      FROM "A2ATaskFile" WHERE "workspaceId"=${task.context.workspaceId}`;
-    if (!existing && Number(usage.taskCount) >= settings.a2aTaskFiles)
+    if (
+      !existing &&
+      (await tx.a2ATaskFile.count({ where: { taskId } })) >=
+        settings.a2aTaskFiles
+    )
       throw taskFileLimitError(
         "TASK_FILE_COUNT_EXCEEDED",
         settings.a2aTaskFiles,
       );
-    // [reason, configured limit, remaining bytes]: the smallest remainder is
-    // both the reservation and the reported reason.
-    const bounds: [TaskFileLimit, number, number][] = [
-      ["FILE_TOO_LARGE", fileBytes, fileBytes],
-      ...(sourceKey.startsWith(TASK_INPUT_SOURCE_PREFIX)
-        ? [
-            [
-              "TASK_INPUT_BYTES_EXCEEDED",
-              settings.a2aTaskInputBytes,
-              settings.a2aTaskInputBytes - Number(usage.taskInputBytes),
-            ] as [TaskFileLimit, number, number],
-          ]
-        : []),
-      [
-        "WORKSPACE_FILE_BYTES_EXCEEDED",
-        settings.a2aWorkspaceFileBytes,
-        settings.a2aWorkspaceFileBytes - Number(usage.workspaceBytes),
-      ],
-    ];
-    const [limit, limitBytes, reservedBytes] = bounds.reduce((min, bound) =>
-      bound[2] < min[2] ? bound : min,
-    );
-    if (reservedBytes <= 0) throw taskFileLimitError(limit, limitBytes);
+    let reservedBytes: number;
+    try {
+      reservedBytes = await reserveWorkspaceStorage(tx, workspace, fileBytes);
+    } catch (error) {
+      if (error instanceof StorageQuotaExceededError)
+        throw taskFileLimitError("STORAGE_QUOTA_EXCEEDED");
+      throw error;
+    }
     const expiresAt = new Date(
       Math.min(
         task.context.expiresAt.getTime(),
@@ -389,8 +401,6 @@ async function storeAuthorizedTaskFile(
       file,
       upload: true as const,
       maxBytes: reservedBytes,
-      limit,
-      limitBytes,
     };
   });
   if (!reservation.upload) {
@@ -477,13 +487,16 @@ async function storeAuthorizedTaskFile(
       );
     });
   } catch (error) {
-    const limitError = taskFileLimit(error)
-      ? error
-      : taskFileLimit(sourceError)
-        ? sourceError
-        : error instanceof AttachmentTooLargeError
-          ? taskFileLimitError(reservation.limit, reservation.limitBytes)
-          : undefined;
+    const limitError =
+      error instanceof AttachmentTooLargeError
+        ? reservation.maxBytes < fileBytes
+          ? taskFileLimitError("STORAGE_QUOTA_EXCEEDED")
+          : taskFileLimitError("FILE_TOO_LARGE", fileBytes)
+        : taskFileLimit(error)
+          ? error
+          : taskFileLimit(sourceError)
+            ? sourceError
+            : undefined;
     // Retain cleanup identity until physical removal has succeeded.
     try {
       await deleteWorkspaceAttachmentFile(authority.context.workspaceId, path);

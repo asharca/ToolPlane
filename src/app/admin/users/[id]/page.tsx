@@ -7,6 +7,12 @@ import { adminHref, adminReturnHref } from "@/lib/admin/navigation";
 import { requireAdmin } from "@/lib/auth/admin";
 import { getUserDetail } from "@/lib/admin/users";
 import {
+  getUserLimitDefaults,
+  getUserQuotaSummary,
+} from "@/lib/storage/user-quota";
+import { UserLimitsSettingsForm } from "@/components/admin/UserLimitsSettingsForm";
+import { StorageUsage } from "@/components/ui/StorageUsage";
+import {
   setUserRoleAction,
   setUserStatusAction,
   deleteUserAction,
@@ -38,6 +44,10 @@ export default async function AdminUserDetailPage({
   const { id } = await params;
   const u = await getUserDetail(id);
   if (!u) notFound();
+  const [defaults, quota] = await Promise.all([
+    getUserLimitDefaults(),
+    getUserQuotaSummary(u.id),
+  ]);
   const isSelf = admin.id === u.id;
   const ops = await getTranslations("adminOps");
   const backHref = adminReturnHref(
@@ -157,10 +167,24 @@ export default async function AdminUserDetailPage({
         )}
       </AdminPanel>
 
+      <UserLimitsSettingsForm
+        defaults={defaults}
+        user={{ id: u.id, overrides: quota.overrides }}
+      />
+      <AdminPanel title={t("userStorageUsage")}>
+        <StorageUsage
+          label={t("ownedWorkspaceStorage")}
+          usedBytes={quota.usedBytes}
+          quotaBytes={quota.storageQuotaBytes}
+        />
+      </AdminPanel>
+
       <AdminPanel
         title={t("ownedWorkspaces")}
         actions={
-          <AdminBadge tone="neutral">{u.ownedWorkspaces.length}</AdminBadge>
+          <AdminBadge tone="neutral">
+            {quota.ownedWorkspaces} / {quota.maxOwnedWorkspaces}
+          </AdminBadge>
         }
         padded={false}
       >

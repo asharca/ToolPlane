@@ -3,6 +3,7 @@ import { lookup } from "node:dns/promises";
 import { request } from "node:https";
 import { request as httpRequest } from "node:http";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
+import { attachmentHardLimit } from "@/lib/agents/attachment-limits";
 import { resolvePrivateHostsSettings } from "@/lib/admin/settings";
 import {
   isPrivateRemoteMcpIp,
@@ -615,6 +616,7 @@ export async function fetchRemoteFile(
 ): Promise<ReadableStream<Uint8Array>> {
   const policy = await getTransportSettings();
   const url = remoteFileUrl(value, policy);
+  const hardLimit = attachmentHardLimit();
   if (inflight >= 16) throw new RemoteA2AError("REMOTE_CAPACITY");
   inflight++;
   let released = false;
@@ -678,8 +680,8 @@ export async function fetchRemoteFile(
           refuse(new RemoteA2AError("FILE_DOWNLOAD_REJECTED"));
           return;
         }
-        if (Number(res.headers["content-length"]) > policy.a2aFileBytes) {
-          refuse(taskFileLimitError("FILE_TOO_LARGE", policy.a2aFileBytes));
+        if (Number(res.headers["content-length"]) > hardLimit) {
+          refuse(taskFileLimitError("FILE_TOO_LARGE", hardLimit));
           return;
         }
         let bytes = 0;
@@ -697,8 +699,8 @@ export async function fetchRemoteFile(
             res.on("data", (chunk: Buffer) => {
               if (ended) return;
               bytes += chunk.byteLength;
-              if (bytes > policy.a2aFileBytes) {
-                end(taskFileLimitError("FILE_TOO_LARGE", policy.a2aFileBytes));
+              if (bytes > hardLimit) {
+                end(taskFileLimitError("FILE_TOO_LARGE", hardLimit));
                 res.destroy();
                 req.destroy();
                 return;

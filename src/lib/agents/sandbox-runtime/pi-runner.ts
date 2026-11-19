@@ -10,7 +10,6 @@ import { db } from "@/lib/db";
 import { modelReasoningSupported } from "../model";
 import { AgentRevisionConfigSchema } from "../revision-types";
 import { runtimeModelProxyBase } from "../runtime-access";
-import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { parseContextBreakdown } from "@/lib/context-usage";
 import {
   agentRuntimeBuiltinTools,
@@ -607,13 +606,7 @@ export async function runPiSdk(
       configPath,
       hostSourceChecksum: hostSources.digest("hex"),
       packageSetChecksum,
-      // Live administrator setting, read for every turn; not part of the revision.
-      mcpConfig: JSON.parse(
-        buildPiMcpConfig(
-          mcpServers,
-          (await getTransportSettings()).a2aFileBytes,
-        ),
-      ),
+      mcpConfig: JSON.parse(buildPiMcpConfig(mcpServers)),
       model: sessionModel,
       advisor,
     },
