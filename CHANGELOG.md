@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.43.0](https://github.com/asharca/ToolPlane/compare/v0.42.1...v0.43.0) (2026-11-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* **storage:** 按用户限制存储与工作区数量并新增文件管理 ([#275](https://github.com/asharca/ToolPlane/issues/275))
+* **platform:** 拆分执行与控制台模块并统一授权边界 ([#274](https://github.com/asharca/ToolPlane/issues/274))
+
+### Features
+
+* **storage:** 按用户限制存储与工作区数量并新增文件管理 ([#275](https://github.com/asharca/ToolPlane/issues/275)) ([ab86763](https://github.com/asharca/ToolPlane/commit/ab8676341e610f083b828a72cbed9c557f330bb9))
+
+
+### Refactors
+
+* **platform:** 拆分执行与控制台模块并统一授权边界 ([#274](https://github.com/asharca/ToolPlane/issues/274)) ([2664cf8](https://github.com/asharca/ToolPlane/commit/2664cf87cdbd88a01faf78421fbd4adda5eb2ddf))
+
 ## [0.42.1](https://github.com/asharca/ToolPlane/compare/v0.42.0...v0.42.1) (2026-11-17)
 
 
