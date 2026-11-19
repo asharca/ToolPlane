@@ -1,11 +1,19 @@
 "use client";
 
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
 import {
   Download,
+  Eye,
   File as FileIcon,
   FileArchive,
   FileAudio,
@@ -24,8 +32,10 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { Tooltip } from "@/components/motion/tooltip";
 import { StorageUsage, useFormatBytes } from "@/components/ui/StorageUsage";
 import { apiRequest } from "@/lib/client/api";
+import { previewType } from "@/lib/file-preview";
 import { cn } from "@/lib/utils";
 import { DashboardEmptyState } from "./DashboardUI";
+import { FilePreviewDialog } from "./FilePreviewDialog";
 import { DashboardTable } from "./DashboardTable";
 import { DialogCancel, DialogFooter, DialogHeader } from "./dialog";
 import { notify } from "./Toaster";
@@ -72,17 +82,32 @@ type DeleteResult = {
 };
 
 const DELETE_BATCH = 100;
+// The preview dialog reads the whole file into memory and renders text with
+// syntax highlighting; larger files stay download-only.
+const PREVIEW_MAX_BYTES = { text: 2 * 1024 * 1024, other: 50 * 1024 * 1024 };
 // Column widths in px. Name and source share what the measured area leaves;
 // the table's filler column absorbs the scrollbar allowance.
 const CHECKBOX_COLUMN = 48;
 const SIZE_COLUMN = 96;
 const DATE_COLUMN = 176;
-const ACTIONS_COLUMN = 112;
+const ACTIONS_COLUMN = 152;
 const SCROLLBAR_ALLOWANCE = 16;
 const COMPACT_BELOW = 680;
 
 const rowId = (file: { kind: FileKind; id: string }) =>
   `${file.kind}:${file.id}`;
+
+function previewable(file: WorkspaceFile) {
+  if (!file.downloadUrl) return false;
+  const { kind } = previewType(file.name, file.mimeType);
+  if (kind === "unsupported") return false;
+  return (
+    file.size <=
+    (kind === "text" || kind === "markdown"
+      ? PREVIEW_MAX_BYTES.text
+      : PREVIEW_MAX_BYTES.other)
+  );
+}
 
 function MimeIcon({ mimeType }: { mimeType: string }) {
   const mime = mimeType.toLowerCase();
@@ -135,6 +160,8 @@ export function WorkspaceFilesManager({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmTargets, setConfirmTargets] = useState<WorkspaceFile[]>([]);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewFile, setPreviewFile] = useState<WorkspaceFile | null>(null);
   const [areaWidth, setAreaWidth] = useState(0);
   const tableArea = useRef<HTMLDivElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -142,6 +169,25 @@ export function WorkspaceFilesManager({
   const deletingRef = useRef(false);
   const endpoint = `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/files`;
   const deleting = pendingIds.size > 0;
+  const previewUrl = previewFile?.downloadUrl ?? null;
+  const previewGone = t("previewGone");
+
+  // The dialog shows its own generic error for any rejection.
+  const loadPreview = useCallback(
+    async (signal: AbortSignal) => {
+      if (!previewUrl) throw new Error("Preview unavailable.");
+      const response = await fetch(previewUrl, { signal, redirect: "error" });
+      if (response.status === 404) {
+        setPreviewOpen(false);
+        notify(previewGone, { severity: "warning" });
+        setReload((value) => value + 1);
+        throw new Error(previewGone);
+      }
+      if (!response.ok) throw new Error("Preview unavailable.");
+      return response.blob();
+    },
+    [previewUrl, previewGone],
+  );
 
   function listUrl(cursor: string | null) {
     const query = new URLSearchParams({ kind, sort });
@@ -345,6 +391,22 @@ export function WorkspaceFilesManager({
           />
         ) : (
           <>
+            {previewable(file) ? (
+              <Tooltip side="left" content={t("preview")}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("previewFile", { name: file.name })}
+                  onClick={() => {
+                    setPreviewFile(file);
+                    setPreviewOpen(true);
+                  }}
+                >
+                  <Eye className="size-4" aria-hidden="true" />
+                </Button>
+              </Tooltip>
+            ) : null}
             {file.downloadUrl ? (
               <Tooltip side="left" content={t("download")}>
                 <ButtonLink
@@ -559,14 +621,15 @@ export function WorkspaceFilesManager({
           </div>
         ) : null}
       </div>
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: Escape inside the nested confirmation must stop here, before the settings dialog's window listener closes it too. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: Escape inside a nested dialog must stop here, before the settings dialog's window listener closes it too. */}
       <div
         className="contents"
         onKeyDown={(event) => {
-          if (event.key !== "Escape" || !confirmOpen) return;
+          if (event.key !== "Escape" || !(confirmOpen || previewOpen)) return;
           event.preventDefault();
           event.stopPropagation();
           setConfirmOpen(false);
+          setPreviewOpen(false);
         }}
       >
         <CenterMorphModal open={confirmOpen} onOpenChange={setConfirmOpen}>
@@ -606,6 +669,16 @@ export function WorkspaceFilesManager({
             </DialogFooter>
           </CenterMorphModalContent>
         </CenterMorphModal>
+        {previewFile ? (
+          <FilePreviewDialog
+            open={previewOpen}
+            onOpenChange={setPreviewOpen}
+            name={previewFile.name}
+            mimeType={previewFile.mimeType}
+            size={formatBytes(previewFile.size)}
+            load={loadPreview}
+          />
+        ) : null}
       </div>
     </div>
   );
