@@ -16,6 +16,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import { readFile } from "node:fs/promises";
 import { db } from "@/lib/db";
+import { attachmentHardLimit } from "./attachment-limits";
 import { modelReasoningSupported } from "./model";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import { effectiveStatus } from "@/lib/process/supervisor";
@@ -598,7 +599,6 @@ export function buildPiModelsConfig(options: {
 
 export function buildPiMcpConfig(
   servers: readonly SandboxRuntimeMcpServer[],
-  resultFileBytes: number,
 ): string {
   return JSON.stringify({
     servers: servers.map((server, index) => ({
@@ -608,7 +608,7 @@ export function buildPiMcpConfig(
       ...(server.label ? { label: server.label.slice(0, 80) } : {}),
       ...(server.timeoutMs ? { timeoutMs: server.timeoutMs } : {}),
     })),
-    resultFileBytes,
+    resultFileBytes: attachmentHardLimit(),
   });
 }
 

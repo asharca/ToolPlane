@@ -53,6 +53,7 @@ import { localTaskSandbox } from "@/lib/a2a/local-sandbox";
 import { deleteAgentContextSandbox } from "@/lib/agents/conversation-sandbox";
 import { stageTaskFileTransfers } from "@/lib/a2a/task-files";
 import { cleanupTaskFiles } from "@/lib/a2a/files";
+import { cleanupAttachmentUploads } from "@/lib/attachments/uploads";
 import { workRuntimeObserver } from "@/lib/work/run-control";
 import {
   MeteredExecutionError,
@@ -612,6 +613,7 @@ export async function tickAgentWorker() {
       }
     if (Date.now() - state.prunedAt > 60_000) {
       state.prunedAt = Date.now();
+      await cleanupAttachmentUploads();
       await cleanupTaskFiles();
       const staleDelivery = await db.a2ATask.findMany({
         where: {

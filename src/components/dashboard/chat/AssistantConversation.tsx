@@ -5,6 +5,10 @@ import {
   DisplayError,
   displayErrorText,
 } from "@/components/dashboard/display-error";
+import {
+  ManageFilesButton,
+  STORAGE_QUOTA_EXCEEDED,
+} from "@/components/dashboard/ManageFilesButton";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { FileUIPart, UIMessage } from "ai";
@@ -673,7 +677,9 @@ export function AssistantConversation({
         const body = await response.json();
         if (!response.ok || !body.url)
           throw new DisplayError(
-            body.error ?? composerT("attachmentUploadFailed"),
+            body.code === STORAGE_QUOTA_EXCEEDED
+              ? STORAGE_QUOTA_EXCEEDED
+              : (body.error ?? composerT("attachmentUploadFailed")),
           );
         setFiles((previous) => [
           ...previous,
@@ -1208,9 +1214,14 @@ export function AssistantConversation({
         >
           {error === "runtime_not_ready"
             ? t("runtimeNotReady")
-            : t.has(`modelErrors.${error}`)
-              ? t(`modelErrors.${error}`)
-              : error}
+            : error === STORAGE_QUOTA_EXCEEDED
+              ? composerT("attachmentStorageQuotaExceeded")
+              : t.has(`modelErrors.${error}`)
+                ? t(`modelErrors.${error}`)
+                : error}
+          {error === STORAGE_QUOTA_EXCEEDED ? (
+            <ManageFilesButton className="ml-3" />
+          ) : null}
         </p>
       )}
       {snapshot?.error && (

@@ -24,9 +24,13 @@ export type DashboardTableProps = {
   height?: number;
   ariaLabel?: string;
   selectable?: boolean;
+  /** Column resize and reorder handles; off for fixed-layout tables. */
+  adjustableColumns?: boolean;
   selectedRowIds?: string[];
   onSelectionChange?: (ids: string[]) => void;
   selectionActions?: TableProps<DashboardTableRow>["selectionActions"];
+  /** "above" keeps the selection toolbar out of the sticky header; it requires controlled selection. */
+  selectionPlacement?: "header" | "above";
 };
 
 /** Server pages provide serializable cell content; beUI owns the table rendering. */
@@ -38,9 +42,11 @@ export function DashboardTable({
   height,
   ariaLabel,
   selectable = true,
+  adjustableColumns = true,
   selectedRowIds,
   onSelectionChange,
   selectionActions,
+  selectionPlacement = "header",
 }: DashboardTableProps) {
   const t = useTranslations("console.agents");
   const columns = useMemo<TableColumn<DashboardTableRow>[]>(
@@ -54,12 +60,58 @@ export function DashboardTable({
       })),
     [headers],
   );
+  const toolbar: TableProps<DashboardTableRow>["selectionActions"] = (
+    selection,
+  ) => (
+    <div
+      role="toolbar"
+      aria-label={t("selectedResources", {
+        count: selection.selectedRowIds.length,
+      })}
+      className="flex flex-wrap items-center gap-2 py-1.5"
+      style={
+        selectionPlacement === "header"
+          ? { maxWidth: "calc(100cqw - 80px)" }
+          : undefined
+      }
+    >
+      <span className="text-xs tabular-nums" aria-live="polite">
+        {t("selectedResources", {
+          count: selection.selectedRowIds.length,
+        })}
+      </span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        aria-label={t("clearSelection")}
+        onClick={selection.clearSelection}
+      >
+        <X className="size-3.5" />
+      </Button>
+      {selectionActions?.(selection)}
+    </div>
+  );
+  const loadedIds = new Set(rows.map((row) => row.id));
+  const selectedLoadedIds =
+    selectable && selectionPlacement === "above"
+      ? (selectedRowIds ?? []).filter((id) => loadedIds.has(id))
+      : [];
   return (
     <section
       className={cn("min-w-0 overflow-x-auto", className, "rounded-xl")}
       aria-label={ariaLabel}
       style={{ containerType: "inline-size" }}
     >
+      {selectedLoadedIds.length
+        ? toolbar({
+            selectedRows: rows.filter((row) =>
+              selectedLoadedIds.includes(row.id),
+            ),
+            selectedRowIds: selectedLoadedIds,
+            clearSelection: () => onSelectionChange?.([]),
+          })
+        : null}
       <div style={{ minWidth }}>
         <Table
           className={cn(
@@ -71,36 +123,13 @@ export function DashboardTable({
           columns={columns}
           getRowId={(row) => row.id}
           selectable={selectable}
-          resizable
-          reorderable
+          resizable={adjustableColumns}
+          reorderable={adjustableColumns}
           selectedRowIds={selectedRowIds}
           onSelectionChange={onSelectionChange}
-          selectionActions={(selection) => (
-            <div
-              role="toolbar"
-              aria-label={t("selectedResources", {
-                count: selection.selectedRowIds.length,
-              })}
-              className="flex flex-wrap items-center gap-2 py-1.5"
-              style={{ maxWidth: "calc(100cqw - 80px)" }}
-            >
-              <span className="text-xs tabular-nums" aria-live="polite">
-                {t("selectedResources", {
-                  count: selection.selectedRowIds.length,
-                })}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={t("clearSelection")}
-                onClick={selection.clearSelection}
-              >
-                <X className="size-3.5" />
-              </Button>
-              {selectionActions?.(selection)}
-            </div>
-          )}
+          selectionActions={
+            selectionPlacement === "header" ? toolbar : undefined
+          }
           height={height ?? 640}
         />
       </div>

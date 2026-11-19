@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { logSystemEvent } from "@/lib/observability/system";
 import { withRequestLogging } from "@/lib/observability/http";
@@ -11,9 +12,15 @@ import {
   AttachmentStorageError,
   AttachmentTooLargeError,
   EmptyAttachmentError,
-  deleteWorkspaceAttachmentFile,
+  attachmentObjectPath,
   writeWorkspaceAttachment,
 } from "@/lib/attachments/storage";
+import { discardAttachmentUpload } from "@/lib/attachments/uploads";
+import {
+  lockStorageWorkspace,
+  reserveWorkspaceStorage,
+  StorageQuotaExceededError,
+} from "@/lib/storage/user-quota";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
@@ -31,6 +38,13 @@ function announcedContentLength(req: Request): number | null {
   if (!/^\d+$/.test(value)) return Number.NaN;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : Number.NaN;
+}
+
+function quotaExceeded() {
+  return Response.json(
+    { error: "Storage quota exceeded.", code: "STORAGE_QUOTA_EXCEEDED" },
+    { status: 413 },
+  );
 }
 
 export const POST = withRequestLogging(
@@ -91,17 +105,75 @@ export const POST = withRequestLogging(
       );
     }
 
-    let stored: { storagePath: string; size: number };
+    const objectId = randomUUID();
+    const reservation = await db
+      .$transaction(async (tx) => {
+        const locked = await lockStorageWorkspace(tx, workspace.id);
+        if (locked?.status !== "active") return null;
+        const accessible = await tx.workspace.findFirst({
+          where: { id: workspace.id, ...workspaceAccessWhere(user.id) },
+          select: { id: true },
+        });
+        if (!accessible) return null;
+        const size = await reserveWorkspaceStorage(
+          tx,
+          locked,
+          maxBytes,
+          user.id,
+        );
+        if (announcedSize !== null && announcedSize > size)
+          throw new StorageQuotaExceededError();
+        return tx.workspaceAttachment.create({
+          data: {
+            workspaceId: workspace.id,
+            uploadedById: user.id,
+            name: filename,
+            mimeType: requestMimeType(req),
+            status: "uploading",
+            uploadStartedAt: new Date(),
+            storagePath: attachmentObjectPath(objectId, filename),
+            size,
+          },
+        });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof StorageQuotaExceededError) return quotaExceeded();
+        logSystemEvent("attachments.metadata.reserve_failed", {
+          error,
+          workspaceId: workspace.id,
+          actorId: user.id,
+        });
+        return Response.json(
+          { error: "Could not reserve attachment storage." },
+          { status: 500 },
+        );
+      });
+    if (reservation instanceof Response) return reservation;
+    if (!reservation)
+      return Response.json({ error: "Workspace not found" }, { status: 404 });
+    const discard = () =>
+      discardAttachmentUpload(reservation).catch((error) => {
+        logSystemEvent("attachments.metadata.cleanup_failed", {
+          error,
+          workspaceId: workspace.id,
+          actorId: user.id,
+        });
+      });
+
+    let stored: { size: number };
     try {
       stored = await writeWorkspaceAttachment({
         workspaceId: workspace.id,
         filename,
         body: req.body,
-        maxBytes,
+        objectId,
+        maxBytes: reservation.size,
         signal: req.signal,
       });
     } catch (error) {
+      await discard();
       if (error instanceof AttachmentTooLargeError) {
+        if (reservation.size < maxBytes) return quotaExceeded();
         return Response.json(
           {
             error: `Attachment exceeds the ${formatAttachmentByteLimit(maxBytes)} limit.`,
@@ -129,15 +201,13 @@ export const POST = withRequestLogging(
     }
 
     try {
-      const attachment = await db.workspaceAttachment.create({
-        data: {
-          workspaceId: workspace.id,
-          uploadedById: user.id,
-          name: filename,
-          mimeType: requestMimeType(req),
-          size: stored.size,
-          storagePath: stored.storagePath,
+      const attachment = await db.workspaceAttachment.update({
+        where: {
+          id: reservation.id,
+          status: "uploading",
+          uploadStartedAt: { not: null },
         },
+        data: { status: "ready", size: stored.size, uploadStartedAt: null },
       });
       return Response.json(
         {
@@ -155,17 +225,7 @@ export const POST = withRequestLogging(
         workspaceId: workspace.id,
         actorId: user.id,
       });
-      await deleteWorkspaceAttachmentFile(
-        workspace.id,
-        stored.storagePath,
-      ).catch((cleanupError) => {
-        logSystemEvent("attachments.storage.cleanup_failed", {
-          error: cleanupError,
-          level: "warn",
-          workspaceId: workspace.id,
-          actorId: user.id,
-        });
-      });
+      await discard();
       return Response.json(
         { error: "Could not save attachment metadata." },
         { status: 500 },

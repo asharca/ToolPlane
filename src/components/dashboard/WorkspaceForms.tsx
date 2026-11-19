@@ -25,6 +25,11 @@ import {
   type WorkspaceActionState,
 } from "@/lib/workspace/management-actions";
 
+export type WorkspaceCreationQuota = {
+  ownedWorkspaces: number;
+  maxOwnedWorkspaces: number;
+};
+
 type Action = (
   state: WorkspaceActionState,
   data: FormData,
@@ -36,11 +41,13 @@ export function WorkspaceActionForm({
   label,
   danger = false,
   cancelable = false,
+  disabled = false,
 }: {
   action: Action;
   children: ReactNode;
   label: string;
   danger?: boolean;
+  disabled?: boolean;
   /** Settings-dialog forms put Cancel and submit in a section footer. */
   cancelable?: boolean;
 }) {
@@ -49,7 +56,7 @@ export function WorkspaceActionForm({
   const submit = (
     <Button
       type="submit"
-      disabled={pending}
+      disabled={disabled || pending}
       variant={danger ? "secondary" : "primary"}
       size="md"
     >
@@ -67,7 +74,7 @@ export function WorkspaceActionForm({
       data-unsaved-changes={pending ? "true" : undefined}
     >
       <fieldset
-        disabled={pending}
+        disabled={disabled || pending}
         className="min-w-0 space-y-3 disabled:opacity-60"
       >
         {children}
@@ -98,14 +105,21 @@ export function WorkspaceActionForm({
 export function CreateWorkspaceForm({
   intent = "",
   autoFocus = false,
+  quota,
 }: {
   intent?: string;
   autoFocus?: boolean;
+  quota: WorkspaceCreationQuota;
 }) {
   const t = useTranslations("console.workspaces");
   const id = useId();
+  const atLimit = quota.ownedWorkspaces >= quota.maxOwnedWorkspaces;
   return (
-    <WorkspaceActionForm action={createWorkspaceAction} label={t("create")}>
+    <WorkspaceActionForm
+      action={createWorkspaceAction}
+      label={t("create")}
+      disabled={atLimit}
+    >
       <input type="hidden" name="intent" value={intent} />
       <label htmlFor={id} className="block text-sm font-medium">
         {t("name")}
@@ -120,7 +134,7 @@ export function CreateWorkspaceForm({
         className="w-full"
       />
       <p className="text-xs leading-5 text-muted-foreground">
-        {t("createHint")}
+        {atLimit ? t("ownedWorkspaceCount", quota) : t("createHint")}
       </p>
     </WorkspaceActionForm>
   );

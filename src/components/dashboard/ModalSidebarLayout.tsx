@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { DialogNav } from "./dialog";
 
 export type ModalSidebarSection = {
@@ -9,6 +9,30 @@ export type ModalSidebarSection = {
   icon?: ReactNode;
   content: ReactNode;
 };
+
+const SelectSectionContext = createContext<((id: string) => void) | null>(null);
+
+/** Switches the surrounding ModalSidebarLayout to another section. */
+export function ModalSidebarSectionLink({
+  section,
+  className,
+  children,
+}: {
+  section: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  const select = useContext(SelectSectionContext);
+  return (
+    <button
+      type="button"
+      onClick={() => select?.(section)}
+      className={className}
+    >
+      {children}
+    </button>
+  );
+}
 
 export function ModalSidebarLayout({
   label,
@@ -32,7 +56,9 @@ export function ModalSidebarLayout({
         onSelect={setActiveSection}
       />
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
-        {active?.content}
+        <SelectSectionContext.Provider value={setActiveSection}>
+          {active?.content}
+        </SelectSectionContext.Provider>
       </div>
     </div>
   );

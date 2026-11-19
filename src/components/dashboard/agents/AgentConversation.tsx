@@ -2,6 +2,10 @@
 
 import { Button } from "@/components/motion/button";
 import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
+import {
+  ManageFilesButton,
+  STORAGE_QUOTA_EXCEEDED,
+} from "@/components/dashboard/ManageFilesButton";
 import { notify } from "@/components/dashboard/Toaster";
 import { AgentMessageFeedback } from "./AgentMessageFeedback";
 import Link from "next/link";
@@ -1125,10 +1129,12 @@ export function AgentConversation({
             <span>
               {configurationError
                 ? work("configureAgent")
-                : runtimeError
-                  ? runtimeError.text
-                  : (submitError ??
-                    displayErrorText(chat.error, work("processFailed")))}
+                : submitError === STORAGE_QUOTA_EXCEEDED
+                  ? t("attachmentStorageQuotaExceeded")
+                  : runtimeError
+                    ? runtimeError.text
+                    : (submitError ??
+                      displayErrorText(chat.error, work("processFailed")))}
             </span>
             {(configurationError ||
               runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE") &&
@@ -1139,6 +1145,9 @@ export function AgentConversation({
               >
                 {t("configureAgent")}
               </Link>
+            ) : null}
+            {submitError === STORAGE_QUOTA_EXCEEDED ? (
+              <ManageFilesButton />
             ) : null}
           </div>
         ) : null}

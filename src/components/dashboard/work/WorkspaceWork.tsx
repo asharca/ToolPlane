@@ -7,6 +7,10 @@ import { useTranslations } from "next-intl";
 import { Bot, FileOutput, PanelLeft } from "lucide-react";
 import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
 import {
+  ManageFilesButton,
+  STORAGE_QUOTA_EXCEEDED,
+} from "@/components/dashboard/ManageFilesButton";
+import {
   ChatApp,
   ChatAppSidebarTrigger,
 } from "@/components/dashboard/chat/ChatApp";
@@ -449,12 +453,15 @@ export function WorkspaceWork({
     parseRuntimeCommand(composer.draft, commandRuntimeKind),
   );
   const errorMessage = composer.error ?? selected?.error;
+  const storageQuotaExceeded = errorMessage === STORAGE_QUOTA_EXCEEDED;
   const visibleError =
     errorMessage === "WORK_AGENT_REFERENCE_FORBIDDEN"
       ? composerT("agentReferenceForbidden")
       : errorMessage === "Invalid references"
         ? composerT("referenceFailed")
-        : errorMessage;
+        : storageQuotaExceeded
+          ? tAgents("attachmentStorageQuotaExceeded")
+          : errorMessage;
   const runtimeError = describeRuntimeError(visibleError);
   const configurationError = /no configured model/i.test(visibleError ?? "");
   const showConfigurationNotice =
@@ -983,6 +990,12 @@ export function WorkspaceWork({
                             >
                               {tAgents("configureAgent")}
                             </Button>
+                          ) : null}
+                          {storageQuotaExceeded ? (
+                            <ManageFilesButton
+                              returnTo={workReturnTo}
+                              className="ml-3"
+                            />
                           ) : null}
                         </div>
                       ) : null}

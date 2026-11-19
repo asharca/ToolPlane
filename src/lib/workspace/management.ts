@@ -5,6 +5,12 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { hashToken } from "@/lib/auth/token-format";
 import { writeAudit } from "@/lib/observability/audit";
+import {
+  effectiveUserLimits,
+  lockUserLimits,
+  ownedStorageBytes,
+  workspaceStorageBytes,
+} from "@/lib/storage/user-quota";
 import { killWorkspaceProcesses } from "./teardown";
 import { revokeWorkspaceStreams } from "./access-stream";
 
@@ -54,6 +60,14 @@ export async function createWorkspace(actorId: string, value: string) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       return await db.$transaction(async (tx) => {
+        const [owner] = await lockUserLimits(tx, actorId);
+        if (!owner) invalid("forbidden");
+        const { maxOwnedWorkspaces } = await effectiveUserLimits(tx, owner);
+        if (
+          (await tx.workspace.count({ where: { ownerId: actorId } })) >=
+          maxOwnedWorkspaces
+        )
+          invalid("workspaceLimit");
         const workspace = await tx.workspace.create({
           data: {
             name,
@@ -493,6 +507,9 @@ export async function transferWorkspaceOwnership(
     const workspace = await lockedWorkspace(tx, slug, actorId);
     if (confirmation !== workspace.name) invalid("confirmName");
     if (memberId === actorId) invalid("memberMissing");
+    const users = await lockUserLimits(tx, actorId, memberId);
+    const recipient = users.find((user) => user.id === memberId);
+    if (!recipient) invalid("memberMissing");
     const member = await tx.membership.findUnique({
       where: {
         workspaceId_userId: { workspaceId: workspace.id, userId: memberId },
@@ -500,6 +517,16 @@ export async function transferWorkspaceOwnership(
       include: { user: { select: { status: true } } },
     });
     if (member?.user.status !== "active") invalid("memberMissing");
+    const limits = await effectiveUserLimits(tx, recipient);
+    if (
+      (await tx.workspace.count({ where: { ownerId: memberId } })) >=
+      limits.maxOwnedWorkspaces
+    )
+      invalid("recipientWorkspaceLimit");
+    const recipientBytes = await ownedStorageBytes(tx, memberId);
+    const incomingBytes = await workspaceStorageBytes(tx, workspace.id);
+    if (recipientBytes + incomingBytes > limits.storageQuotaBytes)
+      invalid("recipientStorageQuota");
     const transferred = await tx.workspace.updateMany({
       where: {
         id: workspace.id,

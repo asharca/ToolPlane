@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { generateId, type FileUIPart } from "ai";
 import { DisplayError } from "@/components/dashboard/display-error";
+import { STORAGE_QUOTA_EXCEEDED } from "@/components/dashboard/ManageFilesButton";
 import { apiRequest } from "@/lib/client/api";
 
 const MAX_ATTACHMENTS = 5;
@@ -91,7 +92,9 @@ export function useAgentAttachments(attachmentUploadUrl?: string) {
           const uploaded = result.ok ? result.data : undefined;
           if (!uploaded?.url)
             throw new DisplayError(
-              (!result.ok && result.message) || t("attachmentUploadFailed"),
+              !result.ok && result.code === STORAGE_QUOTA_EXCEEDED
+                ? STORAGE_QUOTA_EXCEEDED
+                : (!result.ok && result.message) || t("attachmentUploadFailed"),
             );
           parts.push({
             type: "file",

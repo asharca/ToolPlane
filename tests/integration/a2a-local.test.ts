@@ -4359,15 +4359,12 @@ describe("unified native ingress mappings", () => {
             runtimeToken: signed,
             model,
             mcpConfig: JSON.parse(
-              buildPiMcpConfig(
-                [
-                  {
-                    deploymentId: "toolplane-runtime",
-                    url: `${origin}/api/v1/agent-runtime/tasks/${parent.id}/tools`,
-                  },
-                ],
-                10 * 1024 * 1024,
-              ),
+              buildPiMcpConfig([
+                {
+                  deploymentId: "toolplane-runtime",
+                  url: `${origin}/api/v1/agent-runtime/tasks/${parent.id}/tools`,
+                },
+              ]),
             ),
           },
         })}\n`,

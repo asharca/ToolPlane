@@ -33,10 +33,7 @@ function form(allowHttp = "true", limit = "512", intent = "save") {
   data.set("allowHttp", allowHttp);
   data.set("a2aInlineKiB", limit);
   data.set("intent", intent);
-  data.set("a2aFileMiB", "10");
-  data.set("a2aTaskInputMiB", "100");
   data.set("a2aTaskFiles", "20");
-  data.set("a2aWorkspaceFileGiB", "1");
   return data;
 }
 
@@ -78,40 +75,26 @@ describe("administrator transport security boundaries", () => {
       expect(state.save).not.toHaveBeenCalled();
     },
   );
-  it.each([
-    ...["0", "101", "1.5", "1e2", "", "Infinity"].map((value) => [
-      "a2aFileMiB",
-      value,
-    ]),
-    ["a2aTaskInputMiB", "0"],
-    ["a2aTaskInputMiB", "10241"],
-    ["a2aTaskFiles", "0"],
-    ["a2aTaskFiles", "101"],
-    ["a2aWorkspaceFileGiB", "0"],
-    ["a2aWorkspaceFileGiB", "1025"],
-  ])(
-    "rejects an invalid file limit without changing settings (%s=%s)",
-    async (field, value) => {
+  it.each(["0", "101", "1.5", "1e2", "", "Infinity"])(
+    "rejects an invalid file count without changing settings (%s)",
+    async (value) => {
       const data = form();
-      data.set(field, value);
-      expect(await updateTransportSettingsAction({}, data)).toHaveProperty(
-        "error",
-      );
+      data.set("a2aTaskFiles", value);
+      expect(await updateTransportSettingsAction({}, data)).toEqual({
+        error: "errorA2aTaskFiles",
+      });
       expect(state.save).not.toHaveBeenCalled();
     },
   );
 
-  it("saves administrator file limits in bytes", async () => {
+  it("saves the file count with the transport policy", async () => {
     const data = form();
-    data.set("a2aTaskInputMiB", "512");
     data.set("a2aTaskFiles", "50");
-    data.set("a2aWorkspaceFileGiB", "8");
     expect(await updateTransportSettingsAction({}, data)).toEqual({ ok: true });
-    expect(JSON.parse(state.save.mock.calls[0][1])).toMatchObject({
-      a2aFileBytes: 10 * 1024 ** 2,
-      a2aTaskInputBytes: 512 * 1024 ** 2,
+    expect(JSON.parse(state.save.mock.calls[0][1])).toEqual({
+      allowHttp: true,
+      a2aInlineBytes: 512 * 1024,
       a2aTaskFiles: 50,
-      a2aWorkspaceFileBytes: 8 * 1024 ** 3,
     });
   });
 
@@ -122,27 +105,22 @@ describe("administrator transport security boundaries", () => {
     expect(await getTransportSettings()).toEqual({
       allowHttp: true,
       a2aInlineBytes: 524288,
-      a2aFileBytes: 10 * 1024 * 1024,
-      a2aTaskInputBytes: 100 * 1024 * 1024,
       a2aTaskFiles: 20,
-      a2aWorkspaceFileBytes: 1024 * 1024 * 1024,
       source: "database",
     });
   });
 
   it.each([1, 25, 100])(
-    "reads an administrator file limit of %s MiB",
-    async (mib) => {
+    "reads an administrator file count of %s",
+    async (files) => {
       state.findUnique.mockResolvedValue({
         value: JSON.stringify({
           allowHttp: false,
           a2aInlineBytes: 32768,
-          a2aFileBytes: mib * 1024 * 1024,
+          a2aTaskFiles: files,
         }),
       });
-      expect((await getTransportSettings()).a2aFileBytes).toBe(
-        mib * 1024 * 1024,
-      );
+      expect((await getTransportSettings()).a2aTaskFiles).toBe(files);
     },
   );
 
@@ -152,10 +130,8 @@ describe("administrator transport security boundaries", () => {
     '{"allowHttp":"true","a2aInlineBytes":524288}',
     '{"allowHttp":true,"a2aInlineBytes":0}',
     '{"allowHttp":true,"a2aInlineBytes":10485761}',
-    '{"allowHttp":true,"a2aInlineBytes":32768,"a2aFileBytes":104857601}',
-    '{"allowHttp":true,"a2aInlineBytes":32768,"a2aFileBytes":"26214400"}',
     '{"allowHttp":true,"a2aInlineBytes":32768,"a2aTaskFiles":0}',
-    '{"allowHttp":true,"a2aInlineBytes":32768,"a2aTaskInputBytes":1.5}',
+    '{"allowHttp":true,"a2aInlineBytes":32768,"a2aTaskFiles":1.5}',
   ])(
     "never enables plaintext from invalid persisted policy (%s)",
     async (value) => {

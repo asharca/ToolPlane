@@ -19,7 +19,6 @@ import { withLogContext } from "@/lib/observability/context";
 import {
   DEFAULT_TRANSPORT_POLICY,
   a2aTransportBodyBytes,
-  DEFAULT_A2A_FILE_BYTES,
 } from "@/lib/transport-policy";
 const responseLimit = Math.max(
   REMOTE_RESPONSE_BYTES,
@@ -102,7 +101,6 @@ beforeEach(() => {
   mocks.privateHosts.mockResolvedValue({ value: "", source: "database" });
   mocks.transportPolicy.mockResolvedValue({
     ...DEFAULT_TRANSPORT_POLICY,
-    a2aFileBytes: DEFAULT_A2A_FILE_BYTES,
     source: "default",
   });
   status = 200;
@@ -238,7 +236,6 @@ describe("remote HTTPS egress boundary", () => {
     const policy = {
       allowHttp: true,
       a2aInlineBytes: 512 * 1024,
-      a2aFileBytes: DEFAULT_A2A_FILE_BYTES,
     };
     mocks.transportPolicy.mockResolvedValue(policy);
     vi.stubEnv("TOOLPLANE_A2A_REMOTE_ORIGINS", '["http://agent.example"]');
@@ -296,18 +293,16 @@ describe("remote HTTPS egress boundary", () => {
     },
   );
   it("bounds file bytes, rejecting a large content length before consumption", async () => {
-    headers["content-length"] = String(DEFAULT_A2A_FILE_BYTES + 1);
+    vi.stubEnv("TOOLPLANE_ATTACHMENT_HARD_MAX_BYTES", "1024");
+    headers["content-length"] = "1025";
     await expect(
       fetchRemoteFile("https://agent.example/file"),
     ).rejects.toThrow();
     expect(mocks.request).toHaveBeenCalledTimes(1);
   });
-  it("uses the administrator limit for advertised and chunked file sizes", async () => {
-    const fileBytes = 12 * 1024 * 1024;
-    mocks.transportPolicy.mockResolvedValue({
-      ...DEFAULT_TRANSPORT_POLICY,
-      a2aFileBytes: fileBytes,
-    });
+  it("uses the attachment hard limit for advertised and chunked file sizes", async () => {
+    const fileBytes = 1024;
+    vi.stubEnv("TOOLPLANE_ATTACHMENT_HARD_MAX_BYTES", String(fileBytes));
     body = "x".repeat(fileBytes);
     headers = { "content-length": String(fileBytes) };
     const accepted = await fetchRemoteFile("https://agent.example/file");

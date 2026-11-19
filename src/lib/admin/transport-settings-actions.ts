@@ -12,23 +12,9 @@ import {
   A2A_FILE_LIMIT_RANGES,
   MIN_A2A_INLINE_BYTES,
   MAX_A2A_INLINE_BYTES,
-  type A2AFileLimits,
 } from "@/lib/transport-policy";
 
-const MiB = 1024 ** 2;
-const GiB = 1024 ** 3;
-/** Form field, unit and validation message for each administrator file limit. */
-const FILE_LIMIT_FIELDS = [
-  ["a2aFileBytes", "a2aFileMiB", MiB, "errorA2aFileSize"],
-  ["a2aTaskInputBytes", "a2aTaskInputMiB", MiB, "errorA2aTaskInputSize"],
-  ["a2aTaskFiles", "a2aTaskFiles", 1, "errorA2aTaskFiles"],
-  [
-    "a2aWorkspaceFileBytes",
-    "a2aWorkspaceFileGiB",
-    GiB,
-    "errorA2aWorkspaceFileSize",
-  ],
-] as const;
+const [minTaskFiles, maxTaskFiles] = A2A_FILE_LIMIT_RANGES.a2aTaskFiles;
 
 export async function updateTransportSettingsAction(
   _prev: AdminSettingsActionState,
@@ -55,21 +41,27 @@ export async function updateTransportSettingsAction(
             max: MAX_A2A_INLINE_BYTES / 1024,
           }),
         };
-      const limits = {} as A2AFileLimits;
-      for (const [key, field, unit, error] of FILE_LIMIT_FIELDS) {
-        const raw = String(formData.get(field) ?? "").trim();
-        const value = /^\d+$/.test(raw) ? Number(raw) * unit : NaN;
-        const [min, max] = A2A_FILE_LIMIT_RANGES[key];
-        if (!Number.isSafeInteger(value) || value < min || value > max)
-          return { error: t(error, { min: min / unit, max: max / unit }) };
-        limits[key] = value;
-      }
+      const rawTaskFiles = String(formData.get("a2aTaskFiles") ?? "").trim();
+      const a2aTaskFiles = /^\d+$/.test(rawTaskFiles)
+        ? Number(rawTaskFiles)
+        : NaN;
+      if (
+        !Number.isSafeInteger(a2aTaskFiles) ||
+        a2aTaskFiles < minTaskFiles ||
+        a2aTaskFiles > maxTaskFiles
+      )
+        return {
+          error: t("errorA2aTaskFiles", {
+            min: minTaskFiles,
+            max: maxTaskFiles,
+          }),
+        };
       await saveAuditedSetting(
         TRANSPORT_SETTINGS_KEY,
         JSON.stringify({
           allowHttp: allowHttp === "true",
           a2aInlineBytes: kib * 1024,
-          ...limits,
+          a2aTaskFiles,
         }),
         admin.id,
       );

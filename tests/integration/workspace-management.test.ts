@@ -15,6 +15,7 @@ import {
   vi,
 } from "vitest";
 import { db } from "@/lib/db";
+import type { Workspace } from "@prisma/client";
 import { createApiToken, verifyApiTokenContext } from "@/lib/auth/tokens";
 import {
   getDefaultWorkspace,
@@ -41,6 +42,8 @@ import {
 import { hashToken } from "@/lib/auth/token-format";
 import { killWorkspaceProcesses } from "@/lib/workspace/teardown";
 import { GET as manifest } from "@/app/api/v1/workspaces/[slug]/manifest/route";
+import { GiB } from "@/lib/storage/user-limit-policy";
+import { getUserQuotaSummary, USER_LIMITS_KEY } from "@/lib/storage/user-quota";
 
 vi.mock("@/lib/workspace/teardown", () => ({
   killWorkspaceProcesses: vi.fn(),
@@ -51,7 +54,7 @@ const userIds: string[] = [];
 let owner: string;
 let member: string;
 let outsider: string;
-let workspace: Awaited<ReturnType<typeof createWorkspace>>;
+let workspace: Workspace;
 const email = (name: string) => `workspace-flow-${name}-${stamp}@example.test`;
 const tokenFrom = (path: string) =>
   assertDefined(
@@ -72,6 +75,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.mocked(killWorkspaceProcesses).mockReset().mockResolvedValue();
+  await db.workspace.deleteMany({ where: { ownerId: { in: userIds } } });
   workspace = await createWorkspace(owner, "研发团队");
   await db.membership.create({
     data: { workspaceId: workspace.id, userId: member },
@@ -518,6 +522,122 @@ describe("workspace lifecycle and authorization", () => {
         (item) => item.id === workspace.id,
       ),
     ).toBe(false);
+  });
+
+  it("serializes concurrent workspace creates at the default limit and honors an override", async () => {
+    const previous = await db.systemSetting.findUnique({
+      where: { key: USER_LIMITS_KEY },
+    });
+    const value = JSON.stringify({
+      storageQuotaBytes: GiB,
+      maxOwnedWorkspaces: 2,
+    });
+    await db.systemSetting.upsert({
+      where: { key: USER_LIMITS_KEY },
+      create: { key: USER_LIMITS_KEY, value },
+      update: { value },
+    });
+    try {
+      const results = await Promise.allSettled([
+        createWorkspace(owner, "Concurrent A"),
+        createWorkspace(owner, "Concurrent B"),
+      ]);
+      expect(
+        results.filter((result) => result.status === "fulfilled"),
+      ).toHaveLength(1);
+      expect(results).toContainEqual({
+        status: "rejected",
+        reason: expect.objectContaining({ message: "workspaceLimit" }),
+      });
+      await expect(createWorkspace(owner, "At limit")).rejects.toThrow(
+        "workspaceLimit",
+      );
+      await db.user.update({
+        where: { id: owner },
+        data: { maxOwnedWorkspaces: 3 },
+      });
+      await createWorkspace(owner, "With override");
+      expect(await getUserQuotaSummary(owner)).toMatchObject({
+        ownedWorkspaces: 3,
+        maxOwnedWorkspaces: 3,
+      });
+    } finally {
+      await db.user.update({
+        where: { id: owner },
+        data: { maxOwnedWorkspaces: null },
+      });
+      if (previous)
+        await db.systemSetting.update({
+          where: { key: USER_LIMITS_KEY },
+          data: { value: previous.value },
+        });
+      else await db.systemSetting.delete({ where: { key: USER_LIMITS_KEY } });
+    }
+  });
+
+  it("rejects ownership transfer to a recipient at the owned-workspace limit", async () => {
+    await createWorkspace(member, "Already owned");
+    await db.user.update({
+      where: { id: member },
+      data: { maxOwnedWorkspaces: 1 },
+    });
+    try {
+      await expect(
+        transferWorkspaceOwnership(
+          owner,
+          workspace.slug,
+          member,
+          workspace.name,
+        ),
+      ).rejects.toThrow("recipientWorkspaceLimit");
+      expect(
+        await db.workspace.findUniqueOrThrow({ where: { id: workspace.id } }),
+      ).toMatchObject({ ownerId: owner });
+    } finally {
+      await db.user.update({
+        where: { id: member },
+        data: { maxOwnedWorkspaces: null },
+      });
+    }
+  });
+
+  it("rejects a transfer that would exceed the recipient's storage quota", async () => {
+    const recipientWorkspace = await createWorkspace(
+      member,
+      "Recipient workspace",
+    );
+    await db.user.update({
+      where: { id: member },
+      data: { storageQuotaBytes: BigInt(GiB), maxOwnedWorkspaces: 2 },
+    });
+    await db.workspaceAttachment.createMany({
+      data: [workspace.id, recipientWorkspace.id].map((workspaceId) => ({
+        workspaceId,
+        uploadedById: member,
+        name: "quota.txt",
+        mimeType: "text/plain",
+        storagePath: "quota.txt",
+        size: GiB / 2 + 1,
+      })),
+    });
+    try {
+      await expect(
+        transferWorkspaceOwnership(
+          owner,
+          workspace.slug,
+          member,
+          workspace.name,
+        ),
+      ).rejects.toThrow("recipientStorageQuota");
+      expect(
+        await db.workspace.findUniqueOrThrow({ where: { id: workspace.id } }),
+      ).toMatchObject({ ownerId: owner });
+    } finally {
+      await db.user.update({
+        where: { id: member },
+        data: { storageQuotaBytes: null, maxOwnedWorkspaces: null },
+      });
+    }
   });
 
   it("transfers to an existing member atomically and removes the old owner’s management rights", async () => {

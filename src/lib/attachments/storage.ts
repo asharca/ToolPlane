@@ -296,6 +296,13 @@ async function streamIntoHelperOwned(
   }
 }
 
+export function attachmentObjectPath(
+  objectId: string,
+  filename: string,
+): string {
+  return `objects/${objectId}-${safeAttachmentFilename(filename)}`;
+}
+
 export async function writeWorkspaceAttachment(input: {
   workspaceId: string;
   filename: string;
@@ -316,7 +323,7 @@ export async function writeWorkspaceAttachment(input: {
     )
   )
     throw new AttachmentStorageError("Invalid attachment object id.");
-  const storagePath = `objects/${objectId}-${safeAttachmentFilename(input.filename)}`;
+  const storagePath = attachmentObjectPath(objectId, input.filename);
   const target = checkedStoragePath(storagePath);
   const temporary = `${ATTACHMENT_MOUNT_PATH}/.uploads/${objectId}`;
   await runDocker(["volume", "create", volumeName]);

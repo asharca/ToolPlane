@@ -122,6 +122,9 @@ vi.mock("@/lib/observability/a2a-log", () => ({
   taskStateName: (name: string) => name,
 }));
 vi.mock("@/lib/a2a/files", () => ({ cleanupTaskFiles: vi.fn(async () => 0) }));
+vi.mock("@/lib/attachments/uploads", () => ({
+  cleanupAttachmentUploads: vi.fn(async () => undefined),
+}));
 vi.mock("@/lib/a2a/task-files", () => ({
   stageTaskFileTransfers: state.stageFiles,
 }));

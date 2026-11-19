@@ -16,26 +16,7 @@ export type TransportSettings = TransportPolicy &
     source: "database" | "default";
   };
 
-/** Missing limits predate their setting and take the default; invalid ones reject the policy. */
-function fileLimits(policy: Record<string, unknown>): A2AFileLimits | null {
-  const limits = { ...DEFAULT_A2A_FILE_LIMITS };
-  for (const [key, [min, max]] of Object.entries(A2A_FILE_LIMIT_RANGES) as [
-    keyof A2AFileLimits,
-    readonly [number, number],
-  ][]) {
-    const value = policy[key];
-    if (value === undefined) continue;
-    if (
-      typeof value !== "number" ||
-      !Number.isSafeInteger(value) ||
-      value < min ||
-      value > max
-    )
-      return null;
-    limits[key] = value;
-  }
-  return limits;
-}
+const [minTaskFiles, maxTaskFiles] = A2A_FILE_LIMIT_RANGES.a2aTaskFiles;
 
 export async function getTransportSettings(): Promise<TransportSettings> {
   const row = await db.systemSetting.findUnique({
@@ -52,9 +33,15 @@ export async function getTransportSettings(): Promise<TransportSettings> {
     const value: unknown = JSON.parse(row.value);
     if (value && typeof value === "object") {
       const policy = value as Record<string, unknown>;
-      const limits = fileLimits(policy);
+      const a2aTaskFiles =
+        policy.a2aTaskFiles === undefined
+          ? DEFAULT_A2A_FILE_LIMITS.a2aTaskFiles
+          : policy.a2aTaskFiles;
       if (
-        limits &&
+        typeof a2aTaskFiles === "number" &&
+        Number.isSafeInteger(a2aTaskFiles) &&
+        a2aTaskFiles >= minTaskFiles &&
+        a2aTaskFiles <= maxTaskFiles &&
         typeof policy.allowHttp === "boolean" &&
         typeof policy.a2aInlineBytes === "number" &&
         Number.isSafeInteger(policy.a2aInlineBytes) &&
@@ -64,7 +51,7 @@ export async function getTransportSettings(): Promise<TransportSettings> {
         return {
           allowHttp: policy.allowHttp,
           a2aInlineBytes: policy.a2aInlineBytes,
-          ...limits,
+          a2aTaskFiles,
           source: "database",
         };
     }

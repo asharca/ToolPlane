@@ -7,6 +7,7 @@ import { Search } from "lucide-react";
 import { useAnimatedSidebar } from "@/components/motion/animated-sidebar";
 import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import type { WorkspaceCreationQuota } from "./WorkspaceForms";
 import { AccountMenu } from "./AccountMenu";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { DashboardCommandPalette } from "./DashboardCommandPalette";
@@ -21,12 +22,14 @@ export function DashboardSidebar({
   workspaceName,
   userLabel,
   workspaces,
+  quota,
   isAdmin = false,
 }: {
   slug: string;
   workspaceName: string;
   userLabel: string;
   workspaces: Workspace[];
+  quota: WorkspaceCreationQuota;
   isAdmin?: boolean;
 }) {
   const pathname = usePathname() ?? "";
@@ -127,6 +130,7 @@ export function DashboardSidebar({
               workspaceName={workspaceName}
               userLabel={userLabel}
               workspaces={workspaces}
+              quota={quota}
               compact={!open && !isMobile}
             />
             <AccountMenu

@@ -17,10 +17,12 @@ import type * as RuntimeOwnership from "@/lib/runtime/ownership-state";
 import type { LocalA2AGrant } from "@/lib/a2a/principal";
 import { encryptSecretText } from "@/lib/security/secrets";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
-import {
-  DEFAULT_A2A_FILE_BYTES,
-  DEFAULT_TRANSPORT_POLICY,
-} from "@/lib/transport-policy";
+import { DEFAULT_TRANSPORT_POLICY } from "@/lib/transport-policy";
+import { createApiToken } from "@/lib/auth/tokens";
+import { cleanupAttachmentUploads } from "@/lib/attachments/uploads";
+import { getUserQuotaSummary } from "@/lib/storage/user-quota";
+import { POST as upload } from "@/app/api/v1/workspaces/[slug]/attachments/route";
+import { GET as download } from "@/app/api/v1/attachments/[attachmentId]/route";
 import { TRANSPORT_SETTINGS_KEY } from "@/lib/admin/transport-settings";
 const io = vi.hoisted(() => ({
   blobs: new Map<string, Uint8Array>(),
@@ -47,7 +49,10 @@ vi.mock("@/lib/attachments/storage", async (original) => {
           throw new actual.AttachmentTooLargeError(input.maxBytes);
         io.entered?.();
         if (io.gate) await io.gate;
-        const storagePath = `objects/${input.objectId}-${input.filename}`;
+        const storagePath = actual.attachmentObjectPath(
+          input.objectId,
+          input.filename,
+        );
         io.blobs.set(`${input.workspaceId}/${storagePath}`, bytes);
         return {
           storagePath,
@@ -86,9 +91,31 @@ import {
 import { submitTask } from "@/lib/a2a/store";
 import { stageTaskFileTransfers } from "@/lib/a2a/task-files";
 let user: string;
+let authorization: string;
 let originalTransportSetting: string | undefined;
 const fixtures: { workspace: string; agent: string }[] = [];
 const body = (value = "abc") => new Blob([value]).stream();
+function uploadAttachment(workspaceId: string, value: string) {
+  return upload(
+    new Request(
+      `http://localhost/api/v1/workspaces/${workspaceId}/attachments?filename=upload.txt`,
+      {
+        method: "POST",
+        headers: { authorization, "content-type": "text/plain" },
+        body: value,
+      },
+    ),
+    { params: Promise.resolve({ slug: workspaceId }) },
+  );
+}
+
+async function setQuota(bytes: number) {
+  await db.user.update({
+    where: { id: user },
+    data: { storageQuotaBytes: BigInt(bytes) },
+  });
+}
+
 async function task(index = 0) {
   const f = fixtures[index];
   const grant = await createLocalRootGrant(f.workspace, f.agent, user);
@@ -137,6 +164,7 @@ beforeAll(async () => {
       data: { email: `files-${randomUUID()}@test.invalid`, passwordHash: "x" },
     })
   ).id;
+  authorization = `Bearer ${(await createApiToken(user, "attachment fixture")).token}`;
   for (let i = 0; i < 2; i++) {
     const workspace = await db.workspace.create({
       data: {
@@ -189,6 +217,12 @@ beforeEach(async () => {
   io.gate = null;
   io.entered = null;
   await db.systemSetting.deleteMany({ where: { key: TRANSPORT_SETTINGS_KEY } });
+  vi.stubEnv("TOOLPLANE_ATTACHMENT_HARD_MAX_BYTES", "1048576");
+  await db.user.update({
+    where: { id: user },
+    data: { storageQuotaBytes: null },
+  });
+  await db.workspaceAttachment.deleteMany({ where: { uploadedById: user } });
   await db.a2ATaskFile.deleteMany({
     where: { workspaceId: { in: fixtures.map((f) => f.workspace) } },
   });
@@ -401,219 +435,173 @@ describe("PostgreSQL task file invariants with streaming storage boundary", () =
     expect(result.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(await db.a2ATaskFile.count({ where: { taskId: t.id } })).toBe(20);
   });
-  it.each(["task", "workspace"])(
-    "serializes concurrent %s byte reservations",
-    async (scope) => {
-      const a = await task(),
-        b = scope === "task" ? a : await task();
-      if (scope === "task") await seed(a.id, 9, DEFAULT_A2A_FILE_BYTES);
-      else {
-        for (let i = 0; i < 6; i++) {
-          const t = await task();
-          await seed(t.id, i === 5 ? 1 : 20, DEFAULT_A2A_FILE_BYTES);
-        }
-      }
-      const { promise: gate, resolve: release } = Promise.withResolvers<void>();
-      const { promise: entered, resolve: markEntered } =
-        Promise.withResolvers<void>();
-      io.gate = gate;
-      io.entered = markEntered;
-      const first = storeTaskFile(
-        a.id,
-        "input:one",
-        "a.txt",
-        "text/plain",
-        body(),
-      );
-      try {
-        await entered;
-        await expect(
-          storeTaskFile(
-            b.id,
-            "input:two",
-            "b.txt",
-            "text/plain",
-            new Blob([new Uint8Array(5 * 1024 * 1024)]).stream(),
-          ),
-        ).rejects.toThrow();
-      } finally {
-        release();
-      }
-      await first;
-    },
-  );
-  it("applies file size changes to storage while retaining ready files and total quotas", async () => {
-    const setLimit = (mib: number) =>
-      db.systemSetting.upsert({
-        where: { key: TRANSPORT_SETTINGS_KEY },
-        create: {
-          key: TRANSPORT_SETTINGS_KEY,
-          value: JSON.stringify({
-            ...DEFAULT_TRANSPORT_POLICY,
-            a2aFileBytes: mib * 1024 ** 2,
-          }),
-        },
-        update: {
-          value: JSON.stringify({
-            ...DEFAULT_TRANSPORT_POLICY,
-            a2aFileBytes: mib * 1024 ** 2,
-          }),
-        },
-      });
-    const t = await task();
-    const large = new Uint8Array(12 * 1024 ** 2);
-    large[large.length - 1] = 42;
-    const stream = () => new Blob([large]).stream();
-    await expect(
-      storeTaskFile(
-        t.id,
-        "large",
-        "large.bin",
-        "application/octet-stream",
-        stream(),
-      ),
-    ).rejects.toThrow();
-    await setLimit(25);
-    const file = await storeTaskFile(
-      t.id,
-      "large",
-      "large.bin",
-      "application/octet-stream",
-      stream(),
-    );
-    expect(file.size).toBe(large.byteLength);
-    await setLimit(1);
-    const opened = await openTaskFile(t.id, file.id);
+  it("charges A2A and conversation attachments in different workspaces to the same owner's quota", async () => {
+    await setQuota(6);
+    const attachment = await uploadAttachment(fixtures[0].workspace, "abc");
+    expect(attachment.status).toBe(201);
+    const t = await task(1);
     expect(
-      Buffer.from(await new Response(opened.body).arrayBuffer()).equals(
-        Buffer.from(large.buffer),
-      ),
-    ).toBe(true);
-    await expect(
-      storeTaskFile(
-        t.id,
-        "new",
-        "new.bin",
-        "application/octet-stream",
-        stream(),
-      ),
-    ).rejects.toThrow();
-    await setLimit(100);
-    const next = await storeTaskFile(
-      t.id,
-      "small",
-      "small.txt",
-      "text/plain",
-      body("after large file"),
-    );
+      (await storeTaskFile(t.id, "artifact:1", "a.txt", "text/plain", body()))
+        .size,
+    ).toBe(3);
+    const summary = await getUserQuotaSummary(user);
+    expect(summary).toMatchObject({
+      usedBytes: 6,
+      ownedWorkspaces: 2,
+      storageQuotaBytes: 6,
+      overrides: { storageQuotaBytes: 6, maxOwnedWorkspaces: null },
+    });
+    const denied = await uploadAttachment(fixtures[1].workspace, "a");
+    expect(denied.status).toBe(413);
+    expect(await denied.json()).toEqual({
+      error: "Storage quota exceeded.",
+      code: "STORAGE_QUOTA_EXCEEDED",
+    });
+    // The ready replay is not a new write and is still checked against its content.
     expect(
-      await new Response((await openTaskFile(t.id, next.id)).body).text(),
-    ).toBe("after large file");
+      (await storeTaskFile(t.id, "artifact:1", "a.txt", "text/plain", body()))
+        .size,
+    ).toBe(3);
+    await expect(
+      storeTaskFile(t.id, "artifact:2", "b.txt", "text/plain", body()),
+    ).rejects.toThrow("Storage quota exceeded.");
   });
 
-  it("retains an active reservation when the administrator lowers the file limit", async () => {
-    const t = await task();
-    await seed(t.id, 6, DEFAULT_A2A_FILE_BYTES);
-    await db.systemSetting.create({
-      data: {
-        key: TRANSPORT_SETTINGS_KEY,
-        value: JSON.stringify({
-          ...DEFAULT_TRANSPORT_POLICY,
-          a2aFileBytes: 40 * 1024 ** 2,
-        }),
-      },
-    });
+  it("cannot overcommit quota when both workspace uploads start together", async () => {
+    await setQuota(5);
+    const results = await Promise.all([
+      uploadAttachment(fixtures[0].workspace, "abc"),
+      uploadAttachment(fixtures[1].workspace, "def"),
+    ]);
+    expect(results.map((response) => response.status).sort()).toEqual([
+      201, 413,
+    ]);
+    expect((await getUserQuotaSummary(user)).usedBytes).toBe(3);
+  });
+
+  it("reserves owner quota across in-flight uploads in different workspaces", async () => {
+    await setQuota(5);
+    const t = await task(1);
     const { promise: gate, resolve: release } = Promise.withResolvers<void>();
     const { promise: entered, resolve: markEntered } =
       Promise.withResolvers<void>();
     io.gate = gate;
     io.entered = markEntered;
-    const first = storeTaskFile(
-      t.id,
-      "input:first",
-      "a.txt",
-      "text/plain",
-      body(),
-    );
+    const first = uploadAttachment(fixtures[0].workspace, "abc");
     try {
       await entered;
-      await db.systemSetting.update({
-        where: { key: TRANSPORT_SETTINGS_KEY },
-        data: {
-          value: JSON.stringify({
-            ...DEFAULT_TRANSPORT_POLICY,
-            a2aFileBytes: DEFAULT_A2A_FILE_BYTES,
-          }),
-        },
+      const uploading = await db.workspaceAttachment.findFirstOrThrow({
+        where: { workspaceId: fixtures[0].workspace, status: "uploading" },
       });
+      const invisible = await download(
+        new Request("http://localhost/api/v1/attachments/file", {
+          headers: { authorization },
+        }),
+        { params: Promise.resolve({ attachmentId: uploading.id }) },
+      );
+      expect(invisible.status).toBe(404);
+      expect((await getUserQuotaSummary(user)).usedBytes).toBe(5);
       await expect(
-        storeTaskFile(t.id, "input:second", "b.txt", "text/plain", body()),
-      ).rejects.toThrow("Task input files exceed the 100 MiB total limit.");
+        storeTaskFile(t.id, "artifact:2", "b.txt", "text/plain", body()),
+      ).rejects.toThrow("Storage quota exceeded.");
     } finally {
       release();
     }
-    await first;
-  });
-
-  it("limits only admitted input bytes per task and reports the exceeded limit", async () => {
-    const t = await task();
-    await seed(t.id, 9, DEFAULT_A2A_FILE_BYTES);
-    await seed(t.id, 1, 5 * 1024 ** 2);
-    const sixMiB = () => new Blob([new Uint8Array(6 * 1024 ** 2)]).stream();
-    await expect(
-      storeTaskFile(t.id, "input:over", "in.bin", "text/plain", sixMiB()),
-    ).rejects.toThrow("Task input files exceed the 100 MiB total limit.");
+    expect((await first).status).toBe(201);
+    expect((await getUserQuotaSummary(user)).usedBytes).toBe(3);
     expect(
       (
-        await db.a2ATaskFile.findUniqueOrThrow({
-          where: {
-            taskId_sourceKey: { taskId: t.id, sourceKey: "input:over" },
-          },
-        })
-      ).errorCode,
-    ).toBe("TASK_INPUT_BYTES_EXCEEDED");
-    for (const key of ["artifact:a:0", "artifact:a:1"])
-      expect(
-        (await storeTaskFile(t.id, key, "out.bin", "text/plain", sixMiB()))
-          .size,
-      ).toBe(6 * 1024 ** 2);
-    await expect(
-      storeTaskFile(
-        t.id,
-        "artifact:big:0",
-        "big.bin",
-        "text/plain",
-        new Blob([new Uint8Array(DEFAULT_A2A_FILE_BYTES + 1)]).stream(),
-      ),
-    ).rejects.toThrow("File exceeds the 10 MiB per-file limit.");
+        await storeTaskFile(
+          t.id,
+          "artifact:2",
+          "b.txt",
+          "text/plain",
+          body("ab"),
+        )
+      ).size,
+    ).toBe(2);
   });
 
-  it("applies administrator task input and file count limits", async () => {
+  it("aborts an A2A write at the remaining quota and releases its reservation", async () => {
+    await setQuota(3);
     const t = await task();
-    await seed(t.id, 9, DEFAULT_A2A_FILE_BYTES);
-    await seed(t.id, 1, 5 * 1024 ** 2);
+    await expect(
+      storeTaskFile(t.id, "input:over", "in.bin", "text/plain", body("four")),
+    ).rejects.toThrow("Storage quota exceeded.");
+    const failed = await db.a2ATaskFile.findUniqueOrThrow({
+      where: { taskId_sourceKey: { taskId: t.id, sourceKey: "input:over" } },
+    });
+    expect(failed).toMatchObject({
+      errorCode: "STORAGE_QUOTA_EXCEEDED",
+      storagePath: null,
+    });
+    expect((await getUserQuotaSummary(user)).usedBytes).toBe(0);
+    expect((await uploadAttachment(fixtures[0].workspace, "four")).status).toBe(
+      413,
+    );
+    expect(
+      await db.workspaceAttachment.count({ where: { uploadedById: user } }),
+    ).toBe(0);
+    expect((await uploadAttachment(fixtures[0].workspace, "abc")).status).toBe(
+      201,
+    );
+  });
+
+  it("bounds A2A ready-file comparison by the attachment hard limit", async () => {
+    const t = await task();
+    const key = "artifact:ready";
+    await storeTaskFile(t.id, key, "out.txt", "text/plain", body());
+    vi.stubEnv("TOOLPLANE_ATTACHMENT_HARD_MAX_BYTES", "2");
+    await expect(
+      storeTaskFile(t.id, key, "out.txt", "text/plain", body()),
+    ).rejects.toMatchObject({
+      metadata: { toolplaneFileLimit: "FILE_TOO_LARGE" },
+    });
+  });
+
+  it("reclaims a stale attachment reservation but not a ready file", async () => {
+    const workspaceId = fixtures[0].workspace;
+    const response = await uploadAttachment(workspaceId, "abc");
+    expect(response.status).toBe(201);
+    const path = `objects/${randomUUID()}-interrupted.txt`;
+    io.blobs.set(`${workspaceId}/${path}`, Buffer.from("abc"));
+    const stale = await db.workspaceAttachment.create({
+      data: {
+        workspaceId,
+        uploadedById: user,
+        name: "interrupted.txt",
+        mimeType: "text/plain",
+        storagePath: path,
+        size: 10,
+        status: "uploading",
+        uploadStartedAt: new Date(Date.now() - 2 * 60 * 60_000),
+      },
+    });
+    expect((await getUserQuotaSummary(user)).usedBytes).toBe(13);
+    await cleanupAttachmentUploads();
+    expect(
+      await db.workspaceAttachment.findUnique({ where: { id: stale.id } }),
+    ).toBeNull();
+    expect(io.blobs.has(`${workspaceId}/${path}`)).toBe(false);
+    expect((await getUserQuotaSummary(user)).usedBytes).toBe(3);
+  });
+
+  it("applies the administrator task file count limit", async () => {
+    const t = await task();
+    await seed(t.id, 10, 1);
     await db.systemSetting.create({
       data: {
         key: TRANSPORT_SETTINGS_KEY,
         value: JSON.stringify({
           ...DEFAULT_TRANSPORT_POLICY,
-          a2aTaskInputBytes: 200 * 1024 ** 2,
           a2aTaskFiles: 11,
         }),
       },
     });
-    const sixMiB = () => new Blob([new Uint8Array(6 * 1024 ** 2)]).stream();
     expect(
-      (
-        await storeTaskFile(
-          t.id,
-          "input:more",
-          "in.bin",
-          "text/plain",
-          sixMiB(),
-        )
-      ).size,
-    ).toBe(6 * 1024 ** 2);
+      (await storeTaskFile(t.id, "input:more", "in.bin", "text/plain", body()))
+        .size,
+    ).toBe(3);
     await expect(
       storeTaskFile(t.id, "artifact:a:0", "out.bin", "text/plain", body()),
     ).rejects.toThrow("Task files exceed the 11-file limit.");
