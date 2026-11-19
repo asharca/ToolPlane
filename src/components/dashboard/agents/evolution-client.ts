@@ -1,6 +1,23 @@
 "use client";
 
-import type { EvolutionResponse } from "@/lib/agents/evolution/contracts";
+import {
+  evolutionFailures,
+  type EvolutionErrorCode,
+} from "@/lib/agents/evolution/contracts";
+import { apiRequest } from "@/lib/client/api";
+
+/** A failed evolution call; only its registered code reaches the UI. */
+export class EvolutionRequestError extends Error {
+  constructor(readonly code: EvolutionErrorCode) {
+    super(code);
+  }
+}
+
+export function evolutionErrorCode(cause: unknown): EvolutionErrorCode {
+  return cause instanceof EvolutionRequestError
+    ? cause.code
+    : "EVOLUTION_FAILED";
+}
 
 export async function evolutionRequest<T>(
   url: string,
@@ -9,18 +26,16 @@ export async function evolutionRequest<T>(
   signal?: AbortSignal,
   onPage?: (nextCursor: string | null) => void,
 ): Promise<T> {
-  const response = await fetch(url, {
-    method,
-    signal,
-    headers:
-      body === undefined ? undefined : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const result = (await response.json()) as EvolutionResponse<T> & {
-    nextCursor?: string | null;
-  };
-  if ("error" in result) throw new Error(result.error.code);
-  if (!response.ok || !("data" in result)) throw new Error("EVOLUTION_FAILED");
-  onPage?.(result.nextCursor ?? null);
-  return result.data;
+  const result = await apiRequest<{ data?: T; nextCursor?: string | null }>(
+    url,
+    { method, signal, json: body },
+  );
+  if (!result.ok)
+    throw new EvolutionRequestError(
+      evolutionFailures.is(result.code) ? result.code : "EVOLUTION_FAILED",
+    );
+  if (!result.data || !("data" in result.data))
+    throw new EvolutionRequestError("EVOLUTION_FAILED");
+  onPage?.(result.data.nextCursor ?? null);
+  return result.data.data as T;
 }

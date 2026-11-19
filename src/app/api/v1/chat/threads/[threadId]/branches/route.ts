@@ -1,11 +1,11 @@
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { ChatBranchMutationSchema } from "@/lib/chat/schemas";
+import { ChatServiceError } from "@/lib/chat/shared";
 import {
-  ChatServiceError,
   deleteReservedChatBranch,
   reserveChatBranch,
-} from "@/lib/chat/service";
+} from "@/lib/chat/branch-reservation";
 
 export const runtime = "nodejs";
 

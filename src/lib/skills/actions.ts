@@ -1,5 +1,8 @@
 "use server";
 
+import { workspaceScopeWhere } from "@/lib/workspace/scope";
+import { actionScope } from "@/lib/workspace/action-scope";
+
 import { logSystemEvent } from "@/lib/observability/system";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -8,9 +11,9 @@ import type { InstalledSkill } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { readZip } from "@/lib/archives/zip";
 import { db } from "@/lib/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
+
 import { getSkillImportSettings } from "@/lib/admin/settings";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { parseCreateSkill, isGithubUrl, slugify } from "./custom-skill";
 import {
   fetchGithubSkillBundles,
@@ -32,13 +35,6 @@ Describe the capability.
 
 Describe how an agent should invoke this skill.
 `;
-
-async function authedWs(slug: string) {
-  const user = await getCurrentUser();
-  if (!user) return null;
-  const ws = await getWorkspaceForUser(slug, user.id);
-  return ws ? { user, ws } : null;
-}
 
 async function ownCustomSkill(installId: string, workspaceId: string) {
   return db.installedSkill.findFirst({
@@ -133,7 +129,7 @@ export async function createCustomSkillAction(
 ): Promise<SkillActionState> {
   const t = await getTranslations("console.skills");
   const slug = String(formData.get("workspace") ?? "");
-  const ctx = await authedWs(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return { error: t("formAccessDenied") };
   let parsed: { name: string; description: string; slug: string };
   try {
@@ -177,17 +173,22 @@ export async function updateSkillContentAction(
   const t = await getTranslations("console.skills");
   const slug = String(formData.get("workspace") ?? "");
   const installId = String(formData.get("installId") ?? "");
-  const ctx = await authedWs(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx || !(await ownCustomSkill(installId, ctx.ws.id)))
     return { error: t("formAccessDenied") };
   try {
-    await db.installedSkill.update({
-      where: { id: installId, workspaceId: ctx.ws.id },
+    const changed = await db.installedSkill.updateMany({
+      where: {
+        id: installId,
+        workspace: workspaceScopeWhere(ctx.ws),
+        skillId: null,
+      },
       data: {
         content: String(formData.get("content") ?? ""),
         status: "published",
       },
     });
+    if (!changed.count) return { error: t("formAccessDenied") };
   } catch (error) {
     logSystemEvent("skills.content.save_failed", {
       error,
@@ -205,7 +206,7 @@ export async function updateSkillContentAction(
 export async function updateSkillAttributesAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const installId = String(formData.get("installId") ?? "");
-  const ctx = await authedWs(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx || !(await ownCustomSkill(installId, ctx.ws.id))) return;
   const data: {
     description?: string | null;
@@ -223,17 +224,22 @@ export async function updateSkillAttributesAction(formData: FormData) {
   if (descriptionChanged) {
     data.description = String(formData.get("description") ?? "") || null;
   }
-  await db.installedSkill.update({
-    where: { id: installId, workspaceId: ctx.ws.id },
+  const changed = await db.installedSkill.updateMany({
+    where: {
+      id: installId,
+      workspace: workspaceScopeWhere(ctx.ws),
+      skillId: null,
+    },
     data,
   });
+  if (!changed.count) return;
   revalidatePath(`/app/${slug}/skills/${installId}`);
 }
 
 export async function deleteCustomSkillAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const installId = String(formData.get("installId") ?? "");
-  const ctx = await authedWs(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx || !(await ownCustomSkill(installId, ctx.ws.id))) return;
   await db.installedSkill.deleteMany({
     where: { id: installId, workspaceId: ctx.ws.id },
@@ -318,7 +324,9 @@ export async function previewSkillUploadAction(
   formData: FormData,
 ): Promise<SkillActionState> {
   const t = await getTranslations("console.skills");
-  const ctx = await authedWs(String(formData.get("workspace") ?? ""));
+  const ctx = await actionScope({
+    slug: String(formData.get("workspace") ?? ""),
+  });
   if (!ctx) return { error: t("formAccessDenied") };
   if (formData.get("repo") && !isGithubUrl(String(formData.get("repo"))))
     return { error: t("invalidUpload") };
@@ -354,7 +362,7 @@ export async function importSkillFromGithubAction(
   const t = await getTranslations("console.skills");
   const slug = String(formData.get("workspace") ?? "");
   const repo = String(formData.get("repo") ?? "").trim();
-  const ctx = await authedWs(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return { error: t("formAccessDenied") };
   if (!isGithubUrl(repo)) return { error: t("invalidUpload") };
   let bundles: SkillBundle[];
@@ -425,7 +433,7 @@ export async function uploadSkillFolderAction(
   const t = await getTranslations("console.skills");
   const slug = String(formData.get("workspace") ?? "");
   const name = String(formData.get("name") ?? "").trim();
-  const ctx = await authedWs(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return { error: t("formAccessDenied") };
   let bundles: UploadedSkillBundle[];
   try {

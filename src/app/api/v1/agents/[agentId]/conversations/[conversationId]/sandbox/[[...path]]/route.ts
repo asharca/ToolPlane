@@ -1,3 +1,4 @@
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
@@ -23,10 +24,7 @@ async function proxy(req: Request, { params }: Params) {
       conversations: {
         some: { id: conversationId, publicApiConversation: null },
       },
-      workspace: {
-        status: "active",
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
-      },
+      workspace: workspaceAccessWhere(user.id),
     },
     include: {
       conversations: {
@@ -65,13 +63,7 @@ async function proxy(req: Request, { params }: Params) {
         agent: {
           retiredAt: null,
           runtimeKind: agent.runtimeKind,
-          workspace: {
-            status: "active",
-            OR: [
-              { ownerId: user.id },
-              { members: { some: { userId: user.id } } },
-            ],
-          },
+          workspace: workspaceAccessWhere(user.id),
         },
       },
     });

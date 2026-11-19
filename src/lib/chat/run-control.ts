@@ -1,4 +1,8 @@
 import "server-only";
+import {
+  workspaceScopeWhere,
+  type WorkspaceScope,
+} from "@/lib/workspace/scope";
 import { randomUUID } from "node:crypto";
 import type { UIMessageChunk } from "ai";
 import type { Prisma } from "@prisma/client";
@@ -8,24 +12,29 @@ import {
   runtimeAbortSignal,
 } from "@/lib/runtime/ownership-state";
 import { logSystemEvent } from "@/lib/observability/system";
-import {
-  CHAT_TURN_STALE_AFTER_MS,
-  completeChatTurn,
-  finishChatTurn,
-} from "./service";
+import { defineFailures } from "@/lib/errors/registry";
+import { CHAT_TURN_STALE_AFTER_MS } from "./admission";
+import { completeChatTurn, finishChatTurn } from "./history";
 import {
   chatExecutionProgressChunk,
   readChatExecutionProgress,
   type ChatExecutionStage,
 } from "./execution-stage";
 
+const chatRunFailures = defineFailures({
+  CHAT_RUN_OUTCOME_UNKNOWN:
+    "Chat execution interrupted; remote effect outcome unknown. Do not replay.",
+  CHAT_RUN_CANCELLED: "Chat turn cancelled.",
+  CHAT_RUN_TIMED_OUT: "Chat turn timed out.",
+  CHAT_RUN_FAILED: "Chat turn failed.",
+});
+
 export type ChatRunFence = { leaseToken: string; generation: number };
 export type ChatRunScope = {
   threadId: string;
   turnId: string;
   assistantMessageId: string;
-  workspaceId: string;
-  userId: string;
+  workspace: WorkspaceScope;
 };
 export type ChatRunOutput = {
   stream: ReadableStream<UIMessageChunk>;
@@ -58,18 +67,6 @@ export async function lockChatRun(
   });
   if (claim.count !== 1) throw new Error("Chat execution lease was lost.");
   return tx.chatTurn.findUniqueOrThrow({ where: { id: turnId } });
-}
-export function chatAccessWhere(userId: string, workspaceId: string) {
-  return {
-    workspaceId,
-    workspace: {
-      status: "active",
-      OR: [
-        { ownerId: userId, owner: { status: "active" as const } },
-        { members: { some: { userId, user: { status: "active" as const } } } },
-      ],
-    },
-  };
 }
 function json(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -288,13 +285,13 @@ export async function startChatRun(
         status: "pending",
         leaseToken: null,
         stopRequestedAt: null,
-        thread: chatAccessWhere(scope.userId, scope.workspaceId),
+        thread: { workspace: workspaceScopeWhere(scope.workspace) },
       },
       data: {
         leaseToken: token,
         leaseExpiresAt: new Date(Date.now() + LEASE_MS),
         generation: { increment: 1 },
-        actorUserId: scope.userId,
+        actorUserId: scope.workspace.actorUserId,
         startedAt: new Date(),
       },
     });
@@ -338,7 +335,7 @@ export async function startChatRun(
               ? {}
               : {
                   stopRequestedAt: null,
-                  thread: chatAccessWhere(scope.userId, scope.workspaceId),
+                  thread: { workspace: workspaceScopeWhere(scope.workspace) },
                 }),
           },
           data: { leaseExpiresAt: new Date(Date.now() + LEASE_MS) },
@@ -438,17 +435,27 @@ export async function startChatRun(
           where: { turnId: scope.turnId, status: "execution_unknown" },
         });
         if (unknownEffects) settlement.outcome = "error";
+        const cancelled = !unknownEffects && error?.name === "AbortError";
+        const code = unknownEffects
+          ? "CHAT_RUN_OUTCOME_UNKNOWN"
+          : cancelled
+            ? "CHAT_RUN_CANCELLED"
+            : error?.name === "TimeoutError"
+              ? "CHAT_RUN_TIMED_OUT"
+              : "CHAT_RUN_FAILED";
+        logSystemEvent("chat.run.execution_failed", {
+          domain: "agent",
+          workspaceId: scope.workspace.id,
+          runId: scope.turnId,
+          conversationId: scope.threadId,
+          error,
+          errorCode: code,
+        });
         await finishChatTurn(
           scope.threadId,
           scope.turnId,
-          !unknownEffects && error?.name === "AbortError"
-            ? "cancelled"
-            : "failed",
-          unknownEffects
-            ? "Chat execution interrupted; remote effect outcome unknown. Do not replay."
-            : error instanceof Error
-              ? error.message
-              : "Chat turn failed",
+          cancelled ? "cancelled" : "failed",
+          chatRunFailures.text(code),
           scope.assistantMessageId,
           undefined,
           fence,
@@ -458,7 +465,7 @@ export async function startChatRun(
         settlement = { outcome: "error", error };
         logSystemEvent("chat.run.persistence_failed", {
           domain: "agent",
-          workspaceId: scope.workspaceId,
+          workspaceId: scope.workspace.id,
           runId: scope.turnId,
           conversationId: scope.threadId,
           error,
@@ -492,7 +499,7 @@ export async function startChatRun(
                 : "error";
           logSystemEvent("chat.run.settled", {
             domain: "agent",
-            workspaceId: scope.workspaceId,
+            workspaceId: scope.workspace.id,
             runId: scope.turnId,
             conversationId: scope.threadId,
             outcome: settlement.outcome,
@@ -516,7 +523,7 @@ export async function startChatRun(
         } catch (error) {
           logSystemEvent("chat.run.settlement_read_failed", {
             domain: "agent",
-            workspaceId: scope.workspaceId,
+            workspaceId: scope.workspace.id,
             runId: scope.turnId,
             conversationId: scope.threadId,
             error,
@@ -528,8 +535,7 @@ export async function startChatRun(
     scope.threadId,
     scope.assistantMessageId,
     {
-      userId: scope.userId,
-      workspaceId: scope.workspaceId,
+      workspace: scope.workspace,
       runId: scope.turnId,
     },
   );
@@ -541,8 +547,7 @@ export async function subscribeChatRun(
   threadId: string,
   assistantMessageId: string | null,
   options: {
-    userId: string;
-    workspaceId: string;
+    workspace: WorkspaceScope;
     runId?: string;
     afterSequence?: number;
   },
@@ -558,7 +563,7 @@ export async function subscribeChatRun(
               some: { id: assistantMessageId ?? "", role: "assistant" },
             },
           }),
-      thread: chatAccessWhere(options.userId, options.workspaceId),
+      thread: { workspace: workspaceScopeWhere(options.workspace) },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -583,7 +588,7 @@ export async function subscribeChatRun(
           const authorized = await db.chatThread.findFirst({
             where: {
               id: threadId,
-              ...chatAccessWhere(options.userId, options.workspaceId),
+              workspace: workspaceScopeWhere(options.workspace),
             },
             select: { id: true },
           });
@@ -593,7 +598,14 @@ export async function subscribeChatRun(
             return;
           }
           const events = await db.chatRunEvent.findMany({
-            where: { turnId: turn.id, sequence: { gt: cursor } },
+            where: {
+              turnId: turn.id,
+              sequence: { gt: cursor },
+              turn: {
+                threadId,
+                thread: { workspace: workspaceScopeWhere(options.workspace) },
+              },
+            },
             orderBy: { sequence: "asc" },
             take: 128,
           });
@@ -638,14 +650,24 @@ export async function subscribeChatRun(
     }),
   };
 }
-export async function cancelChatRun(threadId: string, turnId: string) {
+export async function cancelChatRun(
+  scope: WorkspaceScope,
+  threadId: string,
+  turnId: string,
+) {
+  const where = {
+    id: turnId,
+    threadId,
+    thread: { workspace: workspaceScopeWhere(scope) },
+  };
   const requested = await db.$transaction(async (tx) => {
     const claim = await tx.chatTurn.updateMany({
-      where: { id: turnId, threadId, status: "pending" },
+      where: { ...where, status: "pending" },
       data: { stopRequestedAt: new Date() },
     });
     if (!claim.count) return false;
-    const turn = await tx.chatTurn.findUniqueOrThrow({ where: { id: turnId } });
+    const turn = await tx.chatTurn.findFirst({ where });
+    if (!turn) return false;
     if (!turn.leaseToken) {
       await tx.chatRunEvent.create({
         data: {
@@ -655,12 +677,19 @@ export async function cancelChatRun(threadId: string, turnId: string) {
           payload: { type: "abort" },
         },
       });
-      await tx.chatTurn.update({
-        where: { id: turnId },
+      const updated = await tx.chatTurn.updateMany({
+        where,
         data: { status: "cancelled", completedAt: new Date() },
       });
+      if (!updated.count) throw new Error("Chat Run not found.");
       await tx.chatMessage.updateMany({
-        where: { turnId, role: "assistant", status: "pending" },
+        where: {
+          turnId,
+          threadId,
+          thread: { workspace: workspaceScopeWhere(scope) },
+          role: "assistant",
+          status: "pending",
+        },
         data: { status: "cancelled" },
       });
     }
@@ -687,14 +716,14 @@ export function chatRunHeaders(output: ChatRunOutput) {
 
 export async function getChatRunSnapshot(
   threadId: string,
-  options: { userId: string; workspaceId: string; runId?: string },
+  options: { workspace: WorkspaceScope; runId?: string },
 ) {
   await recoverStaleChatRuns(threadId);
   const turn = await db.chatTurn.findFirst({
     where: {
       threadId,
       ...(options.runId ? { id: options.runId } : {}),
-      thread: chatAccessWhere(options.userId, options.workspaceId),
+      thread: { workspace: workspaceScopeWhere(options.workspace) },
     },
     orderBy: { createdAt: "desc" },
     include: {

@@ -1,20 +1,24 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
+import { defineFailures, type FailureCodeOf } from "@/lib/errors/registry";
 import type { NotificationKind, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { normalizeAdminPage } from "@/lib/admin/pagination";
 import { db } from "@/lib/db";
 import { writeAudit } from "@/lib/observability/audit";
 
-export type NotificationErrorCode =
-  | "forbidden"
-  | "unavailable"
-  | "invalidContent"
-  | "invalidRecipients"
-  | "notFound";
+const notificationFailures = defineFailures({
+  forbidden: "You do not have permission to manage notifications.",
+  unavailable: "Notifications are unavailable.",
+  invalidContent: "The notification content is invalid.",
+  invalidRecipients: "The notification recipients are invalid.",
+  notFound: "The notification was not found.",
+});
+export type NotificationErrorCode = FailureCodeOf<typeof notificationFailures>;
 
 export class NotificationError extends Error {
   constructor(public readonly code: NotificationErrorCode) {
-    super(code);
+    super(notificationFailures.text(code));
     this.name = "NotificationError";
   }
 }
@@ -104,10 +108,7 @@ export async function publishNotification(
       const candidate = await tx.workspace.findFirst({
         where: {
           slug: scope.slug,
-          OR: [
-            { ownerId: actorId },
-            { members: { some: { userId: actorId, role: "admin" } } },
-          ],
+          ...workspaceAccessWhere(actorId, "manage"),
         },
         select: { id: true, name: true, status: true },
       });

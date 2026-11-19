@@ -40,6 +40,7 @@ import {
 
 import { QrPairingDisplay } from "@/components/dashboard/agents/QrPairingDisplay";
 import { notify } from "@/components/dashboard/Toaster";
+import { apiRequest } from "@/lib/client/api";
 import {
   ChannelAccessPanel,
   type ChannelAccessCommand,
@@ -122,7 +123,6 @@ type ChannelResponse = {
   connectionId?: string;
   upgraded?: number;
   skipped?: number;
-  error?: string;
 };
 
 function PlatformIcon({ platform }: { platform: string }) {
@@ -696,27 +696,22 @@ export function AgentMessagingPanel({
       busy.current += 1;
       setPending((count) => count + 1);
       setError("");
-      const operation = queue.current.then(async () => {
-        const response = await fetch(endpoint, {
+      const operation = queue.current.then(() =>
+        apiRequest<ChannelResponse>(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(command),
-        });
-        const data: ChannelResponse = await response.json();
-        if (data.connections) setConnections(data.connections);
-        if (!response.ok) throw new Error(data.error || requestFailed);
-        return data;
-      });
-      queue.current = operation.catch(() => {});
-      try {
-        return await operation;
-      } catch (error) {
-        setError(error instanceof Error ? error.message : requestFailed);
+          json: command,
+        }),
+      );
+      queue.current = operation;
+      const result = await operation;
+      busy.current -= 1;
+      setPending((count) => count - 1);
+      if (!result.ok) {
+        setError(result.message ?? requestFailed);
         return null;
-      } finally {
-        busy.current -= 1;
-        setPending((count) => count - 1);
       }
+      if (result.data.connections) setConnections(result.data.connections);
+      return result.data;
     },
     [endpoint, requestFailed],
   );
@@ -727,27 +722,23 @@ export function AgentMessagingPanel({
     const controller = new AbortController();
     async function refresh() {
       const version = revision.current;
-      try {
-        if (!busy.current && !document.hidden) {
-          const query = sandboxId
-            ? `?sandboxId=${encodeURIComponent(sandboxId)}`
-            : "";
-          const response = await fetch(`${endpoint}${query}`, {
-            cache: "no-store",
-            signal: controller.signal,
-          });
-          const data: ChannelResponse = await response.json();
-          if (!response.ok) throw new Error(data.error || requestFailed);
-          if (!cancelled) {
-            if (data.connections && version === revision.current)
-              setConnections(data.connections);
-            if (data.agents) setAgents(data.agents);
-            if (data.sandboxes) setSandboxes(data.sandboxes);
-          }
+      if (!busy.current && !document.hidden) {
+        const query = sandboxId
+          ? `?sandboxId=${encodeURIComponent(sandboxId)}`
+          : "";
+        const result = await apiRequest<ChannelResponse>(
+          `${endpoint}${query}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        if (cancelled) return;
+        if (!result.ok) setError(result.message ?? requestFailed);
+        else {
+          const data = result.data;
+          if (data.connections && version === revision.current)
+            setConnections(data.connections);
+          if (data.agents) setAgents(data.agents);
+          if (data.sandboxes) setSandboxes(data.sandboxes);
         }
-      } catch (error) {
-        if (!cancelled)
-          setError(error instanceof Error ? error.message : requestFailed);
       }
       if (!cancelled) timer = setTimeout(refresh, 3000);
     }

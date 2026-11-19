@@ -1,4 +1,8 @@
 import "server-only";
+import {
+  workspaceScopeWhere,
+  type WorkspaceScope,
+} from "@/lib/workspace/scope";
 import { db } from "@/lib/db";
 
 type Subscription = { workspaceId: string; userId: string; close: () => void };
@@ -33,19 +37,15 @@ export function observeWorkspaceStreamRevocation(
 
 export function workspaceAccessResponse(
   response: Response,
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope,
   signal: AbortSignal,
 ) {
   return response.body
-    ? new Response(
-        workspaceAccessStream(response.body, workspaceId, userId, signal),
-        {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-        },
-      )
+    ? new Response(workspaceAccessStream(response.body, scope, signal), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      })
     : response;
 }
 
@@ -53,10 +53,10 @@ export function workspaceAccessResponse(
 // made by another server process. A failed authorization check closes the stream.
 export function workspaceAccessStream(
   body: ReadableStream<Uint8Array>,
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope,
   signal: AbortSignal,
 ) {
+  const { id: workspaceId, actorUserId: userId } = scope;
   const reader = body.getReader();
   let close = () => {};
   return new ReadableStream<Uint8Array>({
@@ -82,11 +82,7 @@ export function workspaceAccessStream(
         checking = true;
         try {
           const accessible = await db.workspace.findFirst({
-            where: {
-              id: workspaceId,
-              status: "active",
-              OR: [{ ownerId: userId }, { members: { some: { userId } } }],
-            },
+            where: workspaceScopeWhere(scope),
             select: { id: true },
           });
           if (!accessible) close();

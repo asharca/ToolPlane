@@ -2,7 +2,7 @@ import "server-only";
 
 import { revalidatePath } from "next/cache";
 import { providerModelIds } from "@/lib/agents/model";
-import { setProviderModels } from "@/lib/agents/mutations";
+import { setProviderModels } from "@/lib/agents/provider-mutations";
 import {
   fetchProviderModels,
   type ProviderModelFetchConfig,

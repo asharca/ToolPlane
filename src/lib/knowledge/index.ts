@@ -6,6 +6,8 @@ import {
   type AgentToolSet,
 } from "@/lib/agents/agent-tool";
 import { db } from "@/lib/db";
+import { logSystemEvent } from "@/lib/observability/system";
+import { KnowledgeError, knowledgeFailures } from "./errors";
 
 const MAX_QUERY_LENGTH = 4_000;
 
@@ -24,9 +26,7 @@ export async function embed(
   input: string,
 ): Promise<number[]> {
   if (provider.format === "anthropic" || provider.format === "pi:anthropic") {
-    throw new Error(
-      "This provider does not expose an OpenAI-compatible embeddings endpoint.",
-    );
+    throw new KnowledgeError("KNOWLEDGE_PROVIDER_UNSUPPORTED");
   }
   const response = await fetch(
     `${provider.baseUrl.replace(/\/+$/, "")}/embeddings`,
@@ -42,8 +42,7 @@ export async function embed(
       signal: AbortSignal.timeout(30_000),
     },
   );
-  if (!response.ok)
-    throw new Error(`Embedding request failed (${response.status}).`);
+  if (!response.ok) throw new KnowledgeError("KNOWLEDGE_EMBEDDING_FAILED");
   const body = (await response.json()) as {
     data?: Array<{ embedding?: unknown }>;
   };
@@ -53,7 +52,7 @@ export async function embed(
     !vector.length ||
     vector.some((value) => typeof value !== "number")
   ) {
-    throw new Error("Embedding provider returned an invalid vector.");
+    throw new KnowledgeError("KNOWLEDGE_EMBEDDING_INVALID");
   }
   return vector;
 }
@@ -85,27 +84,30 @@ function vectorLiteral(vector: number[]) {
   return `[${vector.join(",")}]`;
 }
 
-export async function indexKnowledgeText(documentId: string, text: string) {
-  const document = await db.knowledgeDocument.findUnique({
-    where: { id: documentId },
+export async function indexKnowledgeText(
+  scope: Prisma.KnowledgeDocumentWhereInput,
+  text: string,
+) {
+  const document = await db.knowledgeDocument.findFirst({
+    where: scope,
     include: { knowledgeBase: { include: { provider: true } } },
   });
-  if (!document) throw new Error("Knowledge document not found.");
+  if (!document) throw new KnowledgeError("KNOWLEDGE_DOCUMENT_NOT_FOUND");
+  const where = { AND: [scope, { id: document.id }] };
   const provider = document.knowledgeBase.provider;
-  if (!provider) throw new Error("Configure an embedding provider first.");
   const chunks = splitKnowledgeText(
     text,
     document.knowledgeBase.chunkSize,
     document.knowledgeBase.chunkOverlap,
   );
-  if (!chunks.length)
-    throw new Error("The file does not contain indexable text.");
-
-  await db.knowledgeDocument.update({
-    where: { id: document.id },
+  const claimed = await db.knowledgeDocument.updateMany({
+    where,
     data: { status: "indexing", error: null },
   });
+  if (!claimed.count) throw new KnowledgeError("KNOWLEDGE_DOCUMENT_NOT_FOUND");
   try {
+    if (!provider) throw new KnowledgeError("KNOWLEDGE_PROVIDER_REQUIRED");
+    if (!chunks.length) throw new KnowledgeError("KNOWLEDGE_DOCUMENT_EMPTY");
     const vectors = await Promise.all(
       chunks.map((chunk) =>
         embed(provider, document.knowledgeBase.embeddingModel, chunk),
@@ -113,8 +115,14 @@ export async function indexKnowledgeText(documentId: string, text: string) {
     );
     const dimensions = vectors[0]?.length;
     if (!dimensions || vectors.some((vector) => vector.length !== dimensions))
-      throw new Error("Embedding dimensions are inconsistent.");
+      throw new KnowledgeError("KNOWLEDGE_EMBEDDING_INVALID");
     await db.$transaction(async (tx) => {
+      const updated = await tx.knowledgeDocument.updateMany({
+        where,
+        data: { status: "indexed", error: null },
+      });
+      if (!updated.count)
+        throw new KnowledgeError("KNOWLEDGE_DOCUMENT_NOT_FOUND");
       await tx.knowledgeChunk.deleteMany({
         where: { documentId: document.id },
       });
@@ -128,23 +136,24 @@ export async function indexKnowledgeText(documentId: string, text: string) {
         where: { id: document.knowledgeBaseId },
         data: { dimensions },
       });
-      await tx.knowledgeDocument.update({
-        where: { id: document.id },
-        data: { status: "indexed", error: null },
-      });
     });
   } catch (error) {
-    await db.knowledgeDocument.update({
-      where: { id: document.id },
-      data: {
-        status: "failed",
-        error:
-          error instanceof Error
-            ? error.message.slice(0, 500)
-            : "Indexing failed.",
-      },
+    const failure =
+      error instanceof KnowledgeError
+        ? error
+        : new KnowledgeError("KNOWLEDGE_INDEX_FAILED");
+    logSystemEvent("knowledge.documents.index_failed", {
+      error,
+      errorCode: failure.code,
+      workspaceId: document.knowledgeBase.workspaceId,
     });
-    throw error;
+    const updated = await db.knowledgeDocument.updateMany({
+      where,
+      data: { status: "failed", error: knowledgeFailures.text(failure.code) },
+    });
+    if (!updated.count)
+      throw new KnowledgeError("KNOWLEDGE_DOCUMENT_NOT_FOUND");
+    throw failure;
   }
 }
 

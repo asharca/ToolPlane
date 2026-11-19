@@ -1,4 +1,5 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { randomUUID } from "node:crypto";
 import type { AgentEvolutionRecord, Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -114,11 +115,7 @@ async function actorAuthorized(scope: Scope) {
     await db.workspace.findFirst({
       where: {
         id: scope.workspaceId,
-        status: "active",
-        OR: [
-          { ownerId: scope.actorId },
-          { members: { some: { userId: scope.actorId, role: "admin" } } },
-        ],
+        ...workspaceAccessWhere(scope.actorId, "manage"),
       },
     }),
   );

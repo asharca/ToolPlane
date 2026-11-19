@@ -32,6 +32,7 @@ import {
 } from "@/lib/workspace/runtime-files-actions";
 import { FilePathTree } from "./FilePathTree";
 import { McpSharedChangeConfirmation } from "./McpSharedChangeConfirmation";
+import { notify } from "./Toaster";
 
 type Draft = {
   /** A present id means the user explicitly revealed an existing file. */
@@ -126,7 +127,6 @@ export function RuntimeFilesEditor({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [revealError, setRevealError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<"saved" | "removed" | null>(null);
   const [isRevealing, startReveal] = useTransition();
   const [isSaving, startSave] = useTransition();
   const [isDeleting, startDelete] = useTransition();
@@ -159,17 +159,12 @@ export function RuntimeFilesEditor({
   const selectedFile =
     files.find((file) => file.id === selectedFileId) ?? files[0];
 
-  const clearMutationFeedback = () => {
-    setMutationError(null);
-    setNotice(null);
-  };
-
   const error = uploadError ?? revealError ?? mutationError;
 
   const revealFile = (file: RuntimeFileMetadata) => {
     setRevealError(null);
     setUploadError(null);
-    clearMutationFeedback();
+    setMutationError(null);
     startReveal(async () => {
       try {
         const result = await revealDeploymentRuntimeFileAction({
@@ -199,7 +194,7 @@ export function RuntimeFilesEditor({
     setDraft({ path: "", content: "", source: "new" });
     setUploadError(null);
     setRevealError(null);
-    clearMutationFeedback();
+    setMutationError(null);
   };
 
   const pickUpload = () => uploadInputRef.current?.click();
@@ -213,7 +208,7 @@ export function RuntimeFilesEditor({
 
     setUploadError(null);
     setRevealError(null);
-    clearMutationFeedback();
+    setMutationError(null);
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (bytes.includes(0)) {
@@ -241,7 +236,6 @@ export function RuntimeFilesEditor({
     const formData = new FormData(event.currentTarget);
     addImpactConfirmation(formData);
     setMutationError(null);
-    setNotice(null);
     startSave(async () => {
       try {
         const result = await upsertDeploymentRuntimeFileAction({}, formData);
@@ -272,7 +266,7 @@ export function RuntimeFilesEditor({
         setDraft(null);
         setUploadError(null);
         setRevealError(null);
-        setNotice("saved");
+        notify(t("runtimeFileSaved"));
       } catch {
         setMutationError(t("runtimeFileSaveFailed"));
       }
@@ -290,7 +284,6 @@ export function RuntimeFilesEditor({
     addImpactConfirmation(formData);
     setDeletingFileId(file.id);
     setMutationError(null);
-    setNotice(null);
     startDelete(async () => {
       try {
         const result = await deleteDeploymentRuntimeFileAction(formData);
@@ -307,7 +300,7 @@ export function RuntimeFilesEditor({
           current.filter((candidate) => candidate.id !== file.id),
         );
         setDraft((current) => (current?.fileId === file.id ? null : current));
-        setNotice("removed");
+        notify(t("runtimeFileRemoved"));
       } catch {
         setMutationError(t("runtimeFileRemoveFailed"));
       } finally {
@@ -496,7 +489,7 @@ export function RuntimeFilesEditor({
                 setDraft(null);
                 setUploadError(null);
                 setRevealError(null);
-                clearMutationFeedback();
+                setMutationError(null);
               }}
               disabled={isSaving || isDeleting}
               aria-label={t("closeRuntimeFileEditor")}
@@ -587,14 +580,6 @@ export function RuntimeFilesEditor({
                 >
                   {error}
                 </p>
-              ) : notice ? (
-                <p role="status">
-                  <AnimatedBadge status="success">
-                    {notice === "saved"
-                      ? t("runtimeFileSaved")
-                      : t("runtimeFileRemoved")}
-                  </AnimatedBadge>
-                </p>
               ) : null}
             </div>
             <Button
@@ -621,14 +606,6 @@ export function RuntimeFilesEditor({
               role="alert"
             >
               {error}
-            </p>
-          ) : notice ? (
-            <p role="status">
-              <AnimatedBadge status="success">
-                {notice === "saved"
-                  ? t("runtimeFileSaved")
-                  : t("runtimeFileRemoved")}
-              </AnimatedBadge>
             </p>
           ) : null}
         </div>

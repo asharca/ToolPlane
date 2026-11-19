@@ -2,10 +2,8 @@ import { withRequestLogging } from "@/lib/observability/http";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import {
-  ChatServiceError,
-  getChatThreadForExecution,
-} from "@/lib/chat/service";
+import { ChatServiceError } from "@/lib/chat/shared";
+import { getChatThreadForExecution } from "@/lib/chat/admission";
 import {
   listAttachedMcpPrompts,
   McpPromptRequestError,

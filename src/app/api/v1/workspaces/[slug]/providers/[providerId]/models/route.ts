@@ -1,6 +1,7 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { logSystemEvent } from "@/lib/observability/system";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { getProvider } from "@/lib/agents/queries";
 import { withRequestLogging } from "@/lib/observability/http";
 import {
@@ -20,7 +21,7 @@ export const POST = withRequestLogging(
     const user = await resolveRequestUser(req);
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
     const { slug, providerId } = await params;
-    const workspace = await getWorkspaceForUser(slug, user.id);
+    const workspace = await resolveWorkspaceScope({ slug }, user.id);
     if (!workspace)
       return Response.json({ error: "Workspace not found" }, { status: 404 });
     const provider = await getProvider(workspace.id, providerId);

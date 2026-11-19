@@ -32,6 +32,10 @@ import { narrowExternalSandboxAccess } from "@/lib/sandboxes/external";
 import { agentPermissionAdditions } from "./permission-additions";
 import { TERMINAL } from "@/lib/a2a/model";
 import { localTarget } from "@/lib/a2a/local-policy";
+import {
+  conversationEntryFilter,
+  matchesConversationEntry,
+} from "./entry-kinds";
 
 /** Only ingress contexts belonging to this exact session follow its explicit upgrade. */
 async function conversationEntryContexts(
@@ -44,23 +48,17 @@ async function conversationEntryContexts(
   },
   target: { id: string; version: number },
 ) {
+  const identity = {
+    conversation: conversation.id,
+    workSession: conversation.workSession?.id,
+  };
   const contexts = await tx.a2AContext.findMany({
     where: {
       workspaceId: input.workspaceId,
       agentId: input.agentId,
       targetKind: "local",
       entryBindings: {
-        some: {
-          OR: [
-            {
-              kind: { in: ["chat", "control", "channel", "trigger"] },
-              sourceId: conversation.id,
-            },
-            ...(conversation.workSession
-              ? [{ kind: "work", sourceId: conversation.workSession.id }]
-              : []),
-          ],
-        },
+        some: conversationEntryFilter(identity),
       },
     },
     select: {
@@ -77,13 +75,7 @@ async function conversationEntryContexts(
       !context.agentRevisionId ||
       (context.sandboxId && context.sandboxId !== conversation.sandboxId) ||
       context.entryBindings.some(
-        (entry) =>
-          !(
-            (["chat", "control", "channel", "trigger"].includes(entry.kind) &&
-              entry.sourceId === conversation.id) ||
-            (entry.kind === "work" &&
-              entry.sourceId === conversation.workSession?.id)
-          ),
+        (entry) => !matchesConversationEntry(entry, identity),
       )
     )
       throw new AgentConversationRevisionError("readOnly");

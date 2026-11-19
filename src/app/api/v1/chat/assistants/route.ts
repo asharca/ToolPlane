@@ -1,12 +1,13 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveAccountRequestUser } from "@/lib/auth/request-user";
 import { CreateChatAssistantSchema } from "@/lib/chat/schemas";
+import { ChatServiceError } from "@/lib/chat/shared";
 import {
-  ChatServiceError,
   createChatAssistant,
-  listChatAssistantsForUser,
-  listRunningChatThreadIds,
-} from "@/lib/chat/service";
+  listChatAssistantsForWorkspace,
+} from "@/lib/chat/assistants";
+import { listRunningChatThreadIds } from "@/lib/chat/admission";
 
 export const runtime = "nodejs";
 
@@ -30,19 +31,18 @@ export const GET = withRequestLogging(
         { status: 400 },
       );
     try {
+      const scope = await resolveWorkspaceScope({ id: workspaceId }, user.id);
+      if (!scope) throw new ChatServiceError(404, "Workspace not found");
       if (new URL(req.url).searchParams.get("running") === "1") {
         return Response.json(
           {
-            runningThreadIds: await listRunningChatThreadIds(
-              user.id,
-              workspaceId,
-            ),
+            runningThreadIds: await listRunningChatThreadIds(scope),
           },
           { headers: { "Cache-Control": "no-store" } },
         );
       }
       return Response.json({
-        assistants: await listChatAssistantsForUser(user.id, workspaceId),
+        assistants: await listChatAssistantsForWorkspace(scope),
       });
     } catch (error) {
       return failure(error);
@@ -68,7 +68,12 @@ export const POST = withRequestLogging(
         { status: 400 },
       );
     try {
-      const assistant = await createChatAssistant(user.id, parsed.data);
+      const scope = await resolveWorkspaceScope(
+        { id: parsed.data.workspaceId },
+        user.id,
+      );
+      if (!scope) throw new ChatServiceError(404, "Workspace not found");
+      const assistant = await createChatAssistant(scope, parsed.data);
       return Response.json({ assistant }, { status: 201 });
     } catch (error) {
       return failure(error);

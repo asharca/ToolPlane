@@ -1,4 +1,8 @@
 import "server-only";
+import {
+  type WorkspaceScope,
+  workspaceScopeWhere,
+} from "@/lib/workspace/scope";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -7,11 +11,7 @@ import { readMcpToolCatalog } from "@/lib/process/mcp-tool-catalog";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 import { removeAgentRevisionPackageInTransaction } from "@/lib/agents/revisions";
 import { readCapabilities, requiresReview } from "./capabilities";
-import {
-  PluginError,
-  requirePluginWorkspace,
-  visiblePluginWhere,
-} from "./catalog";
+import { PluginError, visiblePluginWhere } from "./catalog";
 import { syncInstallAgents } from "./agent-sync";
 
 export const pluginMcpBindingsSchema = z
@@ -100,15 +100,25 @@ function storedBindings(resourceMap: unknown): unknown {
 }
 
 export async function addPlugin(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope<"manage">,
   listingId: string,
   mcpBindings: PluginMcpBindings = {},
 ) {
+  const { id: workspaceId, actorUserId: userId } = scope;
   return db.$transaction(
     async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
-      await requirePluginWorkspace(workspaceId, userId, true, tx);
+      if (
+        !(await tx.workspace.findFirst({
+          where: workspaceScopeWhere(scope),
+          select: { id: true },
+        }))
+      )
+        throw new PluginError(
+          "not_authorized",
+          "Workspace access denied.",
+          403,
+        );
       const listing = await tx.marketListing.findFirst({
         where: {
           id: listingId,
@@ -167,16 +177,26 @@ export async function addPlugin(
 }
 
 export async function updatePlugin(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope<"manage">,
   installId: string,
   targetReleaseId: string,
   mcpBindings?: PluginMcpBindings,
 ) {
+  const { id: workspaceId, actorUserId: userId } = scope;
   const install = await db.$transaction(
     async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
-      await requirePluginWorkspace(workspaceId, userId, true, tx);
+      if (
+        !(await tx.workspace.findFirst({
+          where: workspaceScopeWhere(scope),
+          select: { id: true },
+        }))
+      )
+        throw new PluginError(
+          "not_authorized",
+          "Workspace access denied.",
+          403,
+        );
       const current = await tx.marketInstall.findFirst({
         where: {
           id: installId,
@@ -254,14 +274,24 @@ export async function updatePlugin(
 
 /** Uninstall narrows defaults; immutable revisions and existing sessions retain their pins. */
 export async function removePlugin(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope<"manage">,
   installId: string,
 ) {
+  const { id: workspaceId } = scope;
   return db.$transaction(
     async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
-      await requirePluginWorkspace(workspaceId, userId, true, tx);
+      if (
+        !(await tx.workspace.findFirst({
+          where: workspaceScopeWhere(scope),
+          select: { id: true },
+        }))
+      )
+        throw new PluginError(
+          "not_authorized",
+          "Workspace access denied.",
+          403,
+        );
       const install = await tx.marketInstall.findFirst({
         where: { id: installId, targetWorkspaceId: workspaceId },
       });

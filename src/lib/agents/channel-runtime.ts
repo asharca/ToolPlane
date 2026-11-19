@@ -8,6 +8,7 @@ import {
 import type { UIMessage } from "ai";
 import { db } from "@/lib/db";
 import { logSystemEvent } from "@/lib/observability/system";
+import { defineFailures } from "@/lib/errors/registry";
 import { decryptChannelCredentials } from "./channel-connections";
 import { hostedRunnerSpec } from "./platform-runner";
 import { getMessagingPlatform, missingStartCredentialNames } from "./platforms";
@@ -38,6 +39,11 @@ import type {
   ChannelStatusEvent,
   SendMessageOptions,
 } from "./channels/ChannelAdapter";
+
+const channelRuntimeFailures = defineFailures({
+  CHANNEL_CONNECTION_FAILED: "Channel connection failed.",
+  CHANNEL_DISCONNECTED: "Channel disconnected. Reconnecting…",
+});
 
 // Longer than every silent reply token, so a silent reply is never shown as progress.
 const STREAM_MIN_CHARS = 16;
@@ -273,9 +279,12 @@ async function start(
     adapter.on("statusChange", (event: ChannelStatusEvent) => {
       if (!current()) return;
       active.status = event.connected ? "running" : "starting";
+      if (event.error) log("error", event.error);
       update({
         status: active.status,
-        lastError: event.error ? log("error", event.error) : null,
+        lastError: event.error
+          ? channelRuntimeFailures.text("CHANNEL_DISCONNECTED")
+          : null,
       });
     });
     adapter.on("fatal", (message: string) => {
@@ -283,7 +292,8 @@ async function start(
       active.cleanup();
       runners().delete(connectionId);
       void adapter.disconnect().catch(() => {});
-      const error = log("error", message);
+      log("error", message);
+      const error = channelRuntimeFailures.text("CHANNEL_CONNECTION_FAILED");
       void active.pendingWrite
         .then(() =>
           runners().has(connectionId)
@@ -742,10 +752,13 @@ async function start(
       runners().delete(connectionId);
     await state?.adapter.disconnect().catch(() => {});
     await state?.pendingWrite;
-    const message = log(
-      "error",
-      error instanceof Error ? error.message : "Channel connection failed.",
-    );
+    logSystemEvent("channel.runner.start_failed", {
+      domain: "channel",
+      channelId: connectionId,
+      workspaceId,
+      error,
+    });
+    const message = channelRuntimeFailures.text("CHANNEL_CONNECTION_FAILED");
     await db.agentChannelConnection.updateMany({
       where: { id: connectionId, workspaceId },
       data: { status: "error", runnerPid: null, lastError: message },

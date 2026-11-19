@@ -1,4 +1,5 @@
 import "server-only";
+import type { WorkspaceScope } from "@/lib/workspace/scope";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
@@ -31,36 +32,6 @@ export function pluginReleaseLabel(release: {
   return String(release.version);
 }
 
-export async function requirePluginWorkspace(
-  workspaceId: string,
-  userId: string,
-  mutate = false,
-  client: Prisma.TransactionClient = db,
-) {
-  const workspace = await client.workspace.findFirst({
-    where: {
-      id: workspaceId,
-      status: "active",
-      OR: [
-        { ownerId: userId, owner: { status: "active" } },
-        {
-          members: {
-            some: {
-              userId,
-              user: { status: "active" },
-              ...(mutate ? { role: { in: ["owner", "admin"] } } : {}),
-            },
-          },
-        },
-      ],
-    },
-    select: { id: true },
-  });
-  if (!workspace)
-    throw new PluginError("not_authorized", "Workspace access denied.", 403);
-  return workspace;
-}
-
 export function visiblePluginWhere(
   workspaceId: string,
 ): Prisma.MarketListingWhereInput {
@@ -91,11 +62,11 @@ const sourceSelect = {
 } as const;
 
 export async function listPlugins(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope,
   options: { sourceId?: string; query?: string; installedOnly?: boolean } = {},
 ) {
-  await requirePluginWorkspace(workspaceId, userId);
+  const { id: workspaceId } = scope;
+
   const listings = await db.marketListing.findMany({
     where: {
       ...visiblePluginWhere(workspaceId),
@@ -181,11 +152,11 @@ export async function listPlugins(
 
 /** Catalog-only enrichment; selectors and badge APIs retain the lightweight list. */
 export async function listPluginCards(
-  workspaceId: string,
-  userId: string,
-  options: Parameters<typeof listPlugins>[2] = {},
+  scope: WorkspaceScope,
+  options: Parameters<typeof listPlugins>[1] = {},
 ) {
-  const catalog = await listPlugins(workspaceId, userId, options);
+  const { id: workspaceId } = scope;
+  const catalog = await listPlugins(scope, options);
   const installIds = catalog.items.flatMap((item) =>
     item.install ? [item.install.id] : [],
   );
@@ -239,12 +210,9 @@ export async function listPluginCards(
   return { ...catalog, items };
 }
 
-export async function getPlugin(
-  workspaceId: string,
-  userId: string,
-  listingId: string,
-) {
-  await requirePluginWorkspace(workspaceId, userId);
+export async function getPlugin(scope: WorkspaceScope, listingId: string) {
+  const { id: workspaceId } = scope;
+
   const plugin = await db.marketListing.findFirst({
     where: {
       id: listingId,

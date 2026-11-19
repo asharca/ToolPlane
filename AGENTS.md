@@ -33,24 +33,45 @@ The application keeps its root `README.md` and CI-generated `CHANGELOG.md`.
   entries manually; update relevant documentation separately when needed.
 - Avoid unnecessary secondary labels and descriptions. Let the layout do the explaining.
 
+## Correcting mistakes
+
+Agents copy what the codebase already does and take the shortest path. When a
+correction, rework, or review finding exposes a repeatable mistake, fix it at the
+highest layer that can hold it, in this order:
+
+1. **Code**: types, invariants, boundaries, and one paved path that make the wrong
+   version unwritable (for example, a shared helper that enforces the policy).
+2. **Static checks**: `tsc`, Biome rules, or a database-free test that scans source;
+   these run in `pnpm check` and cost no review attention.
+3. **Prose**: this file, [LESSONS.md](LESSONS.md), skills, and comments, only for
+   judgment a machine cannot check.
+4. **Human review**: last resort; it does not scale to agent throughput.
+
+When a shared path replaces a convention, migrate every caller and delete the old
+variant and its duplicated checks. Do not leave comments that explain a workaround
+or "temporary" shortcut: fix the cause or add a check. Agents copy them.
+
 ## Lessons learned
 
 Before changing code, read [LESSONS.md](LESSONS.md) and apply the relevant lessons.
 When a user correction, rework, regression, or verification gap reveals a reusable
-lesson, update that notebook in the same change with evidence and the check that
-would have caught it. Merge duplicate causes; do not invent incidents or counts.
-Follow its promotion rules for recurring lessons; keep durable guidance here or
-in the relevant subsystem document rather than duplicating it.
+lesson, update that notebook in the same change with evidence, the check that would
+have caught it, and the enforcement layer above. Merge duplicate causes; do not
+invent incidents or counts. Follow its promotion rules for recurring lessons.
 
 ## Security invariants
 
-- Verify workspace ownership on every workspace-scoped query and mutation,
-  including gateway calls, manifests, toolkits, and agent tools.
+- Resolve workspace authority with `resolveWorkspaceScope` (or `actionScope`
+  in server actions). Include `workspaceScopeWhere(scope)` or the appropriate
+  shared access predicate in the final workspace-scoped read or write. Do not
+  widen a manage-only operation to ordinary membership.
 - Persist a chat turn only if its conversation belongs to the agent in the URL.
 - Preserve the route's auth policy: `resolveRequestUser()` accepts personal API tokens
   and session cookies, never Toolkit tokens; Toolkit endpoints use
   `resolveRequestPrincipal()` and intersect the token scope with the query; agent-control
   MCP requires an account-level Bearer token, never a cookie or toolkit token.
+  `resolveRequestPrincipal()` accepts a session cookie for unsafe methods only from
+  the app origin; do not duplicate that check per route or read cookies around it.
   See `src/lib/auth/request-user.ts` before choosing an auth helper.
 - Public Agent endpoints must not expose container APIs/dashboards, runtime
   tokens, provider keys, or MCP runtime tokens. Agent containers must not receive
@@ -153,9 +174,11 @@ sandboxes, and agents. Route groups do not appear in URLs:
 | Toolkit retirement and client registration | `src/lib/toolkits/cutover.ts`; [runtime operations](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS); `src/lib/plugins/installs.ts`. Legacy execution/tokens are retired; conversion does not grant new authority. |
 | GitHub Plugin Center | `src/lib/plugins/github.ts`, `indexer.ts`, `sources.ts`; [GitHub plugin center](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS#user-content-github-插件中心). Catalog contents only come from indexed fixed GitHub commits; preserve immutable pins and workspace-private authoring/uploads. No manual catalog publish/ZIP/npm intake paths. |
 | Agent revisions and turns | `src/lib/agents/revisions.ts`, `sandbox-turn.ts`, `conversation-sandbox.ts`; Pi (`pi-sdk`) is the only executable kernel. OMP and other retired runtimes retain read-only history. Sessions pin applied revisions and own separate directories in one persistent sandbox per Agent; package pins remain conversation/context-scoped. |
-| Assistant chat and tools | `src/lib/chat/service.ts`, `run-control.ts`, `tools.ts`; independent Assistant revisions and durable Runs, remote MCP only, no Agent/Skill/package/stdio/A2A execution. |
+| Assistant chat and tools | `src/lib/chat/assistants.ts`, `threads.ts`, `admission.ts`, `run-control.ts`, `tools.ts`; independent Assistant revisions and durable Runs, remote MCP only, no Agent/Skill/package/stdio/A2A execution. |
 | Agent chat and tools | `src/app/api/v1/agents/[agentId]/chat/route.ts`; `src/lib/agents/resolve.ts`, `tools.ts`, `mutations.ts` |
+| Console JSON requests | `src/lib/client/api.ts`; use `apiRequest` and a translated fallback. Native `fetch` is reserved for stream, upload, and binary paths listed in `scripts/check-invariants.mjs`. |
 | Sandboxes and PTY | [Sandboxes](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/SANDBOXES); conversation-scoped routes under `src/app/api/v1/agents/[agentId]/conversations/[conversationId]/` |
+| Work lifecycle and conversation display | `src/lib/work/lifecycle.ts`, `state-machine.ts`; `src/lib/conversation/content-projection.ts` is shared by live, saved, and exported output. |
 | Messaging channels | [Messaging platforms](https://asharca.github.io/toolplane-docs/docs/zh/guides/docs/AGENT_MESSAGING_PLATFORMS); `src/lib/agents/channel-*.ts` |
 | Public agent API | [Agent public API](https://asharca.github.io/toolplane-docs/docs/zh/api/docs/AGENT_PUBLIC_API); `src/lib/agents/public-api/` |
 | Workspace control MCP | [Agent Control MCP](https://asharca.github.io/toolplane-docs/docs/zh/api/docs/AGENT_CONTROL_MCP); `src/lib/agents/control-mcp.ts`, `control-service.ts`; creation accepts `pi-sdk` and produces an unauthorized draft requiring explicit revision review/application. |
@@ -171,8 +194,9 @@ tool-source deduplication, and A2A depth/cycle guards. Assistant Run persistence
 confirmation recovery and subscription lifecycles remain separate.
 A tool error the model can read (non-zero exit, MCP error result) is a failed tool
 result, never a failed turn: it must not fail the run, its persisted status, or the
-process summary, and a failed turn still saves its session history.
-Failures reaching users, peers, or models carry a fixed, allowlisted reason code and
+process summary, and a failed turn still saves its session history. The model
+receives the tool's original error text so it can correct itself. Failures reaching
+users, peers, or persisted run/turn status carry a fixed, allowlisted reason code and
 safe text; never collapse them into a generic error or forward raw exception strings.
 Trust current code over stale architecture descriptions.
 Runtime mutations require the single-owner guard; read [runtime operations](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS)

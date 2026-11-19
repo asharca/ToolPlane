@@ -1,3 +1,4 @@
+import { testWorkspaceScope } from "../helpers/workspace-scope";
 // @vitest-environment node
 import { assertDefined } from "../assert-defined";
 import { createHash, randomUUID } from "node:crypto";
@@ -16,6 +17,10 @@ import {
 import { addPlugin, updatePlugin } from "@/lib/plugins/installs";
 import { computePluginCapabilities } from "@/lib/plugins/capabilities";
 import { approveAgentPluginSync } from "@/lib/plugins/agent-sync";
+import {
+  PI_HOST_ENTRY,
+  PI_HOST_FILES,
+} from "@/lib/agents/sandbox-runtime/pi-host-files";
 import { createAgent } from "@/lib/agents/mutations";
 import { resolveAgentPiPackages } from "@/lib/agents/resolve";
 import { AGENT_PI_PACKAGES_INCLUDE } from "@/lib/agents/pi-package-includes";
@@ -895,11 +900,11 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
       slug: "runtime",
       name: "Frozen runtime",
     });
-    const install = await addPlugin(
-      workspace.id,
-      user.id,
-      published.listing.id,
-    );
+    const install = await (async () =>
+      addPlugin(
+        await testWorkspaceScope(workspace.id, user.id, "manage"),
+        published.listing.id,
+      ))();
     const installed = { install };
     const agent = await createAgent(workspace.id, "Frozen SDK", {
       runtime: "pi-sdk",
@@ -944,17 +949,7 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
       "toolplane-pi-package-capture:1.5.2",
       "infinity",
     ]);
-    for (const file of [
-      "pi-sdk-session.mjs",
-      "native-session-paths.mjs",
-      "pi-sdk-capabilities.mjs",
-      "pi-sdk-ui.mjs",
-      "pi-desktop-tools.mjs",
-      "pi-sdk-advisor.mjs",
-      "pi-sdk-context.mjs",
-      "pi-sdk-native-resources.mjs",
-      "pi-sdk-package-files.mjs",
-    ])
+    for (const file of PI_HOST_FILES)
       await exec("docker", [
         "cp",
         `scripts/${file}`,
@@ -1093,7 +1088,7 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
           container,
           "node",
           "-e",
-          `const c=require('child_process').spawn('node',['/tmp/pi-sdk-session.mjs','/tmp/private/config.json'],{stdio:['pipe','ignore','inherit','pipe']});process.stdin.pipe(c.stdin);c.stdio[3].pipe(process.stdout,{end:false});c.once('error',e=>{console.error(e);process.exit(1)});c.once('close',code=>{process.stdin.destroy();process.stdout.end(()=>process.exit(code??1))});c.stdin.on('error',()=>{});process.stdin.on('end',()=>c.kill());process.on('SIGTERM',()=>c.kill());`,
+          `const c=require('child_process').spawn('node',['/tmp/${PI_HOST_ENTRY}','/tmp/private/config.json'],{stdio:['pipe','ignore','inherit','pipe']});process.stdin.pipe(c.stdin);c.stdio[3].pipe(process.stdout,{end:false});c.once('error',e=>{console.error(e);process.exit(1)});c.once('close',code=>{process.stdin.destroy();process.stdout.end(()=>process.exit(code??1))});c.stdin.on('error',()=>{});process.stdin.on('end',()=>c.kill());process.on('SIGTERM',()=>c.kill());`,
         ],
         { stdio: ["pipe", "pipe", "pipe"] },
       );
@@ -1242,12 +1237,12 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
       slug: "runtime",
       name: "Frozen runtime",
     });
-    await updatePlugin(
-      workspace.id,
-      user.id,
-      installed.install.id,
-      v2.release.id,
-    );
+    await (async () =>
+      updatePlugin(
+        await testWorkspaceScope(workspace.id, user.id, "manage"),
+        installed.install.id,
+        v2.release.id,
+      ))();
     expect((await packages())[0].releaseId).toBe(published.release.id);
     expect(
       await db.agentPiPackage.findUniqueOrThrow({
@@ -1268,13 +1263,13 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
     });
     await stop();
     expect(
-      await approveAgentPluginSync(
-        workspace.id,
-        user.id,
-        agent.id,
-        installed.install.id,
-        v2.release.id,
-      ),
+      await (async () =>
+        approveAgentPluginSync(
+          await testWorkspaceScope(workspace.id, user.id, "manage"),
+          agent.id,
+          installed.install.id,
+          v2.release.id,
+        ))(),
     ).toMatchObject({
       releaseId: v2.release.id,
       syncStatus: "synced",

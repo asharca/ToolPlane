@@ -28,16 +28,16 @@ import {
 } from "@/lib/observability/a2a-log";
 import type { LogOutcome } from "@/lib/observability/events";
 import { taskFileLimitError } from "./file-limits";
+import { a2aFailures, type A2AReason } from "./errors";
 
 export const REMOTE_RESPONSE_BYTES = 524_288;
 export const REMOTE_REQUEST_BYTES = 262_144;
 export class RemoteA2AError extends Error {
   constructor(
-    message = "The remote Agent request could not be verified or completed.",
+    readonly code: A2AReason,
     readonly httpStatus?: number,
-    readonly reason?: "NETWORK_BLOCKED",
   ) {
-    super(message);
+    super(a2aFailures.text(code));
   }
 }
 const blocked = new BlockList();
@@ -85,7 +85,7 @@ export function remoteUrl(
   try {
     url = new URL(value);
   } catch {
-    throw new RemoteA2AError("Invalid remote HTTPS address.");
+    throw new RemoteA2AError("INVALID_REMOTE_URL");
   }
   if (
     value !== value.trim() ||
@@ -96,15 +96,13 @@ export function remoteUrl(
     url.search ||
     url.hash
   ) {
-    throw new RemoteA2AError(
-      "Remote addresses require HTTPS without credentials, query or fragment.",
-    );
+    throw new RemoteA2AError("REMOTE_URL_RESTRICTED");
   }
   let allowed: unknown;
   try {
     allowed = JSON.parse(runtimeEnv("TOOLPLANE_A2A_REMOTE_ORIGINS") || "[]");
   } catch {
-    throw new RemoteA2AError("Configure the remote Agent origin allowlist.");
+    throw new RemoteA2AError("REMOTE_ALLOWLIST_REQUIRED");
   }
   if (
     !Array.isArray(allowed) ||
@@ -112,15 +110,11 @@ export function remoteUrl(
     !allowed.every((origin) => typeof origin === "string") ||
     !allowed.includes(url.origin)
   ) {
-    throw new RemoteA2AError(
-      "The deployment administrator has not allowed this remote origin.",
-    );
+    throw new RemoteA2AError("REMOTE_ORIGIN_FORBIDDEN");
   }
   const host = url.hostname.replace(/^\[|\]$/g, "");
   if (isIP(host) && !publicRemoteAddress(host))
-    throw new RemoteA2AError(
-      "Private or reserved remote addresses are not allowed.",
-    );
+    throw new RemoteA2AError("REMOTE_ADDRESS_FORBIDDEN");
   return url;
 }
 export function remotePair(
@@ -131,9 +125,7 @@ export function remotePair(
   const card = remoteUrl(cardUrl, policy),
     rpc = remoteUrl(rpcUrl, policy);
   if (card.origin !== rpc.origin || card.href === rpc.href)
-    throw new RemoteA2AError(
-      "Card and RPC addresses must be distinct paths on the same approved origin.",
-    );
+    throw new RemoteA2AError("REMOTE_PATHS_INVALID");
   return { cardUrl: card.href, rpcUrl: rpc.href };
 }
 async function addresses(
@@ -147,7 +139,7 @@ async function addresses(
   let abort: () => void = () => undefined;
   const aborted = new Promise<never>((_, reject) => {
     abort = () => {
-      const error = new RemoteA2AError();
+      const error = new RemoteA2AError("REMOTE_REQUEST_FAILED");
       error.cause = signal.reason;
       reject(error);
     };
@@ -177,11 +169,7 @@ async function addresses(
           ),
       )
     )
-      throw new RemoteA2AError(
-        "Remote DNS resolved to a prohibited address.",
-        undefined,
-        "NETWORK_BLOCKED",
-      );
+      throw new RemoteA2AError("NETWORK_BLOCKED");
     return result[0];
   } finally {
     signal.removeEventListener("abort", abort);
@@ -347,7 +335,7 @@ export async function fetchPublicWebText(
     if (signal?.aborted) throw new PublicWebFetchError("WEB_TOOL_CANCELLED");
     if (timeout.aborted) throw new PublicWebFetchError("WEB_TOOL_TIMEOUT");
     if (error instanceof PublicWebFetchError) throw error;
-    if (error instanceof RemoteA2AError && error.reason === "NETWORK_BLOCKED")
+    if (error instanceof RemoteA2AError && error.code === "NETWORK_BLOCKED")
       throw new PublicWebFetchError("WEB_FETCH_NETWORK_BLOCKED");
     // Preserve the caller's reauthorization failure; the web tool boundary
     // converts other transport exceptions to its fixed safe failure code.
@@ -374,9 +362,9 @@ async function fetchPinnedRemoteJson(
     Buffer.byteLength(body) >
       Math.max(REMOTE_REQUEST_BYTES, a2aTransportBodyBytes(policy))
   )
-    throw new RemoteA2AError("Remote request size limit exceeded.");
+    throw new RemoteA2AError("REMOTE_REQUEST_TOO_LARGE");
   if (token && (!/^[\x21-\x7e]+$/.test(token) || token.length > 8192))
-    throw new RemoteA2AError("Invalid remote credential.");
+    throw new RemoteA2AError("INVALID_REMOTE_CREDENTIAL");
   const abortSignal = AbortSignal.any([
     AbortSignal.timeout(15_000),
     ...(signal ? [signal] : []),
@@ -387,7 +375,7 @@ async function fetchPinnedRemoteJson(
   return new Promise<Response>((resolve, reject) => {
     let httpStatus: number | undefined;
     const fail = () => {
-      const error = new RemoteA2AError(undefined, httpStatus);
+      const error = new RemoteA2AError("REMOTE_REQUEST_FAILED", httpStatus);
       if (abortSignal.aborted) error.cause = abortSignal.reason;
       reject(error);
     };
@@ -483,7 +471,7 @@ export function remoteRpcFetch(
     const policy = await getTransportSettings();
     const approvedUrl = remoteUrl(rpcUrl, policy).href;
     if (req.url !== approvedUrl || req.method !== "POST")
-      throw new RemoteA2AError("Remote transport target changed.");
+      throw new RemoteA2AError("REMOTE_TARGET_CHANGED");
     const started = performance.now();
     let rpc: unknown, requestPayload: unknown, responsePayload: unknown;
     let rpcMethod = "unknown",
@@ -523,10 +511,7 @@ export function remoteRpcFetch(
         responsePayload = JSON.parse(text);
         validateRemoteResponse(rpc, responsePayload, policy);
       } catch {
-        throw new RemoteA2AError(
-          "Remote output is not a valid supported A2A response.",
-          httpStatus,
-        );
+        throw new RemoteA2AError("INVALID_REMOTE_RESPONSE", httpStatus);
       }
       const envelope = responsePayload as {
         error?: { code: number };
@@ -591,8 +576,7 @@ let inflight = 0;
 export async function fetchRemoteJson(
   ...args: Parameters<typeof fetchPinnedRemoteJson>
 ): Promise<Response> {
-  if (inflight >= 16)
-    throw new RemoteA2AError("Remote connection capacity reached.");
+  if (inflight >= 16) throw new RemoteA2AError("REMOTE_CAPACITY");
   inflight++;
   try {
     return await fetchPinnedRemoteJson(...args);
@@ -610,7 +594,7 @@ export function remoteFileUrl(
   try {
     url = new URL(value);
   } catch {
-    throw new RemoteA2AError("Invalid file HTTPS address.");
+    throw new RemoteA2AError("INVALID_FILE_URL");
   }
   if (
     value !== value.trim() ||
@@ -621,9 +605,7 @@ export function remoteFileUrl(
     url.password ||
     url.hash
   )
-    throw new RemoteA2AError(
-      "File addresses require HTTPS without credentials or fragment.",
-    );
+    throw new RemoteA2AError("FILE_URL_RESTRICTED");
   return url;
 }
 /** Stream bytes directly to storage. No redirects, auth forwarding, proxy, or payload logging. */
@@ -633,8 +615,7 @@ export async function fetchRemoteFile(
 ): Promise<ReadableStream<Uint8Array>> {
   const policy = await getTransportSettings();
   const url = remoteFileUrl(value, policy);
-  if (inflight >= 16)
-    throw new RemoteA2AError("Remote connection capacity reached.");
+  if (inflight >= 16) throw new RemoteA2AError("REMOTE_CAPACITY");
   inflight++;
   let released = false;
   const release = () => {
@@ -694,7 +675,7 @@ export async function fetchRemoteFile(
           (res.headers["content-encoding"] &&
             res.headers["content-encoding"] !== "identity")
         ) {
-          refuse(new RemoteA2AError("File download was rejected."));
+          refuse(new RemoteA2AError("FILE_DOWNLOAD_REJECTED"));
           return;
         }
         if (Number(res.headers["content-length"]) > policy.a2aFileBytes) {
@@ -712,7 +693,7 @@ export async function fetchRemoteFile(
                 controller.error(error);
               }
             };
-            const fail = () => end(new RemoteA2AError("File download failed."));
+            const fail = () => end(new RemoteA2AError("FILE_DOWNLOAD_FAILED"));
             res.on("data", (chunk: Buffer) => {
               if (ended) return;
               bytes += chunk.byteLength;
@@ -755,7 +736,7 @@ export async function fetchRemoteFile(
     );
     req.on("error", () => {
       release();
-      reject(new RemoteA2AError("File download failed."));
+      reject(new RemoteA2AError("FILE_DOWNLOAD_FAILED"));
     });
     req.end();
     return await promise;

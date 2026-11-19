@@ -1,11 +1,11 @@
 import { z } from "zod";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
+import { ChatServiceError } from "@/lib/chat/shared";
 import {
-  ChatServiceError,
   previewChatThreadRevisionUpgrade,
   upgradeChatThreadRevision,
-} from "@/lib/chat/service";
+} from "@/lib/chat/threads";
 
 export const runtime = "nodejs";
 

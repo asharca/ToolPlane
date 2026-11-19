@@ -1,9 +1,10 @@
 "use server";
 
+import { actionScope } from "@/lib/workspace/action-scope";
 import { logSystemEvent } from "@/lib/observability/system";
 import { revalidatePath } from "next/cache";
 import { getTranslations } from "next-intl/server";
-import { requireAdmin } from "@/lib/auth/admin";
+
 import { refreshAgentExecutionLimits } from "@/lib/agents/agent-execution-gate";
 import {
   MAX_ADMIN_ATTACHMENT_MEGABYTES,
@@ -48,7 +49,7 @@ export async function updateAgentConcurrencySettingsAction(
   _prev: AdminSettingsActionState,
   formData: FormData,
 ): Promise<AdminSettingsActionState> {
-  const admin = await requireAdmin();
+  const admin = await actionScope({ admin: true });
   const t = await getTranslations("admin");
   try {
     if (formData.get("intent") === "reset") {
@@ -86,7 +87,7 @@ export async function updateAgentSandboxAutoStopSettingsAction(
   _prev: AdminSettingsActionState,
   formData: FormData,
 ): Promise<AdminSettingsActionState> {
-  const admin = await requireAdmin();
+  const admin = await actionScope({ admin: true });
   const t = await getTranslations("admin");
   try {
     if (formData.get("intent") === "reset") {
@@ -112,7 +113,7 @@ export async function updateAgentAttachmentLimitAction(
   _prev: AdminSettingsActionState,
   formData: FormData,
 ): Promise<AdminSettingsActionState> {
-  const admin = await requireAdmin();
+  const admin = await actionScope({ admin: true });
   const t = await getTranslations("admin");
 
   try {
@@ -150,7 +151,7 @@ export async function updateSkillImportLimitAction(
   _prev: AdminSettingsActionState,
   formData: FormData,
 ): Promise<AdminSettingsActionState> {
-  const admin = await requireAdmin();
+  const admin = await actionScope({ admin: true });
   const t = await getTranslations("admin");
   const maxSkills = parseWholeNumber(formData, "skillImportMaxSkills");
   if (!isValidSkillImportMaxSkills(maxSkills)) {
@@ -180,7 +181,7 @@ export async function updateMcpStartupTimeoutSettingsAction(
   _prev: AdminSettingsActionState,
   formData: FormData,
 ): Promise<AdminSettingsActionState> {
-  const admin = await requireAdmin();
+  const admin = await actionScope({ admin: true });
   const t = await getTranslations("admin");
 
   try {
@@ -231,7 +232,7 @@ export async function updatePrivateHostsSettingsAction(
   _prev: AdminSettingsActionState,
   formData: FormData,
 ): Promise<AdminSettingsActionState> {
-  const admin = await requireAdmin();
+  const admin = await actionScope({ admin: true });
   const t = await getTranslations("admin");
 
   try {

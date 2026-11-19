@@ -1,8 +1,8 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { isSameOriginRequest } from "@/lib/http/origin";
 import { ORDINARY_AGENT_FILTER } from "./queries";
 import { parseJson } from "./public-api/body";
 import { AgentApiError } from "./public-api/errors";
@@ -100,24 +100,19 @@ export async function handleAgentAutomation(
     where: {
       id: agentId,
       ...ORDINARY_AGENT_FILTER,
-      workspace: {
-        status: "active",
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
-      },
+      workspace: workspaceAccessWhere(user.id),
     },
     include: {
       workspace: { include: { members: { where: { userId: user.id } } } },
     },
   });
   if (!agent) return jsonError("Not found", 404);
-  if (req.method !== "GET") {
-    if (
-      (!req.headers.has("authorization") && !isSameOriginRequest(req)) ||
-      (agent.workspace.ownerId !== user.id &&
-        !agent.workspace.members.some((m) => m.role === "admin"))
-    )
-      return jsonError("Forbidden", 403);
-  }
+  if (
+    req.method !== "GET" &&
+    agent.workspace.ownerId !== user.id &&
+    !agent.workspace.members.some((m) => m.role === "admin")
+  )
+    return jsonError("Forbidden", 403);
   if (action === "usage") {
     const range = usageRange(req);
     if (!range) return jsonError("INVALID_DAYS", 400);
@@ -363,8 +358,7 @@ export async function handleWorkspaceAgentUsage(req: Request, slug: string) {
   const workspace = await db.workspace.findFirst({
     where: {
       slug,
-      status: "active",
-      OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+      ...workspaceAccessWhere(user.id),
     },
   });
   if (!workspace) return jsonError("Not found", 404);

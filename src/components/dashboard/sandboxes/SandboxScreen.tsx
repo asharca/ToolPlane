@@ -1,5 +1,6 @@
 "use client";
 
+import { apiRequest } from "@/lib/client/api";
 import { Checkbox } from "@/components/motion/checkbox";
 
 import { Button } from "@/components/motion/button";
@@ -136,14 +137,13 @@ export function SandboxScreen({
     );
     void (async () => {
       try {
-        const response = await fetch(`${apiBase}/sessions`, {
+        const response = await apiRequest(`${apiBase}/sessions`, {
           method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ displayId: selectedDisplayId }),
+          json: { displayId: selectedDisplayId },
           signal: controller.signal,
         });
         if (!response.ok) throw new Error(String(response.status));
-        const session = (await response.json()) as RfbSession;
+        const session = response.data as RfbSession;
         if (!session.viewerUrl || !rfbTarget.current)
           throw new Error("missing viewer URL");
         const { default: RFB } = await import("@novnc/novnc");
@@ -207,10 +207,9 @@ export function SandboxScreen({
     const sessionId = rfbSessionId.current;
     if (rfbStatus !== "connected" || !rfbConnected.current || !sessionId)
       return;
-    void fetch(`${apiBase}/control`, {
+    void apiRequest(`${apiBase}/control`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionId, control: !viewOnly }),
+      json: { sessionId, control: !viewOnly },
     }).catch(() => {
       // Control synchronization must not interrupt the viewer or show repeated toasts.
     });

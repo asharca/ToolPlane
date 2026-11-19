@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button } from "@/components/motion/button";
 import { revisionChangeLines } from "@/components/dashboard/RevisionUpgradeNotice";
+import { apiRequest } from "@/lib/client/api";
 import type { RevisionChangelogPage } from "@/lib/revisions/upgrade-diff";
 import { RevisionDiffLoader } from "./RevisionFileDiff";
 
@@ -40,24 +41,21 @@ export function RevisionChangelog({
     async (beforeVersion?: number) => {
       setBusy(true);
       setError(null);
-      try {
-        const query = beforeVersion ? `?beforeVersion=${beforeVersion}` : "";
-        const response = await fetch(`${url}${query}`);
-        const body = (await response.json().catch(() => ({}))) as Partial<
-          RevisionChangelogPage & { error: string }
-        >;
-        if (!response.ok || !body.entries) throw new Error(t("loadFailed"));
-        const next = body as RevisionChangelogPage;
-        setPage((previous) =>
-          beforeVersion && previous
-            ? { ...next, entries: [...previous.entries, ...next.entries] }
-            : next,
-        );
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : t("loadFailed"));
-      } finally {
-        setBusy(false);
+      const query = beforeVersion ? `?beforeVersion=${beforeVersion}` : "";
+      const result = await apiRequest<Partial<RevisionChangelogPage>>(
+        `${url}${query}`,
+      );
+      setBusy(false);
+      if (!result.ok || !result.data?.entries) {
+        setError((!result.ok && result.message) || t("loadFailed"));
+        return;
       }
+      const next = result.data as RevisionChangelogPage;
+      setPage((previous) =>
+        beforeVersion && previous
+          ? { ...next, entries: [...previous.entries, ...next.entries] }
+          : next,
+      );
     },
     [url, t],
   );

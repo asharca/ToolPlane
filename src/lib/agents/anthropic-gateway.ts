@@ -13,11 +13,19 @@ import type {
   ToolCall,
 } from "@earendil-works/pi-ai";
 import { z } from "zod";
+import { defineFailures, type FailureCodeOf } from "@/lib/errors/registry";
+import { logSystemEvent } from "@/lib/observability/system";
 import { buildModel, type ProviderConfig } from "./model";
 import { parseJson } from "./public-api/body";
 import type { AgentSecretObfuscator } from "./secret-obfuscation";
 
 export const ANTHROPIC_GATEWAY_MAX_BODY_BYTES = 32 * 1024 * 1024;
+
+const gatewayFailures = defineFailures({
+  ANTHROPIC_MODEL_FAILED: "Model request failed.",
+  ANTHROPIC_STREAM_INCOMPLETE: "Model stream ended before completion.",
+});
+type GatewayFailure = FailureCodeOf<typeof gatewayFailures>;
 
 const MAX_MESSAGES = 1_000;
 const MAX_BLOCKS = 2_000;
@@ -361,9 +369,10 @@ function errorResponse(
   message: string,
   status: number,
   type = "invalid_request_error",
+  code?: GatewayFailure,
 ): Response {
   return Response.json(
-    { type: "error", error: { type, message } },
+    { type: "error", error: { type, message, ...(code ? { code } : {}) } },
     {
       status,
       headers: { "cache-control": "no-store" },
@@ -446,7 +455,6 @@ function streamResponse(
   first: AssistantMessageEvent,
   iterator: AsyncIterator<AssistantMessageEvent>,
   abort: AbortController,
-  secrets?: AgentSecretObfuscator,
 ): Response {
   const encoder = new TextEncoder();
   const active = new Map<number, ActiveBlock>();
@@ -458,13 +466,19 @@ function streamResponse(
     async start(controller) {
       const write = (event: string, data: unknown) =>
         controller.enqueue(encoder.encode(sse(event, data)));
-      const fail = (message: string) => {
+      const fail = (code: GatewayFailure, error?: unknown) => {
         if (closed) return;
+        logSystemEvent("agent.anthropic_gateway_failed", {
+          domain: "agent",
+          errorCode: code,
+          error,
+        });
         write("error", {
           type: "error",
           error: {
             type: "api_error",
-            message: secrets ? "Model request failed." : message,
+            code,
+            message: gatewayFailures.text(code),
           },
         });
         closed = true;
@@ -473,7 +487,7 @@ function streamResponse(
       const handle = (event: AssistantMessageEvent) => {
         if (event.type === "start") return;
         if (event.type === "error") {
-          fail(event.error.errorMessage ?? "Model request failed.");
+          fail("ANTHROPIC_MODEL_FAILED", event.error.errorMessage);
           return;
         }
         if (event.type === "text_start") {
@@ -623,9 +637,9 @@ function streamResponse(
           if (next.done) break;
           handle(next.value);
         }
-        if (!closed) fail("Model stream ended before completion.");
+        if (!closed) fail("ANTHROPIC_STREAM_INCOMPLETE");
       } catch (error) {
-        fail(error instanceof Error ? error.message : String(error));
+        fail("ANTHROPIC_MODEL_FAILED", error);
       }
     },
     cancel() {
@@ -667,70 +681,61 @@ export async function handleAnthropicMessages(
   const parsed = await parsedRequest(req, MessagesRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value;
-  const names = createToolNames(body.tools);
-  const { models, model } = buildModel(provider, body.model);
-  const context = requestContext(body, model, names);
-  const abort = new AbortController();
-  const signal = AbortSignal.any([req.signal, abort.signal]);
-  const samplingParams: Record<string, unknown> = {};
-  if (!model.reasoning && body.top_p !== undefined)
-    samplingParams.top_p = body.top_p;
-  if (provider.format === "openai" && body.stop_sequences?.length)
-    samplingParams.stop = body.stop_sequences;
-  const modelStream = models.streamSimple(model, context, {
-    maxTokens: body.max_tokens,
-    ...(!model.reasoning && body.temperature !== undefined
-      ? { temperature: body.temperature }
-      : {}),
-    ...(Object.keys(samplingParams).length ? { samplingParams } : {}),
-    ...(reasoningLevel(body.thinking)
-      ? { reasoning: reasoningLevel(body.thinking) }
-      : {}),
-    maxRetries: 0,
-    signal,
-    onPayload: (payload) => {
-      const chosen = applyToolChoice(
-        payload,
-        body.tool_choice,
-        provider.format,
-        names,
-      );
-      return secrets ? secrets.redactBody(chosen ?? payload) : chosen;
-    },
-  });
-
-  if (!body.stream) {
-    const message = await modelStream.result();
-    if (message.stopReason === "error" || message.stopReason === "aborted") {
-      return errorResponse(
-        secrets
-          ? "Model request failed."
-          : (message.errorMessage ?? "Model request failed."),
-        502,
-        "api_error",
-      );
+  const fail = (code: GatewayFailure, error?: unknown) => {
+    logSystemEvent("agent.anthropic_gateway_failed", {
+      domain: "agent",
+      errorCode: code,
+      error,
+    });
+    return errorResponse(gatewayFailures.text(code), 502, "api_error", code);
+  };
+  try {
+    const names = createToolNames(body.tools);
+    const { models, model } = buildModel(provider, body.model);
+    const context = requestContext(body, model, names);
+    const abort = new AbortController();
+    const signal = AbortSignal.any([req.signal, abort.signal]);
+    const samplingParams: Record<string, unknown> = {};
+    if (!model.reasoning && body.top_p !== undefined)
+      samplingParams.top_p = body.top_p;
+    if (provider.format === "openai" && body.stop_sequences?.length)
+      samplingParams.stop = body.stop_sequences;
+    const modelStream = models.streamSimple(model, context, {
+      maxTokens: body.max_tokens,
+      ...(!model.reasoning && body.temperature !== undefined
+        ? { temperature: body.temperature }
+        : {}),
+      ...(Object.keys(samplingParams).length ? { samplingParams } : {}),
+      ...(reasoningLevel(body.thinking)
+        ? { reasoning: reasoningLevel(body.thinking) }
+        : {}),
+      maxRetries: 0,
+      signal,
+      onPayload: (payload) => {
+        const chosen = applyToolChoice(
+          payload,
+          body.tool_choice,
+          provider.format,
+          names,
+        );
+        return secrets ? secrets.redactBody(chosen ?? payload) : chosen;
+      },
+    });
+    if (!body.stream) {
+      const message = await modelStream.result();
+      if (message.stopReason === "error" || message.stopReason === "aborted")
+        return fail("ANTHROPIC_MODEL_FAILED", message.errorMessage);
+      return messageResponse(message, body, names);
     }
-    return messageResponse(message, body, names);
+    const iterator = modelStream[Symbol.asyncIterator]();
+    const first = await iterator.next();
+    if (first.done) return fail("ANTHROPIC_STREAM_INCOMPLETE");
+    if (first.value.type === "error")
+      return fail("ANTHROPIC_MODEL_FAILED", first.value.error.errorMessage);
+    return streamResponse(body, names, first.value, iterator, abort);
+  } catch (error) {
+    return fail("ANTHROPIC_MODEL_FAILED", error);
   }
-
-  const iterator = modelStream[Symbol.asyncIterator]();
-  const first = await iterator.next();
-  if (first.done)
-    return errorResponse(
-      "Model stream ended before it started.",
-      502,
-      "api_error",
-    );
-  if (first.value.type === "error") {
-    return errorResponse(
-      secrets
-        ? "Model request failed."
-        : (first.value.error.errorMessage ?? "Model request failed."),
-      502,
-      "api_error",
-    );
-  }
-  return streamResponse(body, names, first.value, iterator, abort, secrets);
 }
 
 export async function handleAnthropicCountTokens(

@@ -1,3 +1,7 @@
+import {
+  resolveWorkspaceScope,
+  workspaceScopeWhere,
+} from "@/lib/workspace/scope";
 // @vitest-environment node
 import { assertDefined } from "../assert-defined";
 import { randomBytes } from "node:crypto";
@@ -14,7 +18,6 @@ import { db } from "@/lib/db";
 import { createApiToken, verifyApiTokenContext } from "@/lib/auth/tokens";
 import {
   getDefaultWorkspace,
-  getWorkspaceForUser,
   listWorkspacesForUser,
 } from "@/lib/workspace/queries";
 import {
@@ -84,13 +87,53 @@ afterAll(async () => {
 });
 
 describe("workspace lifecycle and authorization", () => {
+  it("enforces workspace roles and denies an already resolved scope after revocation", async () => {
+    const workspace = await createWorkspace(owner, "Scoped workspace");
+    await db.membership.create({
+      data: { workspaceId: workspace.id, userId: member, role: "member" },
+    });
+    const readScope = await resolveWorkspaceScope({ id: workspace.id }, member);
+    expect(readScope).toMatchObject({
+      id: workspace.id,
+      actorUserId: member,
+      role: "member",
+      capability: "read",
+    });
+    expect(
+      await resolveWorkspaceScope({ slug: workspace.slug }, member, "manage"),
+    ).toBeNull();
+    expect(
+      await resolveWorkspaceScope({ slug: workspace.slug }, outsider),
+    ).toBeNull();
+    await db.membership.updateMany({
+      where: { workspaceId: workspace.id, userId: member },
+      data: { role: "admin" },
+    });
+    const manageScope = await resolveWorkspaceScope(
+      { id: workspace.id },
+      member,
+      "manage",
+    );
+    expect(manageScope).toMatchObject({ role: "admin", capability: "manage" });
+    if (!manageScope) throw new Error("Admin scope was not resolved");
+    await removeWorkspaceMember(owner, workspace.slug, member);
+    expect(
+      await db.workspace.findFirst({ where: workspaceScopeWhere(manageScope) }),
+    ).toBeNull();
+    expect(
+      await resolveWorkspaceScope({ slug: workspace.slug }, owner, "manage"),
+    ).toMatchObject({ role: "owner" });
+  });
+
   it("creates Chinese names with stable, unique URLs and validates names on the server", async () => {
     const another = await createWorkspace(owner, "研发团队");
     expect(another.slug).not.toBe(workspace.slug);
     expect(workspace.name).toBe("研发团队");
     expect(workspace.slug).toMatch(/^workspace-[a-f0-9]{8}$/);
     await renameWorkspace(owner, workspace.slug, "新的名称");
-    expect(await getWorkspaceForUser(workspace.slug, owner)).toMatchObject({
+    expect(
+      await resolveWorkspaceScope({ slug: workspace.slug }, owner),
+    ).toMatchObject({
       name: "新的名称",
       slug: workspace.slug,
     });
@@ -163,14 +206,18 @@ describe("workspace lifecycle and authorization", () => {
       },
     });
     expect(saved?.tokenHash).not.toBe(token);
-    expect(await getWorkspaceForUser(workspace.slug, outsider)).toBeNull();
+    expect(
+      await resolveWorkspaceScope({ slug: workspace.slug }, outsider),
+    ).toBeNull();
     await expect(acceptWorkspaceInvitation(member, token)).rejects.toThrow(
       "invalidInvitation",
     );
     expect(await acceptWorkspaceInvitation(outsider, token)).toBe(
       workspace.slug,
     );
-    expect(await getWorkspaceForUser(workspace.slug, outsider)).not.toBeNull();
+    expect(
+      await resolveWorkspaceScope({ slug: workspace.slug }, outsider),
+    ).not.toBeNull();
     await expect(acceptWorkspaceInvitation(outsider, token)).rejects.toThrow(
       "invalidInvitation",
     );
@@ -229,7 +276,9 @@ describe("workspace lifecycle and authorization", () => {
       toolkitId: toolkit.id,
     });
     await removeWorkspaceMember(owner, workspace.slug, member);
-    expect(await getWorkspaceForUser(workspace.slug, member)).toBeNull();
+    expect(
+      await resolveWorkspaceScope({ slug: workspace.slug }, member),
+    ).toBeNull();
     expect(
       await verifyApiTokenContext(`Bearer ${personal.token}`),
     ).not.toBeNull();
@@ -251,8 +300,12 @@ describe("workspace lifecycle and authorization", () => {
       removeWorkspaceMember(owner, workspace.slug, owner),
     ).rejects.toThrow("transferFirst");
     await removeWorkspaceMember(member, workspace.slug, member);
-    expect(await getWorkspaceForUser(workspace.slug, member)).toBeNull();
-    expect(await getWorkspaceForUser(workspace.slug, owner)).not.toBeNull();
+    expect(
+      await resolveWorkspaceScope({ slug: workspace.slug }, member),
+    ).toBeNull();
+    expect(
+      await resolveWorkspaceScope({ slug: workspace.slug }, owner),
+    ).not.toBeNull();
   });
 
   it("changes workspace roles independently of site roles and audits only real changes", async () => {
@@ -488,7 +541,9 @@ describe("workspace lifecycle and authorization", () => {
       member,
       workspace.name,
     );
-    expect(await getWorkspaceForUser(workspace.slug, owner)).toMatchObject({
+    expect(
+      await resolveWorkspaceScope({ slug: workspace.slug }, owner),
+    ).toMatchObject({
       ownerId: member,
     });
     const owners = await db.membership.findMany({
@@ -513,7 +568,9 @@ describe("workspace lifecycle and authorization", () => {
       "forbidden",
     );
     await removeWorkspaceMember(owner, workspace.slug, owner);
-    expect(await getWorkspaceForUser(workspace.slug, member)).not.toBeNull();
+    expect(
+      await resolveWorkspaceScope({ slug: workspace.slug }, member),
+    ).not.toBeNull();
   });
 
   it("serializes transfer and leave so the owner always remains a member", async () => {
@@ -546,7 +603,9 @@ describe("workspace lifecycle and authorization", () => {
     expect(
       await db.workspace.findUnique({ where: { id: workspace.id } }),
     ).toMatchObject({ status: "delete_failed" });
-    expect(await getWorkspaceForUser(workspace.slug, owner)).toBeNull();
+    expect(
+      await resolveWorkspaceScope({ slug: workspace.slug }, owner),
+    ).toBeNull();
     await expect(renameWorkspace(owner, workspace.slug, "No")).rejects.toThrow(
       "unavailable",
     );
@@ -691,7 +750,9 @@ describe("confirmed invitation notifications", () => {
         where: { notificationId: notification.id },
       }),
     ).toMatchObject([{ userId: outsider, readAt: null }]);
-    expect(await getWorkspaceForUser(workspace.slug, outsider)).toBeNull();
+    expect(
+      await resolveWorkspaceScope({ slug: workspace.slug }, outsider),
+    ).toBeNull();
   });
 
   it("accepts only a personal receipt once and preserves the historical read notification", async () => {
@@ -708,7 +769,9 @@ describe("confirmed invitation notifications", () => {
     await expect(
       acceptWorkspaceInvitationNotification(outsider, notification.id),
     ).rejects.toThrow("invalidInvitation");
-    expect(await getWorkspaceForUser(workspace.slug, outsider)).not.toBeNull();
+    expect(
+      await resolveWorkspaceScope({ slug: workspace.slug }, outsider),
+    ).not.toBeNull();
     expect(
       await db.notification.findUnique({ where: { id: notification.id } }),
     ).toMatchObject({ invitationId: null, workspaceName: workspace.name });

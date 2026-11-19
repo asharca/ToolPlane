@@ -18,6 +18,10 @@ import { NativeUiResponse, NativeUiProjectionLimitError } from "./native-ui";
 import { readTaskUi, respondTaskUi } from "./task-ui";
 import { uiStatus } from "./ui-http";
 import { taskRuntimeFailure } from "@/lib/agents/runtime-failure";
+import {
+  conversationEntryFilter,
+  entryConversationId,
+} from "@/lib/agents/entry-kinds";
 
 function executionFailure(snapshot: unknown) {
   return (
@@ -102,8 +106,7 @@ export async function handleConversationExecution(
       if (!active) return reply({ error: "Unauthorized" }, 401);
       const binding = await db.a2AEntryBinding.findFirst({
         where: {
-          sourceId: conversation.id,
-          kind: { in: ["chat", "channel", "control", "trigger"] },
+          ...conversationEntryFilter({ conversation: conversation.id }),
           context: {
             workspaceId: agent.workspaceId,
             agentId,
@@ -123,11 +126,13 @@ export async function handleConversationExecution(
         !isLocalGrant(grant) ||
         grant.workspaceId !== agent.workspaceId ||
         grant.agentId !== agentId ||
-        grant.entryPolicy?.sourceId !== conversation.id ||
+        !grant.entryPolicy ||
         grant.entryPolicy.kind !== binding.kind ||
         grant.entryPolicy.sourceAgentId !== agentId ||
         task.parentTaskId ||
-        task.rootTaskId !== task.id
+        task.rootTaskId !== task.id ||
+        (await entryConversationId(db, grant, grant.entryPolicy)) !==
+          conversation.id
       )
         return reply({ error: "Execution not found." }, 404);
       if (grant.actorId !== user.id)

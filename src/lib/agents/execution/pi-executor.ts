@@ -220,20 +220,19 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
     throw error;
   }
   const artifact = textArtifact(text);
-  if (options.runtimeKind === "pi-sdk")
-    artifact.metadata = {
-      toolplanePiSdk: {
-        commands,
-        streamRuleTriggers,
-        model: usage?.actualModel ?? {
-          providerId: options.provider.id,
-          model: options.modelId,
-        },
-        ...(usage ? { usage } : {}),
-        ...(commandResult ? { commandResult } : {}),
-        ...(contextMaintenance.length ? { contextMaintenance } : {}),
+  artifact.metadata = {
+    toolplanePiSdk: {
+      commands,
+      streamRuleTriggers,
+      model: usage?.actualModel ?? {
+        providerId: options.provider.id,
+        model: options.modelId,
       },
-      ...(queuedReplyText ? { toolplaneQueuedReplyText: queuedReplyText } : {}),
-    };
+      ...(usage ? { usage } : {}),
+      ...(commandResult ? { commandResult } : {}),
+      ...(contextMaintenance.length ? { contextMaintenance } : {}),
+    },
+    ...(queuedReplyText ? { toolplaneQueuedReplyText: queuedReplyText } : {}),
+  };
   return { state: TaskState.TASK_STATE_COMPLETED, artifact };
 };

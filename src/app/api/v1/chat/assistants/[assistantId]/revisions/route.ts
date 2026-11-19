@@ -1,8 +1,6 @@
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import {
-  ChatServiceError,
-  listChatAssistantRevisionChangelog,
-} from "@/lib/chat/service";
+import { ChatServiceError } from "@/lib/chat/shared";
+import { listChatAssistantRevisionChangelog } from "@/lib/chat/threads";
 import { withRequestLogging } from "@/lib/observability/http";
 
 export const runtime = "nodejs";

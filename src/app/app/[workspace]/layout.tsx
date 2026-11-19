@@ -1,10 +1,8 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import {
-  getWorkspaceForUser,
-  listWorkspacesForUser,
-} from "@/lib/workspace/queries";
+import { listWorkspacesForUser } from "@/lib/workspace/queries";
 import { DashboardChrome } from "@/components/dashboard/DashboardChrome";
 import { UserTimeZoneProvider } from "@/components/timezone/UserTimeZoneProvider";
 import { NextIntlClientProvider } from "next-intl";
@@ -27,7 +25,7 @@ export default async function WorkspaceLayout({
   const user = await getCurrentUser();
   if (!user)
     redirect(`/app/login?next=${encodeURIComponent(`/app/${slug}/work`)}`);
-  const ws = await getWorkspaceForUser(slug, user.id);
+  const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app?view=workspaces&notice=unavailable");
   const [workspaces, messages, cookieStore] = await Promise.all([
     listWorkspacesForUser(user.id),

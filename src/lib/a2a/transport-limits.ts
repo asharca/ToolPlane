@@ -10,7 +10,7 @@ export class ObservationLimiter {
   acquire(owner: string): () => void {
     const count = this.owners.get(owner) ?? 0;
     if (count >= this.perOwner || this.total >= this.capacity)
-      throw new A2AHttpError(429, "Too many active task observers.");
+      throw new A2AHttpError(429, "OBSERVER_LIMIT");
     this.total++;
     this.owners.set(owner, count + 1);
     let released = false;
@@ -43,11 +43,11 @@ export class WindowLimiter {
     const current = this.entries.get(key);
     if (!current || current.until <= now) {
       if (!current && this.entries.size >= this.capacity)
-        throw new A2AHttpError(429, "Request admission is full.");
+        throw new A2AHttpError(429, "ADMISSION_FULL");
       this.entries.set(key, { count: 1, until: now + 60_000 });
       return;
     }
     if (++current.count > this.perMinute)
-      throw new A2AHttpError(429, "Too many A2A requests.");
+      throw new A2AHttpError(429, "REQUEST_RATE_LIMIT");
   }
 }

@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { ButtonLink } from "@/components/motion/button";
 import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
@@ -5,10 +6,7 @@ import { redirect } from "next/navigation";
 import { Brain, CheckCircle2, Store } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getSkillImportSettings } from "@/lib/admin/settings";
-import {
-  getWorkspaceForUser,
-  getInstalledSkills,
-} from "@/lib/workspace/queries";
+import { getInstalledSkills } from "@/lib/workspace/queries";
 import { skillLabel } from "@/lib/workspace/skill-label";
 import { AddSkillDialog } from "@/components/dashboard/AddSkillDialog";
 import {
@@ -53,7 +51,7 @@ export default async function SkillsPage({
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
-  const ws = await getWorkspaceForUser(slug, user.id);
+  const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app");
   const [skills, skillImportSettings] = await Promise.all([
     getInstalledSkills(ws.id),

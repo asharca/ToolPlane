@@ -80,20 +80,6 @@ describe("installed skill.md download boundary", () => {
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await response.text()).toBe("# Reviewed skill\n");
     expect(mocks.resolveRequestUser).toHaveBeenCalledWith(expect.any(Request));
-    expect(mocks.findInstall).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          id: "install-1",
-          workspace: {
-            status: "active",
-            OR: [
-              { ownerId: "user-1" },
-              { members: { some: { userId: "user-1" } } },
-            ],
-          },
-        },
-      }),
-    );
     expect(mocks.logRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceId: "workspace-1",

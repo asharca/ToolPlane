@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import {
   resolveLiveDeployment,
@@ -19,6 +20,12 @@ export const GET = withRequestLogging(
     const { deploymentId, sessionId } = await params;
     const resolved = await resolveLiveDeployment(req, deploymentId);
     if ("response" in resolved) return resolved.response;
+    const scope = await resolveWorkspaceScope(
+      { id: resolved.dep.workspaceId },
+      resolved.userId,
+    );
+    if (!scope)
+      return Response.json({ error: "Deployment not found" }, { status: 404 });
     return withDeploymentSandboxAccess(resolved.dep.sandbox?.id, async () => {
       const upstream = await fetch(
         `http://127.0.0.1:${resolved.port}/terminal/session/${encodeURIComponent(sessionId)}/stream`,
@@ -38,12 +45,7 @@ export const GET = withRequestLogging(
       }
 
       return new Response(
-        workspaceAccessStream(
-          upstream.body,
-          resolved.dep.workspaceId,
-          resolved.userId,
-          req.signal,
-        ),
+        workspaceAccessStream(upstream.body, scope, req.signal),
         {
           status: upstream.status,
           headers: {

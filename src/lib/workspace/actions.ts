@@ -1,13 +1,14 @@
 "use server";
 
+import { workspaceScopeWhere } from "@/lib/workspace/scope";
+import { actionScope } from "@/lib/workspace/action-scope";
 import { logSystemEvent } from "@/lib/observability/system";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import {
   connectionImpact,
   confirmedConnectionImpact,
@@ -97,14 +98,6 @@ function mcpProcessOptions(
         },
       ),
   };
-}
-
-async function authorizedWorkspace(slug: string) {
-  const user = await getCurrentUser();
-  if (!user) return null;
-  const ws = await getWorkspaceForUser(slug, user.id);
-  if (!ws) return null;
-  return { user, ws };
 }
 
 function selectedInstalledSkillIds(formData: FormData): string[] | null {
@@ -237,7 +230,7 @@ export async function deployServerAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const serverId = String(formData.get("serverId") ?? "");
   if (!slug || !serverId) return;
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
 
   const server = await db.server.findUnique({
@@ -266,8 +259,8 @@ export async function deployServerAction(formData: FormData) {
   const requiresSetup =
     requiresHttpApproval ||
     missingRequiredEnvironment(recipe, sealedInstallCfg).length > 0;
-  const existing = await db.deployment.findUnique({
-    where: { workspaceId_serverId: { workspaceId: ctx.ws.id, serverId } },
+  const existing = await db.deployment.findFirst({
+    where: { workspace: workspaceScopeWhere(ctx.ws), serverId },
     select: { id: true },
   });
   // Only a first install persists recipe fields; resolve mutable package
@@ -374,7 +367,7 @@ export async function deployCustomServerAction(
 ): Promise<DeployCustomMcpActionState | undefined> {
   const slug = String(formData.get("workspace") ?? "");
   if (!slug) return;
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
 
   let parsed: ParsedCustomMcp;
@@ -466,7 +459,7 @@ export async function getMcpConnectionImpactAction(
   workspace: string,
   deploymentId: string,
 ): Promise<McpConnectionImpact | null> {
-  const ctx = await authorizedWorkspace(workspace);
+  const ctx = await actionScope({ slug: workspace });
   if (
     !ctx ||
     !(await db.deployment.findFirst({
@@ -497,7 +490,7 @@ export async function approveUnsafeRemoteMcpHttpAction(
 ): Promise<McpJsonConfigActionState> {
   const workspace = String(formData.get("workspace") ?? "");
   const deploymentId = String(formData.get("deploymentId") ?? "");
-  const ctx = await authorizedWorkspace(workspace);
+  const ctx = await actionScope({ slug: workspace });
   if (!ctx) return { error: "notAuthorized" };
   if (formData.get("allowUnsafeHttp") !== "true")
     return { error: "invalidJsonConfig" };
@@ -526,13 +519,14 @@ export async function approveUnsafeRemoteMcpHttpAction(
       await stopProcess(deploymentId);
       const requiresSetup =
         missingDeploymentRequiredEnvironment(installCfg).length > 0;
-      await db.deployment.update({
-        where: { id: deploymentId },
+      const changed = await db.deployment.updateMany({
+        where: { id: deploymentId, workspace: workspaceScopeWhere(ctx.ws) },
         data: {
           installCfg: installCfg as Prisma.InputJsonValue,
           status: requiresSetup ? "setup_required" : "stopped",
         },
       });
+      if (!changed.count) return { error: "deploymentNotFound" } as const;
       return { savedAt: Date.now(), requiresSetup };
     },
   );
@@ -553,7 +547,7 @@ export async function revealMcpJsonConfigAction({
   deploymentId: string;
 }): Promise<McpJsonConfigRevealResult> {
   if (!workspace || !deploymentId) return { error: "deploymentNotFound" };
-  const ctx = await authorizedWorkspace(workspace);
+  const ctx = await actionScope({ slug: workspace });
   if (!ctx) return { error: "notAuthorized" };
   const deployment = await db.deployment.findFirst({
     where: {
@@ -582,7 +576,7 @@ export async function updateMcpJsonConfigAction(
   if (!slug || !deploymentId || !config.trim())
     return { error: "invalidJsonConfig" };
 
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return { error: "notAuthorized" };
   const operation = await runMcpDeploymentOperation(
     ctx.ws.id,
@@ -705,7 +699,7 @@ export async function updateMcpJsonConfigAction(
       }
       const updated = await db.$transaction(async (tx) => {
         const value = await tx.deployment.update({
-          where: { id: deployment.id },
+          where: { id: deployment.id, workspace: workspaceScopeWhere(ctx.ws) },
           data: {
             source: parsed.source,
             sourceRef: parsed.ref,
@@ -739,10 +733,11 @@ export async function updateMcpJsonConfigAction(
           deploymentId: deployment.id,
           actorId: ctx.user.id,
         });
-        await db.deployment.update({
-          where: { id: deployment.id },
+        const changed = await db.deployment.updateMany({
+          where: { id: deployment.id, workspace: workspaceScopeWhere(ctx.ws) },
           data: { status: "error" },
         });
+        if (!changed.count) return { error: "deploymentNotFound" } as const;
         return { error: "rebuildFailed" } as const;
       }
       return { savedAt: Date.now(), requiresSetup: false };
@@ -788,7 +783,7 @@ export async function updateMcpToolExposureAction(
     return { error: "invalidToolSelection" };
   }
 
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return { error: "notAuthorized" };
   const deployment = await db.deployment.findFirst({
     where: { id: deploymentId, workspaceId: ctx.ws.id },
@@ -808,14 +803,15 @@ export async function updateMcpToolExposureAction(
     return { error: "invalidToolSelection" };
   }
 
-  await db.deployment.update({
-    where: { id: deployment.id },
+  const changed = await db.deployment.updateMany({
+    where: { id: deployment.id, workspace: workspaceScopeWhere(ctx.ws) },
     data: {
       mcpToolExposure: mode,
       mcpAllowedTools: mode === "allowlist" ? selected : [],
       publicInvocable,
     },
   });
+  if (!changed.count) return { error: "deploymentNotFound" } as const;
   void syncDeploymentMcpGrants(deploymentId);
   revalidatePath(`/app/${slug}/mcp/${deployment.id}`);
   return { savedAt: Date.now() };
@@ -834,7 +830,7 @@ export async function updateMcpSandboxPlacementAction(
   const slug = String(formData.get("workspace") ?? "");
   const deploymentId = String(formData.get("deploymentId") ?? "");
   const enabled = formData.get("runInAgentSandbox") === "on";
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return { error: "notAuthorized" };
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const deployment = await db.deployment.findFirst({
@@ -913,7 +909,7 @@ export async function runMcpConsoleToolAction(input: {
   }
   if (requestBody.length > 16_000) return { error: "invalidToolCall" };
 
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return { error: "notAuthorized" };
   const deployment = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!deployment) return { error: "deploymentNotFound" };
@@ -1138,7 +1134,7 @@ export async function setDeploymentEnvAction(
   const slug = String(formData.get("workspace") ?? "");
   const deploymentId = String(formData.get("deploymentId") ?? "");
   if (!slug || !deploymentId) return { error: "deploymentNotFound" };
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return { error: "notAuthorized" };
 
   const patch = formData.has("changes")
@@ -1221,13 +1217,14 @@ export async function setDeploymentEnvAction(
       const nextStatus = requiresSetup ? "setup_required" : "stopped";
       // Every rotation/revocation stops the old process before persisting new values.
       await stopProcess(dep.id);
-      await db.deployment.update({
-        where: { id: deploymentId },
+      const changed = await db.deployment.updateMany({
+        where: { id: deploymentId, workspace: workspaceScopeWhere(ctx.ws) },
         data: {
           installCfg: next as Prisma.InputJsonValue,
           ...(nextStatus ? { status: nextStatus } : {}),
         },
       });
+      if (!changed.count) return { error: "deploymentNotFound" } as const;
       return { savedAt: Date.now(), requiresSetup };
     },
   );
@@ -1252,7 +1249,7 @@ export async function revealDeploymentEnvAction({
 }): Promise<DeploymentEnvRevealResult> {
   if (!workspace || !deploymentId) return { error: "deploymentNotFound" };
   if (!ENV_KEY.test(key)) return { error: "variableNotFound" };
-  const ctx = await authorizedWorkspace(workspace);
+  const ctx = await actionScope({ slug: workspace });
   if (!ctx) return { error: "notAuthorized" };
   const dep = await db.deployment.findFirst({
     where: {
@@ -1289,15 +1286,16 @@ export async function renameDeploymentAction(formData: FormData) {
   const name = deploymentName(formData.get("name"));
   if (!slug || !deploymentId || !name) return;
 
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
   const deployment = await deploymentInWorkspace(deploymentId, ctx.ws.id);
   if (!deployment) return;
 
-  await db.deployment.update({
-    where: { id: deployment.id },
+  const changed = await db.deployment.updateMany({
+    where: { id: deployment.id, workspace: workspaceScopeWhere(ctx.ws) },
     data: { name },
   });
+  if (!changed.count) return;
   revalidatePath(`/app/${slug}/mcp`);
   revalidatePath(`/app/${slug}/mcp/${deployment.id}`);
 }
@@ -1307,7 +1305,7 @@ export async function cloneDeploymentAction(formData: FormData) {
   const deploymentId = String(formData.get("deploymentId") ?? "");
   if (!slug || !deploymentId) return;
 
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
   const nameEntry = formData.get("name");
   const copyEnvironmentEntries = formData
@@ -1446,7 +1444,7 @@ export async function removeDeploymentAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const deploymentId = String(formData.get("deploymentId") ?? "");
   if (!slug || !deploymentId) return;
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
   const operation = await removeWorkspaceDeployment(ctx.ws.id, deploymentId);
   if (!operation.accepted || !operation.value) return;
@@ -1460,7 +1458,7 @@ export async function removeDeploymentsAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const deploymentIds = selectedDeploymentIds(formData);
   if (!slug || !deploymentIds) return;
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
   const deployments = await selectedDeploymentsInWorkspace(
     deploymentIds,
@@ -1482,7 +1480,7 @@ export async function startDeploymentAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const deploymentId = String(formData.get("deploymentId") ?? "");
   if (!slug || !deploymentId) return;
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
   await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
     const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
@@ -1506,7 +1504,7 @@ export async function startDeploymentsAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const deploymentIds = selectedDeploymentIds(formData);
   if (!slug || !deploymentIds) return;
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
   const deployments = await selectedDeploymentsInWorkspace(
     deploymentIds,
@@ -1539,7 +1537,7 @@ export async function stopDeploymentAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const deploymentId = String(formData.get("deploymentId") ?? "");
   if (!slug || !deploymentId) return;
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
   await runMcpDeploymentOperation(ctx.ws.id, deploymentId, async () => {
     const dep = await deploymentInWorkspace(deploymentId, ctx.ws.id);
@@ -1558,7 +1556,7 @@ export async function stopDeploymentsAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const deploymentIds = selectedDeploymentIds(formData);
   if (!slug || !deploymentIds) return;
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
   const deployments = await selectedDeploymentsInWorkspace(
     deploymentIds,
@@ -1586,7 +1584,7 @@ export async function restartDeploymentAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const deploymentId = String(formData.get("deploymentId") ?? "");
   if (!slug || !deploymentId) return;
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
   const operation = await runMcpDeploymentOperation(
     ctx.ws.id,
@@ -1624,7 +1622,7 @@ export async function rebuildDeploymentAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const deploymentId = String(formData.get("deploymentId") ?? "");
   if (!slug || !deploymentId) return;
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
   const operation = await runMcpDeploymentOperation(
     ctx.ws.id,
@@ -1661,7 +1659,7 @@ export async function installSkillAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const skillId = String(formData.get("skillId") ?? "");
   if (!slug || !skillId) return;
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
 
   // The workspace market exposes only administrator-curated skills. Recheck
@@ -1684,7 +1682,7 @@ export async function uninstallSkillAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const installIds = selectedInstalledSkillIds(formData);
   if (!slug || !installIds) return;
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
 
   const installed = await db.$transaction(async (tx) => {

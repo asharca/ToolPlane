@@ -9,9 +9,10 @@
 
 - **改动前**：阅读本文件，找出与本次任务相关的教训，再读对应源码和文档。
 - **纠错后**：用户纠正、修复返工、回归或验证遗漏暴露出可复用教训时，在同一改动中补记；正常完成任务不必凑条目。尚未解决的问题仍需明确报告、按项目现有方式跟踪，不能靠写入错题本冒充修复。
-- **记录方式**：一条教训写清规则、错误与原因、下次怎么验证，以及可追溯的 issue、提交、测试或文档链接。没有证据的推测不记成事故；不粘贴凭据、私人会话或原始敏感日志。
+- **先改代码，再写条目**：记录前按 [AGENTS.md 的纠错顺序](AGENTS.md#correcting-mistakes)判断能否用类型、共享入口、单一路径或静态检查让错误写不出来；能做到就在同一改动中做掉，条目只记证据和守卫位置。错题本是兜底，不是第一道防线。
+- **记录方式**：一条教训写清规则、错误与原因、下次怎么验证、**约束层**（结构／检查／文字，并给出守卫所在的代码或测试），以及可追溯的 issue、提交、测试或文档链接。没有证据的推测不记成事故；不粘贴凭据、私人会话或原始敏感日志。
 - **合并与计数**：相同根因合并到已有条目，追加证据和复现日期。日期指实际确认该类错误的日期，同一天多次只计一次；文档整理、重复阅读和补链接不增加次数。不知道历史日期时明确写未知。
-- **提升与瘦身**：同类错误在至少三个不同日期被确认后，把仍适用的规则提升到 [AGENTS.md](AGENTS.md) 或相关子系统文档；本文件仅保留教训标题、证据、日期和规范链接，不复制整套规范。安全要求立即执行，不等待累计三次。过时条目说明失效原因或替代规则。
+- **提升与瘦身**：约束层仍是“文字”的条目，在至少三个不同日期被确认后，先尝试改成结构或检查；确实只能靠判断时，再把规则提升到 [AGENTS.md](AGENTS.md) 或相关子系统文档。本文件仅保留教训标题、证据、日期和规范链接，不复制整套规范。安全要求立即执行，不等待累计三次。过时条目说明失效原因或替代规则。
 
 以下是 2026-10-18 根据仓库现有修复记录整理的初始条目；历史发生日期未逐一核实，
 不将整理日期算作复发日期。不配置无人值守扫描或自动修改规范，后续在实际纠错时维护。
@@ -59,6 +60,7 @@
 - **模型重试接线补充（2026-11-05，线上 `empty_stream` 后新增重试）**：首版把工作区重试次数接在 `sandbox-turn.ts`，宿主回归测试全部通过，但真实 Work 走 A2A `pi-executor` → `task-options` → `runSandboxAgentTurn`，绕过了该入口，伪网关只收到一次请求。改为在 `runNativeSessionExec` 组装每轮 context 时读取工作区设置，真实 Work 观察到一次空流后重试成功，以及重试 2 次后报 `EMPTY_STREAM RETRIED_2`。另外 Pi 的会话初始化会从存储重算 settings，在 `refreshContext` 里应用的覆盖会丢失，须在会话就绪后应用。下次给每轮执行加设置时，接到所有入口共用的宿主调用处，并用一个可控上游跑真实 Work，数实际请求次数。
 - **本地重建迁移遗漏（2026-11-05，用户反馈 Work 页面报错）**：替换 `toolplane-3000` 时复制旧容器的 `Entrypoint=[node]` 与启动命令，绕过镜像的 `docker-entrypoint.sh`；首页及 readiness 均为 200，登录后的 `/app/smoke/work` 却因 `Agent.monthlyBudgetMicros` 缺失报 P2022。核实本地目标库并备份、受控停止应用后，恢复镜像默认入口，成功应用唯一待执行的 `20261105030000_agent_triggers_usage`；smoke 账户实际登录后的 Work 页面 HTTP 200，列表和输入区可见。下次保留部署环境和挂载不等于盲目复制入口覆盖；替换前检查 `prisma migrate status`，并验收带认证的实际业务路由。依据：[镜像入口](docker-entrypoint.sh)、[字段迁移](prisma/migrations/20261105030000_agent_triggers_usage/migration.sql)。
 - **本地 :3000 预检复发（2026-11-06，用户报告创建智能体 `PI_CAPABILITY_PREFLIGHT_FAILED`）**：前一日重建 `toolplane-3000` 时沿用旧容器的环境和挂载，仍缺上文“生产 Pi 迁移补充”要求的同绝对路径 `TMPDIR` 挂载；容器内 `docker create --mount type=bind,source=/tmp/...` 实测返回 `bind source path does not exist`，readiness 仍为 200。确认无活动 Work／助手 Run 后受控停止，保留旧容器为 `toolplane-3000-pre-tmpdir-20261106`，以相同镜像、入口、环境追加 `TMPDIR=/home/ashark/Services/toolplane-3000/runtime-tmp` 及同路径 bind 重建；readiness 200，真实浏览器创建无资源及含 MCP＋技能的 Pi 智能体均发布修订 1，新 Work 原生 bash 返回 `TMPDIR_FIX_OK`。下次替换任何容器化实例，除迁移状态和入口外，还须核对 `TMPDIR` 挂载并完成一次真实创建／发布修订。
+- **约束层（结构＋检查）**：生产沙箱和捕获回归共用 [`pi-host-files.ts`](src/lib/agents/sandbox-runtime/pi-host-files.ts)；[`pi-host-files.test.ts`](tests/unit/pi-host-files.test.ts) 检查宿主的传递本地依赖。可达性仍用真实沙箱回合验证：绑定回环地址的开发服务器即使 readiness 为 200，沙箱也不能经 Docker 网关访问它。
 - **确认日期**：历史日期未知；初始整理于 2026-10-18；2026-10-30、2026-11-01、2026-11-02、2026-11-03、2026-11-04、2026-11-05、2026-11-06 实测确认。
 
 ### TP-L002：构建成功，不代表最终镜像里的原生依赖能启动
@@ -161,6 +163,7 @@
 - **Advisor 非致命失败补充（2026-11-15，真实 Work）**：MiniMax-M3 审查出现一次约 28.7 秒后的 ResponseAborted、一次约 19.8 秒的 HTTP 200，但两者都只留下 `ADVISOR_REVIEW_FAILED`，无法区分 deadline、供应商失败和非法输出。非致命功能也必须透传白名单原因和耗时，不能把“主回合继续”当作可观测性充分；推理模型输出不能只用整段 JSON.parse。宿主增加有界 deadline/取消、最小推理请求和 text 中 think/围栏/说明文字兼容解析。下次用真实 SDK＋broker 覆盖包裹 JSON、HTTP 错误原因、忽略 AbortSignal 的超时/取消，不记录模型原文；真实上游的原失败分类仍需新原因码确认。依据：`scripts/pi-sdk-advisor.mjs`、`tests/integration/native-runtime-session.test.ts`。
 - **频道回复复发（2026-11-17，用户报告 10030 Discord 会话）**：两次失败的 A2A 任务状态已记录 `PI_TASK_GENERATION_TIMEOUT`／`PI_TASK_MODEL_TIMEOUT`（主模型 HTTP 503 四次后由兜底模型执行约 50 次请求，30 分钟总时限到期），`runAgentChannelMessage` 的失败分支却只放行两个错误码，其余一律写成通用“本次执行未能完成”与 `AGENT_EXECUTION_FAILED`，频道和 Work 均看不到原因。旧集成测试直接把通用文案锁成契约。现复用 `describeRuntimeFailure`（与 UI 同一翻译逻辑）输出“错误码＋中文说明”，持久化真实错误码；频道后台不在 RSC 请求域内，`getTranslations` 报 Client Components 错误，须用 `createTranslator`。下次新增入口的失败分支时，用带固定码的失败任务断言用户可见回复含该码，并保留非白名单异常的通用文案。依据：`src/lib/agents/message-service.ts`、`tests/integration/agent-channels.test.ts`。
 - **同日按 Agent 配置任务时限**：任务时限不止一处。改大一个值时，还有三处独立上限会提前截断：本地授权的 `timeoutSeconds`/`expiresAt` 来自全局 `A2A_LIMITS.deadlineSeconds`；`store.ts` 又会对它取 `min`；沙箱回合固定 `TURN_TIMEOUT_MS=30min`；运行时令牌 TTL 也只有 55 分钟到 1 小时，所以 2 小时任务会在中途失去模型和 MCP 访问。现在 `taskTimeoutSeconds` 跟随修订固定，上限是 7 天（A2A 上下文保留期）。用户要求参考 OMP，不要卡死时长：长任务主要靠步数上限和模型流超时约束，不靠紧的总时钟。只有绑定任务的令牌放宽到这一上限，因为它在每个运行时路由上都由 `assertLocalRuntimeToken` 随租约撤销；远端 A2A 仍保留全局上限。下次改时限，要同时检查任务的 `deadlineAt`、沙箱回合超时和令牌 `exp` 三者都不早于目标时长；回归见 `agent-channels.test.ts` 的 pinned time limit 用例和 `agent-runtime-access.test.ts` 的 lease-bound 用例。频道失败回合也会保留失败前已生成的文本：Work 会话靠持久化部分（而非已隐藏的实时视图）显示过程。
+- **约束层（结构＋检查）**：broker 的成功、失败响应使用同一个允许字段投影，失败码由 `runtime-failure.ts` 按精确集合解析；回归经真实 broker 往返，不以直连宿主代替。
 - **确认日期**：2026-10-31（用户报告）；2026-11-05（用户报告）；2026-11-10（用户报告）；2026-11-14（真实 Work 验收）；2026-11-17（用户报告）。
 
 ### TP-L010：工具失败是工具结果，不是整轮失败
@@ -274,6 +277,7 @@
 - **同日验收补充**：执行 API 已拒绝 OMP，但 Work 侧栏仍用“可展示历史”的运行时集合计算 `supportsWork`，误显示“新建工作”和“尚未配置”。可展示历史不等于可执行；实际页面须同时检查历史消息、侧栏创建入口和设置提示，不能只验证主输入框及 HTTP 410。修正位于 [Work 页面](src/app/app/[workspace]/work/page.tsx)。
 - **同日导出实测补充**：真实本机目录中的 AppleDouble 元数据和 `config.yml.backup-20261003` 被误列为阻塞项；应不读取这些私有非执行状态、报告警告，而不是阻止有效配置迁移。无法打包的原生资源仍保留可明确排除的阻塞条目，不能让 issue 引用的资源在界面上消失。依据：[离线导出器](scripts/export-omp-config.mjs)、[导出边界回归](tests/unit/export-omp-config.test.ts)。
 - **失效说明（2026-11-17，用户决定）**：用户要求取消「从 OMP 导入」。导入界面、`/api/v1/workspaces/[slug]/agents/import`（含 preview）、`omp-import.ts`、导出脚本及其测试已删除，上文导入相关路径只作历史证据；关于“可选迁移”的规则部分不再适用，复用平台既有资源、不另建配置入口的规则仍然适用。
+- **约束层（结构）**：执行、创建、实时能力使用 [`ExecutableAgentRuntimeKind`](src/lib/agents/runtime-kind.ts)，历史类型只用于读取和展示。
 - **确认日期**：2026-11-02、2026-11-03（用户纠正及真实导出）。
 
 ### TP-L021：多阶段审核表单不能让 React 自动重置选择器
@@ -414,7 +418,7 @@
 
 ### TP-L035：新增执行入口类型须覆盖数据库约束与全部会话绑定白名单；用量费用不能信任沙箱上报
 
-**规则**：给 `submitAgentEntry` 新增 entry kind 时，同步修改 `A2AEntryBinding_kind_check`，并检索所有以会话为来源的入口白名单（运行时 grant、沙箱绑定、修订升级、会话执行接口、日志 `entryKind`）。Agent 用量费用按服务端模型单价计算，不依赖 Pi 上报的 `cost.total`。
+**规则**：新增入口时更新 [`ENTRY_KINDS`](src/lib/agents/entry-kinds.ts) 和 `A2AEntryBinding_kind_check`。授权、会话绑定和日志复用该模型；用数据库约束与逐入口租约授权的集成测试防止漂移。Agent 用量费用按服务端模型单价计算，不依赖 Pi 上报的 `cost.total`。
 
 - **证据（2026-11-05，触发器验收）**：触发器的集成测试和类型检查都通过了，但真实 webhook 运行先报 `A2AEntryBinding_kind_check` 违反（被统一记成 `TRIGGER_EXECUTION_FAILED`）；补上约束后，沙箱的模型代理又返回 403，原因是 `runtime-grant.ts` 等处只认 `chat/control/channel`，触发器会话因此拿不到 grant。另外 `buildPiModelsConfig` 把模型单价写死为 0，Pi 上报的费用始终为 0，按费用设的预算永远不会触发。修复后，同一 Agent 的定时和 webhook 运行都在真实沙箱中成功；按 ProviderModel 单价算出的费用为 1.2 美元/轮，第二轮越过 80% 告警并达到 100%，之后 REST 返回 402，智能体页面显示预算文案。
 - **下次怎么验证**：新增入口时，用伪 OpenAI 上游跑一次真实沙箱回合，确认模型代理返回 200、会话写入 assistant 消息；为模型配置非零单价，核对 `AgentUsage.costMicros` 非零，并实际越过预算阈值。
@@ -498,6 +502,7 @@
 - **证据（2026-11-10，用户反馈“工具调用和输出堆在一起、窗口一直跳动”）**：共享渲染器让过程组运行时展开、完成后收起，每轮工具后正文开始又触发一次收起；vendored `ToolResult` 在状态变为 running 时也会自动展开。连续同名工具行只显示“bash Completed”，无法区分。改为默认折叠、仅点击切换（用捕获阶段标记过滤组件自身的状态驱动回调）、工具行显示参数摘要、思考两行预览后，真实 Work 三次 `bash` 回合测得 CLS 0、`aria-expanded` 自动变化 0 次、滚动高度回缩 0 次。另发现展开披露会暂停 `MessageScroller` 跟随，助手和 Work 发送新消息后未恢复；已与智能体对话一样在发送时恢复跟随。
 - **下次怎么验证**：真实回合中用 `PerformanceObserver('layout-shift')`、`aria-expanded` 变更计数和滚动容器高度回缩次数取证；先展开一个旧披露再发送，确认新输出仍跟到底部。依据：`ConversationContentBlocks.tsx`、`tests/unit/workspace-work-failures.test.tsx`。
 - **点击切换复发（2026-11-10，线上用户反馈“工具调用不能正常折叠展开”）**：上述捕获阶段标记用 `queueMicrotask` 复位。React 的捕获与冒泡处理分属根节点上的两个原生监听器，真实点击在两者之间会清空微任务，`onOpenChange` 到达时标记已复位，工具行永远打不开；单元测试的程序化 `click()` 在同一脚本栈内执行，微任务不会提前运行，所以测试通过。改为 `setTimeout(0)` 复位。本地真实浏览器（CDP 输入）先复现微任务版点击后 `aria-expanded` 仍为 false，修复后打开／收起均生效。下次凡依赖事件阶段之间的时序，必须用真实浏览器输入验收，不能只用 Testing Library。
+- **约束层（结构）**：`ConversationContentBlocks.tsx` 以受控 `open` 渲染工具披露，不订阅状态驱动的 `onOpenChange`；只处理自身标题按钮的点击，不再靠微任务或定时器判断事件来源。仍须在真实浏览器验收流式期间的点击和布局。
 - **正文顺序补充（同日）**：#201 只修了助手对话；Work 的实时视图把全部正文拼在活动之后，持久化又只存任务最终结果为末尾一段文本，于是工具调用和正文各自堆在一起。实时活动现记录开始时的正文偏移，`interleaveLiveText` 按偏移穿插；协调器按到达顺序记录正文片段，与最终结果去空白后一致时按序持久化，否则仍追加在末尾。已持久化的旧消息无法可靠拆分，保持原样。真实 Work 两次 bash 回合的实时和刷新后结构均为“思考｜正文｜工具｜正文｜工具｜正文”。依据：[协调器](src/lib/work/coordinator.ts)、[输出通道](src/lib/work/run-control.ts)。
 - **推理摘要补充（2026-11-16，用户反馈“流式输出很奇怪”）**：OpenAI Responses 的推理摘要是 `**标题**` 加可选正文，常常只有标题；思考步骤按纯文本渲染，星号原样可见，仅有标题的 reasoning 连续占行。工具行摘要从头截 120 字符，而会话目录前缀就占 102 字符，两次 `read` 只剩相同的 `/.toolplane/runtim`。现在标题作为运行中的状态行，紧跟其他推理的裸标题不占行，路径摘要去掉会话与运行时前缀并保留尾部。验收时先用 chat-completions 协议的脚本化模型回放，标题状态行正常；换成 Responses 协议后 reasoning item 立即结束，标题被“生成中”阶段标签盖住，才把标题优先级调到阶段标签之前。下次推理展示须用与线上相同协议的流验收，覆盖仅标题、连续多个 reasoning item、标题加正文，并在运行中采样状态行文本，不能只看结束后展开的结果。本次经助手对话和本地脚本化 Responses 端点走完真实服务端链路，未做 Work 沙箱回合。依据：`splitReasoning`（`src/lib/conversation/content-blocks.ts`）、`ConversationContentBlocks.tsx`。
 - **频道补充（2026-11-17，用户反馈“回复挤在一堆”）**：Work 已按工具偏移穿插正文，频道流式进度却仍把整轮 text_delta 拼成一段编辑进同一条消息，跨工具的多段说明首尾相连、无分隔。参照 Hermes 的工具边界分段（[hermes-agent 8dee82e](https://github.com/NousResearch/hermes-agent/commit/8dee82ea1e1783b95b380f074386c7a9c5cf376c)），实时输出另记不随插话重置的顶层正文分段，频道在每次工具调用前定稿当前消息、后续正文另起新消息，最终回复只发送未发出的部分。下次新增任何正文消费方（频道、通知、导出）都要处理工具边界，不能直接消费拼接后的 `text`；回归见 `tests/unit/agent-channel-delivery.test.ts` 的工具调用分段用例。
@@ -557,6 +562,7 @@
 **规则**：增加内容块联合类型时，同步更新界面和 Markdown 导出的分支；rewind 的保留报告与 handoff 的摘要都应出现在历史导出中，并沿用凭据脱敏。
 
 - **依据**：[会话导出](src/lib/agents/conversation-export.ts)、[导出回归](tests/integration/conversation-export.test.ts)。
+- **约束层（结构）**：界面和导出共用 [`projectContent`](src/lib/conversation/content-projection.ts)，新增块与过程步骤须补齐穷尽分支。
 
 ### TP-L052：镜像能力要按真实 Agent 创建链路和固定资源验收
 
@@ -608,3 +614,18 @@
 - **错误与原因**：2026-11-17 用户报告线上 10030 的 A2A 任务耗时瀑布图“太长溢出视窗”。`CenterMorphModalContent` 的滚动层 `fixed inset-4 flex items-center justify-center overflow-y-auto` 在瀑布图（每个 span 一行 42px，长任务上百行）超过视口后，面板顶部被裁到视口上方且任何滚动都不可达；真实浏览器 480px 视口、531px 瀑布图实测面板顶部在 -25.5px，滚到底反而到 -99.5px。
 - **下次怎么验证**：打开内容必然超高的浮层（瀑布图、长列表、长 diff），把视口高度临时压小制造溢出，分别记录 scrollTop=0 与 scrollTop=max 时面板首尾是否都在滚动容器可视范围内；内容不超高时居中位置不变。本修复把居中移到 `min-h-full` 内层包裹器，同一真实瀑布图首屏与底部均可达。依据：[中心展开浮层](src/components/motion/center-morph-modal.tsx)。
 - **确认日期**：2026-11-17（用户报告）。
+
+### TP-L058：安全检查要放进共享鉴权入口，不能靠每个路由自己记得加
+
+**规则**：适用于一类请求的安全检查（如会话 Cookie 写操作的同源校验）放在所有路由都会经过的鉴权入口里，默认生效；路由不再各自重复。确需不同期望来源的入口显式传入，而不是跳过。同源判断接受配置的公开地址或浏览器实际访问的主机，避免通过 IP／端口直连的部署因此无法写入。
+
+- **错误与原因（2026-11-19，代码审计）**：`isSameOriginRequest` 只在 23 个文件中按需调用，`src/proxy.ts` 又不匹配 `/api`。直接用 `resolveRequestUser` 的 52 个写操作路由中有 46 个没有同源校验，包括 Agent 对话、Work 输入、MCP 终端会话与输入、助手 Run 和知识库写入。会话 Cookie 为 `SameSite=Lax`，同站不同源的页面（如兄弟子域）可以带 Cookie 发起简单请求。已改为由 `resolveRequestPrincipal()` 对会话的非 GET/HEAD/OPTIONS 请求统一校验来源，删除 10 处重复检查；沙箱 OAuth 授权页通过 `sessionOrigin` 传入其公开来源。
+- **下次怎么验证**：新增或修改写操作路由时，确认它经由 `resolveRequestPrincipal()`／`resolveRequestUser()` 鉴权；测试会话请求在异源、`null`、缺失 Origin 时被拒绝，同源与 Bearer 请求照常通过。路由测试应模拟 `getCurrentUser` 而不是整个 `request-user`，否则测不到这条策略。
+- **约束层**：结构，见 `src/lib/auth/request-user.ts`、`tests/unit/toolkit-principal.test.ts`。
+- **确认日期**：2026-11-19（代码审计）。
+
+### TP-L059：轮询和订阅依赖稳定值，不依赖文案函数身份
+
+- **错误与原因**：Assistant 请求迁移时，恢复回调和断线订阅都依赖翻译函数。函数身份变化后，恢复结果触发渲染，每次渲染又启动一次恢复，回归卡在第一条对话用例。
+- **约束层（结构）**：在渲染时求出 `processFailedText`；恢复和订阅用所需的字符串作为依赖，不捕获翻译函数。
+- **下次怎么验证**：用 [`workspace-assistant-chat.test.tsx`](tests/unit/workspace-assistant-chat.test.tsx) 验收挂载后的恢复、轮询、订阅重连和停止操作；验证失败时区分请求没结束与请求被反复重建。

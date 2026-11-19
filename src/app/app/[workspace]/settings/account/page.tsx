@@ -1,6 +1,7 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { PersonalSettingsContent } from "@/components/dashboard/PersonalSettingsContent";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +17,7 @@ export default async function PersonalSettingsPage({
   const query = await searchParams;
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
-  const workspace = await getWorkspaceForUser(slug, user.id);
+  const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (!workspace) redirect("/app?view=workspaces&notice=unavailable");
 
   const section =

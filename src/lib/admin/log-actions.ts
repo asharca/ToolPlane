@@ -1,10 +1,11 @@
 "use server";
 
+import { actionScope } from "@/lib/workspace/action-scope";
 import { z } from "zod";
 import { logSystemEvent } from "@/lib/observability/system";
 import { revalidatePath } from "next/cache";
 import { getTranslations } from "next-intl/server";
-import { requireAdmin } from "@/lib/auth/admin";
+
 import { db } from "@/lib/db";
 import { writeAudit } from "@/lib/observability/audit";
 import {
@@ -17,7 +18,7 @@ export async function updateLogSettings(
   _previous: { ok?: boolean; error?: string },
   form: FormData,
 ): Promise<{ ok?: boolean; error?: string }> {
-  const admin = await requireAdmin();
+  const admin = await actionScope({ admin: true });
   const t = await getTranslations("admin");
   const intent = form.get("intent");
   try {

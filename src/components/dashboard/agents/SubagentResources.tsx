@@ -1,5 +1,10 @@
 "use client";
 
+import {
+  DisplayError,
+  displayErrorText,
+} from "@/components/dashboard/display-error";
+import { apiRequest } from "@/lib/client/api";
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Bot, Plus, X } from "lucide-react";
@@ -52,7 +57,8 @@ export function SubagentResources({
   const agents = useTranslations("console.agents");
   const id = useId();
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState("");
+  const loadFailed = t("loadFailed");
   const [adding, setAdding] = useState(false);
   const nativePolicy = draft?.nativePolicy ?? snapshot?.nativePolicy;
   const selectedIds = useMemo(
@@ -70,26 +76,27 @@ export function SubagentResources({
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
-    setError(false);
-    void fetch(
+    setError("");
+    void apiRequest<SubagentResourcesSnapshot>(
       `/api/v1/agents/${encodeURIComponent(agentId)}/subagents?workspace=${encodeURIComponent(slug)}`,
       { signal: controller.signal, cache: "no-store" },
     )
-      .then(async (response) => {
-        if (!response.ok) throw new Error("SUBAGENTS_LOAD_FAILED");
-        const data = (await response.json()) as SubagentResourcesSnapshot;
+      .then((response) => {
+        if (!response.ok)
+          throw new DisplayError(response.message ?? loadFailed);
+        const data = response.data;
         if (controller.signal.aborted) return;
         onLoad(data);
         setLoading(false);
       })
-      .catch(() => {
+      .catch((cause) => {
         if (!controller.signal.aborted) {
-          setError(true);
+          setError(displayErrorText(cause, loadFailed));
           setLoading(false);
         }
       });
     return () => controller.abort();
-  }, [agentId, slug, onLoad]);
+  }, [agentId, slug, onLoad, loadFailed]);
 
   const update = (patch: Partial<SubagentDraft>) =>
     nativePolicy &&
@@ -136,7 +143,7 @@ export function SubagentResources({
         </p>
       ) : error ? (
         <p role="alert" className="text-sm text-destructive">
-          {t("loadFailed")}
+          {error}
         </p>
       ) : !snapshot || !nativePolicy ? null : adding ? (
         <fieldset

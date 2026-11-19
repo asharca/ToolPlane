@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { McpHttpApprovalForm } from "@/components/dashboard/McpHttpConsent";
 import { RemoteMcpTransportNotice } from "@/components/dashboard/RemoteMcpTransportNotice";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
@@ -21,7 +22,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { db } from "@/lib/db";
 import { originFromHeaders } from "@/lib/http/origin";
 import {
@@ -128,7 +129,7 @@ export default async function DeploymentInspectorPage({
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
-  const ws = await getWorkspaceForUser(slug, user.id);
+  const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app");
 
   const dep = await db.deployment.findFirst({

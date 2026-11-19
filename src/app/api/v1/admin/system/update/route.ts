@@ -1,3 +1,4 @@
+import { systemUpdateFailures } from "@/lib/system/update-failures";
 import { withRequestLogging } from "@/lib/observability/http";
 import { NextResponse } from "next/server";
 import { adminGate } from "@/lib/auth/admin-policy";
@@ -69,8 +70,15 @@ export const POST = withRequestLogging(
           ? 503
           : 500;
 
-    return NextResponse.json(result, {
-      status,
-    });
+    return NextResponse.json(
+      result.ok
+        ? result
+        : {
+            ok: false,
+            error: systemUpdateFailures.text(result.code),
+            code: result.code,
+          },
+      { status },
+    );
   },
 );

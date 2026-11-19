@@ -1,3 +1,4 @@
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
@@ -31,13 +32,7 @@ export const GET = withRequestLogging(
     const install = await db.installedSkill.findFirst({
       where: {
         id: installId,
-        workspace: {
-          status: "active",
-          OR: [
-            { ownerId: user.id },
-            { members: { some: { userId: user.id } } },
-          ],
-        },
+        workspace: workspaceAccessWhere(user.id),
       },
       include: {
         skill: {

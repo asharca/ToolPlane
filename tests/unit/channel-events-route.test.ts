@@ -57,13 +57,6 @@ describe("channel inbound events", () => {
       { "x-toolplane-channel-token": "header-secret" },
       "header-secret",
     ],
-    ["http://localhost/events?token=query-secret", {}, "query-secret"],
-    ["http://localhost/events?access_token=legacy-secret", {}, "legacy-secret"],
-    [
-      "http://localhost/events?token=fallback",
-      { authorization: "Bearer " },
-      "fallback",
-    ],
   ])(
     "accepts supported callback credentials: %s",
     async (url, headers, token) => {
@@ -73,10 +66,30 @@ describe("channel inbound events", () => {
       expect(m.connection).toHaveBeenCalledWith("connection", token);
     },
   );
+  it.each(["token", "access_token"])(
+    "rejects URL credentials (%s) for GET and POST",
+    async (key) => {
+      const url = `http://localhost/events?${key}=secret`;
+      expect((await GET(new Request(url), context)).status).toBe(401);
+      expect(
+        (await POST(new Request(url, { method: "POST", body: "{}" }), context))
+          .status,
+      ).toBe(401);
+      expect(m.connection).not.toHaveBeenCalled();
+      expect(m.message).not.toHaveBeenCalled();
+    },
+  );
   it("rejects unsupported platforms for both challenge and message requests", async () => {
     m.connection.mockResolvedValue({ platform: "missing" });
     expect(
-      (await GET(new Request("http://localhost?token=secret"), context)).status,
+      (
+        await GET(
+          new Request("http://localhost", {
+            headers: { authorization: "Bearer secret" },
+          }),
+          context,
+        )
+      ).status,
     ).toBe(404);
     expect((await POST(post({}), context)).status).toBe(404);
     expect(m.message).not.toHaveBeenCalled();
@@ -85,7 +98,9 @@ describe("channel inbound events", () => {
     "returns %s callback challenges as plain text",
     async (key) => {
       const response = await GET(
-        new Request(`http://localhost?token=secret&${key}=verify-me`),
+        new Request(`http://localhost?${key}=verify-me`, {
+          headers: { authorization: "Bearer secret" },
+        }),
         context,
       );
       expect(await response.text()).toBe("verify-me");
@@ -95,7 +110,12 @@ describe("channel inbound events", () => {
   it("describes callback versus hosted-runner delivery mode", async () => {
     expect(
       await (
-        await GET(new Request("http://localhost?token=secret"), context)
+        await GET(
+          new Request("http://localhost", {
+            headers: { authorization: "Bearer secret" },
+          }),
+          context,
+        )
       ).json(),
     ).toMatchObject({
       connectionId: "connection",
@@ -110,7 +130,12 @@ describe("channel inbound events", () => {
     });
     expect(
       await (
-        await GET(new Request("http://localhost?token=secret"), context)
+        await GET(
+          new Request("http://localhost", {
+            headers: { authorization: "Bearer secret" },
+          }),
+          context,
+        )
       ).json(),
     ).toMatchObject({ platform: "google_chat", mode: "callback" });
   });
@@ -118,8 +143,9 @@ describe("channel inbound events", () => {
     expect(
       (
         await POST(
-          new Request("http://localhost?token=secret", {
+          new Request("http://localhost", {
             method: "POST",
+            headers: { authorization: "Bearer secret" },
             body: "{",
           }),
           context,

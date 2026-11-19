@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import {
   Bot,
   Brain,
@@ -35,17 +35,17 @@ import {
   AdvisorSuggestionsSchema,
 } from "@/lib/agents/advisor";
 import {
+  assertNever,
   contentProcessStatus,
   displayToolName,
   splitReasoning,
-  toContentBlocks,
-  workContentParts,
   formatContentDuration,
   type ContentBlock,
   type ContentStep,
   type ReasoningOutline,
   type ToolBlockStatus,
 } from "@/lib/conversation/content-blocks";
+import { projectContent } from "@/lib/conversation/content-projection";
 import { cn } from "@/lib/utils";
 
 export type ContentToolOverride = {
@@ -61,16 +61,60 @@ type Props = {
   parts: readonly { type: string; [key: string]: unknown }[];
   streaming: boolean;
   activeLabel?: string;
-  processDataTypes?: readonly `data-${string}`[];
-  renderDataStep?: (
-    step: Extract<ContentStep, { kind: "data" }>,
-  ) => ReactNode | null;
   toolOverride?: (toolCallId: string) => ContentToolOverride | undefined;
   extraSteps?: ContentStep[];
 };
 
 type ProcessBlock = Extract<ContentBlock, { kind: "process" }>;
 type ToolStep = Extract<ContentStep, { kind: "tool" }>;
+type DataStep = Extract<ContentStep, { kind: "data" }>;
+
+/** Null when the record does not parse; the step then gets no row. */
+function dataStepContent(
+  step: DataStep,
+  t: ReturnType<typeof useTranslations<"console.work">>,
+): ReactNode | null {
+  switch (step.type) {
+    case ADVISOR_SUGGESTIONS_PART: {
+      const parsed = AdvisorSuggestionsSchema.safeParse(step.data);
+      return parsed.success ? (
+        <AdvisorSuggestionsCard advisory={parsed.data} />
+      ) : null;
+    }
+    case "data-subagent-activity":
+      return <SubagentActivity value={step.data} />;
+    case "data-hook-activity": {
+      const parsed = HookActivitySchema.safeParse(step.data);
+      return parsed.success ? <HookActivity value={parsed.data} /> : null;
+    }
+    case "data-work-runtime": {
+      const data = step.data as {
+        runtimeKind?: string;
+        status?: string;
+        text?: string;
+      };
+      const runtime =
+        data.runtimeKind === "pi-sdk" || data.runtimeKind === "pi"
+          ? "Pi"
+          : data.runtimeKind === "omp"
+            ? "OMP"
+            : data.runtimeKind === "claude-code"
+              ? "Claude Code"
+              : data.runtimeKind === "dsh"
+                ? "DeepSeek Harness"
+                : "—";
+      return (
+        <p className="text-xs text-muted-foreground">
+          {data.status === "cancelled"
+            ? t("runtimeCancelled", { runtime })
+            : (data.text ?? runtime)}
+        </p>
+      );
+    }
+    default:
+      return assertNever(step.type);
+  }
+}
 
 /** Tool payloads may already be serialized JSON; pretty-print instead of re-quoting. */
 function formatPayload(value: unknown): string {
@@ -262,20 +306,18 @@ function ConversationToolStep({ step }: { step: ToolStep }) {
     step.status === "awaiting" ||
       (step.status === "failed" && step.platformFailure === true),
   );
-  const userToggle = useRef(false);
   const hasPatch = typeof step.patch === "string" && step.patch.length > 0;
   // Collapsed steps skip payload formatting and code highlighting entirely.
   const input =
     !open || step.input === undefined ? undefined : formatPayload(step.input);
   return (
+    // ToolResult is controlled without onOpenChange, so its status-driven
+    // opens are ignored; only a click on its own header button toggles.
     <div
-      onClickCapture={() => {
-        userToggle.current = true;
-        // React runs capture and bubble handlers from separate root listeners, and
-        // a real click drains microtasks between them; reset after the whole event.
-        setTimeout(() => {
-          userToggle.current = false;
-        }, 0);
+      onClickCapture={(event) => {
+        const trigger = (event.target as Element).closest("button");
+        if (trigger?.parentElement?.parentElement === event.currentTarget)
+          setOpen((value) => !value);
       }}
     >
       <ToolResult
@@ -296,9 +338,6 @@ function ConversationToolStep({ step }: { step: ToolStep }) {
           (step.status === "awaiting" ? work("toolAwaiting") : undefined)
         }
         open={open}
-        onOpenChange={(next) => {
-          if (userToggle.current) setOpen(next);
-        }}
         collapseOnComplete={false}
         maxHeight={toolResultUnboundedHeight}
       >
@@ -349,11 +388,9 @@ function ConversationToolStep({ step }: { step: ToolStep }) {
 function ConversationProcessBlock({
   block,
   activeLabel,
-  renderDataStep,
 }: {
   block: ProcessBlock;
   activeLabel?: string;
-  renderDataStep?: Props["renderDataStep"];
 }) {
   const t = useTranslations("console.work");
   const id = useId();
@@ -399,7 +436,7 @@ function ConversationProcessBlock({
       <div className="space-y-3">
         {block.steps.map((step) =>
           step.kind === "data" ? (
-            <div key={step.id}>{renderDataStep?.(step)}</div>
+            <div key={step.id}>{dataStepContent(step, t)}</div>
           ) : null,
         )}
       </div>
@@ -445,7 +482,7 @@ function ConversationProcessBlock({
             {timelineSteps(block.steps).map((item) => {
               const { step } = item;
               const content =
-                step.kind === "data" ? renderDataStep?.(step) : undefined;
+                step.kind === "data" ? dataStepContent(step, t) : undefined;
               if (step.kind === "data" && content == null) return null;
               return (
                 <li
@@ -559,23 +596,18 @@ function ContextMaintenanceBlock({
   );
 }
 
-/** One ordered display path for Assistant and Agent UI-message parts. */
+/** One ordered display path for Assistant, Agent and Work UI-message parts. */
 export function ConversationContentBlocks({
   messageId,
   parts,
   streaming,
   activeLabel,
-  processDataTypes,
-  renderDataStep,
   toolOverride,
   extraSteps,
 }: Props): ReactNode {
   const t = useTranslations("console.agents");
   const work = useTranslations("console.work");
-  const blocks = toContentBlocks(messageId, parts, {
-    streaming,
-    processDataTypes,
-  });
+  const blocks = projectContent(messageId, parts, { streaming });
   for (const block of blocks) {
     if (block.kind !== "process") continue;
     block.steps = block.steps.map((step) => {
@@ -623,92 +655,40 @@ export function ConversationContentBlocks({
   return (
     <div className="w-full min-w-0 space-y-3">
       {blocks.map((block) => {
-        if (block.kind === "stream-rule")
-          return <StreamRuleNotice key={block.id} trigger={block.trigger} />;
-        if (block.kind === "text")
-          return block.text ? (
-            <AssistantMarkdown
-              key={block.id}
-              text={block.text}
-              streaming={block.streaming}
-            />
-          ) : null;
-        if (block.kind === "context-maintenance")
-          return <ContextMaintenanceBlock key={block.id} block={block} />;
-        if (block.kind === "file")
-          return (
-            <ConversationFilePreview
-              key={block.id}
-              name={block.filename ?? t("attachment")}
-              url={block.url}
-              mimeType={block.mediaType}
-            />
-          );
-        return (
-          <ConversationProcessBlock
-            key={block.id}
-            block={block}
-            activeLabel={streaming ? activeLabel : undefined}
-            renderDataStep={renderDataStep}
-          />
-        );
+        switch (block.kind) {
+          case "stream-rule":
+            return <StreamRuleNotice key={block.id} trigger={block.trigger} />;
+          case "text":
+            return block.text ? (
+              <AssistantMarkdown
+                key={block.id}
+                text={block.text}
+                streaming={block.streaming}
+              />
+            ) : null;
+          case "context-maintenance":
+            return <ContextMaintenanceBlock key={block.id} block={block} />;
+          case "file":
+            return (
+              <ConversationFilePreview
+                key={block.id}
+                name={block.filename ?? t("attachment")}
+                url={block.url}
+                mimeType={block.mediaType}
+              />
+            );
+          case "process":
+            return (
+              <ConversationProcessBlock
+                key={block.id}
+                block={block}
+                activeLabel={streaming ? activeLabel : undefined}
+              />
+            );
+          default:
+            return assertNever(block);
+        }
       })}
     </div>
-  );
-}
-
-/** Work keeps its native records and timing; only their presentation is adapted. */
-export function WorkContentBlocks({
-  parts,
-  ...props
-}: Omit<Props, "processDataTypes" | "renderDataStep">) {
-  const t = useTranslations("console.work");
-  return (
-    <ConversationContentBlocks
-      {...props}
-      parts={workContentParts(parts, props.streaming)}
-      processDataTypes={[
-        "data-subagent-activity",
-        "data-hook-activity",
-        "data-work-runtime",
-        ADVISOR_SUGGESTIONS_PART,
-      ]}
-      renderDataStep={(step) => {
-        if (step.type === ADVISOR_SUGGESTIONS_PART) {
-          const parsed = AdvisorSuggestionsSchema.safeParse(step.data);
-          return parsed.success ? (
-            <AdvisorSuggestionsCard advisory={parsed.data} />
-          ) : null;
-        }
-        if (step.type === "data-subagent-activity")
-          return <SubagentActivity value={step.data} />;
-        if (step.type === "data-hook-activity") {
-          const parsed = HookActivitySchema.safeParse(step.data);
-          return parsed.success ? <HookActivity value={parsed.data} /> : null;
-        }
-        const data = step.data as {
-          runtimeKind?: string;
-          status?: string;
-          text?: string;
-        };
-        const runtime =
-          data.runtimeKind === "pi-sdk" || data.runtimeKind === "pi"
-            ? "Pi"
-            : data.runtimeKind === "omp"
-              ? "OMP"
-              : data.runtimeKind === "claude-code"
-                ? "Claude Code"
-                : data.runtimeKind === "dsh"
-                  ? "DeepSeek Harness"
-                  : "—";
-        return (
-          <p className="text-xs text-muted-foreground">
-            {data.status === "cancelled"
-              ? t("runtimeCancelled", { runtime })
-              : (data.text ?? runtime)}
-          </p>
-        );
-      }}
-    />
   );
 }

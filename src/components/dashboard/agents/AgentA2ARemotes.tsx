@@ -16,6 +16,7 @@ import type {
   RemoteAgentAction,
   RemoteAgentView,
 } from "@/lib/a2a/remote-registry";
+import { apiRequest } from "@/lib/client/api";
 
 export function AgentA2ARemotes({
   base,
@@ -38,36 +39,36 @@ export function AgentA2ARemotes({
     generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
   const endpoint = `${base}/remotes`;
+  /** Resolves to the failure text, or null once the view is current. */
   const load = useCallback(
     async (signal?: AbortSignal) => {
       const current = ++generation.current;
-      const response = await fetch(endpoint, {
+      const result = await apiRequest<RemoteAgentView>(endpoint, {
         cache: "no-store",
-        credentials: "same-origin",
         signal: AbortSignal.any([
           AbortSignal.timeout(15_000),
           ...(signal ? [signal] : []),
         ]),
       });
-      if (!response.ok) throw new Error();
-      const next: RemoteAgentView = await response.json();
-      if (!Array.isArray(next.agents) || typeof next.canManage !== "boolean")
-        throw new Error();
+      if (!result.ok) return result.message ?? t("failed");
+      const next = result.data;
+      if (!Array.isArray(next?.agents) || typeof next.canManage !== "boolean")
+        return t("failed");
       if (mounted.current && current === generation.current && !signal?.aborted)
         setView(next);
+      return null;
     },
-    [endpoint],
+    [endpoint, t],
   );
-  const loadInitial = useEffectEvent((signal: AbortSignal) => {
-    void load(signal).catch(() => {
-      if (!signal.aborted) setError(t("failed"));
-    });
+  const loadInitial = useEffectEvent(async (signal: AbortSignal) => {
+    const failure = await load(signal);
+    if (failure && !signal.aborted) setError(failure);
   });
   useEffect(() => {
     void endpoint; // Target identity alone controls the initial fetch lifecycle.
     mounted.current = true;
     const abort = new AbortController();
-    loadInitial(abort.signal);
+    void loadInitial(abort.signal);
     return () => {
       mounted.current = false;
       abort.abort();
@@ -91,47 +92,30 @@ export function AgentA2ARemotes({
     setBusy(true);
     setError("");
     controller.current = new AbortController();
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(action),
-        signal: AbortSignal.any([
-          controller.current.signal,
-          AbortSignal.timeout(25_000),
-        ]),
-      });
-      if (!response.ok) {
-        const value = await response.json();
-        // Only the BFF's fixed, sanitized policy messages are returned here; never native network exceptions.
-        throw new Error(
-          typeof value.error === "string" ? value.error : t("failed"),
-        );
-      }
-      if (!mounted.current) return;
-      setToken("");
-      setKeyTarget(null);
-      if (action.action === "register") {
-        setName("");
-        setCardUrl("");
-        setRpcUrl("");
-      }
-      await load();
-    } catch (failure) {
-      if (mounted.current)
-        setError(
-          failure instanceof Error && failure.message
-            ? failure.message
-            : t("failed"),
-        );
-    } finally {
-      flight.current = false;
-      if (mounted.current) {
-        setBusy(false);
-        setToken("");
-      }
+    const result = await apiRequest(endpoint, {
+      method: "POST",
+      json: action,
+      signal: AbortSignal.any([
+        controller.current.signal,
+        AbortSignal.timeout(25_000),
+      ]),
+    });
+    flight.current = false;
+    if (!mounted.current) return;
+    setBusy(false);
+    setToken("");
+    if (!result.ok) {
+      setError(result.message ?? t("failed"));
+      return;
     }
+    setKeyTarget(null);
+    if (action.action === "register") {
+      setName("");
+      setCardUrl("");
+      setRpcUrl("");
+    }
+    const failure = await load();
+    if (failure && mounted.current) setError(failure);
   }
   return (
     <section
@@ -146,8 +130,8 @@ export function AgentA2ARemotes({
           disabled={busy}
           onClick={() => {
             setError("");
-            void load().catch(() => {
-              if (mounted.current) setError(t("failed"));
+            void load().then((failure) => {
+              if (failure && mounted.current) setError(failure);
             });
           }}
           variant={"secondary"}

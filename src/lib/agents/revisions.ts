@@ -31,10 +31,8 @@ import type {
 import { resolveAgentPiPackages } from "./resolve";
 import { isSupportedPiVersion, PI_SDK_VERSION } from "./pi-version";
 import { assertAgentEnvironmentCredentialReferences } from "./environment-credentials";
-import {
-  preflightPiSdkCapabilities,
-  nativePiMcpToolName,
-} from "./sandbox-runtime";
+import { preflightPiSdkCapabilities } from "./sandbox-runtime";
+import { nativePiMcpToolName } from "./sandbox-runtime/mcp-extension";
 import { MCP_RESULT_TO_FILE_TOOL } from "./native-tools";
 import {
   mcpDefinitionChecksum,

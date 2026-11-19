@@ -1,7 +1,8 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { notFound, redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { getMcpCall } from "@/lib/observability/views/mcp-calls";
 import { McpCallDetail } from "@/components/observability/McpCallDetail";
 import { ButtonLink } from "@/components/motion/button";
@@ -19,7 +20,7 @@ export default async function McpCallPage({
   const { workspace: slug, id } = await params;
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
-  const workspace = await getWorkspaceForUser(slug, user.id);
+  const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (!workspace) notFound();
   const detail = await getMcpCall(
     { kind: "workspace", workspaceId: workspace.id, userId: user.id },

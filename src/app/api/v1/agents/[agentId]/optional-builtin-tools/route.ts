@@ -1,14 +1,12 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
-import { isSameOriginRequest } from "@/lib/http/origin";
+
 import { parseJson } from "@/lib/agents/public-api/body";
 import { OptionalBuiltinToolsSchema } from "@/lib/agents/revision-types";
 import { getAgentOptionalBuiltinTools } from "@/lib/agents/queries";
-import {
-  AgentConfigurationError,
-  updateAgentOptionalBuiltinTools,
-} from "@/lib/agents/mutations";
+import { AgentConfigurationError } from "@/lib/agents/agent-mutation-guards";
+import { updateAgentOptionalBuiltinTools } from "@/lib/agents/agent-draft-mutations";
 import { AgentExecutionBusyError } from "@/lib/agents/agent-execution-gate";
 import { withRequestLogging } from "@/lib/observability/http";
 
@@ -28,12 +26,6 @@ async function handle(
   const user = await resolveRequestUser(req);
   if (!user)
     return Response.json({ error: "Unauthorized" }, { status: 401, headers });
-  if (
-    req.method !== "GET" &&
-    !req.headers.has("authorization") &&
-    !isSameOriginRequest(req)
-  )
-    return Response.json({ error: "Forbidden" }, { status: 403, headers });
   const parsed =
     req.method === "GET" ? null : await parseJson(req, input, 16_000);
   if (parsed && !parsed.ok)
@@ -45,8 +37,13 @@ async function handle(
       },
     );
   const value = parsed?.ok ? parsed.value : null;
-  const workspace = await getWorkspaceForUser(
-    value?.workspace ?? new URL(req.url).searchParams.get("workspace") ?? "",
+  const workspace = await resolveWorkspaceScope(
+    {
+      slug:
+        value?.workspace ??
+        new URL(req.url).searchParams.get("workspace") ??
+        "",
+    },
     user.id,
   );
   if (!workspace)

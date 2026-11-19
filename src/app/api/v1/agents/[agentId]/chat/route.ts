@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import type { UIMessage } from "ai";
 import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { TaskNotFoundError } from "@a2a-js/sdk/errors";
@@ -68,6 +69,11 @@ export const POST = withRequestLogging(
         "Create a conversation before submitting a native task.",
         { status: 400 },
       );
+    const scope = await resolveWorkspaceScope(
+      { id: liveAgent.workspaceId },
+      user.id,
+    );
+    if (!scope) return new Response("Agent not found", { status: 404 });
     const conversation = await db.conversation.findFirst({
       where: {
         id: body.conversationId,
@@ -294,8 +300,7 @@ export const POST = withRequestLogging(
       streamOwnsConversation = true;
       return workspaceAccessResponse(
         createUIMessageStreamResponse({ stream }),
-        liveAgent.workspaceId,
-        user.id,
+        scope,
         req.signal,
       );
     } finally {

@@ -1,5 +1,10 @@
 import "server-only";
 
+import {
+  type WorkspaceScope,
+  workspaceScopeWhere,
+} from "@/lib/workspace/scope";
+import { PluginError } from "@/lib/plugins/catalog";
 import { db } from "@/lib/db";
 import {
   AgentRevisionError,
@@ -14,10 +19,7 @@ import {
 import { catalogToolNames } from "@/lib/process/mcp-grant-sync";
 import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
 import { z } from "zod";
-import {
-  requirePluginWorkspace,
-  visiblePluginWhere,
-} from "@/lib/plugins/catalog";
+import { visiblePluginWhere } from "@/lib/plugins/catalog";
 
 export type AgentPackageMcpConnection = {
   deploymentId: string;
@@ -26,20 +28,31 @@ export type AgentPackageMcpConnection = {
 };
 
 /** Apply exactly one reviewed package over the applied revision, never the mutable draft. */
-export async function applyPiPackageToAgent(input: {
-  workspaceId: string;
-  userId: string;
-  agentId: string;
-  expectedRevisionId: string;
-  package: { marketInstallId: string; releaseId: string; integrity: string };
-  connections: readonly AgentPackageMcpConnection[];
-  syncTarget?: { releaseId: string; requestedById: string };
-}) {
+export async function applyPiPackageToAgent(
+  scope: WorkspaceScope<"manage">,
+  input: {
+    agentId: string;
+    expectedRevisionId: string;
+    package: { marketInstallId: string; releaseId: string; integrity: string };
+    connections: readonly AgentPackageMcpConnection[];
+    syncTarget?: { releaseId: string; requestedById: string };
+  },
+) {
   return db.$transaction(
     async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${input.workspaceId} FOR UPDATE`;
-      await tx.$queryRaw`SELECT id FROM "Agent" WHERE id=${input.agentId} AND "workspaceId"=${input.workspaceId} FOR UPDATE`;
-      await requirePluginWorkspace(input.workspaceId, input.userId, true, tx);
+      await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${scope.id} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM "Agent" WHERE id=${input.agentId} AND "workspaceId"=${scope.id} FOR UPDATE`;
+      if (
+        !(await tx.workspace.findFirst({
+          where: workspaceScopeWhere(scope),
+          select: { id: true },
+        }))
+      )
+        throw new PluginError(
+          "not_authorized",
+          "Workspace access denied.",
+          403,
+        );
       if (input.syncTarget) {
         const pending = await tx.agentPiPackage.findFirst({
           where: {
@@ -48,9 +61,9 @@ export async function applyPiPackageToAgent(input: {
             targetReleaseId: input.syncTarget.releaseId,
             syncRequestedById: input.syncTarget.requestedById,
             syncStatus: "pending",
-            agent: { workspaceId: input.workspaceId },
+            agent: { workspaceId: scope.id },
             marketInstall: {
-              targetWorkspaceId: input.workspaceId,
+              targetWorkspaceId: scope.id,
               currentReleaseId: input.syncTarget.releaseId,
               status: "ready",
             },
@@ -63,7 +76,7 @@ export async function applyPiPackageToAgent(input: {
       const agent = await tx.agent.findFirst({
         where: {
           id: input.agentId,
-          workspaceId: input.workspaceId,
+          workspaceId: scope.id,
           runtimeKind: "pi-sdk",
           retiredAt: null,
           publicRuntimeAllocation: null,
@@ -134,11 +147,11 @@ export async function applyPiPackageToAgent(input: {
         throw new AgentRevisionError("MCP_TOOL_SELECTION_CHANGED");
       const grants: AgentRevisionConfig["mcpGrants"] = [];
       for (const connection of connections) {
-        await tx.$queryRaw`SELECT id FROM "Deployment" WHERE id=${connection.deploymentId} AND "workspaceId"=${input.workspaceId} FOR UPDATE`;
+        await tx.$queryRaw`SELECT id FROM "Deployment" WHERE id=${connection.deploymentId} AND "workspaceId"=${scope.id} FOR UPDATE`;
         const deployment = await tx.deployment.findFirst({
           where: {
             id: connection.deploymentId,
-            workspaceId: input.workspaceId,
+            workspaceId: scope.id,
             OR: [{ source: null }, { source: { not: "sandbox" } }],
           },
         });
@@ -189,11 +202,11 @@ export async function applyPiPackageToAgent(input: {
       const install = await tx.marketInstall.findFirst({
         where: {
           id: input.package.marketInstallId,
-          targetWorkspaceId: input.workspaceId,
+          targetWorkspaceId: scope.id,
           currentReleaseId: input.package.releaseId,
           status: "ready",
           listing: {
-            ...visiblePluginWhere(input.workspaceId),
+            ...visiblePluginWhere(scope.id),
             status: "published",
             releases: {
               some: {
@@ -230,33 +243,28 @@ export async function applyPiPackageToAgent(input: {
           syncError: null,
         },
       });
-      return publishAgentRevisionInTransaction(
-        tx,
-        input.workspaceId,
-        input.agentId,
-        {
-          expectedRevisionId: input.expectedRevisionId,
-          config: {
-            ...current.config,
-            packages: [
-              ...current.config.packages.filter(
-                (pin) => pin.marketInstallId !== input.package.marketInstallId,
-              ),
-              input.package,
-            ],
-            mcpGrants: [
-              ...current.config.mcpGrants.filter(
-                (grant) =>
-                  !input.connections.some(
-                    (connection) =>
-                      connection.deploymentId === grant.deploymentId,
-                  ),
-              ),
-              ...grants,
-            ],
-          },
+      return publishAgentRevisionInTransaction(tx, scope.id, input.agentId, {
+        expectedRevisionId: input.expectedRevisionId,
+        config: {
+          ...current.config,
+          packages: [
+            ...current.config.packages.filter(
+              (pin) => pin.marketInstallId !== input.package.marketInstallId,
+            ),
+            input.package,
+          ],
+          mcpGrants: [
+            ...current.config.mcpGrants.filter(
+              (grant) =>
+                !input.connections.some(
+                  (connection) =>
+                    connection.deploymentId === grant.deploymentId,
+                ),
+            ),
+            ...grants,
+          ],
         },
-      );
+      });
     },
     { timeout: 120_000 },
   );

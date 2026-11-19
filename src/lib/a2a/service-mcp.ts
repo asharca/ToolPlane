@@ -75,7 +75,7 @@ export async function executeServiceMcpTool(
 ) {
   const tool = catalog.find((item) => item.name === name);
   if (!tool || !permits(grant, tool.operation))
-    throw new A2AHttpError(403, "A2A operation is not permitted.");
+    throw new A2AHttpError(403, "OPERATION_FORBIDDEN");
   await assertLiveGrant(grant, tool.operation);
   const method =
     name === "a2a_get_task"
@@ -137,7 +137,7 @@ export async function handleServiceMcp(req: Request, endpointId: string) {
         req.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !==
         "application/json"
       )
-        throw new A2AHttpError(415, "Expected JSON.");
+        throw new A2AHttpError(415, "JSON_REQUIRED");
       const parsed = await parseJson(
         req,
         Rpc,
@@ -149,7 +149,7 @@ export async function handleServiceMcp(req: Request, endpointId: string) {
       if (!parsed.ok)
         throw new A2AHttpError(
           parsed.reason === "too_large" ? 413 : 400,
-          "Invalid MCP request.",
+          "INVALID_MCP_REQUEST",
         );
       const token = req.headers
         .get("authorization")
@@ -159,7 +159,7 @@ export async function handleServiceMcp(req: Request, endpointId: string) {
         token.length > 20 &&
         JSON.stringify(parsed.value).includes(token)
       )
-        throw new A2AHttpError(400, "Credentials are not task content.");
+        throw new A2AHttpError(400, "CREDENTIALS_IN_CONTENT");
       // A notification cannot be used to perform a tools/call mutation without a response ID.
       if (parsed.value.id === undefined)
         return new Response(null, { status: 202, headers });

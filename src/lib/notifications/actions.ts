@@ -1,10 +1,10 @@
 "use server";
 
+import { actionScope } from "@/lib/workspace/action-scope";
 import { logSystemEvent } from "@/lib/observability/system";
 import { revalidatePath } from "next/cache";
 import { getTranslations } from "next-intl/server";
-import { requireAdmin } from "@/lib/auth/admin";
-import { getCurrentUser } from "@/lib/auth/current-user";
+
 import {
   NotificationError,
   publishNotification,
@@ -81,7 +81,7 @@ export async function publishSiteNotificationAction(
   _prev: NotificationActionState,
   form: FormData,
 ): Promise<NotificationActionState> {
-  const admin = await requireAdmin();
+  const admin = await actionScope({ admin: true });
   return publish(admin.id, { kind: "site" }, form);
 }
 
@@ -89,7 +89,7 @@ export async function publishWorkspaceNotificationAction(
   _prev: NotificationActionState,
   form: FormData,
 ): Promise<NotificationActionState> {
-  const user = await getCurrentUser();
+  const user = await actionScope();
   if (!user)
     return failure(
       new NotificationError("forbidden"),
@@ -109,7 +109,7 @@ export async function markNotificationReadAction(
   _prev: NotificationActionState,
   form: FormData,
 ): Promise<NotificationActionState> {
-  const user = await getCurrentUser();
+  const user = await actionScope();
   if (!user)
     return failure(
       new NotificationError("forbidden"),
@@ -136,7 +136,7 @@ export async function markAllNotificationsReadAction(
   form: FormData,
 ): Promise<NotificationActionState> {
   void form;
-  const user = await getCurrentUser();
+  const user = await actionScope();
   if (!user)
     return failure(
       new NotificationError("forbidden"),
@@ -154,7 +154,7 @@ export async function markAllNotificationsReadAction(
 export async function getUnreadNotificationCountAction(): Promise<
   { count: number } | { error: string }
 > {
-  const user = await getCurrentUser();
+  const user = await actionScope();
   try {
     if (!user) throw new NotificationError("forbidden");
     return { count: await getUnreadNotificationCount(user.id) };

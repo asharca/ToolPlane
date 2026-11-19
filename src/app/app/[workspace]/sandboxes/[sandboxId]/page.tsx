@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 
@@ -8,7 +9,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { Cpu, FolderOpen, Globe2, Laptop, Terminal } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { sandboxMcpResource } from "@/lib/sandboxes/oauth-policy";
 import { sandboxMcpExportable } from "@/lib/sandboxes/mcp-policy";
 import { SandboxMcpExport } from "@/components/dashboard/sandboxes/SandboxMcpExport";
@@ -116,7 +117,7 @@ export default async function SandboxDetailPage({
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
-  const ws = await getWorkspaceForUser(slug, user.id);
+  const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app");
 
   const [sandbox, autoStop] = await Promise.all([

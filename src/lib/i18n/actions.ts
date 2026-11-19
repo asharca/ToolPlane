@@ -1,9 +1,10 @@
 "use server";
 
+import { actionScope } from "@/lib/workspace/action-scope";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { getSessionUserId } from "@/lib/auth/session";
+
 import type { Locale } from "@/i18n/routing";
 
 export async function setLocale(locale: Locale): Promise<void> {
@@ -15,7 +16,7 @@ export async function setLocale(locale: Locale): Promise<void> {
     maxAge: 60 * 60 * 24 * 365,
   });
 
-  const userId = await getSessionUserId();
+  const userId = (await actionScope())?.id;
   if (userId) {
     await db.user.updateMany({ where: { id: userId }, data: { locale } });
   }

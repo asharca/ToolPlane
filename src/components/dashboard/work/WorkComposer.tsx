@@ -1,5 +1,10 @@
 "use client";
 
+import { apiRequest } from "@/lib/client/api";
+import {
+  DisplayError,
+  displayErrorText,
+} from "@/components/dashboard/display-error";
 import { Button } from "@/components/motion/button";
 import { ComposerToolbarCustomizer } from "@/components/dashboard/ComposerToolbarCustomizer";
 import { ComposerToolsButton } from "@/components/dashboard/ComposerToolsButton";
@@ -177,11 +182,10 @@ export function WorkComposer({
     onPendingChange(true);
     onError(null);
     try {
-      const response = await fetch(endpoint, {
+      const response = await apiRequest(endpoint, {
         method: "POST",
         signal: controller.signal,
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+        json: {
           kind: item.kind,
           id: item.id,
           ...(item.kind === "agent" ? { targetKind: item.targetKind } : {}),
@@ -189,31 +193,28 @@ export function WorkComposer({
           ...(sandboxId ? { sandboxId } : {}),
           ...(workSessionId ? { workSessionId } : {}),
           ...(conversationId ? { conversationId } : {}),
-        }),
+        },
       });
       if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        throw new Error(
-          body?.error === "WORK_AGENT_REFERENCE_FORBIDDEN"
+        throw new DisplayError(
+          response.message === "WORK_AGENT_REFERENCE_FORBIDDEN"
             ? t("agentReferenceForbidden")
-            : t("referenceFailed"),
+            : (response.message ?? t("referenceFailed")),
         );
       }
-      const reference = (await response.json()) as ComposerReference;
+      const reference = response.data as ComposerReference;
       const next = ComposerReferencesSchema.safeParse([
         ...references,
         reference,
       ]);
-      if (!next.success) throw new Error(t("referenceLimit"));
+      if (!next.success) throw new DisplayError(t("referenceLimit"));
       if (!controller.signal.aborted) {
         onReferencesChange(next.data);
         focusInput();
       }
     } catch (cause) {
       if (!controller.signal.aborted)
-        onError(cause instanceof Error ? cause.message : t("referenceFailed"));
+        onError(displayErrorText(cause, t("referenceFailed")));
     } finally {
       if (!controller.signal.aborted) {
         setResolving(false);
@@ -299,12 +300,13 @@ export function WorkComposer({
             ? { conversationId, excludeConversationId: conversationId }
             : {}),
         });
-        const response = await fetch(`${endpoint}?${params}`, {
+        const response = await apiRequest(`${endpoint}?${params}`, {
           signal,
           cache: "no-store",
         });
-        if (!response.ok) throw new Error(loadFailed);
-        const data = (await response.json()) as { items: ComposerItem[] };
+        if (!response.ok)
+          throw new DisplayError(response.message ?? loadFailed);
+        const data = response.data as { items: ComposerItem[] };
         return data.items.map((item) => ({
           id: `${item.kind}:${item.targetKind ?? ""}:${item.deploymentId ?? ""}:${item.id}`,
           label: item.label,

@@ -1,12 +1,12 @@
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveAccountRequestUser } from "@/lib/auth/request-user";
 import { UpdateChatAssistantSchema } from "@/lib/chat/schemas";
+import { ChatServiceError } from "@/lib/chat/shared";
 import {
-  ChatServiceError,
   deleteChatAssistant,
   getChatAssistantForUser,
   updateChatAssistant,
-} from "@/lib/chat/service";
+} from "@/lib/chat/assistants";
 
 export const runtime = "nodejs";
 

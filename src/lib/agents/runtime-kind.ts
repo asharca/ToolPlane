@@ -1,23 +1,8 @@
-export const AGENT_RUNTIME_KINDS = [
-  "pi",
-  "pi-sdk",
-  "omp",
-  "claude-code",
-  "dsh",
-] as const;
-
-export type AgentRuntimeKind = (typeof AGENT_RUNTIME_KINDS)[number];
-export type ImplementedAgentRuntimeKind = AgentRuntimeKind;
-export type SandboxHarnessRuntimeKind = Extract<
-  AgentRuntimeKind,
-  "claude-code" | "dsh"
->;
-export type DedicatedSandboxRuntimeKind = Extract<
-  AgentRuntimeKind,
-  "pi" | "pi-sdk" | "omp" | "claude-code" | "dsh"
->;
-export type WorkRuntimeKind = DedicatedSandboxRuntimeKind;
 export type ExecutableAgentRuntimeKind = "pi-sdk";
+export type HistoricalAgentRuntimeKind = "pi" | "omp" | "claude-code" | "dsh";
+export type AgentRuntimeKind =
+  | ExecutableAgentRuntimeKind
+  | HistoricalAgentRuntimeKind;
 
 export function isExecutableAgentRuntimeKind(
   value: unknown,
@@ -25,57 +10,10 @@ export function isExecutableAgentRuntimeKind(
   return value === "pi-sdk";
 }
 
-// Explicit public capability inventory. Entry-point subsets are intentional:
-// console support does not automatically grant creation through Control MCP.
+// Control MCP deliberately exposes only an explicit creation allowlist.
 export const AGENT_CONTROL_RUNTIME_KINDS = [
   "pi-sdk",
-] as const satisfies readonly AgentRuntimeKind[];
-export const AGENT_RUNTIME_CAPABILITIES = {
-  pi: {
-    sandbox: true,
-    providerBinding: "single",
-    attachments: false,
-    terminal: true,
-    publicEndpoint: false,
-  },
-  "claude-code": {
-    sandbox: true,
-    providerBinding: "single",
-    attachments: false,
-    terminal: true,
-    publicEndpoint: false,
-  },
-  dsh: {
-    sandbox: true,
-    providerBinding: "single",
-    attachments: false,
-    terminal: true,
-    publicEndpoint: false,
-  },
-  omp: {
-    sandbox: true,
-    providerBinding: "single",
-    attachments: false,
-    terminal: false,
-    publicEndpoint: false,
-  },
-  "pi-sdk": {
-    sandbox: true,
-    providerBinding: "single",
-    attachments: false,
-    terminal: true,
-    publicEndpoint: false,
-  },
-} as const satisfies Record<
-  AgentRuntimeKind,
-  {
-    sandbox: boolean;
-    providerBinding: "single" | "multiple";
-    attachments: boolean;
-    terminal: boolean;
-    publicEndpoint: boolean;
-  }
->;
+] as const satisfies readonly ExecutableAgentRuntimeKind[];
 
 export type AgentOptionalBuiltinTool = {
   /** Stable native tool name; never accept module paths from revision data. */
@@ -140,12 +78,6 @@ export function agentBuiltinFeatureForTool(tool: string) {
   return AGENT_BUILTIN_FEATURES.find((feature) => feature.tools.includes(tool));
 }
 
-export function agentOptionalBuiltinTools(value: unknown) {
-  return isExecutableAgentRuntimeKind(value)
-    ? AGENT_OPTIONAL_BUILTIN_TOOLS
-    : [];
-}
-
 export function agentOptionalBuiltinTool(name: string) {
   return AGENT_OPTIONAL_BUILTIN_TOOLS.find((tool) => tool.name === name);
 }
@@ -167,70 +99,43 @@ export function normalizeOptionalBuiltinTools(
 }
 
 export function agentOptionalBuiltinToolOptions(
-  runtimeKind: unknown,
+  runtimeKind: ExecutableAgentRuntimeKind,
   enabled: readonly string[] = [],
 ) {
-  return agentOptionalBuiltinTools(runtimeKind).map((tool) => ({
+  // Retain the boundary guard for untyped callers.
+  if (!isExecutableAgentRuntimeKind(runtimeKind)) return [];
+  return AGENT_OPTIONAL_BUILTIN_TOOLS.map((tool) => ({
     ...tool,
     enabled: enabled.includes(tool.name),
   }));
 }
 
-const AGENT_RUNTIME_BUILTIN_TOOLS: Record<AgentRuntimeKind, readonly string[]> =
-  {
-    pi: ["read", "edit", "write", "grep", "find", "ls", "bash"],
-    "pi-sdk": ["read", "edit", "write", "grep", "find", "ls", "bash", "todo"],
-    omp: [
-      "read",
-      "edit",
-      "write",
-      "grep",
-      "glob",
-      "web_search",
-      "bash",
-      "eval",
-      "todo",
-      "task",
-      "wait",
-      "ask",
-    ],
-    "claude-code": [
-      "Read",
-      "Edit",
-      "Write",
-      "Glob",
-      "Grep",
-      "Bash",
-      "Workflow",
-    ],
-    dsh: [
-      "read",
-      "read_image",
-      "edit",
-      "write",
-      "str_replace_editor",
-      "glob",
-      "grep",
-      "web_search",
-      "bash",
-      "job_output",
-      "job_list",
-      "job_kill",
-      "todo_write",
-      "skill",
-      "get_goal",
-      "create_goal",
-      "update_goal",
-      "exit_plan_mode",
-      "subagent",
-      "subagent_fork",
-      "send_message",
-      "interrupt_agent",
-      "list_agents",
-      "workflow",
-      "ralph",
-    ],
-  };
+/** Used only for reading historical OMP package members and revisions. */
+export const HISTORICAL_OMP_BUILTIN_TOOLS: readonly string[] = [
+  "read",
+  "edit",
+  "write",
+  "grep",
+  "glob",
+  "web_search",
+  "bash",
+  "eval",
+  "todo",
+  "task",
+  "wait",
+  "ask",
+];
+
+const PI_BUILTIN_TOOLS = [
+  "read",
+  "edit",
+  "write",
+  "grep",
+  "find",
+  "ls",
+  "bash",
+  "todo",
+] as const;
 
 const GENERIC_PROXY_PROVIDER_FORMATS = new Set([
   "openai",
@@ -247,52 +152,23 @@ export function agentRuntimeDisplayName(value: string): string {
   return value;
 }
 
-export function implementedAgentRuntimeKind(
-  value: unknown,
-): ImplementedAgentRuntimeKind | null {
-  return typeof value === "string" &&
-    (AGENT_RUNTIME_KINDS as readonly string[]).includes(value)
-    ? (value as ImplementedAgentRuntimeKind)
-    : null;
-}
-
-export function agentRuntimeCapabilities(value: unknown) {
-  const kind = implementedAgentRuntimeKind(value);
-  return kind ? AGENT_RUNTIME_CAPABILITIES[kind] : null;
-}
-
-/** Default-on tools of a runtime, in the order passed to the runtime. */
-export function agentRuntimeBuiltinTools(value: unknown): readonly string[] {
-  const kind = implementedAgentRuntimeKind(value);
-  return kind ? AGENT_RUNTIME_BUILTIN_TOOLS[kind] : [];
+/** Default-on tools, in the order passed to the executable runtime. */
+export function agentRuntimeBuiltinTools(
+  runtime: ExecutableAgentRuntimeKind,
+): readonly string[] {
+  return isExecutableAgentRuntimeKind(runtime) ? PI_BUILTIN_TOOLS : [];
 }
 
 export function normalizeDisabledBuiltinTools(
-  value: unknown,
+  runtime: ExecutableAgentRuntimeKind,
   tools: readonly string[] | undefined,
 ): string[] {
-  const available = new Set(agentRuntimeBuiltinTools(value));
+  const available = new Set(agentRuntimeBuiltinTools(runtime));
   return [...new Set((tools ?? []).filter((tool) => available.has(tool)))];
 }
 
-export function isSandboxHarnessRuntimeKind(
-  value: unknown,
-): value is SandboxHarnessRuntimeKind {
-  return value === "claude-code" || value === "dsh";
-}
-
-export function isDedicatedSandboxRuntimeKind(
-  value: unknown,
-): value is DedicatedSandboxRuntimeKind {
-  return agentRuntimeCapabilities(value)?.providerBinding === "single";
-}
-
-export function isWorkRuntimeKind(value: unknown): value is WorkRuntimeKind {
-  return agentRuntimeCapabilities(value)?.sandbox === true;
-}
-
 export function agentRuntimeSupportsProviderFormat(
-  runtime: string,
+  runtime: ExecutableAgentRuntimeKind,
   format: string,
 ): boolean {
   return (

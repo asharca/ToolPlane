@@ -18,6 +18,7 @@ import {
 } from "@/lib/sandboxes/external";
 import { AgentRevisionConfigSchema } from "./revision-types";
 import { enrichLogContext } from "@/lib/observability/context";
+import { entryConversationIds } from "./entry-kinds";
 
 /** A token identifies a pinned session; it never freezes live authorization. */
 export async function resolveAgentRuntimeGrant(
@@ -114,22 +115,11 @@ export async function resolveAgentRuntimeGrant(
           },
         });
         if (!context) return null;
-        const conversations = new Set<string>();
-        for (const entry of context.entryBindings) {
-          if (["chat", "control", "channel", "trigger"].includes(entry.kind))
-            conversations.add(entry.sourceId);
-          if (entry.kind === "work") {
-            const work = await tx.workSession.findFirst({
-              where: {
-                id: entry.sourceId,
-                workspaceId: token.workspaceId,
-                agentId: token.agentId,
-              },
-              select: { conversationId: true },
-            });
-            if (work?.conversationId) conversations.add(work.conversationId);
-          }
-        }
+        const conversations = await entryConversationIds(
+          tx,
+          token,
+          context.entryBindings,
+        );
         if (conversations.size > 1) return null;
         contextConversationId = [...conversations][0];
         if (

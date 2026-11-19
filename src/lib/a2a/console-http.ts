@@ -1,4 +1,6 @@
 import "server-only";
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
+import { a2aFailures } from "./errors";
 import { db } from "@/lib/db";
 import { z } from "zod";
 import {
@@ -9,7 +11,7 @@ import { getConsoleContexts } from "./console-contexts";
 import { retryTaskFileReception } from "./store";
 import type { TaskGrant } from "./principal";
 import { resolveRequestPrincipal } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { originFromRequest } from "@/lib/http/origin";
 import { withLogContext } from "@/lib/observability/context";
 import { parseJson } from "@/lib/agents/public-api/body";
@@ -37,7 +39,7 @@ const reply = (body: unknown, status = 200) =>
   });
 function failure(error: unknown) {
   if (error instanceof A2AHttpError)
-    return reply({ error: error.message }, error.status);
+    return reply({ error: a2aFailures.text(error.code) }, error.status);
   if (error instanceof TaskNotFoundError)
     return reply({ error: "Agent unavailable." }, 404);
   return reply(
@@ -55,30 +57,27 @@ export async function sessionActor(
   agentId: string,
 ): Promise<ConsoleActor> {
   if (req.headers.has("authorization"))
-    throw new A2AHttpError(
-      401,
-      "Use the console session, not an API credential.",
-    );
+    throw new A2AHttpError(401, "CONSOLE_CREDENTIAL_REQUIRED");
   const site = req.headers.get("sec-fetch-site");
   if (site && !["same-origin", "none"].includes(site))
-    throw new A2AHttpError(403, "Same-origin request required.");
+    throw new A2AHttpError(403, "SAME_ORIGIN_REQUIRED");
   const suppliedOrigin = req.headers.get("origin");
   if (req.method !== "GET" || suppliedOrigin !== null) {
     const expected = originFromRequest(req);
     // Exact origin check: null, missing, comma-separated or path-bearing Origin is rejected.
     if (suppliedOrigin !== expected)
-      throw new A2AHttpError(403, "Same-origin request required.");
+      throw new A2AHttpError(403, "SAME_ORIGIN_REQUIRED");
   }
   const principal = await resolveRequestPrincipal(req);
   if (principal?.credential !== "session")
-    throw new A2AHttpError(401, "Sign in to the console.");
-  const workspace = await getWorkspaceForUser(slug, principal.user.id);
+    throw new A2AHttpError(401, "CONSOLE_SIGN_IN_REQUIRED");
+  const workspace = await resolveWorkspaceScope({ slug }, principal.user.id);
   if (workspace?.status !== "active")
-    throw new A2AHttpError(404, "Workspace unavailable.");
+    throw new A2AHttpError(404, "WORKSPACE_UNAVAILABLE");
   const active = await db.user.count({
     where: { id: principal.user.id, status: "active" },
   });
-  if (!active) throw new A2AHttpError(401, "Sign in to the console.");
+  if (!active) throw new A2AHttpError(401, "CONSOLE_SIGN_IN_REQUIRED");
   requests.take(`${workspace.id}:${principal.user.id}`);
   return {
     workspaceId: workspace.id,
@@ -102,12 +101,12 @@ export async function handleA2AConsole(
         req.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !==
         "application/json"
       )
-        throw new A2AHttpError(415, "Expected JSON.");
+        throw new A2AHttpError(415, "JSON_REQUIRED");
       const parsed = await parseJson(req, A2AConsoleAction, 4096);
       if (!parsed.ok)
         throw new A2AHttpError(
           parsed.reason === "too_large" ? 413 : 400,
-          "Invalid A2A console request.",
+          "INVALID_CONSOLE_REQUEST",
         );
       await mutateA2AConsole(ctx, parsed.value);
       return reply({ ok: true });
@@ -160,7 +159,7 @@ export async function handleA2AConsoleTasks(
             .trim()
             .toLowerCase() !== "application/json"
         )
-          throw new A2AHttpError(415, "Expected JSON.");
+          throw new A2AHttpError(415, "JSON_REQUIRED");
         const input = await parseJson(
           req,
           z
@@ -175,7 +174,7 @@ export async function handleA2AConsoleTasks(
         if (!input.ok)
           throw new A2AHttpError(
             input.reason === "too_large" ? 413 : 400,
-            "Invalid file retry request.",
+            "INVALID_FILE_RETRY",
           );
         await getConsoleMutationTaskTree(
           ctx,
@@ -193,7 +192,7 @@ export async function handleA2AConsoleTasks(
       }
       const query = new URL(req.url).searchParams;
       if ([...query.keys()].some((key) => query.getAll(key).length !== 1))
-        throw new A2AHttpError(400, "Invalid task query.");
+        throw new A2AHttpError(400, "INVALID_TASK_QUERY");
       const parsed = z
         .object({
           rootTaskId: z.string().min(1).max(200),
@@ -206,7 +205,7 @@ export async function handleA2AConsoleTasks(
         })
         .strict()
         .safeParse(Object.fromEntries(query));
-      if (!parsed.success) throw new A2AHttpError(400, "Invalid task query.");
+      if (!parsed.success) throw new A2AHttpError(400, "INVALID_TASK_QUERY");
       return reply(
         await getConsoleTaskTree(
           ctx,
@@ -234,7 +233,7 @@ export async function handleA2AConsoleContexts(
       const ctx = await sessionActor(req, slug, agentId);
       const query = new URL(req.url).searchParams;
       if ([...query.keys()].some((key) => query.getAll(key).length !== 1))
-        throw new A2AHttpError(400, "Invalid context query.");
+        throw new A2AHttpError(400, "INVALID_CONTEXT_QUERY");
       const parsed = z
         .object({
           taskId: z.string().min(1).max(200).optional(),
@@ -242,8 +241,7 @@ export async function handleA2AConsoleContexts(
         })
         .strict()
         .safeParse(Object.fromEntries(query));
-      if (!parsed.success)
-        throw new A2AHttpError(400, "Invalid context query.");
+      if (!parsed.success) throw new A2AHttpError(400, "INVALID_CONTEXT_QUERY");
       return reply(await getConsoleContexts(ctx, parsed.data));
     } catch (error) {
       return failure(error);

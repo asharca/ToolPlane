@@ -1,9 +1,9 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import {
   getDefaultWorkspace,
-  getWorkspaceForUser,
   listWorkspacesForUser,
 } from "@/lib/workspace/queries";
 import { WorkspaceAccountPage } from "@/components/dashboard/WorkspaceAccountPage";
@@ -79,7 +79,7 @@ export default async function AppIndexPage({
   }
   const cookieStore = await cookies();
   const ws = selectedSlug
-    ? await getWorkspaceForUser(selectedSlug, user.id)
+    ? await resolveWorkspaceScope({ slug: selectedSlug }, user.id)
     : await getDefaultWorkspace(
         user.id,
         cookieStore.get(lastWorkspaceCookieName(user.id))?.value,

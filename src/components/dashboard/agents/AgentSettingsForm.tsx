@@ -3,35 +3,20 @@
 import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import {
-  ArrowDown,
-  ArrowUp,
-  Box,
-  Cable,
-  LoaderCircle,
-  PackageCheck,
-  Server,
-  Trash2,
-} from "lucide-react";
+import { LoaderCircle, PackageCheck, Server } from "lucide-react";
 import { Button, ButtonLink } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
 import { Switch } from "@/components/motion/switch";
 import { FormSelect } from "@/components/ui/FormSelect";
-import { BouncyAccordion } from "@/components/motion/bouncy-accordion";
-import { StatusBadge } from "../StatusBadge";
-import {
-  EXTERNAL_SANDBOX_ACCESS,
-  MAX_EXTERNAL_SANDBOXES,
-  type ExternalSandboxAccess,
-} from "@/lib/sandboxes/external";
+import type { ExternalSandboxAccess } from "@/lib/sandboxes/external";
 import { DialogBody, DialogCancel, DialogField, DialogFooter } from "../dialog";
+import { DisplayError } from "../display-error";
 import { useCloseSettingsModal } from "../SettingsModal";
 import { notify } from "../Toaster";
 import {
   ModelPicker,
   ModelPickerTrigger,
   type ModelProviderOption,
-  type ModelSelection,
 } from "@/components/dashboard/models/ModelPicker";
 import {
   AgentResourceList,
@@ -42,7 +27,7 @@ import {
   AgentBuiltinFeatures,
 } from "./AgentBuiltinFeatures";
 import { AgentMemoriesPanel } from "./AgentMemoriesPanel";
-import { SettingsSection } from "./SettingsSection";
+import { SettingsSection, settingsTextareaClass } from "./SettingsSection";
 import {
   AgentStreamRulesEditor,
   useStreamRulesDraft,
@@ -62,20 +47,9 @@ import {
   publishAgentRevisionAction,
   updateAgentAction,
 } from "@/lib/agents/actions";
-import {
-  createAgentEnvironmentCredentialAction,
-  listAgentEnvironmentCredentialsAction,
-  revokeAgentEnvironmentCredentialAction,
-} from "@/lib/agents/environment-credential-actions";
 import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
+import { buildAgentRevisionDiff } from "@/lib/revisions/config-diff";
 import {
-  buildAgentRevisionDiff,
-  type AgentRevisionDiff,
-} from "@/lib/revisions/config-diff";
-import { RevisionFileDiff } from "../RevisionFileDiff";
-import {
-  AGENT_STEP_BOUNDS,
-  AGENT_TASK_TIMEOUT_BOUNDS,
   DEFAULT_REASONING_LEVEL,
   REASONING_LEVELS,
   normalizeReasoningEffort,
@@ -84,12 +58,8 @@ import {
   type ReasoningLevel,
 } from "@/lib/agents/constants";
 import { REASONING_EFFORT_LABELS } from "./ReasoningEffortControl";
+import { agentPermissionAdditions } from "@/lib/agents/permission-additions";
 import {
-  agentPermissionAdditions,
-  type AgentPermissionAddition,
-} from "@/lib/agents/permission-additions";
-import {
-  agentBuiltinFeatureForTool,
   isExecutableAgentRuntimeKind,
   agentRuntimeSupportsProviderFormat,
 } from "@/lib/agents/runtime-kind";
@@ -102,6 +72,19 @@ import {
   usePluginAgentFlow,
   type PluginSelectionResult,
 } from "../plugins/usePluginAgentFlow";
+import { apiRequest } from "@/lib/client/api";
+import {
+  AgentModelRoutingSettings,
+  type AgentRoleModels,
+  type FallbackModelRow,
+} from "./AgentModelRoutingSettings";
+import { AgentExecutionSettings } from "./AgentExecutionSettings";
+import { AgentSandboxSettings } from "./AgentSandboxSettings";
+import { AgentEnvironmentSettings } from "./AgentEnvironmentSettings";
+import {
+  AgentRevisionReview,
+  type AgentRevisionReviewDraft,
+} from "./AgentRevisionReview";
 
 export type AgentSettingsSection =
   | "general"
@@ -249,7 +232,6 @@ export function AgentSettingsForm(props: Props) {
     agentId,
     runtimeKind === "pi-sdk",
   );
-  const s = useTranslations("console.sandboxes");
   const diffT = useTranslations("console.revisionDiff");
   const router = useRouter();
   const closeModal = useCloseSettingsModal();
@@ -270,25 +252,26 @@ export function AgentSettingsForm(props: Props) {
   const [contextFiles, setContextFiles] = useState(props.contextFiles);
   const [provider, setProvider] = useState(props.providerId ?? "");
   const [model, setModel] = useState(props.model ?? "");
-  const [fallbackModels, setFallbackModels] = useState(() =>
+  const [fallbackModels, setFallbackModels] = useState<FallbackModelRow[]>(() =>
     (publishedRevision?.config.fallbackModels ?? []).map((selection) => ({
       id: crypto.randomUUID(),
       selection,
     })),
   );
-  const [roleModels, setRoleModels] = useState<
-    NonNullable<AgentRevisionConfig["roleModels"]>
-  >(publishedRevision?.config.roleModels ?? {});
-  const modelProviders = providers
-    .filter((item) =>
-      agentRuntimeSupportsProviderFormat(runtimeKind, item.format),
-    )
-    .map((item) => ({
-      ...item,
-      models: item.models.filter((id) =>
-        /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(id),
-      ),
-    }));
+  const [roleModels, setRoleModels] = useState<AgentRoleModels>(
+    publishedRevision?.config.roleModels ?? {},
+  );
+  const compatibleProviders = isExecutableAgentRuntimeKind(runtimeKind)
+    ? providers.filter((item) =>
+        agentRuntimeSupportsProviderFormat(runtimeKind, item.format),
+      )
+    : [];
+  const modelProviders = compatibleProviders.map((item) => ({
+    ...item,
+    models: item.models.filter((id) =>
+      /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(id),
+    ),
+  }));
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
     props.reasoningEffort ?? DEFAULT_REASONING_LEVEL,
   );
@@ -361,17 +344,10 @@ export function AgentSettingsForm(props: Props) {
       ? JSON.stringify(publishedRevision.config.environment, null, 2)
       : "",
   );
-  const [review, setReview] = useState<{
-    expectedRevisionId: string | null;
-    config: AgentRevisionConfig;
-    additions: AgentPermissionAddition[];
-    diff: AgentRevisionDiff;
-    fallbackRows: Record<"before" | "after", typeof fallbackModels>;
-  } | null>(null);
+  const [review, setReview] = useState<AgentRevisionReviewDraft | null>(null);
   const [dirty, setDirty] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
   const [revision, setRevision] = useState(publishedRevision?.id ?? "");
   const [appliedConfig, setAppliedConfig] = useState(
     publishedRevision?.config ?? null,
@@ -551,87 +527,9 @@ export function AgentSettingsForm(props: Props) {
         : [],
     );
   }, [dirtySectionKey, props.onDirtySectionsChange]);
-  const [credentials, setCredentials] = useState<
-    Array<{ id: string; name: string; revokedAt: Date | null }>
-  >([]);
-  const [credentialsState, setCredentialsState] = useState<
-    "idle" | "loading" | "loaded" | "failed"
-  >("idle");
-  const [credentialName, setCredentialName] = useState("");
-  const [credentialValue, setCredentialValue] = useState("");
-  const credentialsVisible =
-    canManageCredentials && page === "execution" && showSection("sandboxes");
-  // Loads once, the first time the sandbox page is shown to an owner.
-  useEffect(() => {
-    if (!credentialsVisible || credentialsState !== "idle") return;
-    setCredentialsState("loading");
-    const data = new FormData();
-    data.set("workspace", slug);
-    data.set("agentId", agentId);
-    void listAgentEnvironmentCredentialsAction(data).then(
-      (result) => {
-        if (result.error) {
-          setCredentialsState("failed");
-          return;
-        }
-        setCredentials(result.credentials ?? []);
-        setCredentialsState("loaded");
-      },
-      () => setCredentialsState("failed"),
-    );
-  }, [credentialsVisible, credentialsState, slug, agentId]);
   function changed() {
     setDirty(true);
     setReview(null);
-    setMessage("");
-  }
-  function modelLabel(selection: ModelSelection | null | undefined) {
-    if (!selection) return t("modelRouting.usePrimary");
-    const providerName = providers.find(
-      (item) => item.id === selection.providerId,
-    )?.name;
-    return `${providerName ?? selection.providerId} / ${selection.model}`;
-  }
-  function modelPicker(
-    selection: ModelSelection | null,
-    label: string,
-    onSelect: (selection: ModelSelection) => void,
-    placeholder = label,
-  ) {
-    const available =
-      selection &&
-      modelProviders.some(
-        (item) =>
-          item.id === selection.providerId &&
-          item.models.includes(selection.model),
-      );
-    return (
-      <ModelPicker
-        className="flex w-72 max-w-full"
-        providers={modelProviders}
-        value={available ? selection : null}
-        pending={pending}
-        onSelect={(next) => {
-          if (pending) return;
-          onSelect(next);
-          changed();
-        }}
-        trigger={
-          <ModelPickerTrigger
-            label={selection?.model ?? placeholder}
-            provider={
-              selection
-                ? (providers.find((item) => item.id === selection.providerId)
-                    ?.name ?? selection.providerId)
-                : undefined
-            }
-            placeholder={!selection}
-            disabled={pending}
-            aria-label={label}
-          />
-        }
-      />
-    );
   }
   function selectPlugin(
     listingId: string,
@@ -690,11 +588,10 @@ export function AgentSettingsForm(props: Props) {
   async function perform(operation: () => Promise<void>) {
     setPending(true);
     setError("");
-    setMessage("");
     try {
       await operation();
     } catch (failure) {
-      const code = failure instanceof Error ? failure.message : String(failure);
+      const code = failure instanceof DisplayError ? failure.message : null;
       if (
         code === "AGENT_FALLBACK_MODELS_INVALID" ||
         code === "AGENT_ROLE_MODELS_INVALID" ||
@@ -702,11 +599,14 @@ export function AgentSettingsForm(props: Props) {
       ) {
         reveal("advanced");
       }
-      const text = t.has(`modelRouting.errors.${code}`)
-        ? t(`modelRouting.errors.${code}`)
-        : r.has(`credentialErrors.${code}`)
-          ? r(`credentialErrors.${code}`)
-          : code;
+      const text =
+        code === null
+          ? settingsState("operationFailed")
+          : t.has(`modelRouting.errors.${code}`)
+            ? t(`modelRouting.errors.${code}`)
+            : r.has(`credentialErrors.${code}`)
+              ? r(`credentialErrors.${code}`)
+              : code;
       if (code === "AGENT_REVISION_CONFLICT") setReview(null);
       setError(text);
       notify(text, { severity: "error" });
@@ -724,8 +624,8 @@ export function AgentSettingsForm(props: Props) {
     const result = await publishAgentRevisionAction(data);
     if ("error" in result) {
       if (result.error !== "PI_CAPABILITY_CONFLICT")
-        throw new Error(result.error);
-      throw new Error(
+        throw new DisplayError(result.error);
+      throw new DisplayError(
         "conflict" in result && result.conflict
           ? r("capabilityConflict", {
               kind: r(`capabilityKinds.${result.conflict.kind}`),
@@ -737,7 +637,6 @@ export function AgentSettingsForm(props: Props) {
     setRevision(result.revisionId);
     setAppliedConfig(prepared.config);
     setReview(null);
-    setMessage("");
     notify(r("publishedSuccess"));
     router.refresh();
     closeModal?.();
@@ -748,7 +647,7 @@ export function AgentSettingsForm(props: Props) {
       await streamRules.save();
       const result = await updateAgentAction({}, data);
       if (result.error)
-        throw new Error(
+        throw new DisplayError(
           result.error === "AGENT_ADVISOR_INVALID"
             ? t("advisorInvalid")
             : t.has(result.error)
@@ -756,28 +655,18 @@ export function AgentSettingsForm(props: Props) {
               : result.error,
         );
       if (subagentsDirty && subagentDraft) {
-        const response = await fetch(
+        const saved = await apiRequest<SubagentResourcesSnapshot>(
           `/api/v1/agents/${encodeURIComponent(agentId)}/subagents`,
-          {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              workspace: slug,
-              ...subagentDraft,
-            }),
-          },
+          { method: "PUT", json: { workspace: slug, ...subagentDraft } },
         );
-        const result = (await response.json()) as SubagentResourcesSnapshot & {
-          error?: string;
-        };
-        if (!response.ok) {
-          throw new Error(
-            result.error && t.has(`subagentResources.errors.${result.error}`)
-              ? t(`subagentResources.errors.${result.error}`)
+        if (!saved.ok) {
+          throw new DisplayError(
+            saved.message && t.has(`subagentResources.errors.${saved.message}`)
+              ? t(`subagentResources.errors.${saved.message}`)
               : t("subagentResources.saveFailed"),
           );
         }
-        setSubagentSnapshot(result);
+        setSubagentSnapshot(saved.data);
         setSubagentDraft(null);
       }
       setDirty(false);
@@ -790,7 +679,7 @@ export function AgentSettingsForm(props: Props) {
       };
       // Never classify against a different tab's newly applied configuration.
       if ((prepared.expectedRevisionId ?? "") !== revision)
-        throw new Error(r("stale"));
+        throw new DisplayError(r("stale"));
       // Routing belongs to the reviewed revision, not the mutable Agent row.
       if (fallbackModelsDirty)
         prepared.config.fallbackModels = fallbackSelections;
@@ -839,58 +728,12 @@ export function AgentSettingsForm(props: Props) {
           after: fallbackModels,
         },
       });
-      setMessage("");
     });
   }
   async function apply() {
     if (!review || dirty || subagentsDirty || streamRules.dirty) return;
     await perform(() => publish(review));
   }
-  async function loadCredentials() {
-    const result = await listAgentEnvironmentCredentialsAction(identity());
-    if (result.error) throw new Error(result.error);
-    setCredentials(result.credentials ?? []);
-    setCredentialsState("loaded");
-  }
-  const referencedCredentialIds = (() => {
-    try {
-      const definition = JSON.parse(
-        environment,
-      ) as AgentRevisionConfig["environment"];
-      return new Set(
-        definition.credentialReferences.map(
-          (reference) => reference.credentialId,
-        ),
-      );
-    } catch {
-      return new Set<string>();
-    }
-  })();
-  // A revoked credential can no longer be referenced; leaving it in the draft would fail the next save.
-  function dropCredentialReference(credentialId: string) {
-    setEnvironment((current) => {
-      try {
-        const definition = JSON.parse(
-          current,
-        ) as AgentRevisionConfig["environment"];
-        if (
-          !definition.credentialReferences.some(
-            (reference) => reference.credentialId === credentialId,
-          )
-        )
-          return current;
-        definition.credentialReferences =
-          definition.credentialReferences.filter(
-            (reference) => reference.credentialId !== credentialId,
-          );
-        return JSON.stringify(definition, null, 2);
-      } catch {
-        return current;
-      }
-    });
-  }
-  const textareaClass =
-    "w-full rounded-lg border border-border bg-background p-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
   const showBasics = page === "basic";
   // Long free text (description, instructions) takes the whole content height when shown alone.
   const fillBody =
@@ -1053,12 +896,7 @@ export function AgentSettingsForm(props: Props) {
                     >
                       <ModelPicker
                         className="flex w-72 max-w-full"
-                        providers={providers.filter((item) =>
-                          agentRuntimeSupportsProviderFormat(
-                            runtimeKind,
-                            item.format,
-                          ),
-                        )}
+                        providers={compatibleProviders}
                         value={
                           provider && model
                             ? { providerId: provider, model }
@@ -1130,7 +968,7 @@ export function AgentSettingsForm(props: Props) {
                       maxLength={500}
                       rows={4}
                       onChange={(event) => setDescription(event.target.value)}
-                      className={`${textareaClass} ${fillBody ? "min-h-32 flex-1 resize-none" : ""}`}
+                      className={`${settingsTextareaClass} ${fillBody ? "min-h-32 flex-1 resize-none" : ""}`}
                     />
                   </DialogField>
                 </section>
@@ -1249,7 +1087,6 @@ export function AgentSettingsForm(props: Props) {
                       onChange={(draft) => {
                         setSubagentDraft(draft);
                         setReview(null);
-                        setMessage("");
                       }}
                     />
                   </div>
@@ -1281,934 +1118,80 @@ export function AgentSettingsForm(props: Props) {
                       onChange={changed}
                     />
                   </SettingsSection>
-                  <SettingsSection
-                    id="advanced"
-                    title={t("modelRoutingSection")}
-                    className="space-y-4"
+                  <AgentModelRoutingSettings
                     hidden={!showSection("advanced")}
-                  >
-                    <DialogField
-                      label={t("modelRouting.fallbackModels")}
-                      dirty={fallbackModelsDirty}
-                      layout="row"
-                    >
-                      <div className="flex flex-col items-end gap-2">
-                        <ol className="space-y-2">
-                          {fallbackModels.map((item, index) => (
-                            <li
-                              key={item.id}
-                              className="flex min-w-0 flex-wrap items-center gap-2"
-                            >
-                              <span
-                                className="w-4 text-xs tabular-nums text-muted-foreground"
-                                aria-hidden="true"
-                              >
-                                {index + 1}
-                              </span>
-                              {modelPicker(
-                                item.selection,
-                                t("modelRouting.fallbackPosition", {
-                                  position: index + 1,
-                                }),
-                                (next) =>
-                                  setFallbackModels((current) =>
-                                    current.map((entry) =>
-                                      entry.id === item.id
-                                        ? { ...entry, selection: next }
-                                        : entry,
-                                    ),
-                                  ),
-                              )}
-                              <div className="flex shrink-0 items-center">
-                                {([-1, 1] as const).map((direction) => (
-                                  <Button
-                                    key={direction}
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    disabled={
-                                      pending ||
-                                      index + direction < 0 ||
-                                      index + direction >= fallbackModels.length
-                                    }
-                                    aria-label={t(
-                                      direction < 0
-                                        ? "modelRouting.moveUp"
-                                        : "modelRouting.moveDown",
-                                      { position: index + 1 },
-                                    )}
-                                    onClick={() => {
-                                      setFallbackModels((current) => {
-                                        const next = [...current];
-                                        [next[index], next[index + direction]] =
-                                          [
-                                            next[index + direction],
-                                            next[index],
-                                          ];
-                                        return next;
-                                      });
-                                      changed();
-                                    }}
-                                  >
-                                    {direction < 0 ? (
-                                      <ArrowUp
-                                        className="size-4"
-                                        aria-hidden="true"
-                                      />
-                                    ) : (
-                                      <ArrowDown
-                                        className="size-4"
-                                        aria-hidden="true"
-                                      />
-                                    )}
-                                  </Button>
-                                ))}
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  disabled={pending}
-                                  aria-label={t("modelRouting.removeFallback", {
-                                    position: index + 1,
-                                  })}
-                                  onClick={() => {
-                                    setFallbackModels((current) =>
-                                      current.filter(
-                                        (_, position) => position !== index,
-                                      ),
-                                    );
-                                    changed();
-                                  }}
-                                >
-                                  <Trash2
-                                    className="size-4"
-                                    aria-hidden="true"
-                                  />
-                                </Button>
-                              </div>
-                            </li>
-                          ))}
-                        </ol>
-                        {fallbackModels.length < 3
-                          ? modelPicker(
-                              null,
-                              t("modelRouting.addFallback"),
-                              (selection) => {
-                                const item = {
-                                  id: crypto.randomUUID(),
-                                  selection,
-                                };
-                                setFallbackModels((current) =>
-                                  current.length < 3
-                                    ? [...current, item]
-                                    : current,
-                                );
-                              },
-                            )
-                          : null}
-                      </div>
-                    </DialogField>
-                    {(["compaction", "title"] as const).map((role) => (
-                      <DialogField
-                        key={role}
-                        label={t(`modelRouting.${role}`)}
-                        dirty={roleModelDirty(role)}
-                        layout="row"
-                      >
-                        <div className="flex min-w-0 items-center gap-1">
-                          {modelPicker(
-                            roleModels[role] ?? null,
-                            t(`modelRouting.${role}`),
-                            (next) =>
-                              setRoleModels((current) => ({
-                                ...current,
-                                [role]: next,
-                              })),
-                            t("modelRouting.usePrimary"),
-                          )}
-                          {roleModels[role] ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              disabled={pending}
-                              aria-label={t("modelRouting.clearRole", {
-                                role: t(`modelRouting.${role}`),
-                              })}
-                              onClick={() => {
-                                setRoleModels((current) => {
-                                  const next = { ...current };
-                                  delete next[role];
-                                  return next;
-                                });
-                                changed();
-                              }}
-                            >
-                              <Trash2 className="size-4" aria-hidden="true" />
-                            </Button>
-                          ) : null}
-                        </div>
-                      </DialogField>
-                    ))}
-                  </SettingsSection>
-                  <SettingsSection
-                    id="execution"
-                    title={t("executionSettings")}
-                    className="space-y-4"
+                    pending={pending}
+                    providers={providers}
+                    modelProviders={modelProviders}
+                    fallbackModels={fallbackModels}
+                    setFallbackModels={setFallbackModels}
+                    fallbackModelsDirty={fallbackModelsDirty}
+                    roleModels={roleModels}
+                    setRoleModels={setRoleModels}
+                    roleModelDirty={roleModelDirty}
+                    onChange={changed}
+                  />
+                  <AgentExecutionSettings
                     hidden={!showSection("advanced")}
-                  >
-                    <DialogField
-                      label={t("maxToolSteps")}
-                      htmlFor={`${formId}-steps`}
-                      dirty={fieldDirty.maxSteps}
-                      layout="row"
-                    >
-                      <Input
-                        id={`${formId}-steps`}
-                        aria-label={t("maxToolSteps")}
-                        name="maxSteps"
-                        type="number"
-                        min={AGENT_STEP_BOUNDS.min}
-                        max={AGENT_STEP_BOUNDS.max}
-                        value={steps}
-                        onChange={setSteps}
-                        className="w-24"
-                      />
-                    </DialogField>
-                    <DialogField
-                      label={t("taskTimeout")}
-                      description={t("taskTimeoutDescription")}
-                      htmlFor={`${formId}-task-timeout`}
-                      dirty={fieldDirty.taskTimeout}
-                      layout="row"
-                    >
-                      <Input
-                        id={`${formId}-task-timeout`}
-                        aria-label={t("taskTimeout")}
-                        name="taskTimeoutMinutes"
-                        type="number"
-                        step={1}
-                        min={AGENT_TASK_TIMEOUT_BOUNDS.min / 60}
-                        max={AGENT_TASK_TIMEOUT_BOUNDS.max / 60}
-                        placeholder={String(
-                          Math.round(props.defaultTaskTimeoutSeconds / 60),
-                        )}
-                        value={timeoutMinutes}
-                        onChange={setTimeoutMinutes}
-                        className="w-24"
-                      />
-                    </DialogField>
-                    <DialogField
-                      label={t("advisor")}
-                      dirty={fieldDirty.advisor}
-                      layout="row"
-                    >
-                      <Switch
-                        checked={advisor !== null}
-                        disabled={pending}
-                        ariaLabel={t("advisorEnabled")}
-                        onCheckedChange={(enabled) => {
-                          setAdvisor(
-                            enabled
-                              ? {
-                                  providerId: provider,
-                                  model,
-                                  cadence: "final",
-                                  minSeverity: "warning",
-                                }
-                              : null,
-                          );
-                          changed();
-                        }}
-                      />
-                    </DialogField>
-                    {advisor ? (
-                      <div className="space-y-4">
-                        <DialogField label={t("advisorModel")} layout="row">
-                          <ModelPicker
-                            className="flex w-72 max-w-full"
-                            pending={pending}
-                            providers={providers.filter((item) =>
-                              agentRuntimeSupportsProviderFormat(
-                                runtimeKind,
-                                item.format,
-                              ),
-                            )}
-                            value={
-                              advisor.providerId && advisor.model
-                                ? advisor
-                                : null
-                            }
-                            onSelect={(selection) => {
-                              setAdvisor({ ...advisor, ...selection });
-                              changed();
-                            }}
-                            onConfigure={() =>
-                              window.location.assign(
-                                `/app/${encodeURIComponent(slug)}/providers`,
-                              )
-                            }
-                            trigger={
-                              <ModelPickerTrigger
-                                label={advisor.model || t("selectModel")}
-                                placeholder={!advisor.model}
-                                provider={
-                                  providers.find(
-                                    (item) => item.id === advisor.providerId,
-                                  )?.name
-                                }
-                                aria-label={t("advisorModel")}
-                                disabled={pending}
-                              />
-                            }
-                          />
-                        </DialogField>
-                        <DialogField
-                          label={t("advisorCadence")}
-                          htmlFor={`${formId}-advisor-cadence`}
-                          layout="row"
-                        >
-                          <FormSelect
-                            className="w-40"
-                            id={`${formId}-advisor-cadence`}
-                            label={t("advisorCadence")}
-                            value={advisor.cadence}
-                            disabled={pending}
-                            options={[
-                              {
-                                value: "each_tool_batch",
-                                label: t("advisorEachToolBatch"),
-                              },
-                              { value: "final", label: t("advisorFinal") },
-                            ]}
-                            onValueChange={(value) => {
-                              if (
-                                value !== "each_tool_batch" &&
-                                value !== "final"
-                              )
-                                return;
-                              setAdvisor({ ...advisor, cadence: value });
-                              changed();
-                            }}
-                          />
-                        </DialogField>
-                        <DialogField
-                          label={t("advisorMinSeverity")}
-                          htmlFor={`${formId}-advisor-severity`}
-                          layout="row"
-                        >
-                          <FormSelect
-                            className="w-40"
-                            id={`${formId}-advisor-severity`}
-                            label={t("advisorMinSeverity")}
-                            value={advisor.minSeverity}
-                            disabled={pending}
-                            options={[
-                              { value: "info", label: t("advisorInfo") },
-                              { value: "warning", label: t("advisorWarning") },
-                              {
-                                value: "critical",
-                                label: t("advisorCritical"),
-                              },
-                            ]}
-                            onValueChange={(value) => {
-                              if (
-                                value !== "info" &&
-                                value !== "warning" &&
-                                value !== "critical"
-                              )
-                                return;
-                              setAdvisor({ ...advisor, minSeverity: value });
-                              changed();
-                            }}
-                          />
-                        </DialogField>
-                      </div>
-                    ) : null}
-                  </SettingsSection>
-                  <SettingsSection
-                    id="sandboxes"
-                    title={t("sandboxes")}
-                    className="space-y-5"
+                    formId={formId}
+                    slug={slug}
+                    pending={pending}
+                    providers={providers}
+                    compatibleProviders={compatibleProviders}
+                    primary={{ providerId: provider, model }}
+                    steps={steps}
+                    setSteps={setSteps}
+                    timeoutMinutes={timeoutMinutes}
+                    setTimeoutMinutes={setTimeoutMinutes}
+                    defaultTaskTimeoutSeconds={props.defaultTaskTimeoutSeconds}
+                    advisor={advisor}
+                    setAdvisor={setAdvisor}
+                    dirty={fieldDirty}
+                    onChange={changed}
+                  />
+                  <AgentSandboxSettings
                     hidden={!showSection("sandboxes")}
-                  >
-                    <DialogField label={t("ownSandbox")}>
-                      {ownSandbox ? (
-                        <div className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-4">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <ButtonLink
-                              href={`/app/${slug}/sandboxes/${ownSandbox.id}`}
-                              variant="ghost"
-                              size="sm"
-                            >
-                              <Box className="size-4" />
-                              {ownSandbox.name}
-                            </ButtonLink>
-                            <StatusBadge status={ownSandbox.status} />
-                          </div>
-                          <dl className="grid min-w-0 gap-2 text-xs sm:grid-cols-[auto_minmax(0,1fr)]">
-                            <dt className="text-muted-foreground">
-                              {s("image")}
-                            </dt>
-                            <dd
-                              title={ownSandbox.image ?? ""}
-                              className="min-w-0 truncate font-mono"
-                            >
-                              {ownSandbox.image?.replace(
-                                /(@sha256:[a-f0-9]{12})[a-f0-9]+/gi,
-                                "$1…",
-                              ) ?? "—"}
-                            </dd>
-                            <dt className="text-muted-foreground">
-                              {s("network")}
-                            </dt>
-                            <dd>
-                              {ownSandbox.network === "none"
-                                ? s("networkNone")
-                                : s("networkIsolated")}
-                            </dd>
-                          </dl>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">
-                          {t("ownSandboxMissing")}
-                        </p>
-                      )}
-                    </DialogField>
-                    <DialogField
-                      label={t("externalSandboxes")}
-                      dirty={attachmentsDirty}
-                    >
-                      <div className="space-y-3">
-                        {attachments.map((attachment) => {
-                          const sandbox = externalSandboxes.find(
-                            (item) => item.id === attachment.sandboxId,
-                          );
-                          if (!sandbox) return null;
-                          const KindIcon =
-                            sandbox.kind === "connector"
-                              ? Cable
-                              : sandbox.kind === "ssh"
-                                ? Server
-                                : Box;
-                          return (
-                            <div
-                              key={sandbox.id}
-                              className="space-y-2 rounded-xl border border-border p-3"
-                            >
-                              <div className="flex flex-wrap items-center gap-2">
-                                <KindIcon className="size-4 shrink-0 text-muted-foreground" />
-                                <ButtonLink
-                                  href={`/app/${slug}/sandboxes/${sandbox.id}`}
-                                  variant="ghost"
-                                  size="sm"
-                                  className="min-w-0 max-w-full"
-                                >
-                                  <span className="truncate">
-                                    {sandbox.name}
-                                  </span>
-                                </ButtonLink>
-                                <span className="text-xs text-muted-foreground">
-                                  {s(
-                                    sandbox.kind === "ssh"
-                                      ? "sshMode"
-                                      : sandbox.kind === "connector"
-                                        ? "connectorMode"
-                                        : "docker",
-                                  )}
-                                </span>
-                                <StatusBadge status={sandbox.status} />
-                                <div className="ml-auto flex items-center gap-2">
-                                  <FormSelect
-                                    label={t("sandboxAccessFor", {
-                                      name: sandbox.name,
-                                    })}
-                                    value={attachment.access}
-                                    options={EXTERNAL_SANDBOX_ACCESS.map(
-                                      (access) => ({
-                                        value: access,
-                                        label: s(`access.${access}`),
-                                      }),
-                                    )}
-                                    onValueChange={(access) => {
-                                      setAttachments((current) =>
-                                        current.map((item) =>
-                                          item.sandboxId === sandbox.id
-                                            ? {
-                                                ...item,
-                                                access:
-                                                  access as ExternalSandboxAccess,
-                                              }
-                                            : item,
-                                        ),
-                                      );
-                                      changed();
-                                    }}
-                                  />
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    aria-label={t("removeExternalSandbox", {
-                                      name: sandbox.name,
-                                    })}
-                                    onClick={() => {
-                                      setAttachments((current) =>
-                                        current.filter(
-                                          (item) =>
-                                            item.sandboxId !== sandbox.id,
-                                        ),
-                                      );
-                                      changed();
-                                    }}
-                                  >
-                                    <Trash2 className="size-4" />
-                                  </Button>
-                                </div>
-                              </div>
-                              {attachment.access === "full" ? (
-                                <p className="text-xs text-amber-700 dark:text-amber-400">
-                                  {t("externalSandboxFullWarning")}
-                                </p>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                        {attachments.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">
-                            {t("noExternalSandboxes")}
-                          </p>
-                        ) : null}
-                        {attachments.length >= MAX_EXTERNAL_SANDBOXES ? (
-                          <p className="text-xs text-muted-foreground">
-                            {t("externalSandboxLimit", {
-                              count: MAX_EXTERNAL_SANDBOXES,
-                            })}
-                          </p>
-                        ) : externalSandboxes.some(
-                            (sandbox) =>
-                              !attachments.some(
-                                (item) => item.sandboxId === sandbox.id,
-                              ),
-                          ) ? (
-                          <FormSelect
-                            label={t("addExternalSandbox")}
-                            value=""
-                            options={[
-                              {
-                                value: "",
-                                label: t("addExternalSandbox"),
-                                disabled: true,
-                              },
-                              ...externalSandboxes
-                                .filter(
-                                  (sandbox) =>
-                                    !attachments.some(
-                                      (item) => item.sandboxId === sandbox.id,
-                                    ),
-                                )
-                                .map((sandbox) => ({
-                                  value: sandbox.id,
-                                  label: `${sandbox.name} · ${s(sandbox.kind === "ssh" ? "sshMode" : sandbox.kind === "connector" ? "connectorMode" : "docker")}`,
-                                })),
-                            ]}
-                            onValueChange={(sandboxId) => {
-                              setAttachments((current) =>
-                                current.length < MAX_EXTERNAL_SANDBOXES &&
-                                !current.some(
-                                  (item) => item.sandboxId === sandboxId,
-                                )
-                                  ? [...current, { sandboxId, access: "read" }]
-                                  : current,
-                              );
-                              changed();
-                            }}
-                          />
-                        ) : null}
-                        <ButtonLink
-                          href={`/app/${slug}/sandboxes?scope=external`}
-                          variant="secondary"
-                          size="sm"
-                        >
-                          {t("manageExternalSandboxes")}
-                        </ButtonLink>
-                      </div>
-                    </DialogField>
-                  </SettingsSection>
+                    slug={slug}
+                    ownSandbox={ownSandbox}
+                    externalSandboxes={externalSandboxes}
+                    attachments={attachments}
+                    setAttachments={setAttachments}
+                    dirty={attachmentsDirty}
+                    onChange={changed}
+                  />
                 </div>
               </fieldset>
             </form>
             {/* Outside the form: credential actions save on their own. */}
-            <section
+            <AgentEnvironmentSettings
               hidden={page !== "execution" || !showSection("sandboxes")}
-              className="space-y-5"
-            >
-              {canManageCredentials ? (
-                <DialogField label={r("credentials")}>
-                  <div className="space-y-3">
-                    {credentialsState === "failed" ? (
-                      <p role="alert" className="text-sm text-destructive">
-                        {r("credentialsLoadFailed")}
-                      </p>
-                    ) : credentialsState !== "loaded" ? (
-                      <p
-                        role="status"
-                        className="text-sm text-muted-foreground"
-                      >
-                        {settingsState("loading")}
-                      </p>
-                    ) : credentials.length ? (
-                      <ul className="m-0 list-none divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 p-0">
-                        {credentials.map((credential) => (
-                          <li
-                            key={credential.id}
-                            className="flex min-w-0 items-center gap-3 px-4 py-2"
-                          >
-                            <span
-                              className={`min-w-0 flex-1 truncate font-mono text-sm ${credential.revokedAt ? "text-muted-foreground line-through" : ""}`}
-                            >
-                              {credential.name}
-                            </span>
-                            {credential.revokedAt ? (
-                              <span className="shrink-0 text-xs text-muted-foreground">
-                                {r("credentialRevoked")}
-                              </span>
-                            ) : (
-                              <>
-                                {referencedCredentialIds.has(credential.id) ? (
-                                  <span className="shrink-0 text-xs text-muted-foreground">
-                                    {r("credentialReferenced")}
-                                  </span>
-                                ) : (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    disabled={pending || !environment.trim()}
-                                    onClick={() =>
-                                      void perform(async () => {
-                                        const definition = JSON.parse(
-                                          environment,
-                                        ) as AgentRevisionConfig["environment"];
-                                        definition.credentialReferences = [
-                                          ...definition.credentialReferences.filter(
-                                            (reference) =>
-                                              reference.name !==
-                                              credential.name,
-                                          ),
-                                          {
-                                            name: credential.name,
-                                            credentialId: credential.id,
-                                          },
-                                        ];
-                                        setEnvironment(
-                                          JSON.stringify(definition, null, 2),
-                                        );
-                                        setReview(null);
-                                      })
-                                    }
-                                  >
-                                    {r("credentialRef")}
-                                  </Button>
-                                )}
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  disabled={pending}
-                                  onClick={() =>
-                                    void perform(async () => {
-                                      const data = identity();
-                                      data.set("credentialId", credential.id);
-                                      const result =
-                                        await revokeAgentEnvironmentCredentialAction(
-                                          data,
-                                        );
-                                      if ("error" in result)
-                                        throw new Error(result.error);
-                                      dropCredentialReference(credential.id);
-                                      await loadCredentials();
-                                      setReview(null);
-                                    })
-                                  }
-                                >
-                                  {r("revokeCredential")}
-                                </Button>
-                              </>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        {r("noCredentials")}
-                      </p>
-                    )}
-                    <div className="flex flex-wrap items-start gap-2">
-                      <Input
-                        aria-label={r("credentialName")}
-                        placeholder={r("credentialName")}
-                        value={credentialName}
-                        onChange={setCredentialName}
-                        className="min-w-40 flex-1"
-                        classNames={{ input: "font-mono" }}
-                      />
-                      <Input
-                        aria-label={r("credentialValue")}
-                        placeholder={r("credentialValue")}
-                        type="password"
-                        value={credentialValue}
-                        onChange={setCredentialValue}
-                        className="min-w-40 flex-1"
-                      />
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={
-                          pending || !credentialName || !credentialValue
-                        }
-                        onClick={() =>
-                          void perform(async () => {
-                            const data = identity();
-                            data.set("name", credentialName);
-                            data.set("value", credentialValue);
-                            const result =
-                              await createAgentEnvironmentCredentialAction(
-                                data,
-                              );
-                            if ("error" in result)
-                              throw new Error(result.error);
-                            setCredentialName("");
-                            setCredentialValue("");
-                            await loadCredentials();
-                          })
-                        }
-                      >
-                        {r("createCredential")}
-                      </Button>
-                    </div>
-                  </div>
-                </DialogField>
-              ) : null}
-              <DialogField
-                label={t("secretObfuscation")}
-                description={t("secretObfuscationDescription")}
-                dirty={fieldDirty.secretObfuscation}
-                layout="row"
-              >
-                <Switch
-                  checked={secretObfuscation}
-                  ariaLabel={t("secretObfuscation")}
-                  disabled={pending}
-                  onCheckedChange={(checked) => {
-                    setSecretObfuscation(checked);
-                    changed();
-                  }}
-                />
-              </DialogField>
-              <BouncyAccordion
-                items={[
-                  {
-                    id: "environment",
-                    title: r("environment"),
-                    description: (
-                      <div className="space-y-3 px-3 pb-3">
-                        <p className="text-xs text-muted-foreground">
-                          {r("environmentHelp")}
-                        </p>
-                        <textarea
-                          aria-label={r("environment")}
-                          rows={14}
-                          value={environment}
-                          onChange={(event) => {
-                            setEnvironment(event.target.value);
-                            setReview(null);
-                          }}
-                          className={`${textareaClass} font-mono`}
-                        />
-                      </div>
-                    ),
-                  },
-                ]}
-              />
-            </section>
+              slug={slug}
+              agentId={agentId}
+              canManageCredentials={canManageCredentials}
+              pending={pending}
+              perform={perform}
+              environment={environment}
+              setEnvironment={setEnvironment}
+              onReviewStale={() => setReview(null)}
+              secretObfuscation={secretObfuscation}
+              secretObfuscationDirty={fieldDirty.secretObfuscation}
+              onSecretObfuscationChange={(checked) => {
+                setSecretObfuscation(checked);
+                changed();
+              }}
+            />
           </div>
           {review ? (
-            <section
-              aria-label={r("review")}
-              className="space-y-3 rounded-lg border border-border p-4"
-            >
-              <h4 className="font-semibold">{r("review")}</h4>
-              <p className="text-sm text-muted-foreground">
-                {diffT("reviewHelp")}
-              </p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="text-muted-foreground">
-                      <th scope="col" className="p-2">
-                        {t("model")}
-                      </th>
-                      <th scope="col" className="p-2">
-                        {t("modelRouting.before")}
-                      </th>
-                      <th scope="col" className="p-2">
-                        {t("modelRouting.after")}
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <th scope="row" className="p-2 font-medium">
-                        {t("model")}
-                      </th>
-                      {[appliedConfig, review.config].map((config, index) => (
-                        <td
-                          key={index === 0 ? "before" : "after"}
-                          className="break-words p-2"
-                        >
-                          {config?.providerId && config.model
-                            ? modelLabel({
-                                providerId: config.providerId,
-                                model: config.model,
-                              })
-                            : t("none")}
-                        </td>
-                      ))}
-                    </tr>
-                    <tr>
-                      <th scope="row" className="p-2 align-top font-medium">
-                        {t("modelRouting.fallbackModels")}
-                      </th>
-                      {[appliedConfig, review.config].map((config, index) => (
-                        <td
-                          key={index === 0 ? "before" : "after"}
-                          className="break-words p-2 align-top"
-                        >
-                          {config?.fallbackModels?.length ? (
-                            <ol className="list-inside list-decimal space-y-1">
-                              {review.fallbackRows[
-                                index === 0 ? "before" : "after"
-                              ].map((item) => (
-                                <li key={item.id}>
-                                  {modelLabel(item.selection)}
-                                </li>
-                              ))}
-                            </ol>
-                          ) : (
-                            t("none")
-                          )}
-                        </td>
-                      ))}
-                    </tr>
-                    {(["compaction", "title"] as const).map((role) => (
-                      <tr key={role}>
-                        <th scope="row" className="p-2 font-medium">
-                          {t(`modelRouting.${role}`)}
-                        </th>
-                        <td className="break-words p-2">
-                          {modelLabel(appliedConfig?.roleModels?.[role])}
-                        </td>
-                        <td className="break-words p-2">
-                          {modelLabel(review.config.roleModels?.[role])}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <RevisionFileDiff diff={review.diff} />
-              {review.additions.length ? (
-                <p className="text-sm text-muted-foreground">
-                  {r("reviewHelp")}
-                </p>
-              ) : null}
-              <ul className="space-y-3 text-sm">
-                {review.additions.map((addition) => {
-                  const nativeDelegation =
-                    addition.kind === "delegation" &&
-                    addition.resourceId === "native";
-                  const nativeValues = nativeDelegation
-                    ? addition.values.map((value) => {
-                        if (value === "native")
-                          return t("subagentResources.nativeMode");
-                        if (value.startsWith("maxConcurrency:"))
-                          return t("subagentResources.reviewConcurrency", {
-                            value: value.split(":")[1],
-                          });
-                        if (value.startsWith("maxDepth:"))
-                          return t("subagentResources.reviewDepth", {
-                            value: value.split(":")[1],
-                          });
-                        return value;
-                      })
-                    : [];
-                  const resource =
-                    addition.kind === "package"
-                      ? piPackages.find(
-                          (option) =>
-                            option.marketInstallId === addition.resourceId,
-                        )?.name
-                      : null;
-                  return (
-                    <li key={`${addition.kind}:${addition.resourceId}`}>
-                      <span className="font-medium">
-                        {nativeDelegation
-                          ? t("subagentResources.nativeMode")
-                          : addition.kind === "delegation" &&
-                              review.config.subagents?.some(
-                                (pin) => pin.subagentId === addition.resourceId,
-                              )
-                            ? r("permissionKinds.subagent")
-                            : r(`permissionKinds.${addition.kind}`)}
-                      </span>
-                      <p className="break-words text-muted-foreground">
-                        {resource ? `${resource}: ` : ""}
-                        {nativeDelegation
-                          ? nativeValues.join(", ")
-                          : addition.kind === "environment"
-                            ? addition.values
-                                .map((value) =>
-                                  r(`environmentChanges.${value}`),
-                                )
-                                .join("、")
-                            : addition.kind === "package" && resource
-                              ? r("packageCode")
-                              : addition.kind === "delegation" &&
-                                  ["inbound", "outbound"].includes(
-                                    addition.resourceId,
-                                  )
-                                ? r(`delegationChanges.${addition.resourceId}`)
-                                : addition.kind === "builtin"
-                                  ? [
-                                      ...new Set(
-                                        addition.values.map((tool) => {
-                                          const feature =
-                                            agentBuiltinFeatureForTool(tool);
-                                          return feature
-                                            ? t(
-                                                `builtinFeatures.${feature.id}.name`,
-                                              )
-                                            : tool;
-                                        }),
-                                      ),
-                                    ].join("、")
-                                  : addition.values.join(", ")}
-                      </p>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
+            <AgentRevisionReview
+              review={review}
+              appliedConfig={appliedConfig}
+              providers={providers}
+              piPackages={piPackages}
+            />
           ) : null}
           {error ? (
             <p role="alert" className="break-words text-sm text-destructive">
               {error}
-            </p>
-          ) : null}
-          {message ? (
-            <p role="status" className="text-sm">
-              {message}
             </p>
           ) : null}
         </div>

@@ -1,4 +1,5 @@
 import "server-only";
+import type { WorkspaceScope } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { AGENT_CONTROL_RUNTIME_KINDS } from "./runtime-kind";
 import { AGENT_STEP_BOUNDS } from "@/lib/agents/constants";
@@ -15,12 +16,6 @@ import {
   listAgentControlResources,
   sendAgentControlMessage,
 } from "@/lib/agents/control-service";
-
-export type AgentControlContext = {
-  actorId?: string;
-  workspaceId: string;
-  workspaceSlug: string;
-};
 
 const Id = z.string().trim().min(1).max(128);
 const IdList = z
@@ -262,47 +257,32 @@ export function isAgentControlTool(name: string): boolean {
 }
 
 export async function executeAgentControlTool(
-  context: AgentControlContext,
+  scope: WorkspaceScope,
   name: string,
   rawArguments: unknown,
 ) {
   switch (name) {
     case "list_agent_resources":
       parseArguments(EmptyArguments, rawArguments);
-      return listAgentControlResources(context.workspaceId);
+      return listAgentControlResources(scope.id);
     case "inspect_mcp_deployment": {
       const input = parseArguments(DeploymentIdArguments, rawArguments);
-      return inspectAgentControlDeployment(
-        context.workspaceId,
-        input.deploymentId,
-      );
+      return inspectAgentControlDeployment(scope.id, input.deploymentId);
     }
     case "list_agents":
       parseArguments(EmptyArguments, rawArguments);
-      return listAgentControlAgents(context.workspaceId);
+      return listAgentControlAgents(scope.id);
     case "get_agent": {
       const input = parseArguments(AgentIdArguments, rawArguments);
-      return getAgentControlAgent(
-        context.workspaceId,
-        context.workspaceSlug,
-        input.agentId,
-      );
+      return getAgentControlAgent(scope.id, scope.slug, input.agentId);
     }
     case "create_agent": {
       const input = parseArguments(CreateAgentArguments, rawArguments);
-      return createAgentFromControl(
-        context.workspaceId,
-        context.workspaceSlug,
-        input,
-      );
+      return createAgentFromControl(scope.id, scope.slug, input);
     }
     case "send_message_to_agent": {
       const input = parseArguments(SendMessageArguments, rawArguments);
-      return sendAgentControlMessage(
-        context.workspaceId,
-        input,
-        context.actorId,
-      );
+      return sendAgentControlMessage(scope, input);
     }
     default:
       throw new AgentControlError("not_found", `Unknown tool: ${name}`);

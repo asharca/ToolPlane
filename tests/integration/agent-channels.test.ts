@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { assertDefined } from "../assert-defined";
+import { testWorkspaceScope } from "../helpers/workspace-scope";
 import {
   afterAll,
   afterEach,
@@ -53,7 +54,7 @@ import {
 
 import { GET as conversationOutputEvents } from "@/app/api/v1/agents/[agentId]/conversations/[conversationId]/events/route";
 import { GET as consoleOutputEvents } from "@/app/api/v1/workspaces/[slug]/agents/[agentId]/a2a/console/tasks/events/route";
-import { createConversation } from "@/lib/agents/mutations";
+import { createConversation } from "@/lib/agents/conversation-mutations";
 import { agentEntryRuntimeParts } from "@/lib/agents/execution/entries";
 import { readTaskOutput } from "@/lib/agents/execution/live-output-read";
 import {
@@ -675,9 +676,12 @@ describe("workspace channels", () => {
     });
     await enableNativeAgent(agent.id);
     const result = await runWorkspaceAgentMessage({
-      workspaceId: workspace.id,
+      workspace: await testWorkspaceScope(
+        workspace.id,
+        assertDefined(identity.user).id,
+        "read",
+      ),
       agentId: agent.id,
-      userId: assertDefined(identity.user).id,
       rawBody: {
         message: "/Review:1 Keep Case",
         source: {
@@ -1703,6 +1707,62 @@ describe("channel execution delivery and conversation approvals", () => {
       ).toBe(1);
     },
   );
+
+  it("resolves trigger executions by their conversation without exposing a sibling conversation's task", async () => {
+    const actorId = assertDefined(identity.user).id;
+    const { id: agentId } = await db.agent.create({
+      data: {
+        workspaceId: workspace.id,
+        slug: `trigger-execution-${randomUUID()}`,
+        name: "Trigger execution",
+        runtimeKind: "pi-sdk",
+        providerId,
+        model: "test",
+      },
+    });
+    const scope = { workspaceId: workspace.id, agentId };
+    await enableNativeAgent(agentId);
+    const conversation = assertDefined(
+      await createConversation(workspace.id, agentId, "Trigger execution"),
+    );
+    const sibling = assertDefined(
+      await createConversation(workspace.id, agentId, "Sibling conversation"),
+    );
+    const trigger = await db.agentTrigger.create({
+      data: {
+        ...scope,
+        actorId,
+        kind: "cron",
+        cron: "0 0 * * *",
+        name: "Trigger",
+        prompt: "Run",
+      },
+    });
+    const admitted = await submitAgentEntry(
+      {
+        ...scope,
+        actorId,
+        kind: "trigger",
+        sourceId: trigger.id,
+        conversationId: conversation.id,
+        messageId: randomUUID(),
+        text: "Run",
+      },
+      () => {},
+    );
+    const view = await executionRequest(agentId, conversation.id);
+    expect(view.status).toBe(200);
+    expect(await view.json()).toMatchObject({
+      execution: { id: admitted.row.id },
+    });
+
+    // A binding is a lookup index, not authority over the persisted grant.
+    await db.a2AEntryBinding.updateMany({
+      where: { lastTaskId: admitted.row.id },
+      data: { sourceId: sibling.id },
+    });
+    expect((await executionRequest(agentId, sibling.id)).status).toBe(404);
+  });
 
   it("notifies native dialogs and accepts only the initiating session's native response", async () => {
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3000");

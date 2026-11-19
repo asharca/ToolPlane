@@ -1,5 +1,6 @@
 import "server-only";
 
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { db } from "@/lib/db";
 import { deleteAgent, getAgentDeleteTargets } from "@/lib/agents/mutations";
 import { cleanupAgentEndpointRuntimesForSource } from "@/lib/agents/public-api/maintenance";
@@ -19,11 +20,7 @@ export async function deleteManagedAgent(input: {
     db.workspace.findFirst({
       where: {
         id: input.workspaceId,
-        status: "active",
-        OR: [
-          { ownerId: input.actorId },
-          { members: { some: { userId: input.actorId } } },
-        ],
+        ...workspaceAccessWhere(input.actorId),
       },
       select: {
         ownerId: true,

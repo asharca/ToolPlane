@@ -1,5 +1,7 @@
 "use server";
 
+import { workspaceScopeWhere } from "@/lib/workspace/scope";
+import { actionScope } from "@/lib/workspace/action-scope";
 import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
@@ -7,8 +9,7 @@ import { headers } from "next/headers";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { logSystemEvent } from "@/lib/observability/system";
-import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import {
   allowProcessRestart,
   effectiveStatus,
@@ -48,14 +49,6 @@ import { setConnectorSetupTokenCookie } from "./connector-setup-token";
 import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
 import { enqueueSandboxOperation, quiesceDockerSandbox } from "./lifecycle";
 import { stopAgentSandboxSessionMcp } from "@/lib/agents/conversation-sandbox";
-
-async function authorizedWorkspace(slug: string) {
-  const user = await getCurrentUser();
-  if (!user) return null;
-  const ws = await getWorkspaceForUser(slug, user.id);
-  if (!ws) return null;
-  return { user, ws };
-}
 
 function slugify(input: string): string {
   const base = input
@@ -316,7 +309,7 @@ async function createCloneRecord({
 export async function createSandboxAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   if (!slug) return;
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx) return;
   const releaseWorkspaceOperation = beginWorkspaceOperation(ctx.ws.id);
   if (!releaseWorkspaceOperation) return;
@@ -403,7 +396,7 @@ export async function createSandboxAction(formData: FormData) {
 export async function cloneSandboxAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const sandboxId = String(formData.get("sandboxId") ?? "");
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx || !sandboxId) return;
 
   const requestedName = cleanName(formData.get("name"));
@@ -510,7 +503,7 @@ export async function cloneSandboxAction(formData: FormData) {
 export async function createSandboxSnapshotAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const sandboxId = String(formData.get("sandboxId") ?? "");
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx || !sandboxId) return;
 
   const name =
@@ -568,7 +561,7 @@ export async function restoreSandboxSnapshotAction(formData: FormData) {
   const sandboxId = String(formData.get("sandboxId") ?? "");
   const snapshotId = String(formData.get("snapshotId") ?? "");
   const requestedRecoveryName = cleanName(formData.get("recoveryName"));
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx || !sandboxId || !snapshotId) return;
 
   const restored = await enqueueSandboxOperation(
@@ -713,7 +706,10 @@ export async function restoreSandboxSnapshotAction(formData: FormData) {
           },
         );
         await db.sandboxSnapshot.update({
-          where: { id: snapshot.id },
+          where: {
+            id: snapshot.id,
+            sandbox: { id: sandbox.id, workspace: workspaceScopeWhere(ctx.ws) },
+          },
           data: { error: null },
         });
       } catch (error) {
@@ -825,7 +821,7 @@ export async function deleteSandboxSnapshotAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const sandboxId = String(formData.get("sandboxId") ?? "");
   const snapshotId = String(formData.get("snapshotId") ?? "");
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx || !sandboxId || !snapshotId) return;
 
   await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
@@ -841,7 +837,10 @@ export async function deleteSandboxSnapshotAction(formData: FormData) {
     if (!snapshot) return;
     const removeSnapshot = async () => {
       await db.sandboxSnapshot.update({
-        where: { id: snapshot.id },
+        where: {
+          id: snapshot.id,
+          sandbox: { id: sandbox.id, workspace: workspaceScopeWhere(ctx.ws) },
+        },
         data: { status: "deleting", error: null },
       });
       try {
@@ -866,7 +865,7 @@ export async function deleteSandboxSnapshotAction(formData: FormData) {
 export async function updateSandboxEnvAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const sandboxId = String(formData.get("sandboxId") ?? "");
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx || !sandboxId) return;
 
   await enqueueSandboxOperation(ctx.ws.id, sandboxId, async () => {
@@ -890,11 +889,15 @@ export async function updateSandboxEnvAction(formData: FormData) {
 
     const [, updatedDeployment] = await db.$transaction([
       db.sandbox.update({
-        where: { id: sandbox.id },
+        where: { id: sandbox.id, workspace: workspaceScopeWhere(ctx.ws) },
         data: { config: config ?? {} },
       }),
       db.deployment.update({
-        where: { id: sandbox.deploymentId },
+        where: {
+          id: sandbox.deploymentId,
+          workspace: workspaceScopeWhere(ctx.ws),
+          sandbox: { id: sandbox.id },
+        },
         data: { installCfg },
       }),
     ]);
@@ -936,7 +939,7 @@ export async function renameSandboxAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const sandboxId = String(formData.get("sandboxId") ?? "");
   const name = cleanName(formData.get("name"));
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx || !sandboxId || !name) return;
 
   const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
@@ -948,11 +951,15 @@ export async function renameSandboxAction(formData: FormData) {
   // slug, runtime token, or generated configuration.
   await db.$transaction([
     db.sandbox.update({
-      where: { id: sandbox.id },
+      where: { id: sandbox.id, workspace: workspaceScopeWhere(ctx.ws) },
       data: { name },
     }),
     db.deployment.update({
-      where: { id: sandbox.deploymentId },
+      where: {
+        id: sandbox.deploymentId,
+        workspace: workspaceScopeWhere(ctx.ws),
+        sandbox: { id: sandbox.id },
+      },
       data: { name: `Sandbox: ${name}` },
     }),
   ]);
@@ -1070,7 +1077,7 @@ export async function batchSandboxLifecycleAction(
       "Invalid sandbox lifecycle selection (maximum 100 sandboxes).",
     );
   }
-  const ctx = await authorizedWorkspace(workspace).catch(() => null);
+  const ctx = await actionScope({ slug: workspace }).catch(() => null);
   if (!ctx)
     return ids.map((sandboxId) => ({
       sandboxId,
@@ -1104,7 +1111,7 @@ export async function batchSandboxLifecycleAction(
 export async function startSandboxAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const sandboxId = String(formData.get("sandboxId") ?? "");
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx || !sandboxId) return;
   await runSandboxLifecycle(ctx.ws.id, sandboxId, "start");
   revalidatePath(`/app/${slug}/sandboxes`);
@@ -1115,7 +1122,7 @@ export async function startSandboxAction(formData: FormData) {
 export async function generateConnectorCommandAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const sandboxId = String(formData.get("sandboxId") ?? "");
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx || !sandboxId) return;
 
   const sandbox = await sandboxInWorkspace(sandboxId, ctx.ws.id);
@@ -1141,7 +1148,7 @@ export async function generateConnectorCommandAction(formData: FormData) {
 
   const [, updatedDeployment] = await db.$transaction([
     db.sandbox.update({
-      where: { id: sandbox.id },
+      where: { id: sandbox.id, workspace: workspaceScopeWhere(ctx.ws) },
       data: {
         config: {
           ...currentConfig,
@@ -1150,7 +1157,11 @@ export async function generateConnectorCommandAction(formData: FormData) {
       },
     }),
     db.deployment.update({
-      where: { id: sandbox.deploymentId },
+      where: {
+        id: sandbox.deploymentId,
+        workspace: workspaceScopeWhere(ctx.ws),
+        sandbox: { id: sandbox.id },
+      },
       data: {
         sourceRef: connectorSourceRef(nextConnector),
         installCfg: {
@@ -1184,7 +1195,7 @@ export async function generateConnectorCommandAction(formData: FormData) {
 export async function stopSandboxAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const sandboxId = String(formData.get("sandboxId") ?? "");
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx || !sandboxId) return;
   await runSandboxLifecycle(ctx.ws.id, sandboxId, "stop");
   revalidatePath(`/app/${slug}/sandboxes`);
@@ -1194,7 +1205,7 @@ export async function stopSandboxAction(formData: FormData) {
 export async function restartSandboxAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const sandboxId = String(formData.get("sandboxId") ?? "");
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx || !sandboxId) return;
   await runSandboxLifecycle(ctx.ws.id, sandboxId, "restart");
   revalidatePath(`/app/${slug}/sandboxes`);
@@ -1204,7 +1215,7 @@ export async function restartSandboxAction(formData: FormData) {
 export async function deleteSandboxAction(formData: FormData) {
   const slug = String(formData.get("workspace") ?? "");
   const sandboxId = String(formData.get("sandboxId") ?? "");
-  const ctx = await authorizedWorkspace(slug);
+  const ctx = await actionScope({ slug });
   if (!ctx || !sandboxId) return;
   let deleted: boolean;
   try {

@@ -1,13 +1,14 @@
 "use server";
 
+import { actionScope } from "@/lib/workspace/action-scope";
 import { logSystemEvent } from "@/lib/observability/system";
 import { revalidatePath } from "next/cache";
-import { requireAdmin } from "@/lib/auth/admin";
+
 import { db } from "@/lib/db";
 import { writeAudit } from "@/lib/observability/audit";
 
 export async function withdrawPluginListing(form: FormData) {
-  const admin = await requireAdmin();
+  const admin = await actionScope({ admin: true });
   const id = String(form.get("listingId") ?? "");
   await db
     .$transaction(async (tx) => {
@@ -42,7 +43,7 @@ export async function withdrawPluginListing(form: FormData) {
 }
 
 export async function revokePluginRelease(form: FormData) {
-  const admin = await requireAdmin();
+  const admin = await actionScope({ admin: true });
   const id = String(form.get("releaseId") ?? "");
   await db
     .$transaction(async (tx) => {

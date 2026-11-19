@@ -8,6 +8,7 @@ import { StatefulButton } from "@/components/motion/button/stateful";
 import { ConfirmSubmitButton } from "../ConfirmSubmitButton";
 import { DialogField } from "../dialog";
 import { notify } from "../Toaster";
+import { apiRequest } from "@/lib/client/api";
 
 type Memory = {
   id: string;
@@ -35,18 +36,10 @@ const memoryErrors = {
 } as const;
 type MemoryError = (typeof memoryErrors)[keyof typeof memoryErrors];
 
-async function responseError(response: Response): Promise<MemoryError> {
-  const value: unknown = await response.json().catch(() => null);
-  if (
-    value &&
-    typeof value === "object" &&
-    "error" in value &&
-    typeof value.error === "string" &&
-    Object.hasOwn(memoryErrors, value.error)
-  ) {
-    return memoryErrors[value.error as keyof typeof memoryErrors];
-  }
-  return "AGENT_MEMORY_FAILED";
+function memoryError(message: string | null): MemoryError {
+  return message && Object.hasOwn(memoryErrors, message)
+    ? memoryErrors[message as keyof typeof memoryErrors]
+    : "AGENT_MEMORY_FAILED";
 }
 
 export function AgentMemoriesPanel({
@@ -91,34 +84,21 @@ export function AgentMemoriesPanel({
     setError(null);
     const timer = window.setTimeout(
       async () => {
-        try {
-          if (search.length > 200 || search.includes("\0")) {
-            setError("AGENT_MEMORY_INVALID");
-            return;
-          }
-          const params = new URLSearchParams({ workspace: slug });
-          if (search) params.set("query", search);
-          const response = await fetch(`${base}?${params}`, {
-            cache: "no-store",
-            credentials: "same-origin",
-            signal: controller.signal,
-          });
-          if (!response.ok) {
-            const code = await responseError(response);
-            if (!controller.signal.aborted && current === generation.current)
-              setError(code);
-            return;
-          }
-          const next: MemoryList = await response.json();
-          if (!controller.signal.aborted && current === generation.current)
-            setData(next);
-        } catch {
-          if (!controller.signal.aborted && current === generation.current)
-            setError("AGENT_MEMORY_FAILED");
-        } finally {
-          if (!controller.signal.aborted && current === generation.current)
-            setLoading(false);
+        if (search.length > 200 || search.includes("\0")) {
+          setError("AGENT_MEMORY_INVALID");
+          setLoading(false);
+          return;
         }
+        const params = new URLSearchParams({ workspace: slug });
+        if (search) params.set("query", search);
+        const result = await apiRequest<MemoryList>(`${base}?${params}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted || current !== generation.current) return;
+        if (result.ok) setData(result.data);
+        else setError(memoryError(result.message));
+        setLoading(false);
       },
       search ? 250 : 0,
     );
@@ -140,60 +120,46 @@ export function AgentMemoriesPanel({
     const controller = new AbortController();
     mutation.current = controller;
     setBusy(memoryId ? "delete" : "add");
-    try {
-      const response = await fetch(
-        memoryId
-          ? `${base}/${encodeURIComponent(memoryId)}?${new URLSearchParams({ workspace: slug })}`
-          : base,
-        {
-          method: memoryId ? "DELETE" : "POST",
-          credentials: "same-origin",
-          signal: controller.signal,
-          ...(memoryId
-            ? {}
-            : {
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  workspace: slug,
-                  content: trimmedContent,
-                }),
-              }),
-        },
-      );
-      if (!response.ok) {
-        const code = await responseError(response);
-        if (!controller.signal.aborted) notify(t(code), { severity: "error" });
-        return;
-      }
-      if (controller.signal.aborted) return;
-      // Invalidate any pre-mutation list before accepting the refreshed count.
-      generation.current += 1;
-      listRequest.current?.abort();
-      if (memoryId) {
-        setData((previous) =>
-          previous
-            ? {
-                ...previous,
-                memories: previous.memories.filter(
-                  (memory) => memory.id !== memoryId,
-                ),
-                total: Math.max(0, previous.total - 1),
-              }
-            : previous,
-        );
-        searchRef.current?.focus();
-      } else {
-        setContent("");
-      }
-      notify(t(memoryId ? "memoryDeleted" : "memorySaved"));
-      setReload((value) => value + 1);
-    } catch {
-      if (!controller.signal.aborted)
-        notify(t("AGENT_MEMORY_FAILED"), { severity: "error" });
-    } finally {
-      if (!controller.signal.aborted) setBusy(null);
-      if (mutation.current === controller) mutation.current = null;
+    const result = await apiRequest(
+      memoryId
+        ? `${base}/${encodeURIComponent(memoryId)}?${new URLSearchParams({ workspace: slug })}`
+        : base,
+      {
+        method: memoryId ? "DELETE" : "POST",
+        signal: controller.signal,
+        json: memoryId
+          ? undefined
+          : { workspace: slug, content: trimmedContent },
+      },
+    );
+    if (mutation.current === controller) mutation.current = null;
+    if (controller.signal.aborted) return;
+    setBusy(null);
+    if (!result.ok) {
+      notify(t(memoryError(result.message)), { severity: "error" });
+      return;
     }
+    // Invalidate any pre-mutation list before accepting the refreshed count.
+    generation.current += 1;
+    listRequest.current?.abort();
+    if (memoryId) {
+      setData((previous) =>
+        previous
+          ? {
+              ...previous,
+              memories: previous.memories.filter(
+                (memory) => memory.id !== memoryId,
+              ),
+              total: Math.max(0, previous.total - 1),
+            }
+          : previous,
+      );
+      searchRef.current?.focus();
+    } else {
+      setContent("");
+    }
+    notify(t(memoryId ? "memoryDeleted" : "memorySaved"));
+    setReload((value) => value + 1);
   }
 
   return (

@@ -1,8 +1,13 @@
 import "server-only";
+import {
+  workspaceAccessWhere,
+  workspaceScopeWhere,
+  type WorkspaceScope,
+} from "@/lib/workspace/scope";
 import { posix } from "node:path";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, WorkSessionStatus } from "@prisma/client";
 import { db } from "@/lib/db";
-import { defaultConversationRuntimeSession } from "@/lib/agents/mutations";
+import { defaultConversationRuntimeSession } from "@/lib/agents/conversation-mutations";
 import { conversationTitleFromParts } from "@/lib/agents/conversation-title";
 import { deleteAgentConversationSandboxes } from "@/lib/agents/conversation-sandbox";
 import {
@@ -14,6 +19,7 @@ import { deleteWorkspaceAttachmentFile } from "@/lib/attachments/storage";
 import { AgentRevisionConfigSchema } from "@/lib/agents/revision-types";
 import { resolveModelContext } from "@/lib/agents/model";
 import type { ReasoningEffort } from "@/lib/agents/constants";
+import type { ExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
 import { selectNewSessionRevision } from "@/lib/agents/evolution/rollout-selection";
 import { resolveAgentPiPackages } from "@/lib/agents/resolve";
 import type {
@@ -28,9 +34,12 @@ import {
   type PreparedWorkAttachment,
 } from "@/lib/attachments/work";
 import {
-  allowedWorkSessionSources,
-  type WorkSessionStatus,
-} from "@/lib/work/state-machine";
+  canTransitionWorkSession,
+  isWorkSessionReadOnly,
+  READ_ONLY_WORK_SESSION_STATUSES,
+} from "./state-machine";
+import { insertWorkSession, updateWorkSessionStatus } from "./lifecycle";
+import { workFailureText } from "./failures";
 import type { AgentModelOverride } from "@/lib/agents/chat-body";
 import {
   AGENT_MODEL_OVERRIDE_PART,
@@ -56,7 +65,7 @@ export type WorkSessionTransitionResult =
   | { ok: true; changed: boolean; status: WorkSessionStatus }
   | { ok: false; reason: "not_found" }
   | { ok: false; reason: "invalid_input" }
-  | { ok: false; reason: "invalid_transition"; status: string };
+  | { ok: false; reason: "invalid_transition"; status: WorkSessionStatus };
 
 const workSessionClientInclude = {
   agent: {
@@ -149,6 +158,7 @@ export function workSessionWorkingDirectory(
   );
 }
 export function workSessionRevisionMetadata(session: {
+  status: WorkSessionStatus;
   agentId: string;
   agentRevisionId: string | null;
   legacyRevisionUnresolved: boolean;
@@ -187,6 +197,7 @@ export function workSessionRevisionMetadata(session: {
     agentRevisionVersion: revision?.version ?? null,
     legacyRevisionUnresolved: session.legacyRevisionUnresolved,
     readOnly:
+      isWorkSessionReadOnly(session.status) ||
       session.runtimeKind !== "pi-sdk" ||
       session.legacyRevisionUnresolved ||
       !config ||
@@ -216,11 +227,10 @@ export function workSessionRevisionMetadata(session: {
 }
 
 export function assertWorkPiPackageSnapshot(
-  runtimeKind: string,
+  _runtimeKind: ExecutableAgentRuntimeKind,
   value: unknown,
   piPackages: readonly ResolvedAgentPiPackage[],
 ): void {
-  if (runtimeKind !== "pi-sdk") return;
   const saved =
     value && typeof value === "object" && "piPackages" in value
       ? value.piPackages
@@ -424,160 +434,80 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
           references.reduce((total, item) => total + item.text.length, 0),
       },
     });
-    return tx.workSession.create({
-      omit: { uiProjection: true, uiLease: true },
-      data: {
-        workspaceId: input.workspaceId,
-        agentId: agent.id,
+    return insertWorkSession(tx, "queued", {
+      workspaceId: input.workspaceId,
+      agentId: agent.id,
+      agentRevisionId: revision.id,
+      legacyRevisionUnresolved: false,
+      sandboxId,
+      conversationId: conversation.id,
+      a2aActorId: input.a2aActorId,
+      task,
+      title,
+      acceptanceCriteria,
+      runtimeKind: agent.runtimeKind,
+      runtimeSnapshot: {
         agentRevisionId: revision.id,
-        legacyRevisionUnresolved: false,
+        providerId: agent.providerId,
+        model: agent.model,
+        modelName: modelContext?.modelName ?? config.model,
+        contextWindow: modelContext?.maxTokens ?? null,
+        contextWindowEstimated: modelContext?.estimated ?? true,
+        systemPrompt: agent.systemPrompt,
+        agentMaxSteps: agent.maxSteps,
+        ...(agent.runtimeKind === "pi-sdk"
+          ? {
+              piPackages: piPackages.map(
+                ({
+                  marketInstallId,
+                  releaseId,
+                  checksum,
+                  mcpBindingsChecksum,
+                }) => ({
+                  marketInstallId,
+                  releaseId,
+                  checksum,
+                  ...(mcpBindingsChecksum ? { mcpBindingsChecksum } : {}),
+                }),
+              ),
+            }
+          : {}),
+        deploymentIds: config.mcpGrants.map((grant) => grant.deploymentId),
+        installedSkillIds: config.skills.map((skill) => skill.installedSkillId),
+        knowledgeBaseIds: config.knowledgeBaseIds,
         sandboxId,
-        conversationId: conversation.id,
-        a2aActorId: input.a2aActorId,
-        task,
-        title,
-        acceptanceCriteria,
-        runtimeKind: agent.runtimeKind,
-        runtimeSnapshot: {
-          agentRevisionId: revision.id,
-          providerId: agent.providerId,
-          model: agent.model,
-          modelName: modelContext?.modelName ?? config.model,
-          contextWindow: modelContext?.maxTokens ?? null,
-          contextWindowEstimated: modelContext?.estimated ?? true,
-          systemPrompt: agent.systemPrompt,
-          agentMaxSteps: agent.maxSteps,
-          ...(agent.runtimeKind === "pi-sdk"
-            ? {
-                piPackages: piPackages.map(
-                  ({
-                    marketInstallId,
-                    releaseId,
-                    checksum,
-                    mcpBindingsChecksum,
-                  }) => ({
-                    marketInstallId,
-                    releaseId,
-                    checksum,
-                    ...(mcpBindingsChecksum ? { mcpBindingsChecksum } : {}),
-                  }),
-                ),
-              }
-            : {}),
-          deploymentIds: config.mcpGrants.map((grant) => grant.deploymentId),
-          installedSkillIds: config.skills.map(
-            (skill) => skill.installedSkillId,
-          ),
-          knowledgeBaseIds: config.knowledgeBaseIds,
-          sandboxId,
-          workingDirectory,
-        },
-        status: "queued",
-      },
-      include: {
-        conversation: true,
-        sandbox: { include: { deployment: true } },
+        workingDirectory,
       },
     });
-  });
-}
-
-export async function transitionWorkSession(
-  workspaceId: string,
-  workSessionId: string,
-  status: WorkSessionStatus,
-  data: Prisma.WorkSessionUpdateManyMutationInput = {},
-): Promise<WorkSessionTransitionResult> {
-  const sources = allowedWorkSessionSources(status).filter(
-    (source) => source !== status,
-  );
-  const updated = await db.workSession.updateMany({
-    where: {
-      id: workSessionId,
-      workspaceId,
-      status: { in: sources },
-      ...(["queued", "running"].includes(status)
-        ? {
-            runtimeKind: { in: ["pi-sdk"] },
-            agentRevisionId: { not: null },
-            legacyRevisionUnresolved: false,
-            conversation: {
-              legacyRevisionUnresolved: false,
-              agentRevisionId: { not: null },
-            },
-          }
-        : {}),
-    },
-    data: { status, ...data },
-  });
-  if (updated.count === 1) return { ok: true, changed: true, status };
-
-  const current = await db.workSession.findFirst({
-    where: { id: workSessionId, workspaceId },
-    select: { status: true },
-  });
-  if (!current) return { ok: false, reason: "not_found" };
-  if (current.status === status) return { ok: true, changed: false, status };
-  return { ok: false, reason: "invalid_transition", status: current.status };
-}
-
-export function startWorkSession(workspaceId: string, workSessionId: string) {
-  return transitionWorkSession(workspaceId, workSessionId, "running", {
-    error: null,
-    waitingQuestion: null,
-    startedAt: new Date(),
-  });
-}
-
-export function waitForWorkSessionUser(
-  workspaceId: string,
-  workSessionId: string,
-  question?: string,
-) {
-  return transitionWorkSession(workspaceId, workSessionId, "waiting_user", {
-    waitingQuestion: question?.trim().slice(0, 20_000) || null,
-  });
-}
-
-export function failWorkSession(
-  workspaceId: string,
-  workSessionId: string,
-  error: string,
-) {
-  return transitionWorkSession(workspaceId, workSessionId, "failed", {
-    error: error.trim().slice(0, 500) || "Work failed.",
-    completedAt: new Date(),
   });
 }
 
 export function cancelWorkSession(workspaceId: string, workSessionId: string) {
   const now = new Date();
   return db.$transaction(async (tx): Promise<WorkSessionTransitionResult> => {
-    const cancelling = await tx.workSession.updateMany({
-      where: {
-        id: workSessionId,
-        workspaceId,
-        status: { in: ["running"] },
-      },
-      data: { status: "cancelling", cancelRequestedAt: now },
-    });
+    const cancelling = await updateWorkSessionStatus(
+      tx,
+      { id: workSessionId, workspaceId, status: "running" },
+      { status: "cancelling", cancelRequestedAt: now },
+    );
     if (cancelling.count) {
       return { ok: true, changed: true, status: "cancelling" };
     }
-    const stopped = await tx.workSession.updateMany({
-      where: {
+    const stopped = await updateWorkSessionStatus(
+      tx,
+      {
         id: workSessionId,
         workspaceId,
         status: { in: ["queued", "waiting_user"] },
       },
-      data: {
+      {
         status: "idle",
         error: null,
         waitingQuestion: null,
         cancelRequestedAt: now,
         completedAt: now,
       },
-    });
+    );
     if (stopped.count) return { ok: true, changed: true, status: "idle" };
     const current = await tx.workSession.findFirst({
       where: { id: workSessionId, workspaceId },
@@ -588,7 +518,7 @@ export function cancelWorkSession(workspaceId: string, workSessionId: string) {
       return {
         ok: true,
         changed: false,
-        status: current.status as WorkSessionStatus,
+        status: current.status,
       };
     }
     return { ok: false, reason: "invalid_transition", status: current.status };
@@ -599,15 +529,16 @@ export async function finalizeWorkSessionCancellation(
   workspaceId: string,
   workSessionId: string,
 ) {
-  const result = await db.workSession.updateMany({
-    where: { id: workSessionId, workspaceId, status: "cancelling" },
-    data: {
+  const result = await updateWorkSessionStatus(
+    db,
+    { id: workSessionId, workspaceId, status: "cancelling" },
+    {
       status: "idle",
       error: null,
       waitingQuestion: null,
       completedAt: new Date(),
     },
-  });
+  );
   return result.count === 1;
 }
 
@@ -636,13 +567,12 @@ async function withWorkSessionInputLease(
 }
 
 export async function resumeWorkSession(
-  workspaceId: string,
+  scope: WorkspaceScope,
   workSessionId: string,
-  actorId?: string,
 ): Promise<WorkSessionTransitionResult> {
-  return withWorkSessionInputLease(workspaceId, workSessionId, async (tx) => {
+  return withWorkSessionInputLease(scope.id, workSessionId, async (tx) => {
     const work = await tx.workSession.findFirst({
-      where: { id: workSessionId, workspaceId },
+      where: { id: workSessionId, workspace: workspaceScopeWhere(scope) },
       select: workSessionExecutionSelect,
     });
     if (!work) return { ok: false, reason: "not_found" } as const;
@@ -652,10 +582,11 @@ export async function resumeWorkSession(
         reason: "invalid_transition",
         status: work.status,
       } as const;
-    const updated = await tx.workSession.updateMany({
-      where: {
+    const updated = await updateWorkSessionStatus(
+      tx,
+      {
         id: workSessionId,
-        workspaceId,
+        workspace: workspaceScopeWhere(scope),
         status: "failed",
         runtimeKind: work.runtimeKind,
         agentRevisionId: work.agentRevisionId,
@@ -666,16 +597,16 @@ export async function resumeWorkSession(
           legacyRevisionUnresolved: false,
         },
       },
-      data: {
+      {
         status: "queued",
-        ...(actorId ? { a2aActorId: actorId } : {}),
+        a2aActorId: scope.actorUserId,
         result: null,
         error: null,
         waitingQuestion: null,
         completedAt: null,
         cancelRequestedAt: null,
       },
-    });
+    );
     return updated.count === 1
       ? ({ ok: true, changed: true, status: "queued" } as const)
       : ({
@@ -715,9 +646,7 @@ export async function appendWorkSessionInput(
         reason: "invalid_transition",
         status: work.status,
       } as const;
-    if (
-      !["idle", "waiting_user", "completed", "failed"].includes(work.status)
-    ) {
+    if (!canTransitionWorkSession(work.status, "queued")) {
       return {
         ok: false,
         reason: "invalid_transition",
@@ -742,13 +671,10 @@ export async function appendWorkSessionInput(
       options.references,
     );
 
-    const updated = await tx.workSession.updateMany({
-      where: {
-        id: workSessionId,
-        workspaceId,
-        status: work.status,
-      },
-      data: {
+    const updated = await updateWorkSessionStatus(
+      tx,
+      { id: workSessionId, workspaceId, status: work.status },
+      {
         status: "queued",
         ...(options.a2aActorId ? { a2aActorId: options.a2aActorId } : {}),
         result: null,
@@ -758,7 +684,7 @@ export async function appendWorkSessionInput(
         completedAt: null,
         cancelRequestedAt: null,
       },
-    });
+    );
     if (updated.count !== 1) {
       return {
         ok: false,
@@ -812,7 +738,7 @@ export async function listWorkSessions(workspaceId: string, agentId?: string) {
     omit: { uiProjection: true, uiLease: true },
     where: {
       workspaceId,
-      status: { not: "archived" },
+      status: { notIn: READ_ONLY_WORK_SESSION_STATUSES },
       ...(agentId ? { agentId } : {}),
     },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -820,6 +746,7 @@ export async function listWorkSessions(workspaceId: string, agentId?: string) {
   });
   return sessions.map((session) => ({
     ...session,
+    error: workFailureText(session.error),
     ...workSessionRevisionMetadata(session),
   }));
 }
@@ -841,7 +768,11 @@ export async function getWorkSession(
     include: workSessionClientInclude,
   });
   return session
-    ? { ...session, ...workSessionRevisionMetadata(session) }
+    ? {
+        ...session,
+        error: workFailureText(session.error),
+        ...workSessionRevisionMetadata(session),
+      }
     : null;
 }
 
@@ -853,17 +784,18 @@ export async function getWorkSessionForUser(
     omit: { uiProjection: true, uiLease: true },
     where: {
       id: workSessionId,
-      workspace: {
-        status: "active",
-        OR: [{ ownerId: userId }, { members: { some: { userId } } }],
-      },
+      workspace: workspaceAccessWhere(userId),
     },
     include: workSessionClientInclude,
   });
   return session &&
     session.agent.workspaceId === session.workspaceId &&
     session.agentId === session.conversation.agentId
-    ? { ...session, ...workSessionRevisionMetadata(session) }
+    ? {
+        ...session,
+        error: workFailureText(session.error),
+        ...workSessionRevisionMetadata(session),
+      }
     : null;
 }
 

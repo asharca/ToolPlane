@@ -1,4 +1,5 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { randomUUID } from "node:crypto";
 import { AgentCard } from "@a2a-js/sdk";
@@ -79,14 +80,11 @@ export async function assertRemoteManager(
     !(await tx.workspace.count({
       where: {
         id: ctx.workspaceId,
-        OR: [
-          { ownerId: ctx.actorId },
-          { members: { some: { userId: ctx.actorId, role: "admin" } } },
-        ],
+        ...workspaceAccessWhere(ctx.actorId, "manage"),
       },
     }))
   )
-    throw new A2AHttpError(403, "Workspace administrator required.");
+    throw new A2AHttpError(403, "WORKSPACE_ADMIN_REQUIRED");
   if (
     !(await tx.agent.count({
       where: {
@@ -96,7 +94,7 @@ export async function assertRemoteManager(
       },
     }))
   )
-    throw new A2AHttpError(404, "Agent unavailable.");
+    throw new A2AHttpError(404, "AGENT_UNAVAILABLE");
 }
 export async function remoteRegistryView(
   ctx: ConsoleActor,
@@ -111,7 +109,7 @@ export async function remoteRegistryView(
       },
     }))
   )
-    throw new A2AHttpError(404, "Agent unavailable.");
+    throw new A2AHttpError(404, "AGENT_UNAVAILABLE");
   let manager = false;
   try {
     await assertRemoteManager(db, ctx);
@@ -180,7 +178,7 @@ export async function mutateRemoteRegistry(
         where: { workspaceId: ctx.workspaceId },
       })) >= 100
     )
-      throw new A2AHttpError(409, "Remote Agent limit reached.");
+      throw new A2AHttpError(409, "REMOTE_AGENT_LIMIT");
     registration = {
       id: randomUUID(),
       ...(await discoverRemoteConnection(
@@ -201,7 +199,7 @@ export async function mutateRemoteRegistry(
           where: { workspaceId: ctx.workspaceId },
         })) >= 100
       )
-        throw new A2AHttpError(409, "Remote Agent limit reached.");
+        throw new A2AHttpError(409, "REMOTE_AGENT_LIMIT");
       id = registration.id;
       await tx.remoteA2AAgent.create({
         data: {
@@ -226,11 +224,7 @@ export async function mutateRemoteRegistry(
           revision: input.revision,
         },
       });
-      if (!row)
-        throw new A2AHttpError(
-          409,
-          "Remote configuration changed. Refresh before retrying.",
-        );
+      if (!row) throw new A2AHttpError(409, "REMOTE_CONFIG_CHANGED");
       id = row.id;
       if (input.action === "replace-key") {
         await tx.remoteA2AAgent.update({
@@ -247,10 +241,7 @@ export async function mutateRemoteRegistry(
         if (input.allowCurrentAgent === true) ids.add(ctx.agentId);
         if (input.allowCurrentAgent === false) ids.delete(ctx.agentId);
         if (ids.size > 100)
-          throw new A2AHttpError(
-            409,
-            "Remote Agent authorization limit reached.",
-          );
+          throw new A2AHttpError(409, "REMOTE_AUTHORIZATION_LIMIT");
         await tx.remoteA2AAgent.update({
           where: { id },
           data: {
@@ -260,7 +251,7 @@ export async function mutateRemoteRegistry(
           },
         });
       }
-    } else throw new A2AHttpError(400, "Invalid remote Agent registration.");
+    } else throw new A2AHttpError(400, "INVALID_REMOTE_REGISTRATION");
     await writeAudit(tx, {
       actorId: ctx.actorId,
       workspaceId: ctx.workspaceId,

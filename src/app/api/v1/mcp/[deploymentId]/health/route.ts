@@ -1,3 +1,4 @@
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { logSystemEvent } from "@/lib/observability/system";
 import { withRequestLogging } from "@/lib/observability/http";
 import { NextResponse } from "next/server";
@@ -24,13 +25,7 @@ export const GET = withRequestLogging(
     const dep = await db.deployment.findFirst({
       where: {
         id: deploymentId,
-        workspace: {
-          status: "active",
-          OR: [
-            { ownerId: user.id },
-            { members: { some: { userId: user.id } } },
-          ],
-        },
+        workspace: workspaceAccessWhere(user.id),
       },
       select: { id: true, status: true, workspaceId: true },
     });

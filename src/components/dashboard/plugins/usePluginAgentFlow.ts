@@ -1,5 +1,6 @@
 "use client";
 
+import { apiRequest } from "@/lib/client/api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { AgentPiPackageOption } from "../agents/AgentSettingsForm";
@@ -49,7 +50,7 @@ export function usePluginAgentFlow({
       if (busy.current) return "busy";
       busy.current = true;
       try {
-        const response = await fetch(
+        const response = await apiRequest<{ plugins: AgentPiPackageOption[] }>(
           `/api/v1/workspaces/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}/plugins/options`,
           { cache: "no-store", signal },
         );
@@ -58,7 +59,7 @@ export function usePluginAgentFlow({
           outcome = "unauthorized";
         else if (!response.ok) outcome = "failed";
         else {
-          const data = await response.json();
+          const data = response.data;
           if (signal?.aborted) return "failed";
           outcome = Array.isArray(data.plugins)
             ? select.current(id, data.plugins)

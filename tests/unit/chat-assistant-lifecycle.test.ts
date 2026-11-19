@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -40,7 +41,7 @@ vi.mock("@/lib/db", () => {
     workspace: {
       findFirst: vi.fn(async ({ where }) =>
         where.id === "ws" && where.OR[0].ownerId === "owner"
-          ? { id: "ws" }
+          ? { id: "ws", slug: "workspace", ownerId: "owner", members: [] }
           : null,
       ),
     },
@@ -207,9 +208,19 @@ import { db } from "@/lib/db";
 import {
   createChatAssistant,
   copyChatAssistant,
-  createChatThread,
   updateChatAssistant,
-} from "@/lib/chat/service";
+} from "@/lib/chat/assistants";
+import { createChatThread } from "@/lib/chat/threads";
+
+async function testWorkspaceScope(
+  id: string,
+  actorUserId: string,
+  capability: "read",
+) {
+  const scope = await resolveWorkspaceScope({ id }, actorUserId, capability);
+  if (!scope) throw new Error("Workspace access denied.");
+  return scope;
+}
 
 function deploymentRecipe(sourceRef = "https://mcp.example.com/mcp") {
   return {
@@ -254,10 +265,10 @@ describe("Assistant revision publication, ownership and retained pins", () => {
   it.each(["provider", "deployment"])(
     "refuses cross-workspace %s bindings before mutation",
     async (resource) => {
-      await createChatAssistant("owner", {
-        workspaceId: "ws",
-        name: "Original",
-      });
+      await createChatAssistant(
+        await testWorkspaceScope("ws", "owner", "read"),
+        { name: "Original" },
+      );
       const input =
         resource === "provider"
           ? { modelProviderId: "foreign" }
@@ -276,12 +287,14 @@ describe("Assistant revision publication, ownership and retained pins", () => {
   );
 
   it("publishes immutable snapshots and pins new threads without changing old threads", async () => {
-    const assistant = await createChatAssistant("owner", {
-      workspaceId: "ws",
-      name: "Assistant",
-      systemPrompt: "Original",
-      mcpGrants: [selectedGrant()],
-    });
+    const assistant = await createChatAssistant(
+      await testWorkspaceScope("ws", "owner", "read"),
+      {
+        name: "Assistant",
+        systemPrompt: "Original",
+        mcpGrants: [selectedGrant()],
+      },
+    );
     const oldThread = await createChatThread("owner", assistant.id, {});
     await updateChatAssistant("owner", assistant.id, {
       expectedRevision: 1,
@@ -337,10 +350,10 @@ describe("Assistant revision publication, ownership and retained pins", () => {
   });
 
   it("rolls back grant edits and CAS when snapshot publication fails", async () => {
-    const assistant = await createChatAssistant("owner", {
-      workspaceId: "ws",
-      name: "Original",
-    });
+    const assistant = await createChatAssistant(
+      await testWorkspaceScope("ws", "owner", "read"),
+      { name: "Original" },
+    );
     vi.mocked(db.chatAssistantRevision.create).mockRejectedValueOnce(
       new Error("publication failed"),
     );
@@ -360,12 +373,10 @@ describe("Assistant revision publication, ownership and retained pins", () => {
   });
 
   it("copies configuration into an independent revision without inheriting grants", async () => {
-    const source = await createChatAssistant("owner", {
-      workspaceId: "ws",
-      name: "Source",
-      systemPrompt: "Policy",
-      mcpGrants: [selectedGrant()],
-    });
+    const source = await createChatAssistant(
+      await testWorkspaceScope("ws", "owner", "read"),
+      { name: "Source", systemPrompt: "Policy", mcpGrants: [selectedGrant()] },
+    );
     const copy = await copyChatAssistant("owner", source.id, {
       name: "Copy",
       expectedRevision: 1,
@@ -404,8 +415,7 @@ describe("Assistant revision publication, ownership and retained pins", () => {
       new Error("publication failed"),
     );
     await expect(
-      createChatAssistant("owner", {
-        workspaceId: "ws",
+      createChatAssistant(await testWorkspaceScope("ws", "owner", "read"), {
         name: "Unpublished",
         mcpGrants: [selectedGrant()],
       }),
@@ -416,11 +426,10 @@ describe("Assistant revision publication, ownership and retained pins", () => {
   });
 
   it("captures the current MCP definition on executable edits without a review receipt", async () => {
-    const source = await createChatAssistant("owner", {
-      workspaceId: "ws",
-      name: "Source",
-      mcpGrants: [selectedGrant()],
-    });
+    const source = await createChatAssistant(
+      await testWorkspaceScope("ws", "owner", "read"),
+      { name: "Source", mcpGrants: [selectedGrant()] },
+    );
     const original = ChatAssistantRevisionConfigSchema.parse(
       state.revisions[0]?.config,
     );
@@ -462,11 +471,10 @@ describe("Assistant revision publication, ownership and retained pins", () => {
   });
 
   it("materializes the complete catalog on addition and executable edits", async () => {
-    const source = await createChatAssistant("owner", {
-      workspaceId: "ws",
-      name: "Source",
-      mcpGrants: [{ deploymentId: "mcp" }],
-    });
+    const source = await createChatAssistant(
+      await testWorkspaceScope("ws", "owner", "read"),
+      { name: "Source", mcpGrants: [{ deploymentId: "mcp" }] },
+    );
     expect(state.grants).toEqual([
       {
         assistantId: source.id,

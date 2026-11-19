@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { randomUUID } from "node:crypto";
+import type { WorkSessionStatus } from "@prisma/client";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
@@ -151,7 +152,7 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
-async function createSession(status = "idle") {
+async function createSession(status: WorkSessionStatus = "idle") {
   const deployment = await db.deployment.create({
     data: {
       workspaceId,

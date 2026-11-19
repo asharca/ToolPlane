@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/motion/button";
+import { apiRequest } from "@/lib/client/api";
 import type {
   RevisionMcpToolChange,
   RevisionUpgradeDiff,
@@ -77,34 +78,23 @@ export function RevisionUpgradeNotice({
     setOpen(true);
     if (diff?.toVersion === targetVersion) return;
     setError(null);
-    const response = await fetch(`${url}?targetVersion=${targetVersion}`);
-    const body = (await response.json().catch(() => ({}))) as {
-      diff?: RevisionUpgradeDiff;
-      error?: string;
-    };
-    if (!response.ok || !body.diff) setError(body.error || t("loadFailed"));
-    else setDiff(body.diff);
+    const result = await apiRequest<{ diff?: RevisionUpgradeDiff }>(
+      `${url}?targetVersion=${targetVersion}`,
+    );
+    if (result.ok && result.data?.diff) setDiff(result.data.diff);
+    else setError((!result.ok && result.message) || t("loadFailed"));
   }
 
   async function upgrade() {
     setBusy(true);
     setError(null);
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ targetVersion }),
-      });
-      const body = (await response.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      if (!response.ok) throw new Error(body.error || t("upgradeFailed"));
-      onUpgraded();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("upgradeFailed"));
-    } finally {
-      setBusy(false);
-    }
+    const result = await apiRequest(url, {
+      method: "POST",
+      json: { targetVersion },
+    });
+    setBusy(false);
+    if (result.ok) onUpgraded();
+    else setError(result.message ?? t("upgradeFailed"));
   }
 
   const changes = diff ? revisionChangeLines(diff, t) : [];

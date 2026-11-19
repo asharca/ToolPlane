@@ -1,5 +1,6 @@
 "use client";
 
+import { displayErrorText } from "@/components/dashboard/display-error";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
@@ -68,7 +69,7 @@ export function AgentPluginSyncReview({
         setError(result.syncError ?? t("failed"));
       else setOpen(false);
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(displayErrorText(failure, t("failed")));
     } finally {
       setPending(false);
     }

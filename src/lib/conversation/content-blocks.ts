@@ -1,13 +1,29 @@
-import {
-  StreamRuleTriggerSchema,
-  STREAM_RULE_TRIGGER_PART,
-  type StreamRuleTrigger,
-} from "@/lib/agents/stream-rules";
-import {
-  CONTEXT_MAINTENANCE_PART,
-  ContextMaintenanceSchema,
-  type ContextMaintenance,
-} from "@/lib/agents/context-maintenance";
+import type { StreamRuleTrigger } from "@/lib/agents/stream-rules";
+import type { ContextMaintenance } from "@/lib/agents/context-maintenance";
+import { ADVISOR_SUGGESTIONS_PART } from "@/lib/agents/advisor";
+
+/**
+ * The conversation content model. `projectContent` in `./content-projection`
+ * is its only producer; every consumer (console renderer, Markdown export)
+ * switches exhaustively over `ContentBlock`, `ContentStep` and
+ * `ProcessDataType`, so a new variant fails the type check until each surface
+ * handles it.
+ */
+export const PROCESS_DATA_TYPES = [
+  "data-subagent-activity",
+  "data-hook-activity",
+  "data-work-runtime",
+  ADVISOR_SUGGESTIONS_PART,
+] as const;
+export type ProcessDataType = (typeof PROCESS_DATA_TYPES)[number];
+
+export function isProcessDataType(type: string): type is ProcessDataType {
+  return (PROCESS_DATA_TYPES as readonly string[]).includes(type);
+}
+
+export function assertNever(value: never): never {
+  throw new Error(`Unhandled conversation content: ${JSON.stringify(value)}`);
+}
 
 export type ToolBlockStatus =
   | "running"
@@ -44,7 +60,7 @@ export type ContentStep =
       kind: "data";
       id: string;
       partIndex: number;
-      type: `data-${string}`;
+      type: ProcessDataType;
       data: unknown;
     };
 
@@ -118,195 +134,6 @@ export function contentProcessStatus(
   return "complete";
 }
 
-function toolStatus(state: unknown, streaming: boolean): ToolBlockStatus {
-  switch (state) {
-    case "approval-requested":
-      return "awaiting";
-    case "output-available":
-      return "succeeded";
-    case "output-error":
-    case "output-denied":
-      return "failed";
-    default:
-      return streaming ? "running" : "cancelled";
-  }
-}
-
-/**
- * Display-only adaptation: never mutate the stored UI-message parts. Text and
- * attachments delimit adjacent process steps; unselected metadata is ignored.
- * IDs follow immutable part slots, not growing content. Only the trailing live
- * text/thinking slot streams; stopped in-flight tools become cancelled.
- */
-export function toContentBlocks(
-  messageId: string,
-  parts: readonly { type: string; [key: string]: unknown }[],
-  options: {
-    streaming: boolean;
-    processDataTypes?: readonly `data-${string}`[];
-  },
-): ContentBlock[] {
-  const blocks: ContentBlock[] = [];
-  const ruleTriggerIds = new Set<string>();
-  const maintenance: ContentBlock[] = [];
-  const appendStep = (step: ContentStep, partIndex: number) => {
-    const previous = blocks.at(-1);
-    if (previous?.kind === "process") previous.steps.push(step);
-    else
-      blocks.push({
-        kind: "process",
-        id: `${messageId}:process:${partIndex}`,
-        status: "complete",
-        steps: [step],
-      });
-  };
-
-  parts.forEach((part, partIndex) => {
-    const id = `${messageId}:part:${partIndex}`;
-    if (part.type === STREAM_RULE_TRIGGER_PART) {
-      const parsed = StreamRuleTriggerSchema.safeParse(part.data);
-      if (parsed.success && !ruleTriggerIds.has(parsed.data.id)) {
-        ruleTriggerIds.add(parsed.data.id);
-        blocks.push({
-          kind: "stream-rule",
-          id: `${messageId}:rule:${parsed.data.id}`,
-          trigger: parsed.data,
-        });
-      }
-      return;
-    }
-    if (part.type === CONTEXT_MAINTENANCE_PART) {
-      const parsed = ContextMaintenanceSchema.safeParse(part.data);
-      if (parsed.success)
-        maintenance.push({
-          kind: "context-maintenance",
-          id: `${messageId}:context:${parsed.data.kind}:${parsed.data.at}`,
-          data: parsed.data,
-        });
-      return;
-    }
-    if (part.type === "text") {
-      // Empty text slots still delimit process groups and retain their identity.
-      blocks.push({
-        kind: "text",
-        id,
-        text: typeof part.text === "string" ? part.text : "",
-        streaming: options.streaming && part.state !== "done",
-      });
-      return;
-    }
-    if (part.type === "reasoning") {
-      const streaming = options.streaming && part.state !== "done";
-      const durationMs =
-        !streaming &&
-        typeof part.startedAt === "number" &&
-        typeof part.completedAt === "number" &&
-        part.completedAt >= part.startedAt
-          ? part.completedAt - part.startedAt
-          : undefined;
-      appendStep(
-        {
-          kind: "thinking",
-          id,
-          text: typeof part.text === "string" ? part.text : "",
-          streaming,
-          ...(durationMs === undefined ? {} : { durationMs }),
-        },
-        partIndex,
-      );
-      return;
-    }
-    if (part.type === "dynamic-tool" || part.type.startsWith("tool-")) {
-      const toolCallId =
-        typeof part.toolCallId === "string" ? part.toolCallId : id;
-      appendStep(
-        {
-          kind: "tool",
-          id: `${id}:tool:${toolCallId}`,
-          toolCallId,
-          toolName:
-            typeof part.toolName === "string"
-              ? part.toolName
-              : part.type === "dynamic-tool"
-                ? "tool"
-                : part.type.slice(5),
-          status:
-            part.workCancelled === true
-              ? "cancelled"
-              : toolStatus(part.state, options.streaming),
-          input: part.input,
-          output: part.output,
-          patch: typeof part.patch === "string" ? part.patch : undefined,
-          truncated:
-            typeof part.truncated === "boolean" ? part.truncated : undefined,
-          firstChangedLine:
-            typeof part.firstChangedLine === "number" &&
-            Number.isInteger(part.firstChangedLine) &&
-            part.firstChangedLine > 0
-              ? part.firstChangedLine
-              : undefined,
-          durationMs:
-            typeof part.durationMs === "number" ? part.durationMs : undefined,
-          errorText:
-            typeof part.errorText === "string" ? part.errorText : undefined,
-        },
-        partIndex,
-      );
-      return;
-    }
-    if (
-      part.type.startsWith("data-") &&
-      options.processDataTypes?.includes(part.type as `data-${string}`)
-    ) {
-      appendStep(
-        {
-          kind: "data",
-          id,
-          partIndex,
-          type: part.type as `data-${string}`,
-          data: part.data,
-        },
-        partIndex,
-      );
-      return;
-    }
-    if (part.type === "file" || part.type === "image") {
-      const url = part.type === "image" ? part.image : part.url;
-      if (typeof url !== "string") return;
-      blocks.push({
-        kind: "file",
-        id,
-        partIndex,
-        url,
-        filename: typeof part.filename === "string" ? part.filename : undefined,
-        mediaType:
-          typeof part.mediaType === "string"
-            ? part.mediaType
-            : typeof part.mimeType === "string"
-              ? part.mimeType
-              : part.type === "image"
-                ? "image/*"
-                : "application/octet-stream",
-      });
-    }
-  });
-  // Runtime metadata precedes persisted text but follows streamed text. Keep
-  // committed context operations at the turn boundary in both projections.
-  blocks.push(...maintenance);
-
-  blocks.forEach((block, index) => {
-    const last = index === blocks.length - 1;
-    if (block.kind === "text") block.streaming &&= last;
-    if (block.kind !== "process") return;
-    block.steps.forEach((step, stepIndex) => {
-      if (step.kind === "thinking")
-        step.streaming &&= last && stepIndex === block.steps.length - 1;
-    });
-    block.status = contentProcessStatus(block.steps, options.streaming, last);
-  });
-  return blocks;
-}
-
 export function displayToolName(name: string): string {
   return name.replace(/^(?:mcp__)?tp_\d+_[A-Za-z0-9_-]+__/, "");
 }
@@ -325,59 +152,6 @@ export function workToolName(part: Readonly<Record<string, unknown>>): string {
   return typeof part.toolName === "string" && part.toolName
     ? part.toolName
     : "Tool";
-}
-
-/** Work's persisted parts and live activities share this display-only adapter.
- * Keep every source slot, including ignored metadata, so streamed IDs stay stable.
- */
-export function workContentParts(
-  parts: readonly { type: string; [key: string]: unknown }[],
-  streaming: boolean,
-): { type: string; [key: string]: unknown }[] {
-  return parts.map((part) => {
-    if (part.type === STREAM_RULE_TRIGGER_PART) return part;
-    if (part.type === CONTEXT_MAINTENANCE_PART) return part;
-    const reasoning = part.type === "reasoning";
-    const status =
-      !streaming && part.status === "running"
-        ? reasoning
-          ? "completed"
-          : "cancelled"
-        : part.status;
-    if (part.source)
-      return {
-        type: "data-subagent-activity",
-        data: { ...part, status, type: reasoning ? "reasoning" : "tool" },
-      };
-    if (part.type === "hook-activity" || part.type === "data-hook-activity")
-      return { type: "data-hook-activity", data: part.data };
-    if (part.type === "data-advisor-suggestions") return part;
-    if (reasoning)
-      return { ...part, state: status === "running" ? "streaming" : "done" };
-    if (part.type === "work-tool" || part.type === "tool")
-      return {
-        ...part,
-        type: "dynamic-tool",
-        toolName: workToolName(part),
-        state:
-          part.isError || status === "failed"
-            ? "output-error"
-            : status === "cancelled"
-              ? "input-available"
-              : status === "running"
-                ? "input-streaming"
-                : "output-available",
-        // Explicit cancellation also applies while the rest of the turn streams.
-        workCancelled: status === "cancelled",
-      };
-    if (
-      (part.type === "work-runtime" || part.type === "runtime") &&
-      (status === "failed" || status === "cancelled")
-    )
-      return { type: "data-work-runtime", data: { ...part, status } };
-    if (part.type === "text" && !part.reference) return part;
-    return { type: "work-metadata" };
-  });
 }
 
 /** Live Work output streams text separately from activities; each activity

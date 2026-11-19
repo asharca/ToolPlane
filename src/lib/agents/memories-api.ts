@@ -1,9 +1,10 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
-import { isSameOriginRequest } from "@/lib/http/origin";
+
 import { parseJson } from "./public-api/body";
 import { ORDINARY_AGENT_FILTER } from "./queries";
 import {
@@ -32,12 +33,6 @@ export async function handleAgentMemories(
   const user = await resolveRequestUser(req);
   if (!user)
     return Response.json({ error: "Unauthorized" }, { status: 401, headers });
-  if (
-    req.method !== "GET" &&
-    !req.headers.has("authorization") &&
-    !isSameOriginRequest(req)
-  )
-    return Response.json({ error: "Forbidden" }, { status: 403, headers });
   const parsed =
     req.method === "POST" ? await parseJson(req, input, 16_000) : null;
   if (parsed && !parsed.ok)
@@ -49,8 +44,8 @@ export async function handleAgentMemories(
   const url = new URL(req.url);
   const { agentId, memoryId } = await params;
   try {
-    const workspace = await getWorkspaceForUser(
-      value?.workspace ?? url.searchParams.get("workspace") ?? "",
+    const workspace = await resolveWorkspaceScope(
+      { slug: value?.workspace ?? url.searchParams.get("workspace") ?? "" },
       user.id,
     );
     if (!workspace)
@@ -64,13 +59,7 @@ export async function handleAgentMemories(
           id: agentId,
           workspaceId: workspace.id,
           ...ORDINARY_AGENT_FILTER,
-          workspace: {
-            status: "active",
-            OR: [
-              { ownerId: user.id },
-              { members: { some: { userId: user.id } } },
-            ],
-          },
+          workspace: workspaceAccessWhere(user.id),
         },
         select: { id: true },
       });

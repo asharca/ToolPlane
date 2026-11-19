@@ -450,6 +450,10 @@ describe("real authorized retained A2A protocol logging", () => {
   it("does not collect rejected credentials or scope-denied request bodies", async () => {
     const invalid = await call(readTaskRequest(), "invalid-key");
     expect(invalid.response.status).toBe(401);
+    expect(invalid.result.error).toEqual({
+      code: -32000,
+      message: "A valid Agent Endpoint credential is required.",
+    });
     expect(invalid.event).toMatchObject({
       outcome: "denied",
       workspaceId: null,

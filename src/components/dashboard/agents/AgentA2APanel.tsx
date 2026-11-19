@@ -18,9 +18,15 @@ import { ArrowUpRight, BookOpen, KeyRound, RefreshCw } from "lucide-react";
 import { AgentA2ARemotes } from "./AgentA2ARemotes";
 import { AgentA2ATaskMonitor } from "./AgentA2ATaskMonitor";
 import { CopyButton } from "@/components/dashboard/CopyButton";
+import {
+  DisplayError,
+  displayErrorText,
+} from "@/components/dashboard/display-error";
+import { notify } from "@/components/dashboard/Toaster";
 import type { A2AConsoleView } from "@/lib/a2a/connection-info";
 import type { A2AConsoleAction } from "@/lib/a2a/console-service";
 import { isExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
+import { apiRequest } from "@/lib/client/api";
 
 const cardClass =
   "space-y-4 rounded-xl border border-border/60 bg-background p-4 sm:p-5";
@@ -39,35 +45,33 @@ export function AgentA2APanel({
   const t = useTranslations("console.agents.a2a");
   const [view, setView] = useState<A2AConsoleView | null>(null);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<"local" | "public">("local");
   const flight = useRef(false);
   const mounted = useRef(true);
   const base = `/api/v1/workspaces/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}/a2a/console`;
+  /** Resolves to the failure text, or null once the view is current. */
   const load = useCallback(
     async (signal?: AbortSignal) => {
-      const response = await fetch(base, {
+      const result = await apiRequest<A2AConsoleView>(base, {
         cache: "no-store",
-        credentials: "same-origin",
         signal,
       });
-      if (!response.ok) throw new Error(t("loadFailed"));
-      const next: A2AConsoleView = await response.json();
-      if (mounted.current && !signal?.aborted) setView(next);
+      if (!result.ok) return result.message ?? t("loadFailed");
+      if (mounted.current && !signal?.aborted) setView(result.data);
+      return null;
     },
     [base, t],
   );
-  const loadInitial = useEffectEvent((signal: AbortSignal) => {
-    void load(signal).catch(() => {
-      if (!signal.aborted) setError(t("loadFailed"));
-    });
+  const loadInitial = useEffectEvent(async (signal: AbortSignal) => {
+    const failure = await load(signal);
+    if (failure && !signal.aborted) setError(failure);
   });
   useEffect(() => {
     void base; // Target identity alone controls the initial fetch lifecycle.
     mounted.current = true;
     const controller = new AbortController();
-    loadInitial(controller.signal);
+    void loadInitial(controller.signal);
     return () => {
       mounted.current = false;
       controller.abort();
@@ -80,33 +84,29 @@ export function AgentA2APanel({
     flight.current = true;
     setBusy(true);
     setError("");
-    setNotice("");
     try {
       await run();
-    } catch {
-      if (mounted.current) setError(t("operationFailed"));
+    } catch (cause) {
+      if (mounted.current)
+        setError(displayErrorText(cause, t("operationFailed")));
     } finally {
       flight.current = false;
       if (mounted.current) setBusy(false);
     }
   }
+  async function refresh() {
+    const failure = await load();
+    if (failure) throw new DisplayError(failure);
+  }
   async function mutate(action: A2AConsoleAction) {
     if (!isExecutableAgentRuntimeKind(runtimeKind)) return;
     await operation(async () => {
-      const response = await fetch(base, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(action),
-      });
-      if (!response.ok) throw new Error();
+      const result = await apiRequest(base, { method: "POST", json: action });
+      if (!result.ok)
+        throw new DisplayError(result.message ?? t("operationFailed"));
       if (!mounted.current) return;
-      setNotice(t("saved"));
-      try {
-        await load();
-      } catch {
-        if (mounted.current) setError(t("refreshFailed"));
-      }
+      notify(t("saved"));
+      if ((await load()) && mounted.current) setError(t("refreshFailed"));
     });
   }
   const connection = view?.connections;
@@ -127,7 +127,7 @@ export function AgentA2APanel({
       <header className="flex justify-end">
         <Button
           disabled={busy}
-          onClick={() => void operation(() => load())}
+          onClick={() => void operation(refresh)}
           variant="secondary"
           size="sm"
         >
@@ -139,11 +139,6 @@ export function AgentA2APanel({
         <div role="alert" className="space-y-2 text-sm text-destructive">
           {error}
         </div>
-      ) : null}
-      {notice ? (
-        <p role="status" className="text-sm text-muted-foreground">
-          {notice}
-        </p>
       ) : null}
       {!view ? (
         <p role="status">{t("loading")}</p>

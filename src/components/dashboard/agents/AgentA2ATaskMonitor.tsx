@@ -10,6 +10,7 @@ import { LiveOutputStatus, LiveOutputView } from "../work/LiveOutputView";
 import { A2AArtifactParts, type A2AWirePart } from "./A2AArtifactParts";
 
 import type { ConsoleTaskTree } from "@/lib/a2a/console-tasks";
+import { apiRequest } from "@/lib/client/api";
 import {
   A2ATaskConversation,
   A2ATaskTree,
@@ -130,12 +131,11 @@ export function AgentA2ATaskMonitor({
           selectedTaskId: selectedId,
         });
         if (showHistory) query.set("historyLength", "32");
-        const response = await fetch(`${base}/tasks?${query}`, {
-          credentials: "same-origin",
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if ([401, 403, 404].includes(response.status)) {
+        const result = await apiRequest<ConsoleTaskTree>(
+          `${base}/tasks?${query}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        if ([401, 403, 404].includes(result.status)) {
           if (!stopped && !controller.signal.aborted) {
             done = true;
             setTree(null);
@@ -146,8 +146,8 @@ export function AgentA2ATaskMonitor({
           }
           return;
         }
-        if (!response.ok) throw new Error("Task tree unavailable");
-        const value = (await response.json()) as ConsoleTaskTree;
+        if (!result.ok) throw new Error("Task tree unavailable");
+        const value = result.data;
         if (stopped || controller.signal.aborted) return;
         if (value.rootTaskId !== rootTaskId || !Array.isArray(value.nodes))
           throw new Error("Invalid task tree");
@@ -431,27 +431,19 @@ export function AgentA2ATaskMonitor({
                   onClick={async () => {
                     setRetryingFiles(true);
                     setFileRetryFailed(false);
-                    try {
-                      const response = await fetch(`${base}/tasks`, {
-                        method: "POST",
-                        credentials: "same-origin",
-                        cache: "no-store",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          action: "retryFiles",
-                          rootTaskId,
-                          taskId: selected.id,
-                        }),
-                        signal: AbortSignal.timeout(15_000),
-                      });
-                      if (!response.ok)
-                        throw new Error("File retry unavailable");
-                      setRefresh((value) => value + 1);
-                    } catch {
-                      setFileRetryFailed(true);
-                    } finally {
-                      setRetryingFiles(false);
-                    }
+                    const result = await apiRequest(`${base}/tasks`, {
+                      method: "POST",
+                      cache: "no-store",
+                      json: {
+                        action: "retryFiles",
+                        rootTaskId,
+                        taskId: selected.id,
+                      },
+                      signal: AbortSignal.timeout(15_000),
+                    });
+                    setRetryingFiles(false);
+                    if (result.ok) setRefresh((value) => value + 1);
+                    else setFileRetryFailed(true);
                   }}
                 >
                   {t("retryFiles")}

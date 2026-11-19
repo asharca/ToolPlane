@@ -1,4 +1,5 @@
 import "server-only";
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { pendingToolApprovals } from "./tool-approvals";
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
@@ -8,11 +9,12 @@ import { resolveAgentRuntimeGrant } from "@/lib/agents/runtime-grant";
 import { getAgentForRun } from "@/lib/agents/queries";
 import { resolvePinnedAgent } from "@/lib/agents/revisions";
 import { agentRuntimeTokenFromRequest } from "@/lib/agents/runtime-access";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { resolveRequestPrincipal } from "@/lib/auth/request-user";
 import { originFromRequest } from "@/lib/http/origin";
 import { parseJson } from "@/lib/agents/public-api/body";
 import { withLogContext } from "@/lib/observability/context";
+import { isWorkSessionReadOnly } from "@/lib/work/state-machine";
 import {
   NativeUiAction,
   NativeUiResponse,
@@ -174,7 +176,10 @@ export async function handleWorkUi(
         }))
       )
         return uiReply({ error: "Console session required." }, 401);
-      const workspace = await getWorkspaceForUser(slug, principal.user.id);
+      const workspace = await resolveWorkspaceScope(
+        { slug },
+        principal.user.id,
+      );
       if (workspace?.status !== "active") throw new TaskNotFoundError();
       if (
         req.method === "POST" &&
@@ -293,7 +298,9 @@ export async function handleWorkUi(
           toolApprovals.length ||
           work.status === "waiting_user"
             ? "input-required"
-            : ["idle", "completed", "archived"].includes(work.status)
+            : isWorkSessionReadOnly(work.status) ||
+                work.status === "idle" ||
+                work.status === "completed"
               ? "completed"
               : ["cancelled", "cancelling"].includes(work.status)
                 ? "cancelled"

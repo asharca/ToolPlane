@@ -1,5 +1,10 @@
 "use client";
 
+import { apiRequest } from "@/lib/client/api";
+import {
+  DisplayError,
+  displayErrorText,
+} from "@/components/dashboard/display-error";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, ButtonLink } from "@/components/motion/button";
@@ -57,15 +62,15 @@ export function ChannelObservability({
     let timer: NodeJS.Timeout;
     async function refresh() {
       try {
-        const response = await fetch(endpoint, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        const data = (await response.json()) as {
+        const response = await apiRequest<{
           connections?: Connection[];
           agents?: Array<{ id: string; name: string }>;
           error?: string;
-        };
+        }>(endpoint, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+
         if (!response.ok) {
           if (
             !controller.signal.aborted &&
@@ -74,8 +79,9 @@ export function ChannelObservability({
             setConnections(null);
             setAgents([]);
           }
-          throw new Error(data.error || requestFailed);
+          throw new DisplayError(response.message ?? requestFailed);
         }
+        const data = response.data;
         if (!controller.signal.aborted) {
           // Retain only observation metadata, never credentials or pairing material.
           setConnections(
@@ -94,7 +100,7 @@ export function ChannelObservability({
         }
       } catch (cause) {
         if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : requestFailed);
+          setError(displayErrorText(cause, requestFailed));
       } finally {
         if (!controller.signal.aborted) timer = setTimeout(refresh, 10000);
       }
@@ -249,11 +255,10 @@ function ChannelConversations({
     async function refresh() {
       let delay = 5000;
       try {
-        const response = await fetch(
+        const response = await apiRequest<HistoryPage>(
           `${endpoint}?history=${encodeURIComponent(channel.id)}${latest.current ? `&after=${encodeURIComponent(latest.current)}` : ""}`,
           { cache: "no-store", signal: controller.signal },
         );
-        const data = (await response.json()) as HistoryPage;
         if (!response.ok) {
           if (
             !controller.signal.aborted &&
@@ -265,8 +270,9 @@ function ChannelConversations({
             setHasOlder(false);
             latest.current = null;
           }
-          throw new Error(data.error || requestFailed);
+          throw new DisplayError(response.message ?? requestFailed);
         }
+        const data = response.data;
         if (!controller.signal.aborted) {
           if (!latest.current) setHasOlder(data.hasMore);
           else if (data.hasMore) delay = 0;
@@ -276,7 +282,7 @@ function ChannelConversations({
         }
       } catch (cause) {
         if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : requestFailed);
+          setError(displayErrorText(cause, requestFailed));
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false);
@@ -298,12 +304,14 @@ function ChannelConversations({
     olderRequest.current = controller;
     setLoadingOlder(true);
     try {
-      const response = await fetch(
+      const response = await apiRequest<HistoryPage>(
         `${endpoint}?history=${encodeURIComponent(channel.id)}&before=${encodeURIComponent(messages[0].id)}`,
         { cache: "no-store", signal: controller.signal },
       );
-      const data = (await response.json()) as HistoryPage;
-      if (!response.ok) throw new Error(data.error || requestFailed);
+
+      if (!response.ok)
+        throw new DisplayError(response.message ?? requestFailed);
+      const data = response.data;
       if (!controller.signal.aborted) {
         merge(data.messages);
         setHasOlder(data.hasMore);
@@ -311,7 +319,7 @@ function ChannelConversations({
       }
     } catch (cause) {
       if (!controller.signal.aborted)
-        setError(cause instanceof Error ? cause.message : requestFailed);
+        setError(displayErrorText(cause, requestFailed));
     } finally {
       olderRequest.current = null;
       if (!controller.signal.aborted) setLoadingOlder(false);
@@ -437,11 +445,11 @@ function ChannelLogs({
     const controller = new AbortController();
     async function poll() {
       try {
-        const response = await fetch(
+        const response = await apiRequest<{ logs: AgentChannelLogEntry[] }>(
           `${endpoint}?logs=${encodeURIComponent(channel.id)}`,
           { cache: "no-store", signal: controller.signal },
         );
-        const data = await response.json();
+
         if (!response.ok) {
           if (!cancelled && [401, 403, 404].includes(response.status)) {
             latest.current = [];
@@ -449,8 +457,9 @@ function ChannelLogs({
             setLogs([]);
             setPendingCount(0);
           }
-          throw new Error(data.error || requestFailed);
+          throw new DisplayError(response.message ?? requestFailed);
         }
+        const data = response.data;
         if (!cancelled) {
           const snapshot = data.logs as AgentChannelLogEntry[];
           latest.current = snapshot;
@@ -478,7 +487,7 @@ function ChannelLogs({
       } catch (cause) {
         if (!cancelled) {
           setConnected(false);
-          setError(cause instanceof Error ? cause.message : requestFailed);
+          setError(displayErrorText(cause, requestFailed));
         }
       }
       if (!cancelled) timer = setTimeout(poll, 2000);

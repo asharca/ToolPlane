@@ -1,5 +1,10 @@
 "use client";
 
+import { apiRequest } from "@/lib/client/api";
+import {
+  DisplayError,
+  displayErrorText,
+} from "@/components/dashboard/display-error";
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import { FormCheckbox } from "@/components/ui/FormCheckbox";
@@ -163,20 +168,23 @@ export function WorkspaceKnowledge({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`/api/v1/knowledge/${selected.id}/agents`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ agentIds: next }),
-      });
-      const body = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(body.error || t("accessError"));
+      const response = await apiRequest(
+        `/api/v1/knowledge/${selected.id}/agents`,
+        {
+          method: "PUT",
+          json: { agentIds: next },
+        },
+      );
+      if (!response.ok)
+        throw new DisplayError(response.message ?? t("accessError"));
+
       setBases((current) =>
         current.map((base) =>
           base.id === selected.id ? { ...base, agentIds: next } : base,
         ),
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("accessError"));
+      setError(displayErrorText(cause, t("accessError")));
     } finally {
       setBusy(false);
     }
@@ -186,26 +194,29 @@ export function WorkspaceKnowledge({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch("/api/v1/knowledge", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          workspace: slug,
-          name,
-          providerId,
-          embeddingModel: model,
-          chunkSize,
-          chunkOverlap,
-          topK,
-          threshold,
-        }),
-      });
-      const base = (await response.json()) as { id?: string; error?: string };
-      if (!response.ok || !base.id)
-        throw new Error(base.error || t("createError"));
+      const response = await apiRequest<{ id?: string; error?: string }>(
+        "/api/v1/knowledge",
+        {
+          method: "POST",
+          json: {
+            workspace: slug,
+            name,
+            providerId,
+            embeddingModel: model,
+            chunkSize,
+            chunkOverlap,
+            topK,
+            threshold,
+          },
+        },
+      );
+      if (!response.ok)
+        throw new DisplayError(response.message ?? t("createError"));
+      const base = response.data;
+      if (!base.id) throw new DisplayError(t("createError"));
       window.location.reload();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("createError"));
+      setError(displayErrorText(cause, t("createError")));
       setBusy(false);
     }
   }
@@ -215,10 +226,9 @@ export function WorkspaceKnowledge({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`/api/v1/knowledge/${selected.id}`, {
+      const response = await apiRequest(`/api/v1/knowledge/${selected.id}`, {
         method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+        json: {
           name,
           providerId,
           embeddingModel: model,
@@ -226,10 +236,11 @@ export function WorkspaceKnowledge({
           chunkOverlap,
           topK,
           threshold,
-        }),
+        },
       });
-      const body = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(body.error || t("settingsError"));
+      if (!response.ok)
+        throw new DisplayError(response.message ?? t("settingsError"));
+
       setBases((current) =>
         current.map((base) =>
           base.id === selected.id
@@ -248,7 +259,7 @@ export function WorkspaceKnowledge({
         ),
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("settingsError"));
+      setError(displayErrorText(cause, t("settingsError")));
     } finally {
       setBusy(false);
     }
@@ -260,7 +271,7 @@ export function WorkspaceKnowledge({
       !window.confirm(t("deleteConfirm", { name: selected.name }))
     )
       return;
-    const response = await fetch(`/api/v1/knowledge/${selected.id}`, {
+    const response = await apiRequest(`/api/v1/knowledge/${selected.id}`, {
       method: "DELETE",
     });
     if (response.ok) window.location.reload();
@@ -286,7 +297,7 @@ export function WorkspaceKnowledge({
       };
       const { id, filename, status } = document;
       if (!response.ok || !id || !filename || !status)
-        throw new Error(document.error || t("importError"));
+        throw new DisplayError(document.error ?? t("importError"));
       setBases((current) =>
         current.map((base) =>
           base.id === selected.id
@@ -307,7 +318,7 @@ export function WorkspaceKnowledge({
       );
       setFile(null);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("importError"));
+      setError(displayErrorText(cause, t("importError")));
     } finally {
       setBusy(false);
     }
@@ -318,18 +329,18 @@ export function WorkspaceKnowledge({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(
-        `/api/v1/knowledge/${selected.id}/documents/${documentId}`,
-        { method: "POST" },
-      );
-      const document = (await response.json()) as {
+      const response = await apiRequest<{
         id?: string;
         status?: string;
         error?: string | null;
-      };
+      }>(`/api/v1/knowledge/${selected.id}/documents/${documentId}`, {
+        method: "POST",
+      });
+      if (!response.ok)
+        throw new DisplayError(response.message ?? t("reindexError"));
+      const document = response.data;
       const { id, status } = document;
-      if (!response.ok || !id || !status)
-        throw new Error(document.error || t("reindexError"));
+      if (!id || !status) throw new DisplayError(t("reindexError"));
       setBases((current) =>
         current.map((base) =>
           base.id === selected.id
@@ -349,7 +360,7 @@ export function WorkspaceKnowledge({
         ),
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("reindexError"));
+      setError(displayErrorText(cause, t("reindexError")));
     } finally {
       setBusy(false);
     }
@@ -357,7 +368,7 @@ export function WorkspaceKnowledge({
 
   async function deleteDocument(documentId: string) {
     if (!selected) return;
-    const response = await fetch(
+    const response = await apiRequest(
       `/api/v1/knowledge/${selected.id}/documents/${documentId}`,
       { method: "DELETE" },
     );
@@ -381,19 +392,20 @@ export function WorkspaceKnowledge({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`/api/v1/knowledge/${selected.id}/search`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query: recallQuery }),
-      });
-      const body = (await response.json()) as {
+      const response = await apiRequest<{
         sources?: typeof recallResults;
         error?: string;
-      };
-      if (!response.ok) throw new Error(body.error || t("recallError"));
+      }>(`/api/v1/knowledge/${selected.id}/search`, {
+        method: "POST",
+        json: { query: recallQuery },
+      });
+      if (!response.ok)
+        throw new DisplayError(response.message ?? t("recallError"));
+      const body = response.data;
+
       setRecallResults(body.sources ?? []);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t("recallError"));
+      setError(displayErrorText(cause, t("recallError")));
     } finally {
       setBusy(false);
     }

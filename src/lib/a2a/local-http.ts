@@ -1,4 +1,7 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
+import { a2aFailures } from "./errors";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { LOCAL_OUTPUT_MODES, A2A_FILE_DELIVERY_EXTENSION } from "./model";
 import { AgentCard } from "@a2a-js/sdk";
@@ -7,7 +10,7 @@ import { db } from "@/lib/db";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
 import { runtimeEnv } from "@/lib/runtime-env";
 import { resolveAgentControlRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { parseJson } from "@/lib/agents/public-api/body";
 import { skillLabel } from "@/lib/workspace/skill-label";
 import { writeAudit } from "@/lib/observability/audit";
@@ -43,16 +46,12 @@ const reply = (body: unknown, status = 200) =>
   });
 async function account(req: Request, slug: string) {
   if (req.headers.has("origin"))
-    throw new A2AHttpError(403, "Use a server-side account credential.");
+    throw new A2AHttpError(403, "SERVER_ACCOUNT_REQUIRED");
   const user = await resolveAgentControlRequestUser(req);
-  if (!user)
-    throw new A2AHttpError(
-      401,
-      "An account-level Bearer credential is required.",
-    );
-  const workspace = await getWorkspaceForUser(slug, user.id);
+  if (!user) throw new A2AHttpError(401, "ACCOUNT_BEARER_REQUIRED");
+  const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (workspace?.status !== "active")
-    throw new A2AHttpError(404, "Workspace unavailable.");
+    throw new A2AHttpError(404, "WORKSPACE_UNAVAILABLE");
   requests.take(`${workspace.id}:${user.id}`);
   return { user, workspace };
 }
@@ -189,15 +188,12 @@ export async function handleLocalA2A(
           where: { workspaceId: workspace.id, userId: user.id, role: "admin" },
         }))
       )
-        throw new A2AHttpError(
-          403,
-          "Workspace owner or administrator required.",
-        );
+        throw new A2AHttpError(403, "WORKSPACE_OWNER_OR_ADMIN_REQUIRED");
       if (
         req.headers.get("content-type")?.split(";")[0].toLowerCase() !==
         "application/json"
       )
-        throw new A2AHttpError(415, "Expected JSON.");
+        throw new A2AHttpError(415, "JSON_REQUIRED");
       const parsed = await parseJson(
         req,
         z
@@ -210,37 +206,21 @@ export async function handleLocalA2A(
           .refine((value) => Object.keys(value).length > 0),
         65_536,
       );
-      if (!parsed.ok)
-        throw new A2AHttpError(400, "Invalid local Agent configuration.");
+      if (!parsed.ok) throw new A2AHttpError(400, "INVALID_LOCAL_CONFIG");
       await db.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspace.id} FOR UPDATE`;
         const authorized = await tx.workspace.count({
           where: {
             id: workspace.id,
-            status: "active",
             owner: { status: "active" },
-            OR: [
-              { ownerId: user.id },
-              {
-                members: {
-                  some: {
-                    userId: user.id,
-                    role: "admin",
-                    user: { status: "active" },
-                  },
-                },
-              },
-            ],
+            ...workspaceAccessWhere(user.id, "manage"),
           },
         });
         if (
           !authorized ||
           !(await tx.user.count({ where: { id: user.id, status: "active" } }))
         )
-          throw new A2AHttpError(
-            403,
-            "Workspace administrator authority changed.",
-          );
+          throw new A2AHttpError(403, "ADMIN_AUTHORITY_CHANGED");
         const agent = await tx.agent.findFirst({
           where: {
             ...ORDINARY_AGENT_FILTER,
@@ -256,9 +236,9 @@ export async function handleLocalA2A(
             nativeSubagentMaxDepth: true,
           },
         });
-        if (!agent) throw new A2AHttpError(404, "Agent unavailable.");
+        if (!agent) throw new A2AHttpError(404, "AGENT_UNAVAILABLE");
         if (agent.runtimeKind !== "pi-sdk")
-          throw new A2AHttpError(409, "Retired Agent execution is read-only.");
+          throw new A2AHttpError(409, "RETIRED_AGENT_READ_ONLY");
         const changed = await tx.agent.updateMany({
           where: {
             ...ORDINARY_AGENT_FILTER,
@@ -275,7 +255,7 @@ export async function handleLocalA2A(
             ...(parsed.value.policy ? { a2aPolicy: parsed.value.policy } : {}),
           },
         });
-        if (!changed.count) throw new A2AHttpError(404, "Agent unavailable.");
+        if (!changed.count) throw new A2AHttpError(404, "AGENT_UNAVAILABLE");
         if (
           agent.runtimeKind === "pi-sdk" &&
           agent.currentRevisionVersion > 0 &&
@@ -329,7 +309,7 @@ export async function handleLocalA2A(
         {
           error:
             error instanceof A2AHttpError
-              ? error.message
+              ? a2aFailures.text(error.code)
               : "Local A2A request failed.",
         },
         error instanceof A2AHttpError ? error.status : 400,

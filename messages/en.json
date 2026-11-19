@@ -51,6 +51,7 @@
     "save": "Save",
     "unsavedChanges": "Unsaved changes",
     "noChanges": "No unsaved changes",
+    "operationFailed": "The operation failed. Try again.",
     "modified": "Modified",
     "cancel": "Cancel",
     "close": "Close",
@@ -2232,7 +2233,8 @@
       "checkAndUpdate": "Check update",
       "updateNow": "Update now",
       "confirmUpdate": "Install {version} and restart ToolPlane?",
-      "targetReleaseUnknown": "Release artifact not configured"
+      "targetReleaseUnknown": "Release artifact not configured",
+      "checkFailed": "Could not check for updates."
     },
     "mcp": {
       "title": "MCP",

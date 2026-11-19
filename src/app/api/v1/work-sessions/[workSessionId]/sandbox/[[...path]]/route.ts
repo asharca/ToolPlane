@@ -1,3 +1,4 @@
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
@@ -18,10 +19,7 @@ async function proxy(req: Request, { params }: Params) {
   const work = await db.workSession.findFirst({
     where: {
       id: workSessionId,
-      workspace: {
-        status: "active",
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
-      },
+      workspace: workspaceAccessWhere(user.id),
     },
     include: {
       conversation: { include: { sandbox: { include: { deployment: true } } } },
@@ -64,13 +62,7 @@ async function proxy(req: Request, { params }: Params) {
           legacyRevisionUnresolved: false,
         },
         agent: { retiredAt: null, runtimeKind: work.runtimeKind },
-        workspace: {
-          status: "active",
-          OR: [
-            { ownerId: user.id },
-            { members: { some: { userId: user.id } } },
-          ],
-        },
+        workspace: workspaceAccessWhere(user.id),
       },
     });
     if (!current) return null;

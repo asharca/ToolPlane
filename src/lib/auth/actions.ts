@@ -1,5 +1,6 @@
 "use server";
 
+import { actionScope } from "@/lib/workspace/action-scope";
 import { logSystemEvent } from "@/lib/observability/system";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
@@ -13,7 +14,7 @@ import {
   PASSWORD_MIN_LENGTH,
   validatePassword,
 } from "./password-policy";
-import { createSession, clearSession, getSessionUserId } from "./session";
+import { createSession, clearSession } from "./session";
 import { createApiToken, revokeApiToken } from "./tokens";
 import { safeRelativePath } from "./safe-redirect";
 import { reconcileAdminRole } from "./admin";
@@ -145,7 +146,7 @@ export async function loginAction(
 }
 
 export async function logoutAction(): Promise<void> {
-  const actorId = await getSessionUserId();
+  const actorId = (await actionScope())?.id;
   await clearSession();
   logSystemEvent("auth.logout", {
     outcome: "success",
@@ -217,7 +218,7 @@ export async function changePasswordAction(
   formData: FormData,
 ): Promise<AuthState> {
   const t = await getTranslations("auth");
-  const userId = await getSessionUserId();
+  const userId = (await actionScope())?.id;
   if (!userId) return { error: t("signInRequired") };
 
   const currentPassword = boundedText(
@@ -282,7 +283,7 @@ export async function createTokenAction(
   _prev: TokenState,
   formData: FormData,
 ): Promise<TokenState> {
-  const userId = await getSessionUserId();
+  const userId = (await actionScope())?.id;
   if (!userId) return { error: "You must be signed in." };
 
   const name = String(formData.get("name") ?? "").trim();
@@ -294,7 +295,7 @@ export async function createTokenAction(
 }
 
 export async function revokeTokenAction(formData: FormData): Promise<void> {
-  const userId = await getSessionUserId();
+  const userId = (await actionScope())?.id;
   if (!userId) return;
   const id = String(formData.get("id") ?? "");
   if (id) await revokeApiToken(userId, id);

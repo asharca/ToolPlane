@@ -21,10 +21,7 @@ export type TaskExecutor = (
 ) => Promise<ExecutionResult>;
 /** Published legacy runtime history is retained, but its execution API is retired. */
 export const executePublishedTask: TaskExecutor = async () => {
-  throw new A2AHttpError(
-    410,
-    "Legacy published Agent execution is retired. Register a new Pi Agent capability client.",
-  );
+  throw new A2AHttpError(410, "LEGACY_AGENT_EXECUTION_RETIRED");
 };
 
 /** Target dispatch belongs to the native task core, never the legacy Responses lifecycle. */

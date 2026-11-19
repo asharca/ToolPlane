@@ -263,7 +263,7 @@ describe("Work attachment transaction failures", () => {
     await screen.findByText("Attachment access denied");
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/attachments/uploaded-first",
-      { method: "DELETE" },
+      expect.objectContaining({ method: "DELETE" }),
     );
     expect(
       fetchMock.mock.calls.some(([url]) => url === "/api/v1/work-sessions"),
@@ -311,9 +311,10 @@ describe("Work attachment transaction failures", () => {
       attachmentIds: ["staged"],
     });
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/v1/attachments/staged", {
-        method: "DELETE",
-      }),
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/attachments/staged",
+        expect.objectContaining({ method: "DELETE" }),
+      ),
     );
     expect(
       screen.getByRole("combobox", {
@@ -361,7 +362,9 @@ describe("Work attachment transaction failures", () => {
   it.each([`/compact ${"x".repeat(2000)}`, "/new"])(
     "rejects invalid Work command %s without losing the text",
     async (line) => {
-      const fetchMock = vi.fn();
+      const fetchMock = vi.fn<typeof fetch>(
+        async () => new Response(null, { status: 404 }),
+      );
       vi.stubGlobal("fetch", fetchMock);
       showSession();
       const input = screen.getByRole("combobox", {
@@ -377,11 +380,9 @@ describe("Work attachment transaction failures", () => {
   );
 
   it("forwards Pi extension commands and preserves the draft on runtime rejection", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
-        Response.json({ error: "Extension command rejected" }, { status: 400 }),
-      );
+    const fetchMock = vi.fn(async () =>
+      Response.json({ error: "Extension command rejected" }, { status: 400 }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     showSession();
     const input = screen.getByRole("combobox", {
@@ -408,7 +409,7 @@ describe("Work attachment transaction failures", () => {
     async (error, message) => {
       vi.stubGlobal(
         "fetch",
-        vi.fn().mockResolvedValue(Response.json({ error }, { status: 409 })),
+        vi.fn(async () => Response.json({ error }, { status: 409 })),
       );
       showSession();
       const input = screen.getByRole("combobox", {
@@ -494,9 +495,10 @@ describe("Work attachment transaction failures", () => {
       screen.queryByText("Recovered partial plus delta"),
     ).not.toBeInTheDocument();
     expect(events.closed).toBe(true);
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/work-sessions/work", {
-      cache: "no-store",
-    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/work-sessions/work",
+      expect.objectContaining({ cache: "no-store" }),
+    );
   });
 });
 

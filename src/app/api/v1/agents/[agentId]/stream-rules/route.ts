@@ -1,9 +1,9 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
-import { isSameOriginRequest } from "@/lib/http/origin";
+
 import { parseJson } from "@/lib/agents/public-api/body";
 import {
   StreamRulesSchema,
@@ -25,12 +25,6 @@ async function handle(
 ) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  if (
-    req.method !== "GET" &&
-    !req.headers.has("authorization") &&
-    !isSameOriginRequest(req)
-  )
-    return Response.json({ error: "Forbidden" }, { status: 403 });
   const parsed =
     req.method === "GET" ? null : await parseJson(req, input, 1_048_576);
   if (parsed && !parsed.ok)
@@ -39,8 +33,13 @@ async function handle(
       { status: parsed.reason === "too_large" ? 413 : 400 },
     );
   const value = parsed?.ok ? parsed.value : null;
-  const workspace = await getWorkspaceForUser(
-    value?.workspace ?? new URL(req.url).searchParams.get("workspace") ?? "",
+  const workspace = await resolveWorkspaceScope(
+    {
+      slug:
+        value?.workspace ??
+        new URL(req.url).searchParams.get("workspace") ??
+        "",
+    },
     user.id,
   );
   if (!workspace) return Response.json({ error: "notFound" }, { status: 404 });

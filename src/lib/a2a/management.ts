@@ -1,8 +1,9 @@
 import "server-only";
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { resolveAgentControlRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { parseJson } from "@/lib/agents/public-api/body";
 import { writeAudit } from "@/lib/observability/audit";
 import { withLogContext } from "@/lib/observability/context";
@@ -34,7 +35,7 @@ export async function manageA2AService(
         { error: "An account-level Bearer credential is required." },
         401,
       );
-    const workspace = await getWorkspaceForUser(slug, user.id);
+    const workspace = await resolveWorkspaceScope({ slug }, user.id);
     if (workspace?.status !== "active")
       return reply({ error: "Workspace not found." }, 404);
     const isAdmin =

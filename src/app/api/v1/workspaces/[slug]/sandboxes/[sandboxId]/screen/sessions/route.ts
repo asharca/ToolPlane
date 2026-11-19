@@ -1,3 +1,4 @@
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import { NextResponse } from "next/server";
 import { resolveRequestUser } from "@/lib/auth/request-user";
@@ -34,11 +35,7 @@ export const POST = withRequestLogging(
         kind: { in: ["connector", "docker"] },
         workspace: {
           slug,
-          status: "active",
-          OR: [
-            { ownerId: user.id },
-            { members: { some: { userId: user.id } } },
-          ],
+          ...workspaceAccessWhere(user.id),
         },
       },
       select: { id: true, kind: true, config: true },

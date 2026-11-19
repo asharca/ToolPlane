@@ -6,6 +6,7 @@ import { useTranslations } from "next-intl";
 import { AssistantMarkdown } from "@/components/dashboard/ConversationMessage";
 import { Button } from "@/components/motion/button/base";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
+import { apiRequest } from "@/lib/client/api";
 import { estimatePromptTokens } from "@/lib/prompt-tokens";
 import { cn } from "@/lib/utils";
 
@@ -65,36 +66,29 @@ export function SystemPromptEditor({
     if (!canGenerate || generating) return;
     setGenerating(true);
     setError(null);
-    try {
-      const response = await fetch("/api/v1/chat/assistants/generate-prompt", {
+    const result = await apiRequest<{ prompt?: string }>(
+      "/api/v1/chat/assistants/generate-prompt",
+      {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+        json: {
           workspaceId,
           name: name.trim(),
           description: description?.trim() || null,
           systemPrompt: value.trim() || null,
           modelProviderId: providerId,
           model,
-        }),
-      });
-      const body = (await response.json().catch(() => ({}))) as {
-        prompt?: string;
-        error?: string;
-      };
-      if (!response.ok || !body.prompt?.trim())
-        throw new Error(body.error || t("promptGenerationError"));
-      const generated = body.prompt.trim();
-      setRestore({ previous: value, generated });
-      onChange(generated);
-      setMode("edit");
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : t("promptGenerationError"),
-      );
-    } finally {
-      setGenerating(false);
+        },
+      },
+    );
+    setGenerating(false);
+    const generated = result.ok ? result.data?.prompt?.trim() : undefined;
+    if (!generated) {
+      setError((!result.ok && result.message) || t("promptGenerationError"));
+      return;
     }
+    setRestore({ previous: value, generated });
+    onChange(generated);
+    setMode("edit");
   }
 
   return (

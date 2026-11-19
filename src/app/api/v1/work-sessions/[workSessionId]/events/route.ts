@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { withRequestLogging } from "@/lib/observability/http";
 import {
   STREAM_RULE_TRIGGER_PART,
@@ -203,6 +204,12 @@ export const GET = withRequestLogging(
     const work = await getWorkSessionForUser(user.id, workSessionId);
     if (!work) return Response.json({ error: "Not found" }, { status: 404 });
 
+    const scope = await resolveWorkspaceScope(
+      { id: work.workspaceId },
+      user.id,
+    );
+    if (!scope) return Response.json({ error: "Not found" }, { status: 404 });
+
     if (!LIVE_STATUSES.has(work.status)) {
       const snapshot = completedOutput(work.conversation.messages);
       return new Response(
@@ -317,9 +324,8 @@ export const GET = withRequestLogging(
         cleanup();
       },
     });
-    return new Response(
-      workspaceAccessStream(stream, work.workspaceId, user.id, req.signal),
-      { headers: AGENT_API_SSE_HEADERS },
-    );
+    return new Response(workspaceAccessStream(stream, scope, req.signal), {
+      headers: AGENT_API_SSE_HEADERS,
+    });
   },
 );

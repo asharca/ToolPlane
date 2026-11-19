@@ -1,13 +1,25 @@
+import {
+  resolveWorkspaceScope,
+  type WorkspaceCapability,
+} from "@/lib/workspace/scope";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { PluginError } from "@/lib/plugins/catalog";
 import { GithubRegistryError } from "@/lib/plugins/sources";
 import type { z } from "zod";
 
-export async function pluginRequestContext(request: Request, slug: string) {
+export async function pluginRequestContext<
+  C extends WorkspaceCapability = "read",
+>(request: Request, slug: string, capability: C) {
   const user = await resolveRequestUser(request);
   if (!user) throw new PluginError("unauthorized", "Unauthorized", 401);
-  const workspace = await getWorkspaceForUser(slug, user.id);
+  const workspace = await resolveWorkspaceScope({ slug }, user.id, capability);
+  if (
+    !workspace &&
+    capability === "manage" &&
+    (await resolveWorkspaceScope({ slug }, user.id))
+  )
+    throw new PluginError("not_authorized", "Workspace access denied.", 403);
   if (!workspace)
     throw new PluginError("not_found", "Workspace not found.", 404);
   return { user, workspace };

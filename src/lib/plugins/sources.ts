@@ -1,4 +1,9 @@
 import "server-only";
+import {
+  workspaceAccessWhere,
+  workspaceScopeWhere,
+  type WorkspaceScope,
+} from "@/lib/workspace/scope";
 import { createHmac } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -41,28 +46,6 @@ function configurationError(error: z.ZodError) {
   );
 }
 
-async function authorize(workspaceId: string, userId: string, manage = false) {
-  const workspace = await db.workspace.findFirst({
-    where: {
-      id: workspaceId,
-      status: "active",
-      OR: [
-        { ownerId: userId },
-        {
-          members: {
-            some: {
-              userId,
-              ...(manage ? { role: { in: ["owner", "admin"] } } : {}),
-            },
-          },
-        },
-      ],
-    },
-    select: { id: true },
-  });
-  if (!workspace) throw new GithubRegistryError("not_authorized");
-}
-
 /** Master keys never leave the server. Each source has a distinct webhook secret. */
 export function deriveGithubResourceRegistryWebhookSecret(registry: {
   id: string;
@@ -76,8 +59,8 @@ export function deriveGithubResourceRegistryWebhookSecret(registry: {
     .digest("hex");
 }
 
-export async function listPluginSources(workspaceId: string, userId: string) {
-  await authorize(workspaceId, userId);
+export async function listPluginSources(scope: WorkspaceScope) {
+  const { id: workspaceId, actorUserId: userId } = scope;
   const [rows, manager, platformAdmin] = await Promise.all([
     db.githubResourceRegistry.findMany({
       where: {
@@ -103,10 +86,7 @@ export async function listPluginSources(workspaceId: string, userId: string) {
     db.workspace.findFirst({
       where: {
         id: workspaceId,
-        OR: [
-          { ownerId: userId },
-          { members: { some: { userId, role: { in: ["owner", "admin"] } } } },
-        ],
+        ...workspaceAccessWhere(userId, "manage"),
       },
       select: { id: true },
     }),
@@ -133,11 +113,10 @@ export async function listPluginSources(workspaceId: string, userId: string) {
 }
 
 export async function createPluginSource(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope<"manage">,
   input: PluginSourceInput,
 ) {
-  await authorize(workspaceId, userId, true);
+  const { id: workspaceId, actorUserId: userId } = scope;
   const parsed = registrationSchema.safeParse(input);
   if (!parsed.success) throw configurationError(parsed.error);
   if (parsed.data.visibility === "private" && !parsed.data.token)
@@ -150,6 +129,13 @@ export async function createPluginSource(
   ).assertAccess(configuration.repository);
   try {
     return await db.$transaction(async (tx) => {
+      if (
+        !(await tx.workspace.findFirst({
+          where: workspaceScopeWhere(scope),
+          select: { id: true },
+        }))
+      )
+        throw new GithubRegistryError("not_authorized");
       const previous = await tx.githubResourceRegistry.findUnique({
         where: {
           workspaceId_repository_branch: {
@@ -170,7 +156,7 @@ export async function createPluginSource(
       };
       const registry = previous
         ? await tx.githubResourceRegistry.update({
-            where: { id: previous.id },
+            where: { id: previous.id, workspace: workspaceScopeWhere(scope) },
             data: { ...data, generation: { increment: 1 } },
           })
         : await tx.githubResourceRegistry.create({
@@ -194,11 +180,12 @@ export async function createPluginSource(
 export async function enqueuePluginSourceSync(
   registryId: string,
   deliveryId?: string,
+  access: Prisma.GithubResourceRegistryWhereInput = {},
 ) {
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT "id" FROM "GithubResourceRegistry" WHERE "id" = ${registryId} FOR UPDATE`;
-    const registry = await tx.githubResourceRegistry.findUnique({
-      where: { id: registryId },
+    const registry = await tx.githubResourceRegistry.findFirst({
+      where: { id: registryId, AND: [access], status: { not: "disabled" } },
     });
     if (!registry || registry.status === "disabled")
       throw new GithubRegistryError("registry_not_found");
@@ -209,10 +196,11 @@ export async function enqueuePluginSourceSync(
       });
       if (previous) return previous;
     }
-    const updated = await tx.githubResourceRegistry.update({
-      where: { id: registryId },
+    const [updated] = await tx.githubResourceRegistry.updateManyAndReturn({
+      where: { id: registryId, AND: [access], status: { not: "disabled" } },
       data: { generation: { increment: 1 }, status: "pending", error: null },
     });
+    if (!updated) throw new GithubRegistryError("registry_not_found");
     return tx.githubResourceSyncJob.create({
       data: { registryId, generation: updated.generation, deliveryId },
       select: { id: true },
@@ -221,11 +209,10 @@ export async function enqueuePluginSourceSync(
 }
 
 export async function syncPluginSource(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope,
   sourceId: string,
 ) {
-  await authorize(workspaceId, userId);
+  const { id: workspaceId, actorUserId: userId } = scope;
   const registry = await db.githubResourceRegistry.findFirst({
     where: {
       id: sourceId,
@@ -242,17 +229,32 @@ export async function syncPluginSource(
       }))
     )
       throw new GithubRegistryError("not_authorized");
-  } else await authorize(workspaceId, userId, true);
-  return enqueuePluginSourceSync(registry.id);
+  } else if (
+    !(await db.workspace.findFirst({
+      where: { id: workspaceId, ...workspaceAccessWhere(userId, "manage") },
+      select: { id: true },
+    }))
+  ) {
+    throw new GithubRegistryError("not_authorized");
+  }
+  return enqueuePluginSourceSync(
+    registry.id,
+    undefined,
+    registry.official
+      ? { official: true, workspaceId: null }
+      : {
+          workspaceId,
+          workspace: workspaceAccessWhere(userId, "manage"),
+          official: false,
+        },
+  );
 }
 
 export async function updatePluginSource(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope<"manage">,
   sourceId: string,
   input: { name?: string; token?: string },
 ) {
-  await authorize(workspaceId, userId, true);
   const parsed = z
     .object({
       name: z.string().trim().min(1).max(120).optional(),
@@ -264,7 +266,7 @@ export async function updatePluginSource(
   const registry = await db.githubResourceRegistry.findFirst({
     where: {
       id: sourceId,
-      workspaceId,
+      workspace: workspaceScopeWhere(scope),
       official: false,
       status: { not: "disabled" },
     },
@@ -284,7 +286,7 @@ export async function updatePluginSource(
     const changed = await tx.githubResourceRegistry.updateMany({
       where: {
         id: sourceId,
-        workspaceId,
+        workspace: workspaceScopeWhere(scope),
         official: false,
         status: { not: "disabled" },
       },
@@ -299,8 +301,8 @@ export async function updatePluginSource(
       },
     });
     if (!changed.count) throw new GithubRegistryError("registry_not_found");
-    const updated = await tx.githubResourceRegistry.findUniqueOrThrow({
-      where: { id: sourceId },
+    const updated = await tx.githubResourceRegistry.findFirstOrThrow({
+      where: { id: sourceId, workspace: workspaceScopeWhere(scope) },
     });
     return tx.githubResourceSyncJob.create({
       data: { registryId: sourceId, generation: updated.generation },
@@ -310,12 +312,13 @@ export async function updatePluginSource(
 }
 
 export async function deletePluginSource(
-  workspaceId: string,
-  userId: string,
+  scope: WorkspaceScope<"manage">,
   sourceId: string,
 ) {
-  await authorize(workspaceId, userId, true);
-  await disableSources({ id: sourceId, workspaceId, official: false }, true);
+  await disableSources(
+    { id: sourceId, workspace: workspaceScopeWhere(scope), official: false },
+    true,
+  );
 }
 async function disableSources(
   where: Prisma.GithubResourceRegistryWhereInput,
@@ -329,8 +332,8 @@ async function disableSources(
     if (required && !sources.length)
       throw new GithubRegistryError("registry_not_found");
     const ids = sources.map((row) => row.id);
-    await tx.githubResourceRegistry.updateMany({
-      where: { id: { in: ids } },
+    const changed = await tx.githubResourceRegistry.updateMany({
+      where: { AND: [where, { id: { in: ids } }] },
       data: {
         status: "disabled",
         generation: { increment: 1 },
@@ -339,6 +342,8 @@ async function disableSources(
         leaseExpiresAt: null,
       },
     });
+    if (required && changed.count !== ids.length)
+      throw new GithubRegistryError("registry_not_found");
     const resources = await tx.githubRegistryResource.findMany({
       where: { registryId: { in: ids } },
       select: { listingId: true },

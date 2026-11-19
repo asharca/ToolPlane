@@ -1,7 +1,8 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { notFound, redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { getA2ATask } from "@/lib/observability/views/a2a-tasks";
 import { getAgentRun } from "@/lib/observability/views/agent-runs";
 import { A2ATaskDetail } from "@/components/observability/A2ATaskDetail";
@@ -20,7 +21,7 @@ export default async function A2ATaskPage({
   const { workspace: slug, taskId } = await params;
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
-  const workspace = await getWorkspaceForUser(slug, user.id);
+  const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (!workspace) notFound();
   const detail = await getA2ATask(
     { kind: "workspace", workspaceId: workspace.id, userId: user.id },

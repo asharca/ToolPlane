@@ -1,4 +1,8 @@
 import "server-only";
+import {
+  workspaceScopeWhere,
+  type WorkspaceScope,
+} from "@/lib/workspace/scope";
 import { db } from "@/lib/db";
 import { buildToolSet } from "@/lib/agents/tools";
 import type { AgentToolSet } from "@/lib/agents/agent-tool";
@@ -12,27 +16,20 @@ import { liveStatus } from "@/lib/process/supervisor";
 import { loadMcpToolPolicies } from "@/lib/workspace/mcp-tool-exposure";
 import { logRequest } from "@/lib/observability/log";
 import type { ChatAssistantRevisionConfig } from "./revision-types";
-import { ChatServiceError, requireChatRemoteDeployment } from "./service";
+import { ChatServiceError, requireChatRemoteDeployment } from "./shared";
 // Revision authority is an upper bound. Live grants can only narrow it, and are
 // checked again immediately before every remote invocation.
 export async function buildChatToolSet(scope: {
   assistantId: string;
-  workspaceId: string;
-  userId: string;
+  workspace: WorkspaceScope;
   config: ChatAssistantRevisionConfig;
   signal?: AbortSignal;
 }): Promise<AgentToolSet> {
   const authorized = await db.chatAssistant.findFirst({
     where: {
       id: scope.assistantId,
-      workspaceId: scope.workspaceId,
-      workspace: {
-        status: "active",
-        OR: [
-          { ownerId: scope.userId },
-          { members: { some: { userId: scope.userId } } },
-        ],
-      },
+      workspaceId: scope.workspace.id,
+      workspace: workspaceScopeWhere(scope.workspace),
     },
     select: { id: true },
   });
@@ -40,6 +37,7 @@ export async function buildChatToolSet(scope: {
   const grants = await db.chatAssistantMcpGrant.findMany({
     where: {
       assistantId: scope.assistantId,
+      assistant: { workspace: workspaceScopeWhere(scope.workspace) },
       deploymentId: {
         in: scope.config.mcpGrants.map((grant) => grant.deploymentId),
       },
@@ -55,7 +53,7 @@ export async function buildChatToolSet(scope: {
   });
   for (const grant of grants) {
     if (
-      grant.deployment.workspaceId !== scope.workspaceId ||
+      grant.deployment.workspaceId !== scope.workspace.id ||
       grant.deployment.sandbox
     )
       throw new ChatServiceError(403, "Assistant MCP authority is invalid");
@@ -74,7 +72,7 @@ export async function buildChatToolSet(scope: {
   }
   const tools = await buildToolSet(
     grants.map((grant) => grant.deploymentId),
-    scope.workspaceId,
+    scope.workspace.id,
     {
       liveStatus,
       // Pinned discovery prepares remote connections; stopped is not a missing tool grant.
@@ -100,7 +98,7 @@ export async function buildChatToolSet(scope: {
           );
         return listPinnedRemoteMcpTools(
           {
-            workspaceId: scope.workspaceId,
+            workspaceId: scope.workspace.id,
             deploymentId,
             definitionChecksum: pinned.definitionChecksum,
           },
@@ -119,7 +117,7 @@ export async function buildChatToolSet(scope: {
           );
         const result = await callPinnedRemoteMcpTool(
           {
-            workspaceId: scope.workspaceId,
+            workspaceId: scope.workspace.id,
             deploymentId,
             definitionChecksum: pinned.definitionChecksum,
           },
@@ -133,21 +131,8 @@ export async function buildChatToolSet(scope: {
                 assistantId: scope.assistantId,
                 deploymentId,
                 assistant: {
-                  workspaceId: scope.workspaceId,
-                  workspace: {
-                    status: "active",
-                    OR: [
-                      { ownerId: scope.userId, owner: { status: "active" } },
-                      {
-                        members: {
-                          some: {
-                            userId: scope.userId,
-                            user: { status: "active" },
-                          },
-                        },
-                      },
-                    ],
-                  },
+                  workspaceId: scope.workspace.id,
+                  workspace: workspaceScopeWhere(scope.workspace),
                 },
               },
               include: {
@@ -161,7 +146,7 @@ export async function buildChatToolSet(scope: {
             });
             if (
               !current?.allowedToolNames.includes(toolName) ||
-              current.deployment.workspaceId !== scope.workspaceId ||
+              current.deployment.workspaceId !== scope.workspace.id ||
               current.deployment.sandbox
             )
               throw new ChatServiceError(

@@ -10,8 +10,8 @@ export const GET = withRequestLogging(
   ) => {
     try {
       const { slug, listingId } = await params;
-      const { user, workspace } = await pluginRequestContext(req, slug);
-      return Response.json(await getPlugin(workspace.id, user.id, listingId));
+      const { workspace } = await pluginRequestContext(req, slug, "read");
+      return Response.json(await getPlugin(workspace, listingId));
     } catch (error) {
       return pluginApiError(error);
     }

@@ -19,7 +19,7 @@ vi.mock("@/lib/db", () => ({
 import {
   deleteConsoleConversation,
   renameConsoleConversation,
-} from "@/lib/agents/mutations";
+} from "@/lib/agents/conversation-mutations";
 
 describe("console conversation mutations", () => {
   beforeEach(() => vi.clearAllMocks());

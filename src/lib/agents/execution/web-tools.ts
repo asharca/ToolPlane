@@ -45,7 +45,7 @@ async function assertWebAuthority(
     !(revision.config.optionalBuiltinTools ?? []).includes(name) ||
     !live?.optionalBuiltinTools.includes(name)
   )
-    throw new A2AHttpError(403, "Optional built-in tool is not enabled.");
+    throw new A2AHttpError(403, "OPTIONAL_BUILTIN_DISABLED");
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -200,8 +200,7 @@ async function deployedSearch(
   signal: AbortSignal,
 ) {
   const grant = await resolveAgentRuntimeGrant(token);
-  if (!grant)
-    throw new A2AHttpError(403, "Optional built-in tool is not enabled.");
+  if (!grant) throw new A2AHttpError(403, "OPTIONAL_BUILTIN_DISABLED");
   const deployments = await db.deployment.findMany({
     where: {
       workspaceId: token.workspaceId,

@@ -2,10 +2,9 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { AgentModelOverrideSchema, type AgentModelOverride } from "./chat-body";
-import {
-  AgentConfigurationError,
-  validateNativeModelSelection,
-} from "./mutations";
+import { AgentConfigurationError } from "./agent-mutation-guards";
+import { isExecutableAgentRuntimeKind } from "./runtime-kind";
+import { validateNativeModelSelection } from "./agent-draft-mutations";
 
 export class AgentModelOverrideError extends Error {
   readonly status = 400;
@@ -26,6 +25,8 @@ export async function resolveAgentModelOverride(
   const parsed = AgentModelOverrideSchema.safeParse(override);
   if (!parsed.success)
     throw new AgentModelOverrideError("modelOverrideInvalid");
+  if (!isExecutableAgentRuntimeKind(runtimeKind))
+    throw new AgentModelOverrideError("modelOverrideUnavailable");
   const resolve = async (client: Prisma.TransactionClient) => {
     try {
       const id = await validateNativeModelSelection(

@@ -7,7 +7,8 @@ import { db } from "@/lib/db";
 import { getAgentForRun } from "@/lib/agents/queries";
 import { resolveAgentPiPackages } from "@/lib/agents/resolve";
 import { runDedicatedSandboxTurn } from "@/lib/agents/sandbox-turn";
-import { createConversation, updateAgent } from "@/lib/agents/mutations";
+import { createConversation } from "@/lib/agents/conversation-mutations";
+import { updateAgent } from "@/lib/agents/agent-draft-mutations";
 import { publishAgentRevision } from "@/lib/agents/revisions";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import {

@@ -1,4 +1,8 @@
 import "server-only";
+import {
+  resolveWorkspaceScope,
+  workspaceAccessWhere,
+} from "@/lib/workspace/scope";
 import { db } from "@/lib/db";
 import { storedRequiredEnvironment } from "@/lib/workspace/server-recipe";
 import { mcpEnvironmentState } from "@/lib/workspace/mcp-environment";
@@ -10,36 +14,18 @@ import { deploymentPinnedPackage } from "@/lib/workspace/deployment-label";
 
 export async function getDefaultWorkspace(userId: string, lastSlug?: string) {
   if (lastSlug) {
-    const last = await getWorkspaceForUser(lastSlug, userId);
+    const last = await resolveWorkspaceScope({ slug: lastSlug }, userId);
     if (last) return last;
   }
   return db.workspace.findFirst({
-    where: {
-      status: "active",
-      OR: [{ ownerId: userId }, { members: { some: { userId } } }],
-    },
+    where: workspaceAccessWhere(userId),
     orderBy: { createdAt: "asc" },
   });
 }
 
-export async function getWorkspaceForUser(slug: string, userId: string) {
-  const workspace = await db.workspace.findFirst({
-    where: {
-      slug,
-      status: "active",
-      OR: [{ ownerId: userId }, { members: { some: { userId } } }],
-    },
-  });
-  if (workspace) {
-    const { enrichLogContext } = await import("@/lib/observability/context");
-    enrichLogContext({ workspaceId: workspace.id, actorId: userId });
-  }
-  return workspace;
-}
-
 export async function listWorkspacesForUser(userId: string) {
   const workspaces = await db.workspace.findMany({
-    where: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+    where: workspaceAccessWhere(userId, "read", true),
     orderBy: { createdAt: "asc" },
     select: {
       id: true,

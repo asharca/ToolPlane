@@ -9,6 +9,8 @@ import {
 import { takeAgentApiPrincipalRateLimit } from "@/lib/agents/public-api/rate-limit";
 import { TaskNotFoundError } from "@a2a-js/sdk/errors";
 import type { AgentModelOverride } from "@/lib/agents/chat-body";
+import type { EntryKind } from "@/lib/agents/entry-kinds";
+import { a2aFailures, type A2AReason } from "./errors";
 
 export const A2A_SCOPES = ["a2a:send", "a2a:read", "a2a:cancel"] as const;
 export type A2AOperation = "send" | "read" | "cancel";
@@ -31,7 +33,7 @@ export type LocalA2AGrant = {
   // Trusted console admission only; never populated from A2A message metadata.
   modelOverride?: AgentModelOverride;
   entryPolicy?: {
-    kind: "chat" | "work" | "channel" | "control" | "trigger";
+    kind: EntryKind;
     sourceId: string;
     conversationId?: string;
     sourceAgentId: string;
@@ -96,9 +98,9 @@ export function isLocalGrant(grant: TaskGrant): grant is LocalA2AGrant {
 export class A2AHttpError extends Error {
   constructor(
     readonly status: number,
-    message: string,
+    readonly code: A2AReason,
   ) {
-    super(message);
+    super(a2aFailures.text(code));
   }
 }
 export function permits(
@@ -113,18 +115,11 @@ export function permits(
 export async function resolveA2AGrant(req: Request, endpointPublicId: string) {
   // Direct server-to-server profile. Browser support needs a separate CORS/OAuth design.
   if (req.headers.has("origin"))
-    throw new A2AHttpError(
-      403,
-      "Browser origins are not supported by this A2A interface.",
-    );
+    throw new A2AHttpError(403, "BROWSER_ORIGIN_FORBIDDEN");
   const principal = await resolveAgentApiPrincipal(req, endpointPublicId);
-  if (!principal)
-    throw new A2AHttpError(
-      401,
-      "A valid Agent Endpoint credential is required.",
-    );
+  if (!principal) throw new A2AHttpError(401, "ENDPOINT_CREDENTIAL_REQUIRED");
   if (!A2A_SCOPES.some((scope) => principal.scopes.includes(scope)))
-    throw new A2AHttpError(403, "A2A permission is required.");
+    throw new A2AHttpError(403, "A2A_PERMISSION_REQUIRED");
   const endpoint = await db.agentEndpoint.findFirst({
     where: {
       id: principal.endpointId,
@@ -134,18 +129,18 @@ export async function resolveA2AGrant(req: Request, endpointPublicId: string) {
     },
     select: { id: true },
   });
-  if (!endpoint) throw new A2AHttpError(404, "Agent service not found.");
+  if (!endpoint) throw new A2AHttpError(404, "SERVICE_NOT_FOUND");
   const rate = await takeAgentApiPrincipalRateLimit(principal);
   let expiresAt: number | null = null;
   if (principal.credentialType === "client_token") {
     // Only after resolveAgentApiPrincipal has verified signature, audience and origin.
     const authorization = req.headers.get("authorization");
-    if (!authorization) throw new A2AHttpError(401, "Missing credential.");
+    if (!authorization) throw new A2AHttpError(401, "MISSING_CREDENTIAL");
     const token = authorization
       .replace(/^Bearer /i, "")
       .slice(AGENT_CLIENT_TOKEN_PREFIX.length);
     const exp = decodeJwt(token).exp;
-    if (!exp) throw new A2AHttpError(401, "The credential has no expiry.");
+    if (!exp) throw new A2AHttpError(401, "CREDENTIAL_EXPIRY_REQUIRED");
     expiresAt = exp * 1000;
   }
   const ownerKey = createHash("sha256")

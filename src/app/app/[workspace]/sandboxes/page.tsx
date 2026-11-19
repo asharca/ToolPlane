@@ -1,3 +1,4 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 /* DashboardTable consumes cell arrays as indexed values. */
 
 import { AnimatedBadge } from "@/components/motion/animated-badge";
@@ -8,7 +9,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Bot, Boxes, Cpu, Laptop, Terminal } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { listSandboxes } from "@/lib/sandboxes/queries";
 import {
   isExternalSandboxAccess,
@@ -136,7 +137,7 @@ export default async function SandboxesPage({
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
   const timeZone = resolveUserTimeZone(user);
-  const ws = await getWorkspaceForUser(slug, user.id);
+  const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app");
 
   const sandboxes = await listSandboxes(ws.id);

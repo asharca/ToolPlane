@@ -1,4 +1,8 @@
 import "server-only";
+import {
+  workspaceScopeWhere,
+  type WorkspaceScope,
+} from "@/lib/workspace/scope";
 import { db } from "@/lib/db";
 import { isRemoteMcpDeployment } from "@/lib/remote-mcp/classification";
 import { listPinnedRemoteMcpTools } from "@/lib/remote-mcp/pinned-connection";
@@ -11,24 +15,12 @@ import {
   filterMcpToolsForAi,
   loadMcpToolPolicies,
 } from "@/lib/workspace/mcp-tool-exposure";
-import { ChatServiceError } from "./service";
 
 // Editor options expose neither connection recipes nor credential values.
-export async function listChatDeploymentOptions(
-  userId: string,
-  workspaceId: string,
-) {
-  const workspace = await db.workspace.findFirst({
-    where: {
-      id: workspaceId,
-      status: "active",
-      OR: [{ ownerId: userId }, { members: { some: { userId } } }],
-    },
-    select: { id: true },
-  });
-  if (!workspace) throw new ChatServiceError(404, "Workspace not found");
+export async function listChatDeploymentOptions(scope: WorkspaceScope) {
+  const workspaceId = scope.id;
   const deployments = await db.deployment.findMany({
-    where: { workspaceId, sandbox: { is: null } },
+    where: { workspace: workspaceScopeWhere(scope), sandbox: { is: null } },
     include: { server: { select: { name: true } } },
     orderBy: { createdAt: "asc" },
   });

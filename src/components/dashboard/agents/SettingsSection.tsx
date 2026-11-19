@@ -1,6 +1,9 @@
 import { type ReactNode, useId } from "react";
 import { cn } from "@/lib/utils";
 
+export const settingsTextareaClass =
+  "w-full rounded-lg border border-border bg-background p-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
 /** One titled block of a settings page; `id` is the deep-link scroll target. */
 export function SettingsSection({
   id,

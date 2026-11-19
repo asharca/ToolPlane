@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { recordEvent } from "@/lib/observability/events";
 import { readMcpToolCatalog } from "@/lib/process/mcp-tool-catalog";
 import { refreshAgentRevisionMcpGrants } from "@/lib/agents/revisions";
-import { refreshAssistantRevisionMcpGrants } from "@/lib/chat/service";
+import { refreshAssistantRevisionMcpGrants } from "@/lib/chat/assistants";
 
 /** Names a binding grants: the deployment's stored catalog. */
 export function catalogToolNames(installCfg: unknown): string[] {

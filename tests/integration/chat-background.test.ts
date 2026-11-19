@@ -1,18 +1,17 @@
+import { testWorkspaceScope } from "../helpers/workspace-scope";
 // @vitest-environment node
 import { assertDefined } from "../assert-defined";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Prisma } from "@prisma/client";
+import { beginChatTurn, getChatThreadForExecution } from "@/lib/chat/admission";
 import {
-  beginChatTurn,
   createChatAssistant,
-  createChatThread,
   deleteChatAssistant,
-  deleteChatThread,
-  finishChatTurn,
-  getChatThreadForExecution,
   updateChatAssistant,
-} from "@/lib/chat/service";
+} from "@/lib/chat/assistants";
+import { createChatThread, deleteChatThread } from "@/lib/chat/threads";
+import { finishChatTurn } from "@/lib/chat/history";
 import { db } from "@/lib/db";
 import { createApiToken } from "@/lib/auth/tokens";
 import { POST, DELETE } from "@/app/api/v1/chat/threads/[threadId]/turns/route";
@@ -92,8 +91,7 @@ async function leasedRun() {
       threadId: chat.id,
       turnId: turn.id,
       assistantMessageId: message.id,
-      userId,
-      workspaceId,
+      workspace: await testWorkspaceScope(workspaceId, userId, "read"),
     },
     fence,
   };
@@ -144,13 +142,13 @@ async function deletionFixture() {
   const source = await db.chatAssistant.findUniqueOrThrow({
     where: { id: assistantId },
   });
-  const assistant = await createChatAssistant(userId, {
-    workspaceId,
-    name: "Deletion safety fixture",
-    modelProviderId: source.modelProviderId,
-    model: source.model,
-    mcpGrants: [],
-  });
+  const assistant = await (async () =>
+    createChatAssistant(await testWorkspaceScope(workspaceId, userId, "read"), {
+      name: "Deletion safety fixture",
+      modelProviderId: source.modelProviderId,
+      model: source.model,
+      mcpGrants: [],
+    }))();
   const chat = await createChatThread(userId, assistant.id, {});
   return { assistant, chat };
 }
@@ -281,10 +279,11 @@ describe("assistant background execution with real persistence", () => {
       where: { id: chat.id },
       data: { activeMessageId: message.id },
     });
-    const foreign = await createChatAssistant(userId, {
-      workspaceId,
-      name: "Other revision owner",
-    });
+    const foreign = await (async () =>
+      createChatAssistant(
+        await testWorkspaceScope(workspaceId, userId, "read"),
+        { name: "Other revision owner" },
+      ))();
     await updateChatAssistant(userId, foreign.id, {
       expectedRevision: 1,
       systemPrompt: "Foreign config",
@@ -626,8 +625,11 @@ describe("assistant background execution with real persistence", () => {
     try {
       const response = await start(chat.id);
       const runId = assertDefined(response.headers.get("X-Chat-Run-Id"));
-      const state = () =>
-        getChatRunSnapshot(chat.id, { userId, workspaceId, runId });
+      const state = async () =>
+        getChatRunSnapshot(chat.id, {
+          workspace: await testWorkspaceScope(workspaceId, userId, "read"),
+          runId,
+        });
       await until(async () => provider.state().pending === 1);
       await until(async () => (await state())?.phase === "waiting-model");
       const waiting = assertDefined(await state());
@@ -781,7 +783,10 @@ describe("assistant background execution with real persistence", () => {
       expect.objectContaining({ type: "finish" }),
     );
     const snapshot = assertDefined(
-      await getChatRunSnapshot(chat.id, { userId, workspaceId, runId: turnId }),
+      await getChatRunSnapshot(chat.id, {
+        workspace: await testWorkspaceScope(workspaceId, userId, "read"),
+        runId: turnId,
+      }),
     );
     expect(snapshot.cursor).toBe(events.length);
     expect(snapshot.status).toBe("completed");
@@ -864,7 +869,7 @@ describe("assistant background execution with real persistence", () => {
     ]);
   });
 
-  it("stops detached execution when the workspace is suspended", async () => {
+  it("stops detached execution when the workspace is deleting", async () => {
     const chat = await thread();
     const response = await start(chat.id);
     const turnId = assertDefined(response.headers.get("X-Chat-Turn-Id"));
@@ -872,7 +877,7 @@ describe("assistant background execution with real persistence", () => {
     await assertDefined(response.body).cancel();
     await db.workspace.update({
       where: { id: workspaceId },
-      data: { status: "suspended" },
+      data: { status: "deleting" },
     });
     try {
       await until(
@@ -915,7 +920,7 @@ describe("assistant background execution with real persistence", () => {
     });
     await recoverStaleChatRuns(scope.threadId);
     const snapshot = assertDefined(
-      await getChatRunSnapshot(scope.threadId, { userId, workspaceId }),
+      await getChatRunSnapshot(scope.threadId, { workspace: scope.workspace }),
     );
     expect(snapshot.status).toBe("failed");
     expect(snapshot.phase).toBe("execution_unknown");
@@ -932,8 +937,7 @@ describe("assistant background execution with real persistence", () => {
     ).rejects.toThrow("lease was lost");
     const replay = assertDefined(
       await subscribeChatRun(scope.threadId, null, {
-        userId,
-        workspaceId,
+        workspace: scope.workspace,
         runId: scope.turnId,
         afterSequence: 1,
       }),
@@ -1016,7 +1020,7 @@ describe("assistant background execution with real persistence", () => {
       }),
     ).toMatchObject({
       status: "failed",
-      error: "Assistant MCP grant was revoked",
+      error: "The tool call could not be sent.",
       executionCompletedAt: expect.any(Date),
     });
     expect(
@@ -1105,7 +1109,7 @@ describe("assistant background execution with real persistence", () => {
       }),
     ).toMatchObject({
       status: "failed",
-      error: "MCP tool mutate is not exposed to AI.",
+      error: "The tool call could not be sent.",
       executionStartedAt: expect.any(Date),
       executionCompletedAt: expect.any(Date),
     });
@@ -1187,7 +1191,9 @@ describe("assistant background execution with real persistence", () => {
     try {
       await until(async () => externalCalls === 1);
       const snapshot = assertDefined(
-        await getChatRunSnapshot(scope.threadId, { userId, workspaceId }),
+        await getChatRunSnapshot(scope.threadId, {
+          workspace: scope.workspace,
+        }),
       );
       expect(snapshot.phase).toBe("tool_calling");
       expect(snapshot.execution).toMatchObject({
@@ -1265,8 +1271,25 @@ describe("assistant background execution with real persistence", () => {
           where: { id: scope.turnId },
           data: { stopRequestedAt: new Date() },
         });
-      if (reason === "actor") toolScope.userId = otherId;
-      if (reason === "workspace") toolScope.workspaceId = randomUUID();
+      if (reason === "actor")
+        await db.chatTurn.update({
+          where: { id: scope.turnId },
+          data: { actorUserId: otherId },
+        });
+      if (reason === "workspace") {
+        const otherWorkspace = await db.workspace.create({
+          data: {
+            name: "Other chat workspace",
+            slug: randomUUID(),
+            ownerId: userId,
+          },
+        });
+        toolScope.workspace = await testWorkspaceScope(
+          otherWorkspace.id,
+          userId,
+          "read",
+        );
+      }
       if (reason === "fence") toolScope.fence.generation += 1;
       if (reason === "abort") controller.abort();
       let externalCalls = 0;
@@ -1396,8 +1419,7 @@ describe("assistant background execution with real persistence", () => {
     });
     const observer = assertDefined(
       await subscribeChatRun(chat.id, null, {
-        userId: otherId,
-        workspaceId,
+        workspace: await testWorkspaceScope(workspaceId, otherId, "read"),
         runId: turnId,
         afterSequence: current.lastEventSequence,
       }),
@@ -1432,10 +1454,14 @@ describe("assistant background execution with real persistence", () => {
     const current = await db.chatTurn.findUniqueOrThrow({
       where: { id: turnId },
     });
+    const workspaceScope = await testWorkspaceScope(
+      workspaceId,
+      userId,
+      "read",
+    );
     const observer = assertDefined(
       await subscribeChatRun(chat.id, null, {
-        userId,
-        workspaceId,
+        workspace: workspaceScope,
         runId: turnId,
         afterSequence: current.lastEventSequence,
       }),
@@ -1451,8 +1477,7 @@ describe("assistant background execution with real persistence", () => {
       });
       expect(
         await getChatRunSnapshot(chat.id, {
-          userId,
-          workspaceId,
+          workspace: workspaceScope,
           runId: turnId,
         }),
       ).toBeNull();
@@ -1630,12 +1655,13 @@ describe("assistant background execution with real persistence", () => {
     );
     const blockerPid = await locked.promise;
     const contenders = Promise.allSettled([
-      beginChatTurn(
-        chat.id,
-        [{ type: "text", text: "Racing admission" }],
-        { workspaceId, userId },
-        { idempotencyKey: randomUUID(), expectedAssistantId: assistant.id },
-      ),
+      (async () =>
+        beginChatTurn(
+          chat.id,
+          [{ type: "text", text: "Racing admission" }],
+          await testWorkspaceScope(workspaceId, userId, "read"),
+          { idempotencyKey: randomUUID(), expectedAssistantId: assistant.id },
+        ))(),
       deleteChatThread(userId, chat.id),
     ]);
     try {
@@ -1687,12 +1713,13 @@ describe("assistant background execution with real persistence", () => {
     const blockerPid = await locked.promise;
     const contenders = Promise.allSettled([
       createChatThread(userId, assistant.id, {}).then((chat) =>
-        beginChatTurn(
-          chat.id,
-          [{ type: "text", text: "New thread admission" }],
-          { workspaceId, userId },
-          { idempotencyKey: randomUUID(), expectedAssistantId: assistant.id },
-        ),
+        (async () =>
+          beginChatTurn(
+            chat.id,
+            [{ type: "text", text: "New thread admission" }],
+            await testWorkspaceScope(workspaceId, userId, "read"),
+            { idempotencyKey: randomUUID(), expectedAssistantId: assistant.id },
+          ))(),
       ),
       deleteChatAssistant(userId, assistant.id),
     ]);

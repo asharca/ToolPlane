@@ -1,3 +1,4 @@
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { logSystemEvent } from "@/lib/observability/system";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
@@ -18,10 +19,7 @@ async function authorizedAttachment(req: Request, attachmentId: string) {
   const attachment = await db.workspaceAttachment.findFirst({
     where: {
       id: attachmentId,
-      workspace: {
-        status: "active",
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
-      },
+      workspace: workspaceAccessWhere(user.id),
     },
     select: {
       id: true,

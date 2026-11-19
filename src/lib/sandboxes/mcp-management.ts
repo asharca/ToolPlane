@@ -22,20 +22,14 @@ const CreateToken = z
   })
   .strict();
 
-// Browser management uses the normal session and strict same-origin mutations.
-// Explicit invalid Bearer credentials never fall back to cookies.
+// Browser management uses the normal session; resolveRequestPrincipal already
+// requires same-origin session mutations. A supplied foreign Origin is refused
+// for every credential. Explicit invalid Bearer credentials never fall back.
 export async function sandboxManagementUser(req: Request) {
   const principal = await resolveRequestPrincipal(req);
   if (!principal || principal.credential === "toolkit-token") return null;
-  const origin = req.headers.get("origin");
-  // Same policy as other cookie mutations (including the local-port rule);
-  // a configured public origin that differs from the served port must not
-  // reject the browser that is actually on this instance.
-  if (principal.credential === "session" && req.method !== "GET") {
-    if (!isSameOriginRequest(req)) return null;
-  } else if (origin !== null && !isSameOriginRequest(req)) {
+  if (req.headers.get("origin") !== null && !isSameOriginRequest(req))
     return null;
-  }
   return principal.user;
 }
 export function handleSandboxMcpTokens(

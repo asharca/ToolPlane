@@ -1,7 +1,9 @@
 import "server-only";
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
+import { ENTRY_KINDS } from "@/lib/agents/entry-kinds";
 import { authorizeLogs, LogAccessError } from "../queries";
 import { listMcpCalls, getMcpCall, pollMcpCalls } from "./mcp-calls";
 import { listA2ATasks, getA2ATask, pollA2ATasks } from "./a2a-tasks";
@@ -39,9 +41,7 @@ const a2aFilter = z.object({
 const runFilter = z.object({
   ...timeFields,
   agentId: text,
-  entryKind: z
-    .enum(["chat", "work", "channel", "control", "trigger"])
-    .optional(),
+  entryKind: z.enum(ENTRY_KINDS).optional(),
   state: text,
 });
 export type StreamCursor = { createdAt: string; id: string };
@@ -85,7 +85,10 @@ export async function handleLogRequest(
       };
       await authorizeLogs({ adminId: user.id });
     } else {
-      const workspace = await getWorkspaceForUser(target.slug, user.id);
+      const workspace = await resolveWorkspaceScope(
+        { slug: target.slug },
+        user.id,
+      );
       if (!workspace)
         return Response.json({ error: "Workspace not found" }, { status: 404 });
       scope = { kind: "workspace", workspaceId: workspace.id, userId: user.id };

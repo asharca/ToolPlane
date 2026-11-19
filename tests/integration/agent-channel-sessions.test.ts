@@ -12,7 +12,7 @@ import {
 import { submitAgentEntry } from "@/lib/agents/execution/entries";
 import { claimTask, finishTask } from "@/lib/a2a/store";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
-import { createConversation } from "@/lib/agents/mutations";
+import { createConversation } from "@/lib/agents/conversation-mutations";
 import { buildMessagingSessionKey } from "@/lib/agents/messaging";
 import {
   persistChannelInboundEvent,

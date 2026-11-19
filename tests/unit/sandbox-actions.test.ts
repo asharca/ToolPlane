@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getCurrentUser: vi.fn(),
-  getWorkspaceForUser: vi.fn(),
+  resolveWorkspaceScope: vi.fn(),
   sandboxFindFirst: vi.fn(),
   sandboxCreate: vi.fn(),
   sandboxUpdate: vi.fn(),
@@ -50,8 +50,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/auth/current-user", () => ({
   getCurrentUser: mocks.getCurrentUser,
 }));
-vi.mock("@/lib/workspace/queries", () => ({
-  getWorkspaceForUser: mocks.getWorkspaceForUser,
+vi.mock("@/lib/workspace/scope", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/workspace/scope")>()),
+  resolveWorkspaceScope: mocks.resolveWorkspaceScope,
 }));
 vi.mock("@/lib/db", () => ({
   db: {
@@ -184,9 +185,11 @@ describe("renameSandboxAction", () => {
     vi.resetAllMocks();
     mocks.agentFindFirst.mockResolvedValue(null);
     mocks.getCurrentUser.mockResolvedValue({ id: "user1" });
-    mocks.getWorkspaceForUser.mockResolvedValue({
+    mocks.resolveWorkspaceScope.mockResolvedValue({
       id: "ws1",
       ownerId: "user1",
+      actorUserId: "user1",
+      capability: "read",
     });
     mocks.transaction.mockImplementation(async (ops: unknown[]) => ops);
     mocks.effectiveStatus.mockReturnValue("stopped");
@@ -627,7 +630,7 @@ describe("renameSandboxAction", () => {
     });
 
     it("never looks up or mutates sandboxes when workspace access is denied", async () => {
-      mocks.getWorkspaceForUser.mockResolvedValueOnce(null);
+      mocks.resolveWorkspaceScope.mockResolvedValueOnce(null);
 
       expect(
         await batchSandboxLifecycleAction("mine", "stop", ["foreign-id"]),
@@ -717,7 +720,7 @@ describe("renameSandboxAction", () => {
     });
 
     it("redacts workspace authorization lookup failures", async () => {
-      mocks.getWorkspaceForUser.mockRejectedValueOnce(
+      mocks.resolveWorkspaceScope.mockRejectedValueOnce(
         new Error("secret database credential"),
       );
       expect(
@@ -753,7 +756,7 @@ describe("renameSandboxAction", () => {
 
     it("reports a closed workspace queue gate as skipped instead of success", async () => {
       await closeWorkspaceOperations("closed-batch-workspace");
-      mocks.getWorkspaceForUser.mockResolvedValueOnce({
+      mocks.resolveWorkspaceScope.mockResolvedValueOnce({
         id: "closed-batch-workspace",
       });
 
@@ -1175,7 +1178,7 @@ describe("renameSandboxAction", () => {
       "connector token rotated",
     );
     expect(mocks.sandboxUpdate).toHaveBeenCalledWith({
-      where: { id: "sb1" },
+      where: { id: "sb1", workspace: expect.objectContaining({ id: "ws1" }) },
       data: {
         config: expect.objectContaining({
           connector: expect.objectContaining({
@@ -1376,7 +1379,7 @@ describe("renameSandboxAction", () => {
     generateConnectorCommandAction,
     deleteSandboxAction,
   ])("does not mutate inaccessible workspace sandboxes", async (action) => {
-    mocks.getWorkspaceForUser.mockResolvedValue(null);
+    mocks.resolveWorkspaceScope.mockResolvedValue(null);
     await action(renameForm("New sandbox"));
     expect(mocks.sandboxFindFirst).not.toHaveBeenCalled();
     expect(mocks.deploymentCreate).not.toHaveBeenCalled();

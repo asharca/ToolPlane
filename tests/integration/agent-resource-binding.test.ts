@@ -4,9 +4,9 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import {
   bindAgentWorkspaceResource,
-  createAgent,
   setAgentTools,
-} from "@/lib/agents/mutations";
+} from "@/lib/agents/agent-draft-mutations";
+import { createAgent } from "@/lib/agents/mutations";
 import {
   captureAgentRevisionConfig,
   prepareAgentRevisionMcpDeployments,

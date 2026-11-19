@@ -1,27 +1,25 @@
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
+import type { Prisma } from "@prisma/client";
 import { withRequestLogging } from "@/lib/observability/http";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { db } from "@/lib/db";
 import { mcpRpc } from "@/lib/process/mcp-client";
 import { indexKnowledgeText } from "@/lib/knowledge";
+import { KnowledgeError, knowledgeFailures } from "@/lib/knowledge/errors";
+import { logSystemEvent } from "@/lib/observability/system";
 
-async function documentForUser(
+function documentScope(
   documentId: string,
   knowledgeBaseId: string,
   userId: string,
-) {
-  return db.knowledgeDocument.findFirst({
-    where: {
-      id: documentId,
-      knowledgeBaseId,
-      knowledgeBase: {
-        workspace: {
-          status: "active",
-          OR: [{ ownerId: userId }, { members: { some: { userId } } }],
-        },
-      },
+): Prisma.KnowledgeDocumentWhereInput {
+  return {
+    id: documentId,
+    knowledgeBaseId,
+    knowledgeBase: {
+      workspace: workspaceAccessWhere(userId),
     },
-    include: { sandbox: { select: { deploymentId: true } } },
-  });
+  };
 }
 
 function resultText(result: Record<string, unknown> | null) {
@@ -45,11 +43,11 @@ export const POST = withRequestLogging(
     const user = await resolveRequestUser(req);
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
     const { knowledgeBaseId, documentId } = await params;
-    const document = await documentForUser(
-      documentId,
-      knowledgeBaseId,
-      user.id,
-    );
+    const where = documentScope(documentId, knowledgeBaseId, user.id);
+    const document = await db.knowledgeDocument.findFirst({
+      where,
+      include: { sandbox: { select: { deploymentId: true } } },
+    });
     if (!document?.sandbox)
       return Response.json(
         { error: "Source sandbox is unavailable" },
@@ -62,7 +60,7 @@ export const POST = withRequestLogging(
       undefined,
       { internal: true },
     );
-    const raw = resultText(result);
+    const raw = result?.isError ? null : resultText(result);
     if (!raw)
       return Response.json(
         { error: "Source file is unavailable" },
@@ -76,16 +74,24 @@ export const POST = withRequestLogging(
       // Some sandbox connectors return the file text directly.
     }
     try {
-      await indexKnowledgeText(document.id, content);
-      return Response.json(
-        await db.knowledgeDocument.findUnique({ where: { id: document.id } }),
-      );
+      await indexKnowledgeText(where, content);
     } catch (error) {
+      const code =
+        error instanceof KnowledgeError ? error.code : "KNOWLEDGE_INDEX_FAILED";
+      if (!(error instanceof KnowledgeError))
+        logSystemEvent("knowledge.documents.reindex_failed", {
+          error,
+          errorCode: code,
+        });
       return Response.json(
-        { error: error instanceof Error ? error.message : "Reindex failed" },
-        { status: 502 },
+        { error: knowledgeFailures.text(code), code },
+        { status: code === "KNOWLEDGE_DOCUMENT_NOT_FOUND" ? 404 : 502 },
       );
     }
+    const updated = await db.knowledgeDocument.findFirst({ where });
+    return updated
+      ? Response.json(updated)
+      : Response.json({ error: "Document not found" }, { status: 404 });
   },
 );
 
@@ -100,14 +106,11 @@ export const DELETE = withRequestLogging(
     const user = await resolveRequestUser(req);
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
     const { knowledgeBaseId, documentId } = await params;
-    const document = await documentForUser(
-      documentId,
-      knowledgeBaseId,
-      user.id,
-    );
-    if (!document)
+    const deleted = await db.knowledgeDocument.deleteMany({
+      where: documentScope(documentId, knowledgeBaseId, user.id),
+    });
+    if (!deleted.count)
       return Response.json({ error: "Document not found" }, { status: 404 });
-    await db.knowledgeDocument.delete({ where: { id: document.id } });
     return new Response(null, { status: 204 });
   },
 );

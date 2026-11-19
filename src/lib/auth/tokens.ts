@@ -1,4 +1,5 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { db } from "@/lib/db";
 import { generateToken, hashToken, tokenPrefix } from "./token-format";
 import { writeAudit } from "@/lib/observability/audit";
@@ -85,13 +86,7 @@ export async function verifyApiTokenContext(authHeader: string | null) {
       where: {
         id: record.toolkitId,
         enabled: true,
-        workspace: {
-          status: "active",
-          OR: [
-            { ownerId: record.userId },
-            { members: { some: { userId: record.userId } } },
-          ],
-        },
+        workspace: workspaceAccessWhere(record.userId),
       },
       select: { id: true },
     });

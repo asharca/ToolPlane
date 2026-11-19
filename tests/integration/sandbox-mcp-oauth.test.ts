@@ -34,10 +34,8 @@ import {
 } from "@/lib/sandboxes/oauth-policy";
 import { handleSandboxMcpTokens } from "@/lib/sandboxes/mcp-management";
 
-const mocks = vi.hoisted(() => ({ principal: vi.fn(), rpc: vi.fn() }));
-vi.mock("@/lib/auth/request-user", () => ({
-  resolveRequestPrincipal: mocks.principal,
-}));
+const mocks = vi.hoisted(() => ({ user: vi.fn(), rpc: vi.fn() }));
+vi.mock("@/lib/auth/current-user", () => ({ getCurrentUser: mocks.user }));
 vi.mock("@/lib/process/supervisor", () => ({
   effectiveStatus: (_id: string, status: string) => status,
 }));
@@ -217,11 +215,7 @@ beforeAll(async () => {
   createdClients.push(oauthClient.client_id);
 });
 beforeEach(async () => {
-  mocks.principal.mockResolvedValue({
-    credential: "session",
-    user: { id: userId },
-    token: null,
-  });
+  mocks.user.mockResolvedValue({ id: userId });
   mocks.rpc.mockReset();
   mocks.rpc.mockResolvedValue({
     content: [{ type: "text", text: '{"kind":"ssh"}' }],
@@ -258,7 +252,7 @@ describe("sandbox OAuth with PostgreSQL and genuine MCP SDK", () => {
     expect(response.headers.get("cache-control")).toContain("no-store");
   });
   it("returns to the original authorization request after ToolPlane login; never auto-consents", async () => {
-    mocks.principal.mockResolvedValue(null);
+    mocks.user.mockResolvedValue(null);
     const response = await handleSandboxOAuth(
       new Request(authorizeUrl()),
       "authorize",
@@ -308,10 +302,7 @@ describe("sandbox OAuth with PostgreSQL and genuine MCP SDK", () => {
     expect(location.searchParams.get("error")).toBe("invalid_request");
   });
   it("does not authorize outsiders", async () => {
-    mocks.principal.mockResolvedValue({
-      credential: "session",
-      user: { id: outsiderId },
-    });
+    mocks.user.mockResolvedValue({ id: outsiderId });
     const denied = await handleSandboxOAuth(
       new Request(authorizeUrl()),
       "authorize",
@@ -565,7 +556,7 @@ describe("sandbox OAuth with PostgreSQL and genuine MCP SDK", () => {
   );
   it("does not accept a sandbox token for grant management, even with a session cookie", async () => {
     const token = await tokenFor();
-    mocks.principal.mockResolvedValue(null);
+    mocks.user.mockResolvedValue(null);
     const response = await handleSandboxMcpTokens(
       new Request(`${origin}/api/v1/sandboxes/${sandboxId}/mcp-tokens`, {
         method: "POST",

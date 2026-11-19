@@ -301,9 +301,9 @@ async function authorizeGet(req: Request, policy: TransportPolicy) {
   });
 }
 async function authorizePost(req: Request, policy: TransportPolicy) {
-  if (req.headers.get("origin") !== sandboxPublicOrigin(policy))
-    fail("access_denied", 403);
-  const principal = await resolveRequestPrincipal(req);
+  const principal = await resolveRequestPrincipal(req, {
+    sessionOrigin: sandboxPublicOrigin(policy),
+  });
   if (principal?.credential !== "session") fail("access_denied", 403);
   const form = await readForm(req);
   let consent: ConsentData;

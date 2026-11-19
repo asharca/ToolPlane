@@ -1,12 +1,11 @@
 import "server-only";
+import type { WorkspaceScope } from "@/lib/workspace/scope";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import {
-  AgentConfigurationError,
-  createConfiguredAgent,
-  type ExternalSandboxSelection,
-} from "@/lib/agents/mutations";
+import { AgentConfigurationError } from "@/lib/agents/agent-mutation-guards";
+import { createConfiguredAgent } from "@/lib/agents/mutations";
+import type { ExternalSandboxSelection } from "@/lib/agents/agent-draft-mutations";
 import { isExternalSandboxCandidate } from "@/lib/sandboxes/external";
 import {
   runWorkspaceAgentMessage,
@@ -20,7 +19,7 @@ import {
 } from "@/lib/workspace/mcp-tool-exposure";
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import { skillLabel } from "@/lib/workspace/skill-label";
-import type { ImplementedAgentRuntimeKind } from "@/lib/agents/runtime-kind";
+import type { ExecutableAgentRuntimeKind } from "@/lib/agents/runtime-kind";
 import { McpPinningError } from "@/lib/process/mcp-pinning";
 
 export class AgentControlError extends Error {
@@ -39,7 +38,7 @@ export class AgentControlError extends Error {
 
 export type CreateAgentFromControlInput = {
   name: string;
-  runtime: ImplementedAgentRuntimeKind;
+  runtime: ExecutableAgentRuntimeKind;
   systemPrompt?: string | null;
   providerId?: string | null;
   model?: string | null;
@@ -521,16 +520,14 @@ export async function createAgentFromControl(
 }
 
 export async function sendAgentControlMessage(
-  workspaceId: string,
+  workspace: WorkspaceScope,
   input: { agentId: string; message: string; conversationId?: string },
-  actorId?: string,
 ) {
   const sourceId = randomUUID();
   let result: AgentMessageResult;
   try {
     result = await runWorkspaceAgentMessage({
-      userId: actorId,
-      workspaceId,
+      workspace,
       agentId: input.agentId,
       rawBody: {
         message: input.message,

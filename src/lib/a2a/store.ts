@@ -398,10 +398,7 @@ export async function submitTaskInTransaction(
   admission: { parentLeaseToken?: string } = {},
 ) {
   if (!isWorkspaceGrant(grant))
-    throw new A2AHttpError(
-      410,
-      "Published legacy execution is retired; retained tasks are read-only.",
-    );
+    throw new A2AHttpError(410, "PUBLISHED_EXECUTION_RETIRED");
   validateSend(request, LOCAL_OUTPUT_MODES, await getTransportSettings());
   const message = request.message;
   if (!message) throw new RequestMalformedError("A user message is required.");
@@ -881,10 +878,7 @@ export async function claimTask(id: string) {
       return null;
     const grant = row.grant as unknown as TaskGrant;
     if (!isWorkspaceGrant(grant))
-      throw new A2AHttpError(
-        410,
-        "Published legacy execution cannot acquire a new lease.",
-      );
+      throw new A2AHttpError(410, "PUBLISHED_LEASE_RETIRED");
     if (isLocalGrant(grant) && !cleanup) {
       const context = await tx.a2AContext.findUnique({
         where: { id: row.contextId },

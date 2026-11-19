@@ -1,4 +1,5 @@
 import "server-only";
+import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -52,8 +53,7 @@ async function authorize(req: Request, workspaceId: string) {
   const workspace = await db.workspace.findFirst({
     where: {
       id: workspaceId,
-      status: "active",
-      OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
+      ...workspaceAccessWhere(user.id),
     },
     select: { id: true, slug: true },
   });

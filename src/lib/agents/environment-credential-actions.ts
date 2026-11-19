@@ -1,7 +1,7 @@
 "use server";
 
-import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+import { actionScope } from "@/lib/workspace/action-scope";
+
 import { db } from "@/lib/db";
 import {
   createAgentEnvironmentCredential,
@@ -23,14 +23,14 @@ async function credentialResult<T>(operation: () => Promise<T>) {
 export async function createAgentEnvironmentCredentialAction(
   formData: FormData,
 ) {
-  const user = await getCurrentUser();
+  const user = await actionScope();
   if (!user) return { error: "unauthorized" };
-  const workspace = await getWorkspaceForUser(
-    String(formData.get("workspace") ?? ""),
-    user.id,
-  );
-  if (!workspace || workspace.ownerId !== user.id)
-    return { error: "forbidden" };
+  const ctx = await actionScope({
+    slug: String(formData.get("workspace") ?? ""),
+    ownerOnly: true,
+  });
+  if (!ctx) return { error: "forbidden" };
+  const { ws: workspace } = ctx;
   return credentialResult(async () => ({
     credential: await createAgentEnvironmentCredential({
       actorUserId: user.id,
@@ -45,14 +45,14 @@ export async function createAgentEnvironmentCredentialAction(
 export async function revokeAgentEnvironmentCredentialAction(
   formData: FormData,
 ) {
-  const user = await getCurrentUser();
+  const user = await actionScope();
   if (!user) return { error: "unauthorized" };
-  const workspace = await getWorkspaceForUser(
-    String(formData.get("workspace") ?? ""),
-    user.id,
-  );
-  if (!workspace || workspace.ownerId !== user.id)
-    return { error: "forbidden" };
+  const ctx = await actionScope({
+    slug: String(formData.get("workspace") ?? ""),
+    ownerOnly: true,
+  });
+  if (!ctx) return { error: "forbidden" };
+  const { ws: workspace } = ctx;
   return credentialResult(() =>
     revokeAgentEnvironmentCredential({
       actorUserId: user.id,
@@ -66,14 +66,14 @@ export async function revokeAgentEnvironmentCredentialAction(
 export async function listAgentEnvironmentCredentialsAction(
   formData: FormData,
 ) {
-  const user = await getCurrentUser();
+  const user = await actionScope();
   if (!user) return { error: "unauthorized" };
-  const workspace = await getWorkspaceForUser(
-    String(formData.get("workspace") ?? ""),
-    user.id,
-  );
-  if (!workspace || workspace.ownerId !== user.id)
-    return { error: "forbidden" };
+  const ctx = await actionScope({
+    slug: String(formData.get("workspace") ?? ""),
+    ownerOnly: true,
+  });
+  if (!ctx) return { error: "forbidden" };
+  const { ws: workspace } = ctx;
   const credentials = await db.agentEnvironmentCredential.findMany({
     where: {
       workspaceId: workspace.id,

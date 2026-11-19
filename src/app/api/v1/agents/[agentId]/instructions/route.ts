@@ -1,7 +1,7 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
-import { isSameOriginRequest } from "@/lib/http/origin";
+
 import { parseJson } from "@/lib/agents/public-api/body";
 import {
   OMP_CONFIG_MAX_BYTES,
@@ -28,12 +28,6 @@ async function handle(
 ) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  if (
-    req.method !== "GET" &&
-    !req.headers.has("authorization") &&
-    !isSameOriginRequest(req)
-  )
-    return Response.json({ error: "Forbidden" }, { status: 403 });
   const parsed =
     req.method === "GET"
       ? null
@@ -44,21 +38,24 @@ async function handle(
       { status: parsed.reason === "too_large" ? 413 : 400 },
     );
   const value = parsed?.ok ? parsed.value : null;
-  const workspace = await getWorkspaceForUser(
-    value?.workspace ?? new URL(req.url).searchParams.get("workspace") ?? "",
+  const workspace = await resolveWorkspaceScope(
+    {
+      slug:
+        value?.workspace ??
+        new URL(req.url).searchParams.get("workspace") ??
+        "",
+    },
     user.id,
   );
   if (!workspace) return Response.json({ error: "notFound" }, { status: 404 });
   const { agentId } = await params;
   try {
     const result = value
-      ? await saveOmpInstructionsDraft({
-          workspaceId: workspace.id,
-          userId: user.id,
+      ? await saveOmpInstructionsDraft(workspace, {
           agentId,
           files: value.files,
         })
-      : await readOmpInstructions(workspace.id, user.id, agentId);
+      : await readOmpInstructions(workspace, agentId);
     return Response.json(result, {
       headers: { "Cache-Control": "private, no-store" },
     });

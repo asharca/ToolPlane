@@ -7,6 +7,7 @@ import { getLogSettings } from "./settings";
 import type { PayloadPolicy } from "./payload";
 import { version } from "../../../package.json";
 import { z } from "zod";
+import { ENTRY_KINDS } from "@/lib/agents/entry-kinds";
 
 const logId = z.string().max(200).optional();
 export const a2aLogMetadataSchema = z.object({
@@ -19,9 +20,7 @@ export const a2aLogMetadataSchema = z.object({
   contextId: logId,
   rootTaskId: logId,
   parentTaskId: logId,
-  entryKind: z
-    .enum(["chat", "work", "channel", "control", "trigger"])
-    .optional(),
+  entryKind: z.enum(ENTRY_KINDS).optional(),
   taskState: z
     .string()
     .regex(

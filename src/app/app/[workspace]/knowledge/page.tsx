@@ -1,7 +1,8 @@
+import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { getWorkspaceForUser } from "@/lib/workspace/queries";
+
 import { listProviders, listAgents } from "@/lib/agents/queries";
 import { listSandboxes } from "@/lib/sandboxes/queries";
 import { db } from "@/lib/db";
@@ -21,7 +22,7 @@ export default async function KnowledgePage({
     getTranslations("console.knowledge"),
   ]);
   if (!user) redirect("/app/login");
-  const workspace = await getWorkspaceForUser(slug, user.id);
+  const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (!workspace) redirect("/app");
   const [bases, providers, sandboxes, agents] = await Promise.all([
     db.knowledgeBase.findMany({
