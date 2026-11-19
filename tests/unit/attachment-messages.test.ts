@@ -245,11 +245,17 @@ describe("workspace attachment messages", () => {
     },
   );
 
-  it("distinguishes missing scope, incomplete bytes, invalid UTF-8 and storage failures", async () => {
+  it("replays missing attachments without reading storage", async () => {
     mocks.attachmentFindMany.mockResolvedValueOnce([]);
     await expect(
       hydrateWorkspaceAttachmentMessages(fileMessages, hydrationInput),
-    ).rejects.toMatchObject({ status: 409 });
+    ).resolves.toEqual([
+      { role: "user", parts: [{ type: "text", text: expect.any(String) }] },
+    ]);
+    expect(mocks.readAttachment).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes incomplete bytes, invalid UTF-8 and storage failures", async () => {
     mocks.attachmentFindMany.mockResolvedValue([stored()]);
     mocks.readAttachment.mockReturnValueOnce(stream(new Uint8Array([1])));
     await expect(
