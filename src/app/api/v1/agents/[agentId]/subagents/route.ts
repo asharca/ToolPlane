@@ -3,7 +3,6 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
-import { isSameOriginRequest } from "@/lib/http/origin";
 import {
   listPlatformSubagents,
   savePlatformSubagents,
@@ -24,12 +23,6 @@ async function handle(
   try {
     const user = await resolveRequestUser(req);
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
-    if (
-      req.method !== "GET" &&
-      !req.headers.has("authorization") &&
-      !isSameOriginRequest(req)
-    )
-      return Response.json({ error: "Forbidden" }, { status: 403 });
     const value = req.method === "GET" ? null : await pluginJson(req, input);
     const workspace = await getWorkspaceForUser(
       value?.workspace ?? new URL(req.url).searchParams.get("workspace") ?? "",

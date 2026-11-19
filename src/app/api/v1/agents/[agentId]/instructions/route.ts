@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { getWorkspaceForUser } from "@/lib/workspace/queries";
-import { isSameOriginRequest } from "@/lib/http/origin";
 import { parseJson } from "@/lib/agents/public-api/body";
 import {
   OMP_CONFIG_MAX_BYTES,
@@ -28,12 +27,6 @@ async function handle(
 ) {
   const user = await resolveRequestUser(req);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  if (
-    req.method !== "GET" &&
-    !req.headers.has("authorization") &&
-    !isSameOriginRequest(req)
-  )
-    return Response.json({ error: "Forbidden" }, { status: 403 });
   const parsed =
     req.method === "GET"
       ? null

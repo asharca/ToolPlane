@@ -2,7 +2,6 @@ import "server-only";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { isSameOriginRequest } from "@/lib/http/origin";
 import { ORDINARY_AGENT_FILTER } from "./queries";
 import { parseJson } from "./public-api/body";
 import { AgentApiError } from "./public-api/errors";
@@ -110,14 +109,12 @@ export async function handleAgentAutomation(
     },
   });
   if (!agent) return jsonError("Not found", 404);
-  if (req.method !== "GET") {
-    if (
-      (!req.headers.has("authorization") && !isSameOriginRequest(req)) ||
-      (agent.workspace.ownerId !== user.id &&
-        !agent.workspace.members.some((m) => m.role === "admin"))
-    )
-      return jsonError("Forbidden", 403);
-  }
+  if (
+    req.method !== "GET" &&
+    agent.workspace.ownerId !== user.id &&
+    !agent.workspace.members.some((m) => m.role === "admin")
+  )
+    return jsonError("Forbidden", 403);
   if (action === "usage") {
     const range = usageRange(req);
     if (!range) return jsonError("INVALID_DAYS", 400);

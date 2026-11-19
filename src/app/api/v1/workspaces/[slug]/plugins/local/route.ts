@@ -1,7 +1,6 @@
 import { withRequestLogging } from "@/lib/observability/http";
 import { PrivatePluginInputSchema } from "@/lib/agents/capability-contracts";
 import { createPrivatePlugin } from "@/lib/plugins/local";
-import { isSameOriginRequest } from "@/lib/http/origin";
 import { parseJson } from "@/lib/agents/public-api/body";
 import { pluginApiError, pluginRequestContext } from "../_shared";
 export const runtime = "nodejs";
@@ -16,8 +15,6 @@ export const POST = withRequestLogging(
         req,
         (await params).slug,
       );
-      if (!req.headers.has("authorization") && !isSameOriginRequest(req))
-        return Response.json({ error: "Forbidden" }, { status: 403 });
       const input = await parseJson(
         req,
         PrivatePluginInputSchema,

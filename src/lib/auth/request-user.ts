@@ -1,6 +1,7 @@
 import "server-only";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { verifyApiTokenContext } from "@/lib/auth/tokens";
+import { isSameOriginRequest } from "@/lib/http/origin";
 import { enrichLogContext } from "@/lib/observability/context";
 
 type TokenContext = NonNullable<
@@ -14,9 +15,14 @@ export type RequestPrincipal = {
 
 // Never discard credential scope or fall back to cookies after an explicit,
 // invalid Authorization header. A user can own more resources than a token.
+// A session cookie authenticates an unsafe method only from the expected
+// origin, which defaults to this instance's public origin.
 export async function resolveRequestPrincipal(
   req: Request,
-  { allowSession = true }: { allowSession?: boolean } = {},
+  {
+    allowSession = true,
+    sessionOrigin,
+  }: { allowSession?: boolean; sessionOrigin?: string } = {},
 ): Promise<RequestPrincipal | null> {
   const authorization = req.headers.get("authorization");
   if (authorization !== null) {
@@ -29,6 +35,13 @@ export async function resolveRequestPrincipal(
     };
   }
   if (!allowSession) return null;
+  if (
+    !["GET", "HEAD", "OPTIONS"].includes(req.method) &&
+    (sessionOrigin === undefined
+      ? !isSameOriginRequest(req)
+      : req.headers.get("origin") !== sessionOrigin)
+  )
+    return null;
   const user = await getCurrentUser();
   if (!user) return null;
   enrichLogContext({ actorId: user.id });

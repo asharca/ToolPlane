@@ -2,7 +2,6 @@ import "server-only";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { resolveRequestUser } from "@/lib/auth/request-user";
-import { isSameOriginRequest } from "@/lib/http/origin";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
 import {
   assertRuntimeOwner,
@@ -82,11 +81,6 @@ async function authorize(req: Request, agentId: string, feedback = false) {
       (m) => m.role === "admin" || m.role === "owner",
     );
   if (!feedback && !canReview) throw new EvolutionError("FORBIDDEN");
-  if (req.method !== "GET") {
-    if (!req.headers.has("authorization") && !isSameOriginRequest(req))
-      throw new EvolutionError("FORBIDDEN");
-    if (!feedback && !canReview) throw new EvolutionError("FORBIDDEN");
-  }
   return {
     slug: agent.workspace.slug,
     scope: {

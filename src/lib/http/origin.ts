@@ -95,9 +95,17 @@ export function originFromRequest(req: Request): string {
 
 // Cookie-authenticated JSON and raw-body mutations need an explicit CSRF
 // boundary because Route Handlers do not receive the Server Action origin
-// protection automatically. API routes that intentionally support cross-origin
-// Bearer-token clients should not use this helper.
+// protection automatically. Like Server Actions, the Origin may match either the
+// configured public origin or the host the browser actually addressed: a page
+// can only send this instance's host-only cookie from that host, and forms
+// cannot set forwarding headers. API routes that intentionally support
+// cross-origin Bearer-token clients should not use this helper.
 export function isSameOriginRequest(req: Request): boolean {
   const suppliedOrigin = normalizedHttpOrigin(req.headers.get("origin"));
-  return suppliedOrigin !== null && suppliedOrigin === originFromRequest(req);
+  if (suppliedOrigin === null) return false;
+  if (suppliedOrigin === originFromRequest(req)) return true;
+  const servedHost =
+    firstHeaderValue(req.headers.get("x-forwarded-host")) ??
+    firstHeaderValue(req.headers.get("host"));
+  return servedHost !== null && new URL(suppliedOrigin).host === servedHost;
 }
