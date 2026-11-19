@@ -22,6 +22,7 @@ import {
 } from "@/components/agents/ai-artifacts";
 import type { AgentCodeLanguage } from "@/components/agents/agent-code";
 import { previewType, type FilePreviewKind } from "@/lib/file-preview";
+import { AssistantMarkdown } from "./ConversationMessage";
 
 export type FilePreviewDialogProps = {
   open: boolean;
@@ -93,8 +94,17 @@ export function FilePreviewDialog(props: FilePreviewDialogProps) {
         origin.current.focus({ preventScroll: true });
     };
   }, [mobile, props.open]);
+  // Text previews are an AIArtifact whose own header carries the close control.
+  const textPreview = ["text", "markdown"].includes(
+    previewType(props.name, props.mimeType).kind,
+  );
   const content = (
-    <PreviewContent key={props.name} {...props} requestRef={requestRef} />
+    <PreviewContent
+      key={props.name}
+      {...props}
+      requestRef={requestRef}
+      ownClose={textPreview}
+    />
   );
   if (mobile)
     return (
@@ -110,16 +120,18 @@ export function FilePreviewDialog(props: FilePreviewDialogProps) {
         {props.open ? (
           <div className="relative flex h-full min-h-0 flex-col">
             {content}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="absolute right-4 top-4"
-              aria-label={t("close")}
-              onClick={() => props.onOpenChange(false)}
-            >
-              <X className="size-4" />
-            </Button>
+            {textPreview ? null : (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute right-4 top-4"
+                aria-label={t("close")}
+                onClick={() => props.onOpenChange(false)}
+              >
+                <X className="size-4" />
+              </Button>
+            )}
           </div>
         ) : null}
       </dialog>
@@ -129,11 +141,10 @@ export function FilePreviewDialog(props: FilePreviewDialogProps) {
       <CenterMorphModalContent
         ariaLabel={props.name}
         closeButtonLabel={t("close")}
+        showCloseButton={!textPreview}
         onExitComplete={restoreFocus}
         className={
-          ["text", "markdown"].includes(
-            previewType(props.name, props.mimeType).kind,
-          )
+          textPreview
             ? "flex max-h-[min(88dvh,900px)] w-full max-w-4xl flex-col"
             : "flex h-[min(88dvh,900px)] w-full max-w-6xl flex-col"
         }
@@ -160,7 +171,11 @@ function PreviewContent({
   actions,
   error,
   requestRef,
-}: FilePreviewDialogProps & { requestRef: RefObject<AbortController | null> }) {
+  ownClose,
+}: FilePreviewDialogProps & {
+  requestRef: RefObject<AbortController | null>;
+  ownClose: boolean;
+}) {
   const t = useTranslations("filePreview");
   const [file, setFile] = useState<PreviewState | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -253,9 +268,55 @@ function PreviewContent({
         ),
       ),
     );
+  if (
+    !loadError &&
+    file?.blob?.size &&
+    (file.kind === "text" || file.kind === "markdown")
+  ) {
+    const filename = name.split(/[\\/]/).pop() || "file";
+    return (
+      <>
+        {error || operationError ? (
+          <p
+            role="alert"
+            className="shrink-0 break-words px-4 py-2 text-sm text-destructive"
+          >
+            {error || operationError}
+          </p>
+        ) : null}
+        <AIArtifact
+          kind={file.kind === "markdown" ? "document" : "code"}
+          title={
+            file.kind === "markdown"
+              ? filename
+              : codeLanguage === "text"
+                ? (labels.component.plainText ?? codeLanguage)
+                : codeLanguage
+          }
+          filename={filename}
+          language={codeLanguage}
+          versions={[
+            { id: "current", label: labels.current, content: file.text ?? "" },
+          ]}
+          renderDocument={(text) => <AssistantMarkdown text={text} />}
+          onDownload={download}
+          actions={actions}
+          onClose={() => onOpenChange(false)}
+          labels={labels.component}
+          className="rounded-none border-0 bg-transparent"
+        />
+      </>
+    );
+  }
   return (
     <>
-      <header className="flex shrink-0 items-center gap-3 border-b border-border pt-5 pb-4 pl-4 pr-14 sm:pl-6">
+      <header
+        className={
+          ownClose
+            ? "flex shrink-0 items-center gap-3 border-b border-border px-4 pt-5 pb-4 sm:pl-6"
+            : "flex shrink-0 items-center gap-3 border-b border-border pt-5 pb-4 pl-4 pr-14 sm:pl-6"
+        }
+      >
         <FileText
           className="size-5 shrink-0 text-muted-foreground"
           aria-hidden="true"
@@ -286,6 +347,17 @@ function PreviewContent({
           )}
         </Button>
         {actions}
+        {ownClose ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={t("close")}
+            onClick={() => onOpenChange(false)}
+          >
+            <X className="size-4" />
+          </Button>
+        ) : null}
       </header>
       {error || operationError ? (
         <p
@@ -393,31 +465,7 @@ function PreviewContent({
               {t("pdfFallback")}
             </p>
           )
-        ) : (
-          <div className="p-4">
-            <AIArtifact
-              kind={file.kind === "markdown" ? "document" : "code"}
-              title={
-                file.kind === "markdown"
-                  ? name.split(/[\\/]/).pop() || name
-                  : codeLanguage === "text"
-                    ? (labels.component.plainText ?? codeLanguage)
-                    : codeLanguage
-              }
-              filename={name.split(/[\\/]/).pop() || "file"}
-              language={codeLanguage}
-              versions={[
-                {
-                  id: "current",
-                  label: labels.current,
-                  content: file.text ?? "",
-                },
-              ]}
-              labels={labels.component}
-              onClose={() => onOpenChange(false)}
-            />
-          </div>
-        )}
+        ) : null}
       </div>
     </>
   );

@@ -1,7 +1,7 @@
 "use client";
 // asharca.github.io/ui/components/agents/ai-artifacts
 
-import { useId, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import {
   Code2,
   Copy,
@@ -60,6 +60,7 @@ export interface AIArtifactLabels extends ArtifactMarkdownLabels {
   saved: string;
   clipboardUnavailable: string;
   copyFailed: string;
+  downloadFailed: string;
   saveFailed: string;
 }
 export const defaultAIArtifactLabels: AIArtifactLabels = {
@@ -96,6 +97,7 @@ export const defaultAIArtifactLabels: AIArtifactLabels = {
   saved: "Document saved",
   clipboardUnavailable: "Clipboard unavailable. Select the text to copy it.",
   copyFailed: "Copy failed",
+  downloadFailed: "Download failed",
   saveFailed: "Save failed; your edits are preserved.",
 };
 export interface AIArtifactProps {
@@ -111,6 +113,12 @@ export interface AIArtifactProps {
   onSave?: (content: string, baseVersion: string) => void | Promise<void>;
   onCopy?: (content: string) => void | Promise<void>;
   onClose?: () => void;
+  /** Replaces the built-in document renderer, e.g. with a host's full Markdown pipeline. */
+  renderDocument?: (content: string) => ReactNode;
+  /** Replaces the built-in download of the current text, e.g. to serve the original file. */
+  onDownload?: () => void | Promise<void>;
+  /** Extra header controls placed before the close button. */
+  actions?: ReactNode;
   labels?: Partial<AIArtifactLabels>;
   className?: string;
 }
@@ -127,6 +135,9 @@ export function AIArtifact({
   onSave,
   onCopy,
   onClose,
+  renderDocument,
+  onDownload,
+  actions,
   labels,
   className,
 }: AIArtifactProps) {
@@ -171,7 +182,18 @@ export function AIArtifact({
       setError(failure instanceof Error ? failure.message : l.copyFailed);
     }
   };
-  const download = () => {
+  const download = async () => {
+    setError("");
+    setMessage("");
+    if (onDownload) {
+      try {
+        await onDownload();
+        setMessage(l.downloaded);
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : l.downloadFailed);
+      }
+      return;
+    }
     const url = URL.createObjectURL(
       new Blob([content], {
         type:
@@ -257,7 +279,7 @@ export function AIArtifact({
           >
             <Download className="size-4" />
           </Button>
-          {kind === "document" ? (
+          {kind === "document" && (
             <Button
               variant="ghost"
               size="icon"
@@ -269,7 +291,9 @@ export function AIArtifact({
             >
               <History className="size-4" />
             </Button>
-          ) : (
+          )}
+          {actions}
+          {(kind === "code" || onClose) && (
             <Button
               variant="ghost"
               size="icon"
@@ -335,7 +359,11 @@ export function AIArtifact({
           </div>
         ) : (
           <div className="max-h-[min(70vh,40rem)] min-h-48 overflow-auto overscroll-contain px-5 py-6 sm:px-8">
-            <ArtifactMarkdown content={content} labels={l} />
+            {renderDocument ? (
+              renderDocument(content)
+            ) : (
+              <ArtifactMarkdown content={content} labels={l} />
+            )}
           </div>
         )}
         <AnimatePresence initial={false}>
