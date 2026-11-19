@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.0](https://github.com/asharca/ToolPlane/compare/v0.42.1...v1.0.0) (2026-11-19)
+## [0.43.0](https://github.com/asharca/ToolPlane/compare/v0.42.1...v0.43.0) (2026-11-19)
 
 
 ### ⚠ BREAKING CHANGES
