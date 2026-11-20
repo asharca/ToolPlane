@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { FaGithub } from "react-icons/fa";
 import { getLocale } from "next-intl/server";
+import { FaGithub } from "react-icons/fa";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { getMarketingContent } from "@/lib/marketing/content";
 import { SITE } from "@/lib/site";
@@ -59,9 +59,10 @@ export async function Footer() {
   const { footer, navigation } = content;
   const productLinks = navigation.links.filter((link) => link.href !== "/");
   const resourceLinks: FooterLink[] = [
+    { label: footer.docs, href: navigation.docsUrl },
     { label: footer.sourceCode, href: SITE.sourceUrl },
     { label: footer.mcpProtocol, href: SITE.protocolUrl },
-    { label: footer.documentation, href: "/what-is-an-mcp-server" },
+    { label: footer.mcpGuide, href: "/what-is-an-mcp-server" },
   ];
   const accessLinks: FooterLink[] = [
     { label: footer.openConsole, href: "/app" },
