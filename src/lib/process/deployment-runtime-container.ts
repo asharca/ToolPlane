@@ -57,7 +57,7 @@ export async function removeDeploymentContainer(
     for (;;) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
-        markRuntimeUncertain();
+        markRuntimeUncertain("DEPLOYMENT_CONTAINER_REMOVAL_TIMEOUT");
         throw new Error(
           `Docker runtime container cleanup timed out after ${DOCKER_COMMAND_TIMEOUT_MS}ms.`,
         );
@@ -77,7 +77,7 @@ export async function removeDeploymentContainer(
           else resolve(stillRemoving);
         };
         const timer = setTimeout(() => {
-          markRuntimeUncertain();
+          markRuntimeUncertain("DEPLOYMENT_CONTAINER_REMOVAL_TIMEOUT");
           try {
             child.kill("SIGKILL");
           } catch {

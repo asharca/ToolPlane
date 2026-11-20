@@ -18,6 +18,7 @@ export class RuntimeOwnershipState {
   status: OwnerStatus = "idle";
   pending = 0;
   uncertain = false;
+  readonly uncertainReasons = new Set<string>();
   readonly abort = new AbortController();
   readonly maintenance = new AsyncLocalStorage<boolean>();
   canOperate(stop = false) {
@@ -96,8 +97,33 @@ export function runtimeCanOperate(stop = false) {
 export function runtimeAbortSignal(): AbortSignal | undefined {
   return fixture() ? undefined : ownership.abort.signal;
 }
-export function markRuntimeUncertain() {
-  if (!fixture()) ownership.uncertain = true;
+export type RuntimeUncertainReason =
+  | "DOCKER_COMMAND_TIMEOUT"
+  | "DOCKER_CLEANUP_TIMEOUT"
+  | "DEPLOYMENT_CONTAINER_REMOVAL_TIMEOUT"
+  | "SANDBOX_PROCESS_STOP_UNCONFIRMED"
+  | "ATTACHMENT_HELPER_STOPPED"
+  | "MCP_CAPTURE_CLEANUP_FAILED";
+/** Latches until restart: the next owner needs a recovery acknowledgement. */
+export function markRuntimeUncertain(reason: RuntimeUncertainReason) {
+  if (fixture()) return;
+  ownership.uncertain = true;
+  ownership.uncertainReasons.add(reason);
+  // The stack names the call site; the latch is otherwise only visible at shutdown.
+  const error = new Error(`Runtime operation outcome unconfirmed: ${reason}`);
+  void import("@/lib/observability/system")
+    .then(({ logSystemEvent }) =>
+      logSystemEvent("runtime.owner.uncertain", {
+        domain: "runtime",
+        level: "error",
+        errorCode: reason,
+        error,
+      }),
+    )
+    .catch(() => undefined);
+}
+export function runtimeUncertain(): boolean {
+  return !fixture() && ownership.uncertain;
 }
 export function trackRuntimeOperation<T>(
   operation: () => Promise<T>,

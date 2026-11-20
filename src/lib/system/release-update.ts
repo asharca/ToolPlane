@@ -24,7 +24,10 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { runtimeIsReady } from "@/lib/runtime/ownership-state";
+import {
+  runtimeIsReady,
+  runtimeUncertain,
+} from "@/lib/runtime/ownership-state";
 
 const DEFAULT_UPDATE_REPO = "asharca/ToolPlane";
 const DEFAULT_UPDATE_ARTIFACT = "toolplane-runtime-linux-amd64.tar.gz";
@@ -311,7 +314,9 @@ export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {
       ? "Runtime directory is not configured."
       : !(await canWriteRuntime(root))
         ? "Runtime directory is not writable."
-        : null;
+        : runtimeUncertain()
+          ? systemUpdateFailures.text("SYSTEM_UPDATE_RUNTIME_UNCERTAIN")
+          : null;
 
   try {
     const release = await fetchLatestRelease();
@@ -444,6 +449,20 @@ export async function applySystemUpdate(): Promise<SystemUpdateResult> {
         artifactName,
       };
     }
+    if (runtimeUncertain()) {
+      return {
+        ok: false,
+        status: "unavailable",
+        runtimeId,
+        currentVersion,
+        latestVersion,
+        artifactName,
+        code: recordUpdateFailure(
+          new SystemUpdateFailure("SYSTEM_UPDATE_RUNTIME_UNCERTAIN"),
+          "SYSTEM_UPDATE_RUNTIME_UNCERTAIN",
+        ),
+      };
+    }
 
     const artifact = findReleaseAsset(release, artifactName);
     if (!artifact) {
@@ -542,6 +561,9 @@ async function runSystemUpdateJob(
           "SYSTEM_UPDATE_MANAGED_LAUNCHER_REQUIRED",
         );
       }
+      // Draining cannot clear the latch, so it would only stop a running owner.
+      if (runtimeUncertain())
+        throw new SystemUpdateFailure("SYSTEM_UPDATE_RUNTIME_UNCERTAIN");
       setUpdateJob("applying", {
         targetVersion,
         message:

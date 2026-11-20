@@ -15,6 +15,8 @@ export const systemUpdateFailures = defineFailures({
     "Online updates require the managed production launcher. No runtime files were replaced.",
   SYSTEM_UPDATE_DRAIN_FAILED:
     "Runtime shutdown was not clean. No runtime files were replaced; inspect recovery before restarting.",
+  SYSTEM_UPDATE_RUNTIME_UNCERTAIN:
+    "The runtime recorded an unconfirmed operation and cannot shut down cleanly. No runtime files were replaced and the runtime is still running; see runtime.owner.uncertain in the logs.",
 });
 
 export type SystemUpdateFailureCode = FailureCodeOf<

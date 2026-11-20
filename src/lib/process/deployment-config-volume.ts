@@ -143,7 +143,7 @@ function runDockerOwned(
       else resolve(stdout);
     };
     const timer = setTimeout(() => {
-      markRuntimeUncertain();
+      markRuntimeUncertain("DOCKER_COMMAND_TIMEOUT");
       child.kill("SIGKILL");
       finish(new Error(`Docker command timed out after ${timeoutMs}ms.`));
     }, timeoutMs);

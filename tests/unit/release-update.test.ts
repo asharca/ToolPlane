@@ -234,4 +234,27 @@ describe("release installation shutdown boundary", () => {
       expect(kill).not.toHaveBeenCalled();
     },
   );
+
+  it("keeps the runtime running instead of draining when ownership is already uncertain", async () => {
+    const kill = await prepareRelease();
+    globals.__toolplaneShutdown = vi.fn(async () => true);
+    vi.stubEnv("TOOLPLANE_TEST_RUNTIME_OWNER", "1");
+    ownership.uncertain = true;
+    try {
+      await expect(applySystemUpdate()).resolves.toMatchObject({
+        ok: false,
+        code: "SYSTEM_UPDATE_RUNTIME_UNCERTAIN",
+      });
+    } finally {
+      ownership.uncertain = false;
+    }
+    expect(globals.__toolplaneShutdown).not.toHaveBeenCalled();
+    expect(kill).not.toHaveBeenCalled();
+    expect(
+      await readFile(
+        path.join(assertDefined(root), ".toolplane-version"),
+        "utf8",
+      ),
+    ).toBe("old-release");
+  });
 });

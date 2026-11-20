@@ -40,8 +40,6 @@ export type DockerExecOptions = {
   piHarness?: boolean;
 };
 
-const uncertainPiSandboxes = new Set<string>();
-
 // `extra` is forwarded into the container via `docker exec --env KEY`, so it
 // must win over the host values the Docker CLI itself needs.
 export function dockerEnv(
@@ -75,10 +73,23 @@ export function redact(value: string, secrets: readonly string[]): string {
   );
 }
 
-export function runDockerOnce(
+class DockerCommandTimeoutError extends Error {}
+
+export async function runDockerOnce(
   args: string[],
   timeoutMs = 10_000,
 ): Promise<void> {
+  try {
+    await runDockerAttempt(args, timeoutMs);
+  } catch (error) {
+    if (error instanceof DockerCommandTimeoutError)
+      markRuntimeUncertain("DOCKER_CLEANUP_TIMEOUT");
+    throw error;
+  }
+}
+
+/** A timeout leaves the daemon-side command running; the caller decides whether that is settled. */
+function runDockerAttempt(args: string[], timeoutMs: number): Promise<void> {
   assertRuntimeOwner(true);
   return new Promise((resolve, reject) => {
     const child = spawn("docker", args, {
@@ -97,8 +108,7 @@ export function runDockerOnce(
     };
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      markRuntimeUncertain();
-      finish(new Error("Docker cleanup timed out."));
+      finish(new DockerCommandTimeoutError("Docker cleanup timed out."));
     }, timeoutMs);
     child.stderr?.on("data", (chunk: Buffer) => {
       stderr += stderrDecoder.write(chunk);
@@ -151,31 +161,37 @@ if [ "$3" = confirm ]; then
   done
 fi
 `;
+  // A starved sandbox can delay one kill exec past its CLI timeout while the
+  // daemon still runs it. A later completed attempt settles the stop.
+  let timedOut = false;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     try {
-      await runDockerOnce([
-        "exec",
-        container,
-        "sh",
-        "-c",
-        script,
-        "toolplane-kill",
-        pid == null ? "" : String(pid),
-        pidFile,
-        confirm ? "confirm" : "",
-      ]);
+      await runDockerAttempt(
+        [
+          "exec",
+          container,
+          "sh",
+          "-c",
+          script,
+          "toolplane-kill",
+          pid == null ? "" : String(pid),
+          pidFile,
+          confirm ? "confirm" : "",
+        ],
+        10_000,
+      );
       return;
-    } catch {
+    } catch (error) {
+      if (error instanceof DockerCommandTimeoutError) timedOut = true;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
-  if (confirm) {
-    uncertainPiSandboxes.add(container);
-    markRuntimeUncertain();
+  if (confirm || timedOut)
+    markRuntimeUncertain("SANDBOX_PROCESS_STOP_UNCONFIRMED");
+  if (confirm)
     throw new Error(
       "PI_PROCESS_STOP_UNCONFIRMED: runtime owner recovery is required before reopening this sandbox.",
     );
-  }
 }
 
 export function runTrackedDockerExec(
