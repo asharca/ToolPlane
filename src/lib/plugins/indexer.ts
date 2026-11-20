@@ -29,6 +29,7 @@ import {
   parseJsonFile,
   type GithubRegistryEntry,
 } from "./github";
+import type { PluginSourceSyncSummary } from "./source-sync-types";
 
 type GithubFile = { path: string; data: Buffer; executable?: boolean };
 const packageMetadataSchema = z.object({
@@ -76,15 +77,27 @@ type Prepared = {
   releaseNotes?: string | null;
   scanResult?: MarketSecretScan;
 };
+
+class RegistryEntrySyncError extends Error {
+  readonly failedPath: string | null;
+
+  constructor(path: string, token: string | undefined, cause: unknown) {
+    super("Registry entry sync failed", { cause });
+    this.failedPath =
+      (token && path.includes(token)) ||
+      scanMarketArtifact(path).status === "blocked"
+        ? null
+        : path;
+  }
+}
+
 async function prepare(
   registry: GithubResourceRegistry,
   transport: GithubRegistryTransport,
   commit: string,
   token?: string,
 ) {
-  const index = await transport.index(registry.repository, commit);
-  const results: Prepared[] = [];
-  for (const entry of index.plugins) {
+  async function prepareEntry(entry: GithubRegistryEntry) {
     const files = await transport.directory(
       registry.repository,
       commit,
@@ -163,9 +176,24 @@ async function prepare(
         throw new GithubRegistryError("resource_secrets_detected");
       prepared.manifest = manifest;
     }
-    results.push(prepared);
+    return prepared;
   }
-  return results;
+
+  const index = await transport.index(registry.repository, commit);
+  const prepared: Prepared[] = [];
+  for (const entry of index.plugins) {
+    try {
+      prepared.push(await prepareEntry(entry));
+    } catch (error) {
+      throw new RegistryEntrySyncError(entry.path, token, error);
+    }
+  }
+  const unregistered = await transport.unregisteredDirectories(
+    registry.repository,
+    commit,
+    index.plugins.map((entry) => entry.path),
+  );
+  return { prepared, unregistered };
 }
 
 async function publish(
@@ -175,211 +203,250 @@ async function publish(
   leaseToken: string,
   commit: string,
   prepared: Prepared[],
+  unregistered: string[],
+  token?: string,
 ) {
-  return db.$transaction(
-    async (tx) => {
-      const claim = await tx.githubResourceRegistry.updateMany({
-        where: {
-          id: registry.id,
-          generation,
-          leaseToken,
-          leaseExpiresAt: { gt: new Date() },
-          lastAppliedCommit: registry.lastAppliedCommit,
-          status: { not: "disabled" },
-        },
-        data: {
-          status: "synced",
-          lastAppliedCommit: commit,
-          lastSyncAt: new Date(),
-          error: null,
-          leaseToken: null,
-          leaseExpiresAt: null,
-        },
-      });
-      if (!claim.count)
-        throw new GithubRegistryError("registry_source_changed");
-      for (const item of prepared) {
-        let resource = await tx.githubRegistryResource.findUnique({
+  let entryPath: string | null = null;
+  return db
+    .$transaction(
+      async (tx) => {
+        const claim = await tx.githubResourceRegistry.updateMany({
           where: {
-            registryId_resourceId: {
-              registryId: registry.id,
-              resourceId: item.entry.id,
-            },
+            id: registry.id,
+            generation,
+            leaseToken,
+            leaseExpiresAt: { gt: new Date() },
+            lastAppliedCommit: registry.lastAppliedCommit,
+            status: { not: "disabled" },
+          },
+          data: {
+            status: "synced",
+            lastAppliedCommit: commit,
+            lastSyncAt: new Date(),
+            error: null,
+            leaseToken: null,
+            leaseExpiresAt: null,
           },
         });
-        const previous = resource
-          ? await tx.githubRegistryVersion.findUnique({
-              where: {
-                resourceId_version: {
-                  resourceId: resource.id,
-                  version: item.version,
-                },
-              },
-            })
-          : null;
-        if (previous && previous.digest !== item.digest)
-          throw new GithubRegistryError("resource_version_conflict");
-        let listingId = resource?.listingId;
-        if (!listingId) {
-          if (!item.manifest)
-            throw new GithubRegistryError("resource_artifact_missing");
-          const listing = await tx.marketListing.create({
-            data: {
-              kind: "pi-package",
-              namespace: registry.official
-                ? "official"
-                : `github-${registry.id}`,
-              slug: item.entry.id,
-              publisherKind: registry.official ? "official" : "workspace",
-              publisherWorkspaceId: registry.workspaceId,
-              publishedById: registry.createdById,
-              visibility: registry.official ? "public" : "private",
-              status: "published",
-              name: item.manifest.listing.name,
-              summary: item.manifest.listing.summary,
-              iconUrl: item.manifest.listing.iconUrl,
-              tags: item.manifest.listing.tags,
-              metadata: {},
-            },
-          });
-          listingId = listing.id;
-        }
-        resource = resource
-          ? await tx.githubRegistryResource.update({
-              where: { id: resource.id },
-              data: { listingId, active: true, kind: "pi-package" },
-            })
-          : await tx.githubRegistryResource.create({
-              data: {
+        if (!claim.count)
+          throw new GithubRegistryError("registry_source_changed");
+        const summary: PluginSourceSyncSummary = {
+          resourceCount: prepared.length,
+          added: [],
+          updated: [],
+          removed: [],
+          unregistered,
+        };
+        for (const item of prepared) {
+          entryPath = item.entry.path;
+          let resource = await tx.githubRegistryResource.findUnique({
+            where: {
+              registryId_resourceId: {
                 registryId: registry.id,
                 resourceId: item.entry.id,
-                listingId,
+              },
+            },
+          });
+          const wasActive = resource?.active === true;
+          const previous = resource
+            ? await tx.githubRegistryVersion.findUnique({
+                where: {
+                  resourceId_version: {
+                    resourceId: resource.id,
+                    version: item.version,
+                  },
+                },
+              })
+            : null;
+          if (previous && previous.digest !== item.digest)
+            throw new GithubRegistryError("resource_version_conflict");
+          let listingId = resource?.listingId;
+          if (!listingId) {
+            if (!item.manifest)
+              throw new GithubRegistryError("resource_artifact_missing");
+            const listing = await tx.marketListing.create({
+              data: {
                 kind: "pi-package",
+                namespace: registry.official
+                  ? "official"
+                  : `github-${registry.id}`,
+                slug: item.entry.id,
+                publisherKind: registry.official ? "official" : "workspace",
+                publisherWorkspaceId: registry.workspaceId,
+                publishedById: registry.createdById,
+                visibility: registry.official ? "public" : "private",
+                status: "published",
+                name: item.manifest.listing.name,
+                summary: item.manifest.listing.summary,
+                iconUrl: item.manifest.listing.iconUrl,
+                tags: item.manifest.listing.tags,
+                metadata: {},
               },
             });
-        let releaseId = previous?.releaseId;
-        if (!releaseId) {
-          if (!item.manifest || !item.scanResult)
-            throw new GithubRegistryError("resource_artifact_missing");
-          const manifest = item.manifest;
-          const latest = await tx.marketRelease.aggregate({
-            where: { listingId },
-            _max: { version: true },
-          });
-          const release = await tx.marketRelease.create({
-            data: {
-              listingId,
-              version: (latest._max.version ?? 0) + 1,
-              manifest: manifest as Prisma.InputJsonValue,
-              releaseNotes: item.releaseNotes,
-              releaseSummary: {
-                ...projectPiPackageSummary(manifest.package),
-                source: {
-                  repository: registry.repository,
-                  commit,
-                  path: item.entry.path,
-                  version: item.version,
+            listingId = listing.id;
+          }
+          resource = resource
+            ? await tx.githubRegistryResource.update({
+                where: { id: resource.id },
+                data: { listingId, active: true, kind: "pi-package" },
+              })
+            : await tx.githubRegistryResource.create({
+                data: {
+                  registryId: registry.id,
+                  resourceId: item.entry.id,
+                  listingId,
+                  kind: "pi-package",
                 },
-                capabilities: computePluginCapabilities(manifest),
-              } as unknown as Prisma.InputJsonValue,
-              checksum: marketReleaseChecksum(manifest),
-              scanResult: item.scanResult,
-              reviewStatus: "approved",
-              reviewedAt: new Date(),
-              reviewedById: registry.createdById,
-              reviewNote: "Secret-scanned GitHub plugin",
+              });
+          let releaseId = previous?.releaseId;
+          const needsRelease = !releaseId;
+          if (!releaseId) {
+            if (!item.manifest || !item.scanResult)
+              throw new GithubRegistryError("resource_artifact_missing");
+            const manifest = item.manifest;
+            const latest = await tx.marketRelease.aggregate({
+              where: { listingId },
+              _max: { version: true },
+            });
+            const release = await tx.marketRelease.create({
+              data: {
+                listingId,
+                version: (latest._max.version ?? 0) + 1,
+                manifest: manifest as Prisma.InputJsonValue,
+                releaseNotes: item.releaseNotes,
+                releaseSummary: {
+                  ...projectPiPackageSummary(manifest.package),
+                  source: {
+                    repository: registry.repository,
+                    commit,
+                    path: item.entry.path,
+                    version: item.version,
+                  },
+                  capabilities: computePluginCapabilities(manifest),
+                } as unknown as Prisma.InputJsonValue,
+                checksum: marketReleaseChecksum(manifest),
+                scanResult: item.scanResult,
+                reviewStatus: "approved",
+                reviewedAt: new Date(),
+                reviewedById: registry.createdById,
+                reviewNote: "Secret-scanned GitHub plugin",
+                publishedAt: new Date(),
+              },
+            });
+            releaseId = release.id;
+            if (previous)
+              await tx.githubRegistryVersion.update({
+                where: { id: previous.id },
+                data: { releaseId },
+              });
+            else
+              await tx.githubRegistryVersion.create({
+                data: {
+                  resourceId: resource.id,
+                  version: item.version,
+                  digest: item.digest,
+                  sourceRepository: registry.repository,
+                  sourceCommit: commit,
+                  sourcePath: item.entry.path,
+                  releaseId,
+                },
+              });
+          }
+          const release = await tx.marketRelease.findUniqueOrThrow({
+            where: { id: releaseId },
+          });
+          const manifest = parsePiPackageReleaseManifest(
+            release.manifest,
+            release.checksum,
+          );
+          const changes = !wasActive
+            ? summary.added
+            : needsRelease
+              ? summary.updated
+              : null;
+          if (changes && changes.length < 200) {
+            changes.push({
+              id: item.entry.id,
+              name: manifest.listing.name,
+              version: item.version,
+            });
+          }
+          await tx.marketListing.update({
+            where: { id: listingId },
+            data: {
+              name: manifest.listing.name,
+              summary: manifest.listing.summary,
+              iconUrl: manifest.listing.iconUrl,
+              tags: manifest.listing.tags,
+              metadata: {
+                author: manifest.listing.author,
+                repository: registry.repository,
+                commit,
+                path: item.entry.path,
+                version: item.version,
+              },
+              latestReleaseId: release.id,
+              latestVersion: release.version,
+              visibility: registry.official ? "public" : "private",
               publishedAt: new Date(),
             },
           });
-          releaseId = release.id;
-          if (previous)
-            await tx.githubRegistryVersion.update({
-              where: { id: previous.id },
-              data: { releaseId },
-            });
-          else
-            await tx.githubRegistryVersion.create({
-              data: {
-                resourceId: resource.id,
-                version: item.version,
-                digest: item.digest,
-                sourceRepository: registry.repository,
-                sourceCommit: commit,
-                sourcePath: item.entry.path,
-                releaseId,
-              },
-            });
+          // Source sync may restore a removed entry, but must never undo an administrator's take-down.
+          await tx.marketListing.updateMany({
+            where: { id: listingId, status: { not: "withdrawn" } },
+            data: { status: "published" },
+          });
         }
-        const release = await tx.marketRelease.findUniqueOrThrow({
-          where: { id: releaseId },
-        });
-        const manifest = parsePiPackageReleaseManifest(
-          release.manifest,
-          release.checksum,
-        );
-        await tx.marketListing.update({
-          where: { id: listingId },
-          data: {
-            name: manifest.listing.name,
-            summary: manifest.listing.summary,
-            iconUrl: manifest.listing.iconUrl,
-            tags: manifest.listing.tags,
-            metadata: {
-              author: manifest.listing.author,
-              repository: registry.repository,
-              commit,
-              path: item.entry.path,
-              version: item.version,
-            },
-            latestReleaseId: release.id,
-            latestVersion: release.version,
-            visibility: registry.official ? "public" : "private",
-            publishedAt: new Date(),
+        entryPath = null;
+        const removed = await tx.githubRegistryResource.findMany({
+          where: {
+            registryId: registry.id,
+            resourceId: { notIn: prepared.map((item) => item.entry.id) },
+            active: true,
           },
+          orderBy: { resourceId: "asc" },
+          include: { listing: { select: { name: true } } },
         });
-        // Source sync may restore a removed entry, but must never undo an administrator's take-down.
+        summary.removed = removed.slice(0, 200).map((item) => ({
+          id: item.resourceId,
+          name: item.listing?.name ?? item.resourceId,
+        }));
         await tx.marketListing.updateMany({
-          where: { id: listingId, status: { not: "withdrawn" } },
-          data: { status: "published" },
-        });
-      }
-      const removed = await tx.githubRegistryResource.findMany({
-        where: {
-          registryId: registry.id,
-          resourceId: { notIn: prepared.map((item) => item.entry.id) },
-          active: true,
-        },
-      });
-      await tx.marketListing.updateMany({
-        where: {
-          id: {
-            in: removed.flatMap((item) =>
-              item.listingId ? [item.listingId] : [],
-            ),
+          where: {
+            id: {
+              in: removed.flatMap((item) =>
+                item.listingId ? [item.listingId] : [],
+              ),
+            },
+            status: { not: "withdrawn" },
           },
-          status: { not: "withdrawn" },
-        },
-        data: { status: "removed" },
-      });
-      await tx.githubRegistryResource.updateMany({
-        where: { id: { in: removed.map((item) => item.id) } },
-        data: { active: false },
-      });
-      const completed = await tx.githubResourceSyncJob.updateMany({
-        where: { id: jobId, leaseToken, status: "running" },
-        data: {
-          status: "succeeded",
-          commit,
-          finishedAt: new Date(),
-          error: null,
-          leaseToken: null,
-        },
-      });
-      if (!completed.count)
-        throw new GithubRegistryError("registry_source_changed");
-    },
-    { timeout: 30_000 },
-  );
+          data: { status: "removed" },
+        });
+        await tx.githubRegistryResource.updateMany({
+          where: { id: { in: removed.map((item) => item.id) } },
+          data: { active: false },
+        });
+        const completed = await tx.githubResourceSyncJob.updateMany({
+          where: { id: jobId, leaseToken, status: "running" },
+          data: {
+            status: "succeeded",
+            commit,
+            summary,
+            finishedAt: new Date(),
+            error: null,
+            leaseToken: null,
+          },
+        });
+        if (!completed.count)
+          throw new GithubRegistryError("registry_source_changed");
+      },
+      { timeout: 30_000 },
+    )
+    .catch((error) => {
+      if (entryPath !== null)
+        throw new RegistryEntrySyncError(entryPath, token, error);
+      throw error;
+    });
 }
 let processing = false;
 export async function runPendingGithubResourceSyncJobs() {
@@ -503,7 +570,12 @@ export async function runPendingGithubResourceSyncJobs() {
             where: { id: job.id, leaseToken, status: "running" },
             data: { commit },
           });
-          const prepared = await prepare(registry, transport, commit, token);
+          const { prepared, unregistered } = await prepare(
+            registry,
+            transport,
+            commit,
+            token,
+          );
           if (
             !runtimeIsReady() ||
             (await transport.resolveCommit(
@@ -519,6 +591,8 @@ export async function runPendingGithubResourceSyncJobs() {
             leaseToken,
             commit,
             prepared,
+            unregistered,
+            token,
           );
           logSystemEvent("plugins.registry.synced", {
             workspaceId: registry.workspaceId ?? undefined,
@@ -530,27 +604,60 @@ export async function runPendingGithubResourceSyncJobs() {
             },
           });
         } catch (error) {
+          const entryError =
+            error instanceof RegistryEntrySyncError ? error : null;
+          const cause = entryError ? entryError.cause : error;
           const code =
-            error instanceof GithubRegistryError
-              ? error.code
+            cause instanceof GithubRegistryError
+              ? cause.code
               : "registry_sync_failed";
           logSystemEvent("plugins.registry.sync_failed", {
-            error,
+            error: cause,
             errorCode: code.toUpperCase(),
             workspaceId: registry.workspaceId ?? undefined,
             durationMs: Date.now() - started,
             attributes: { sourceId: registry.id },
           });
           await db.$transaction(async (tx) => {
-            await tx.githubResourceSyncJob.updateMany({
+            // Match the registry-first lock order used by claims and enqueueing.
+            const [current] = await tx.$queryRaw<{ generation: number }[]>`
+              SELECT "generation" FROM "GithubResourceRegistry"
+              WHERE "id" = ${registry.id} FOR UPDATE
+            `;
+            const failed = await tx.githubResourceSyncJob.updateMany({
               where: { id: job.id, status: "running", leaseToken },
               data: {
                 status: "failed",
                 error: code,
+                failedPath: entryError?.failedPath ?? null,
                 finishedAt: new Date(),
                 leaseToken: null,
               },
             });
+            let retry = false;
+            if (
+              failed.count > 0 &&
+              code === "registry_source_changed" &&
+              current?.generation === job.generation
+            ) {
+              // The current failure counts toward the three-job cutoff.
+              const recent = await tx.githubResourceSyncJob.findMany({
+                where: { registryId: registry.id },
+                orderBy: [
+                  { generation: "desc" },
+                  { createdAt: "desc" },
+                  { id: "desc" },
+                ],
+                take: 3,
+                select: { status: true, error: true },
+              });
+              retry =
+                recent.length < 3 ||
+                recent.some(
+                  (attempt) =>
+                    attempt.status !== "failed" || attempt.error !== code,
+                );
+            }
             const changed = await tx.githubResourceRegistry.updateMany({
               where: {
                 id: registry.id,
@@ -559,17 +666,31 @@ export async function runPendingGithubResourceSyncJobs() {
                 status: { not: "disabled" },
               },
               data: {
-                status: "error",
-                error: code,
+                status: retry ? "pending" : "error",
+                error: retry ? null : code,
+                ...(retry ? { generation: { increment: 1 } } : {}),
                 leaseToken: null,
                 leaseExpiresAt: null,
               },
             });
-            if (!changed.count)
+            if (!changed.count) {
+              // A newer generation owns the status; only release this job's lease.
               await tx.githubResourceRegistry.updateMany({
                 where: { id: registry.id, leaseToken },
                 data: { leaseToken: null, leaseExpiresAt: null },
               });
+            } else if (retry) {
+              await tx.githubResourceSyncJob.create({
+                data: {
+                  registryId: registry.id,
+                  generation: job.generation + 1,
+                },
+              });
+              await tx.githubResourceSyncJob.update({
+                where: { id: job.id },
+                data: { retried: true },
+              });
+            }
           });
         } finally {
           clearInterval(heartbeat);

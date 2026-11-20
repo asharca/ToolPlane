@@ -76,7 +76,7 @@ async function rpc(server, method, params, signal, maxBytes) {
     throw new Error('MCP request exceeded its byte limit');
   }
   const timeout = AbortSignal.timeout(
-    Number.isSafeInteger(server.timeoutMs) && server.timeoutMs > 0 && server.timeoutMs <= 300000
+    Number.isSafeInteger(server.timeoutMs) && server.timeoutMs > 0 && server.timeoutMs <= 310000
       ? server.timeoutMs
       : 30000,
   );

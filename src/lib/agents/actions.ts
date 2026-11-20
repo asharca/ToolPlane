@@ -66,6 +66,7 @@ import {
   type ProviderModelValues,
 } from "@/lib/agents/model-catalog";
 import {
+  AGENT_MCP_TOOL_TIMEOUT_BOUNDS,
   AGENT_STEP_BOUNDS,
   AGENT_TASK_TIMEOUT_BOUNDS,
   REASONING_LEVELS,
@@ -251,6 +252,20 @@ function agentTaskTimeoutSeconds(
     .safeParse(value);
   if (!parsed.success)
     throw new AgentConfigurationError("Invalid task time limit.");
+  return parsed.data;
+}
+
+function parseMcpToolTimeoutSeconds(value: FormDataEntryValue | null) {
+  if (value === null || (typeof value === "string" && !value.trim()))
+    return null;
+  const parsed = z.coerce
+    .number()
+    .int()
+    .min(AGENT_MCP_TOOL_TIMEOUT_BOUNDS.min)
+    .max(AGENT_MCP_TOOL_TIMEOUT_BOUNDS.max)
+    .safeParse(value);
+  if (!parsed.success)
+    throw new AgentConfigurationError("Invalid MCP tool time limit.");
   return parsed.data;
 }
 
@@ -1030,6 +1045,19 @@ export async function updateAgentAction(
   const maxSteps = agentMaxSteps(formData);
 
   try {
+    const mcpToolTimeoutSeconds = formData.has("mcpToolTimeoutSeconds")
+      ? parseMcpToolTimeoutSeconds(formData.get("mcpToolTimeoutSeconds"))
+      : undefined;
+    const deploymentIds = formData.getAll("deploymentId").map(String);
+    const mcpToolTimeouts = new Map<string, number | null>();
+    for (const deploymentId of deploymentIds) {
+      mcpToolTimeouts.set(
+        deploymentId,
+        parseMcpToolTimeoutSeconds(
+          formData.get(`mcpToolTimeoutSeconds:${deploymentId}`),
+        ),
+      );
+    }
     await withAgentDraftLease(agentId, async () => {
       await updateAgent(ctx.ws.id, agentId, {
         name: String(formData.get("name") ?? "").trim() || "New agent",
@@ -1057,11 +1085,13 @@ export async function updateAgentAction(
           : undefined,
         secretObfuscation: agentSecretObfuscation(formData),
         taskTimeoutSeconds: agentTaskTimeoutSeconds(formData),
+        mcpToolTimeoutSeconds,
         advisor: agentAdvisor(formData),
         piPackages: piPackagesFromForm(formData),
       });
       await setAgentTools(ctx.ws.id, agentId, {
-        deploymentIds: formData.getAll("deploymentId").map(String),
+        deploymentIds,
+        mcpToolTimeouts,
         installedSkillIds: formData.getAll("installedSkillId").map(String),
         toolkitIds: formData.getAll("toolkitId").map(String),
         externalSandboxes: externalSandboxesFromForm(formData),

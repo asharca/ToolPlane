@@ -264,6 +264,11 @@ export async function cloneAgent(
           streamRules: true,
           toolApproval: true,
           taskTimeoutSeconds: true,
+          mcpToolTimeoutSeconds: true,
+          servers: {
+            where: { deploymentId: { in: deployments.map(({ id }) => id) } },
+            select: { deploymentId: true, toolTimeoutSeconds: true },
+          },
           sandboxes: {
             where: { isDefault: true },
             select: { sandbox: { select: { image: true } } },
@@ -303,9 +308,16 @@ export async function cloneAgent(
             : {}),
           ...(source.toolApproval ? { toolApproval: source.toolApproval } : {}),
           taskTimeoutSeconds: source.taskTimeoutSeconds,
+          mcpToolTimeoutSeconds: source.mcpToolTimeoutSeconds,
         },
       });
       if (deployments.length) {
+        const overrides = new Map(
+          source.servers.map(({ deploymentId, toolTimeoutSeconds }) => [
+            deploymentId,
+            toolTimeoutSeconds,
+          ]),
+        );
         const current = await tx.deployment.findMany({
           where: {
             id: { in: deployments.map(({ id }) => id) },
@@ -318,6 +330,7 @@ export async function cloneAgent(
             agentId: cloned.id,
             deploymentId: id,
             allowedToolNames: catalogToolNames(installCfg),
+            toolTimeoutSeconds: overrides.get(id) ?? null,
           })),
         });
       }
@@ -582,6 +595,7 @@ export async function createConfiguredAgent(
           toolApproval: cfg.toolApproval ?? { mode: "off" },
           secretObfuscation: cfg.secretObfuscation ?? true,
           taskTimeoutSeconds: cfg.taskTimeoutSeconds ?? null,
+          mcpToolTimeoutSeconds: cfg.mcpToolTimeoutSeconds ?? null,
           ...(cfg.advisor ? { advisor: cfg.advisor } : {}),
         },
       });
@@ -590,6 +604,7 @@ export async function createConfiguredAgent(
           agentId: agent.id,
           deploymentId: id,
           allowedToolNames: catalogToolNames(installCfg),
+          toolTimeoutSeconds: tools.mcpToolTimeouts?.get(id) ?? null,
         })),
       });
       await tx.agentSkill.createMany({

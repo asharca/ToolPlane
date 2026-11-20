@@ -20,6 +20,7 @@ import {
   mcpRuntimeCredentialIdentity,
 } from "./supervisor";
 import { listMcpTools, mcpRpc } from "./mcp-client";
+import { mcpToolCallDeadlineMs } from "./mcp-tool-timeout";
 import { mcpHeaderSecrets, redactMcpResult } from "./mcp-result-redaction";
 import {
   sessionMcpPackageLaunch,
@@ -250,7 +251,13 @@ async function resolveSessionMcp(
     snapshot?.remoteConnectionIdentity !== remoteMcpConnectionIdentity(spec)
   )
     throw new Error("MCP_CONNECTION_RESTART_REQUIRED");
-  return { allowed, processId, spec, redactionValues };
+  return {
+    allowed,
+    processId,
+    spec,
+    redactionValues,
+    toolDeadlineMs: mcpToolCallDeadlineMs(revision, deploymentId),
+  };
 }
 
 async function runSessionMcpOperation<T>(
@@ -298,10 +305,12 @@ export async function callSessionMcpTool(
       throw new Error("MCP_TOOL_UNAVAILABLE");
     // Recheck the live grant after discovery, immediately before the side effect.
     const fresh = await resolveSessionMcp(context, deploymentId, true, name);
-    const result = await mcpRpc(fresh.processId, "tools/call", {
-      name,
-      arguments: args,
-    });
+    const result = await mcpRpc(
+      fresh.processId,
+      "tools/call",
+      { name, arguments: args },
+      fresh.toolDeadlineMs,
+    );
     if (!result) throw new Error("MCP_TOOL_EXECUTION_UNKNOWN");
     const redacted = redactMcpResult(result, [
       ...fresh.redactionValues,

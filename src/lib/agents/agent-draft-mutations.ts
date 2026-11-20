@@ -105,6 +105,8 @@ export type AgentConfig = {
   secretObfuscation?: boolean;
   /** Seconds; null resets to the system default, undefined leaves it unchanged. */
   taskTimeoutSeconds?: number | null;
+  /** Seconds; null inherits the system default, undefined leaves it unchanged. */
+  mcpToolTimeoutSeconds?: number | null;
   advisor?: AgentAdvisor | null;
   piPackages?: Array<{ marketInstallId: string; releaseId?: string }>;
 };
@@ -116,6 +118,8 @@ export type ExternalSandboxSelection = {
 
 export type AgentToolSelection = {
   deploymentIds: string[];
+  /** Missing entries preserve retained overrides; null resets to the Agent default. */
+  mcpToolTimeouts?: ReadonlyMap<string, number | null>;
   installedSkillIds: string[];
   toolkitIds: string[];
   /** Full desired set; omit to keep current attachments. */
@@ -357,7 +361,9 @@ async function requireAgentWorkspaceResource(
 export async function bindAgentWorkspaceResource(
   workspaceId: string,
   agentId: string,
-  resource: { kind: "skill" | "mcp"; id: string },
+  resource:
+    | { kind: "skill"; id: string }
+    | { kind: "mcp"; id: string; toolTimeoutSeconds?: number | null },
 ) {
   // Draft bindings only shape the next revision; pinned sessions keep running.
   return withAgentDraftLease(agentId, async () => {
@@ -388,16 +394,18 @@ export async function bindAgentWorkspaceResource(
         const deployment = await tx.deployment.findUniqueOrThrow({
           where: { id: resource.id },
         });
+        const data = {
+          allowedToolNames: catalogToolNames(deployment.installCfg),
+          ...(resource.toolTimeoutSeconds === undefined
+            ? {}
+            : { toolTimeoutSeconds: resource.toolTimeoutSeconds }),
+        };
         await tx.agentServer.upsert({
           where: {
             agentId_deploymentId: { agentId, deploymentId: resource.id },
           },
-          create: {
-            agentId,
-            deploymentId: resource.id,
-            allowedToolNames: catalogToolNames(deployment.installCfg),
-          },
-          update: { allowedToolNames: catalogToolNames(deployment.installCfg) },
+          create: { agentId, deploymentId: resource.id, ...data },
+          update: data,
         });
       }
     });
@@ -519,6 +527,9 @@ export async function updateAgent(
           ...(cfg.taskTimeoutSeconds === undefined
             ? {}
             : { taskTimeoutSeconds: cfg.taskTimeoutSeconds }),
+          ...(cfg.mcpToolTimeoutSeconds === undefined
+            ? {}
+            : { mcpToolTimeoutSeconds: cfg.mcpToolTimeoutSeconds }),
           ...(cfg.advisor !== undefined
             ? { advisor: cfg.advisor ?? Prisma.DbNull }
             : {}),
@@ -636,8 +647,10 @@ export async function setAgentTools(
           ]
         : []),
       ...deployments.map((deployment) => {
+        const toolTimeoutSeconds = tools.mcpToolTimeouts?.get(deployment.id);
         const data = {
           allowedToolNames: catalogToolNames(deployment.installCfg),
+          ...(toolTimeoutSeconds === undefined ? {} : { toolTimeoutSeconds }),
         };
         return db.agentServer.upsert({
           where: {

@@ -652,6 +652,8 @@ model Agent {
   secretObfuscation       Boolean                  @default(true)
   // Total task deadline in seconds; null uses the system default.
   taskTimeoutSeconds      Int?
+  // Per MCP tools/call deadline; null uses the system default.
+  mcpToolTimeoutSeconds   Int?
   advisor                 Json?
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
@@ -1076,6 +1078,8 @@ model AgentServer {
   deploymentId String
   /// Materialized live grant, kept equal to the deployment catalog.
   allowedToolNames String[] @default([])
+  /// Overrides the Agent's MCP tool timeout for this deployment.
+  toolTimeoutSeconds Int?
   agent        Agent      @relation(fields: [agentId], references: [id], onDelete: Cascade)
   deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
 
@@ -2121,6 +2125,9 @@ model GithubResourceSyncJob {
   status String @default("pending")
   commit String?
   error String?
+  summary Json?
+  failedPath String?
+  retried Boolean @default(false)
   startedAt DateTime?
   finishedAt DateTime?
   createdAt DateTime @default(now())

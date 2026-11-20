@@ -65,6 +65,7 @@ type SettingsData = {
   maxSteps: number;
   taskTimeoutSeconds: number | null;
   defaultTaskTimeoutSeconds: number;
+  mcpToolTimeoutSeconds: number | null;
   providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
@@ -262,6 +263,7 @@ export function AgentSettings({
                 maxSteps={settings.maxSteps}
                 taskTimeoutSeconds={settings.taskTimeoutSeconds}
                 defaultTaskTimeoutSeconds={settings.defaultTaskTimeoutSeconds}
+                mcpToolTimeoutSeconds={settings.mcpToolTimeoutSeconds}
                 providers={settings.providers}
                 deployments={settings.deployments}
                 skills={settings.skills}

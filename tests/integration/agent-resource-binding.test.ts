@@ -13,6 +13,7 @@ import {
 } from "@/lib/agents/revisions";
 import type { AgentEnvironmentSnapshot } from "@/lib/agents/revision-types";
 import { mcpDefinitionChecksum } from "@/lib/process/mcp-definition";
+import { mcpToolCallDeadlineMs } from "@/lib/process/mcp-tool-timeout";
 import type * as McpRuntimeImage from "@/lib/process/mcp-runtime-image";
 import { createAgentFromControl } from "@/lib/agents/control-service";
 
@@ -281,6 +282,60 @@ it("pins an existing floating npm binding before revision checksum capture", asy
     }),
   ]);
   expect(registry).toHaveBeenCalled();
+});
+
+it("pins the Agent MCP timeout and per-MCP overrides, omitting unset values", async () => {
+  const agent = await createAgent(workspaceId, "MCP timeouts");
+  const deployments = await Promise.all(
+    ["Slow", "Default"].map((name) =>
+      db.deployment.create({
+        data: {
+          workspaceId,
+          name,
+          source: "remote",
+          sourceRef: `https://${name.toLowerCase()}.example.com/mcp`,
+          installCfg: { env: {}, transport: "streamable-http" },
+        },
+      }),
+    ),
+  );
+  for (const deployment of deployments)
+    await bindAgentWorkspaceResource(workspaceId, agent.id, {
+      kind: "mcp",
+      id: deployment.id,
+    });
+  const environment: AgentEnvironmentSnapshot = {
+    kind: "docker",
+    image: `fixture@sha256:${"a".repeat(64)}`,
+    network: "isolated",
+    piVersion: "1.5.2",
+    initialSnapshot: null,
+    resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
+    credentialReferences: [],
+  };
+  const unset = await captureAgentRevisionConfig(db, agent.id, environment);
+  expect(unset).not.toHaveProperty("mcpToolTimeoutSeconds");
+  for (const grant of unset.mcpGrants)
+    expect(grant).not.toHaveProperty("toolTimeoutSeconds");
+  expect(mcpToolCallDeadlineMs(unset, deployments[0].id)).toBe(35_000);
+
+  await db.agent.update({
+    where: { id: agent.id },
+    data: { mcpToolTimeoutSeconds: 90 },
+  });
+  await db.agentServer.update({
+    where: {
+      agentId_deploymentId: {
+        agentId: agent.id,
+        deploymentId: deployments[0].id,
+      },
+    },
+    data: { toolTimeoutSeconds: 240 },
+  });
+  const pinned = await captureAgentRevisionConfig(db, agent.id, environment);
+  expect(pinned.mcpToolTimeoutSeconds).toBe(90);
+  expect(mcpToolCallDeadlineMs(pinned, deployments[0].id)).toBe(245_000);
+  expect(mcpToolCallDeadlineMs(pinned, deployments[1].id)).toBe(95_000);
 });
 
 it("returns a friendly resolution code without attaching or rewriting a failed npm recipe", async () => {

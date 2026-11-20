@@ -75,6 +75,16 @@ const { InMemoryCredentialStore } = await import(
     ),
   ).href
 );
+const { isContextOverflow } = await import(
+  pathToFileURL(
+    join(
+      dirname(
+        findPackageJSON("@earendil-works/pi-ai", pathToFileURL(sdkEntry)),
+      ),
+      "dist/compat.js",
+    ),
+  ).href
+);
 const { verifyPiPackageSnapshots, canonicalJson } = await import(
   pathToFileURL(config.packageVerifierPath).href
 );
@@ -674,6 +684,56 @@ const transientModelFailure = (message) =>
     /rate.?limit|too many requests|overload|service unavailable/i.test(
       String(message.errorMessage ?? ""),
     ));
+// Like OMP's retry fallback chains: a failed model is suppressed for a cooldown
+// (provider retry-after when stated, else 5 minutes). Later turns start on the
+// first unsuppressed candidate and return to the primary once it expires.
+const MODEL_COOLDOWN_MS = 5 * 60_000;
+const MAX_MODEL_COOLDOWN_MS = 60 * 60_000;
+const suppressedModels = new Map();
+const modelKey = (model) => `${model?.provider}/${model?.id}`;
+function modelSuppressed(model) {
+  const until = suppressedModels.get(modelKey(model));
+  if (until === undefined) return false;
+  if (until > Date.now()) return true;
+  suppressedModels.delete(modelKey(model));
+  return false;
+}
+function suppressModel(model, errorMessage) {
+  const hint =
+    /retry[-_ ]after\W{0,4}(\d+(?:\.\d+)?)\s*(ms|s(?:ec(?:ond)?s?)?)?\b/i.exec(
+      String(errorMessage ?? ""),
+    );
+  const stated = hint
+    ? Number(hint[1]) * (hint[2]?.toLowerCase() === "ms" ? 1 : 1_000)
+    : 0;
+  suppressedModels.set(
+    modelKey(model),
+    Date.now() +
+      (stated > 0
+        ? Math.min(stated, MAX_MODEL_COOLDOWN_MS)
+        : MODEL_COOLDOWN_MS),
+  );
+}
+/** Next unsuppressed fallback at or after fallbackIndex. */
+function nextFallbackIndex() {
+  const models = config.fallbackModels ?? [];
+  for (let index = fallbackIndex; index < models.length; index++)
+    if (!modelSuppressed(models[index])) return index;
+  return -1;
+}
+/** Turn start: the primary unless it is cooling down after a failure. */
+async function selectTurnModel(session) {
+  const candidates = [config.model, ...(config.fallbackModels ?? [])];
+  const index = Math.max(
+    0,
+    candidates.findIndex((model) => !modelSuppressed(model)),
+  );
+  fallbackIndex = index;
+  await session.setModel(candidates[index], { persist: false });
+  if (index === 0) return;
+  const selected = modelIdentity(candidates[index]);
+  if (selected) emit({ type: "model_selected", ...selected });
+}
 let runtimeProviders = new Set(["toolplane"]);
 let lastState;
 let queuedInputs = [];
@@ -1201,13 +1261,27 @@ function applyConfiguredThinkingLevel(session) {
   // Pi 1.5.2 clamps to the current model and persists the change in this session only.
   session.setThinkingLevel(level, { persist: false });
 }
-// Pinned 1.5.2 exposes no retry matcher setting; extend its instance check so
-// empty/incomplete gateway streams retry under the same budget and backoff.
+// Pinned 1.5.2 exposes no retry matcher or fallback chain. Extend its instance
+// hooks: empty/incomplete gateway streams retry under the same budget, and a
+// failed request switches to the next fallback model at once (OMP semantics)
+// instead of spending same-model retries first.
 function allowTransientStreamRetry(session) {
   const piRetryable = session._isRetryableError;
   if (typeof piRetryable !== "function") fail("PI_SDK_VERSION_MISMATCH");
   if (piRetryable.toolplane) return;
+  // Fallback stays inside Pi's continuation loop: no prompt or extension replay,
+  // never after a native tool has started, and never for an overflow, which
+  // compaction handles.
+  const fallbackIndexFor = (message) =>
+    message?.stopReason === "error" &&
+    active &&
+    !aborted &&
+    !toolStarted &&
+    !isContextOverflow(message, session.model?.contextWindow ?? 0)
+      ? nextFallbackIndex()
+      : -1;
   const retryable = (message) =>
+    fallbackIndexFor(message) >= 0 ||
     piRetryable.call(session, message) ||
     transientModelFailure(message) ||
     (message?.stopReason === "error" &&
@@ -1223,15 +1297,15 @@ function allowTransientStreamRetry(session) {
   )
     fail("PI_SDK_VERSION_MISMATCH");
   session._prepareRetry = async (message) => {
-    if (await prepareRetry.call(session, message)) return true;
-    // Stay inside Pi's continuation loop: do not replay the prompt or extensions.
-    if (!active || aborted || toolStarted || !transientModelFailure(message))
-      return false;
-    const next = config.fallbackModels?.[fallbackIndex++];
-    if (!next) return false;
+    const index = fallbackIndexFor(message);
+    if (index < 0) return prepareRetry.call(session, message);
+    suppressModel(session.model, message.errorMessage);
+    const next = config.fallbackModels[index];
+    fallbackIndex = index + 1;
     await session.setModel(next, { persist: false });
     const selected = modelIdentity(next);
     if (selected) emit({ type: "model_selected", ...selected });
+    // A fallback model gets a fresh retry budget.
     session._retryAttempt = 0;
     modelRetried = 0;
     texts = [];
@@ -1766,9 +1840,9 @@ async function handle(request) {
       runtime.setRebindSession(bindSession);
       await bindSession(runtime.session);
     }
-    // Always select the admitted model, including the pinned default on a turn
-    // without an override. Session history survives and global defaults do not change.
-    await runtime.session.setModel(config.model, { persist: false });
+    // Select the admitted model (or, while it cools down after a failure, its
+    // first available fallback). History survives; global defaults do not change.
+    await selectTurnModel(runtime.session);
     applyConfiguredThinkingLevel(runtime.session);
     applyRetryBudget();
     await nativeUi.projectTodos(runtime.session.sessionManager);

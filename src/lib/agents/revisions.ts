@@ -162,7 +162,14 @@ export async function captureInstalledSkillSnapshot(
 }
 
 const captureInclude = {
-  servers: { include: { deployment: true } },
+  servers: {
+    select: {
+      deploymentId: true,
+      allowedToolNames: true,
+      toolTimeoutSeconds: true,
+      deployment: true,
+    },
+  },
   skills: { include: { installedSkill: { include: { skill: true } } } },
   knowledgeBases: true,
   sandboxes: { include: { sandbox: true } },
@@ -310,6 +317,9 @@ export async function captureAgentRevisionConfig(
     ...(agent.taskTimeoutSeconds != null
       ? { taskTimeoutSeconds: agent.taskTimeoutSeconds }
       : {}),
+    ...(agent.mcpToolTimeoutSeconds != null
+      ? { mcpToolTimeoutSeconds: agent.mcpToolTimeoutSeconds }
+      : {}),
     disabledBuiltinTools: agent.disabledBuiltinTools,
     optionalBuiltinTools: agent.optionalBuiltinTools,
     sandboxTemplateId: template?.id ?? null,
@@ -354,13 +364,19 @@ export async function captureAgentRevisionConfig(
     // catalog, `selected` bindings hold the user's explicit subset.
     mcpGrants: await Promise.all(
       agent.servers.map(
-        async ({ deploymentId, deployment, allowedToolNames }) => ({
+        async ({
+          deploymentId,
+          deployment,
+          allowedToolNames,
+          toolTimeoutSeconds,
+        }) => ({
           deploymentId,
           ...(await prepareSessionMcpDefinition(deployment, {
             prepare: false,
           })),
           runtimeFilesChecksum: await mcpRuntimeFilesChecksum(tx, deploymentId),
           allowedToolNames: exposedMcpToolNames(deployment, allowedToolNames),
+          ...(toolTimeoutSeconds != null ? { toolTimeoutSeconds } : {}),
         }),
       ),
     ),
@@ -865,7 +881,7 @@ export async function refreshAgentRevisionMcpGrants(
           // A removed binding is a revocation; runtime already narrows it.
           if (!binding) return grant;
           return {
-            deploymentId: grant.deploymentId,
+            ...grant,
             ...(await prepareSessionMcpDefinition(binding.deployment, {
               prepare: false,
             })),

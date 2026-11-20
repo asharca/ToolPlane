@@ -97,7 +97,9 @@ export async function applyPiPackageToAgent(
           },
         },
       });
-      const connections: AgentPackageMcpConnection[] = [];
+      const connections: (AgentPackageMcpConnection & {
+        toolTimeoutSeconds?: number;
+      })[] = [];
       for (const connection of input.connections) {
         if (
           connection.allowedToolNames &&
@@ -129,6 +131,7 @@ export async function applyPiPackageToAgent(
           : [];
         connections.push({
           ...connection,
+          toolTimeoutSeconds: retained?.toolTimeoutSeconds,
           allowedToolNames:
             connection.allowedToolNames === undefined
               ? undefined
@@ -197,6 +200,9 @@ export async function applyPiPackageToAgent(
             deployment.id,
           ),
           allowedToolNames,
+          ...(connection.toolTimeoutSeconds !== undefined
+            ? { toolTimeoutSeconds: connection.toolTimeoutSeconds }
+            : {}),
         });
       }
       const install = await tx.marketInstall.findFirst({

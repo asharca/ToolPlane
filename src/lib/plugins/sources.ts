@@ -5,6 +5,7 @@ import {
   type WorkspaceScope,
 } from "@/lib/workspace/scope";
 import { createHmac } from "node:crypto";
+import type { GithubResourceSyncJob } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -15,6 +16,10 @@ import {
   GithubRegistryTransport,
   repositorySchema,
 } from "./github";
+import type {
+  PluginSourceSyncJob,
+  PluginSourceSyncSummary,
+} from "./source-sync-types";
 export { GithubRegistryError } from "./github";
 
 const tokenSchema = z
@@ -59,6 +64,58 @@ export function deriveGithubResourceRegistryWebhookSecret(registry: {
     .digest("hex");
 }
 
+const syncItemSchema = z.object({ id: z.string(), name: z.string() });
+const versionedSyncItemSchema = syncItemSchema.extend({ version: z.string() });
+const syncSummarySchema = z.object({
+  resourceCount: z.number().int().nonnegative(),
+  added: z.array(versionedSyncItemSchema).max(200),
+  updated: z.array(versionedSyncItemSchema).max(200),
+  removed: z.array(syncItemSchema).max(200),
+  unregistered: z.array(z.string()).max(50),
+});
+
+type SyncJobRow = Pick<
+  GithubResourceSyncJob,
+  | "registryId"
+  | "id"
+  | "status"
+  | "error"
+  | "failedPath"
+  | "commit"
+  | "createdAt"
+  | "startedAt"
+  | "finishedAt"
+  | "summary"
+  | "retried"
+>;
+
+function projectSyncJob(row: SyncJobRow): PluginSourceSyncJob | null {
+  const { status } = row;
+  if (
+    status !== "pending" &&
+    status !== "running" &&
+    status !== "succeeded" &&
+    status !== "failed"
+  )
+    return null;
+  const parsed = syncSummarySchema.safeParse(row.summary);
+  const summary: PluginSourceSyncSummary | null = parsed.success
+    ? parsed.data
+    : null;
+  return {
+    id: row.id,
+    error: row.error,
+    failedPath: row.failedPath,
+    commit: row.commit,
+    retried: row.retried,
+    status,
+    createdAt: row.createdAt.toISOString(),
+    startedAt: row.startedAt?.toISOString() ?? null,
+    finishedAt: row.finishedAt?.toISOString() ?? null,
+    summary,
+  };
+}
+
 export async function listPluginSources(scope: WorkspaceScope) {
   const { id: workspaceId, actorUserId: userId } = scope;
   const [rows, manager, platformAdmin] = await Promise.all([
@@ -95,8 +152,35 @@ export async function listPluginSources(scope: WorkspaceScope) {
       select: { id: true },
     }),
   ]);
+  const activeJobs = new Map<string, PluginSourceSyncJob>();
+  const lastJobs = new Map<string, PluginSourceSyncJob>();
+  if (rows.length) {
+    // Return at most one active and one terminal job for each visible registry.
+    const jobs = await db.$queryRaw<SyncJobRow[]>`
+      SELECT DISTINCT ON ("registryId", "status" IN ('pending', 'running'))
+        "registryId", "id", "status", "error", "failedPath", "commit",
+        "createdAt", "startedAt", "finishedAt", "summary", "retried"
+      FROM "GithubResourceSyncJob"
+      WHERE "registryId" IN (${Prisma.join(rows.map((row) => row.id))})
+        AND "status" IN ('pending', 'running', 'succeeded', 'failed')
+      ORDER BY "registryId", ("status" IN ('pending', 'running')),
+        "generation" DESC, "createdAt" DESC, "id" DESC
+    `;
+    for (const row of jobs) {
+      const job = projectSyncJob(row);
+      if (job) {
+        const group =
+          job.status === "pending" || job.status === "running"
+            ? activeJobs
+            : lastJobs;
+        group.set(row.registryId, job);
+      }
+    }
+  }
   return rows.map(({ credentials, ...row }) => ({
     ...row,
+    activeJob: activeJobs.get(row.id) ?? null,
+    lastJob: lastJobs.get(row.id) ?? null,
     hasCredentials: row.official
       ? Boolean(process.env.TOOLPLANE_OFFICIAL_PLUGIN_TOKEN)
       : credentials !== null,
@@ -181,6 +265,7 @@ export async function enqueuePluginSourceSync(
   registryId: string,
   deliveryId?: string,
   access: Prisma.GithubResourceRegistryWhereInput = {},
+  { dedupeActive = false } = {},
 ) {
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT "id" FROM "GithubResourceRegistry" WHERE "id" = ${registryId} FOR UPDATE`;
@@ -195,6 +280,18 @@ export async function enqueuePluginSourceSync(
         select: { id: true },
       });
       if (previous) return previous;
+    }
+    if (dedupeActive) {
+      const active = await tx.githubResourceSyncJob.findFirst({
+        where: { registryId, status: { in: ["pending", "running"] } },
+        orderBy: [
+          { generation: "desc" },
+          { createdAt: "desc" },
+          { id: "desc" },
+        ],
+        select: { id: true },
+      });
+      if (active) return active;
     }
     const [updated] = await tx.githubResourceRegistry.updateManyAndReturn({
       where: { id: registryId, AND: [access], status: { not: "disabled" } },
@@ -247,6 +344,7 @@ export async function syncPluginSource(
           workspace: workspaceAccessWhere(userId, "manage"),
           official: false,
         },
+    { dedupeActive: true },
   );
 }
 

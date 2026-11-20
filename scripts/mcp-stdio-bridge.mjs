@@ -27,7 +27,9 @@ try {
   process.exitCode = 1;
 }
 const PROTOCOL_VERSION = "2025-06-18";
-const CALL_TIMEOUT_MS = 70000;
+// Callers set the effective per-deployment deadline (up to 300s, see
+// src/lib/process/mcp-tool-timeout.ts); this only bounds an abandoned call.
+const CALL_TIMEOUT_MS = 300000;
 const DEFAULT_STARTUP_IDLE_TIMEOUT_MS = 90000;
 const DEFAULT_STARTUP_MAX_TIMEOUT_MS = 300000;
 const CONTAINER_POLL_MS = 1000;
@@ -312,8 +314,8 @@ function notifyChild(method, params) {
 }
 
 async function handshake() {
-  // Initialization is bounded by the startup watchdog, not CALL_TIMEOUT_MS.
-  // Normal tool calls below retain their independent 70 second timeout.
+  // Initialization is bounded by the startup watchdog, not CALL_TIMEOUT_MS,
+  // which applies only to the calls forwarded below.
   const reply = await callChild(
     "initialize",
     {
