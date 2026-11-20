@@ -587,6 +587,7 @@ let texts = [],
   usage,
   turnError,
   modelFailed = false,
+  failedTextIndex,
   modelReason,
   modelRetried = 0,
   aborted = false;
@@ -629,8 +630,7 @@ function triggerRule(rule, toolCall) {
     return delivery;
   }
 }
-let toolStarted = false,
-  fallbackIndex = 0,
+let fallbackIndex = 0,
   actualModel;
 const modelIdentity = (model) =>
   model?.toolplaneProviderId
@@ -1130,6 +1130,7 @@ function event(event, source, sourceModel) {
         assistantText: texts.join("\n\n"),
       });
       texts = [];
+      failedTextIndex = undefined;
       emitQueue();
     }
   }
@@ -1178,8 +1179,6 @@ function event(event, source, sourceModel) {
       });
   }
   if (event.type === "tool_execution_start") {
-    // Even a failed/unknown tool may already have changed external state.
-    toolStarted = true;
     emit({
       type: event.type,
       ...(source ? { source } : {}),
@@ -1240,6 +1239,7 @@ function event(event, source, sourceModel) {
           ? modelFailureReason(message.errorMessage)
           : undefined;
       const text = contentText(message.content);
+      failedTextIndex = modelFailed && text ? texts.length : undefined;
       if (text) texts.push(text);
       recordUsage(message.usage, runtime.session.model, true);
     }
@@ -1269,14 +1269,14 @@ function allowTransientStreamRetry(session) {
   const piRetryable = session._isRetryableError;
   if (typeof piRetryable !== "function") fail("PI_SDK_VERSION_MISMATCH");
   if (piRetryable.toolplane) return;
-  // Fallback stays inside Pi's continuation loop: no prompt or extension replay,
-  // never after a native tool has started, and never for an overflow, which
-  // compaction handles.
+  // Like OMP, continue from the existing model checkpoint. Pi handles provider
+  // errors before dispatching that response's tools. Omit only that attempt;
+  // earlier tool calls and results stay in context and are not replayed.
+  // Context overflow still goes through compaction.
   const fallbackIndexFor = (message) =>
     message?.stopReason === "error" &&
     active &&
     !aborted &&
-    !toolStarted &&
     !isContextOverflow(message, session.model?.contextWindow ?? 0)
       ? nextFallbackIndex()
       : -1;
@@ -1308,7 +1308,8 @@ function allowTransientStreamRetry(session) {
     // A fallback model gets a fresh retry budget.
     session._retryAttempt = 0;
     modelRetried = 0;
-    texts = [];
+    if (failedTextIndex !== undefined) texts.splice(failedTextIndex, 1);
+    failedTextIndex = undefined;
     session._omitRecoveryAttempt(message);
     return true;
   };
@@ -1806,6 +1807,7 @@ async function handle(request) {
   turnError = undefined;
   aborted = false;
   modelFailed = false;
+  failedTextIndex = undefined;
   modelReason = undefined;
   modelRetried = 0;
   ruleText = "";
@@ -1815,7 +1817,6 @@ async function handle(request) {
   turnExistingEntries = undefined;
   acceptingQueue = true;
   queueReceipts.clear();
-  toolStarted = false;
   fallbackIndex = 0;
   actualModel = undefined;
   let terminal;

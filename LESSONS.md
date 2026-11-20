@@ -176,6 +176,7 @@
 - **证据**：[会话宿主](scripts/pi-sdk-session.mjs)、[宿主集成测试](tests/integration/pi-sdk-host.test.ts)。
 - **2026-11-04 首次失败补充（用户反馈）**：首次接纳失败后，Work 保存的 assistant 模型标签、`work-runtime: failed` 和耗时元数据被消息条数及“存在 assistant”双重判定误认为原生历史，下一次显式请求因空 OMP session 继续失败。入口和 Pi／OMP 启动统一使用实质历史判定，仅跳过已知的展示元数据；正文、推理、工具活动、完成记录及未知内容仍保守要求恢复。原失败 Work 真实 bash 返回 `NATIVE_HISTORY_RECOVERED_OK`，同智能体新 Work 首轮真实 bash 返回 `FRESH_NATIVE_OK`。回归：[上下文边界测试](tests/unit/conversation-context.test.ts)；实现：[共享历史判定](src/lib/agents/conversation-context.ts)、[入口参数](src/lib/agents/execution/task-options.ts)、[沙箱宿主配置](src/lib/agents/sandbox-runtime.ts)。
 - **2026-11-10 展示层复发（用户反馈线上“处理失败 159 s，实际已完成”）**：Work 状态为 `idle`、无错误，但 13 次 SSH MCP 调用中有几次返回 `SSH_CONNECTION_FAILED`；共享渲染器 `contentProcessStatus` 遇到任一失败工具即把整个过程组标为“处理失败”，失败工具还默认展开。改为只有运行时（`data-work-runtime`）或平台级失败（助手确认回执，`platformFailure`）才使过程组失败；工具行仍显示 Failed。真实 Work 中 `ls` 失败（`isError: true`）后过程组显示“使用了 1 个工具”。依据：[过程状态](src/lib/conversation/content-blocks.ts)。
+- **工具执行后模型兜底不触发**：主模型在已执行工具后返回 HTTP 200 内嵌 `api_error`，旧宿主把「本轮有工具执行」误当成「重试会回放工具」而禁止兜底。切换必须走 Pi 的原生续跑，投影只剔除当前失败的 assistant 响应，保留前面已执行工具的调用和结果；不得重新提交原 prompt。宿主和 broker 回归均检查兜底请求收到原工具结果，并以文件副作用确认只执行一次。
 - **确认日期**：2026-10-31、2026-11-04（用户报告）、2026-11-10（用户报告）。
 
 ### TP-L011：设置放在拥有它的对象上，复用已有控件
