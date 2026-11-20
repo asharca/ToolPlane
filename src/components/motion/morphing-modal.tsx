@@ -36,10 +36,13 @@ export function MorphingModal({
 
   useLayoutEffect(() => {
     if (!backgroundScrollLocked) return;
-    const prev = document.body.style.overflow;
+    const prevBody = document.body.style.overflow;
+    const prevHtml = document.documentElement.style.overflow;
     document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
     return () => {
-      document.body.style.overflow = prev;
+      document.body.style.overflow = prevBody;
+      document.documentElement.style.overflow = prevHtml;
     };
   }, [backgroundScrollLocked]);
 
@@ -99,12 +102,15 @@ export function MorphingModal({
                 transition={SPRING_PANEL}
                 {...gate}
                 className={cn(
-                  "pointer-events-auto relative w-full max-w-sm overflow-hidden rounded-3xl border border-border bg-background shadow-2xl will-change-transform [opacity:var(--modal-opacity)]",
+                  "pointer-events-auto relative flex max-h-full w-full max-w-sm flex-col overflow-hidden rounded-3xl border border-border bg-background shadow-2xl will-change-transform [opacity:var(--modal-opacity)]",
                   className,
                 )}
               >
                 {/* popLayout offsets need a stable containing block during layout projection. */}
-                <motion.div layout="position" className="relative p-5">
+                <motion.div
+                  layout="position"
+                  className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain p-5"
+                >
                   <AnimatePresence mode="popLayout" initial={false}>
                     <motion.div
                       key={viewId}
