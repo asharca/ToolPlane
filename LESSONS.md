@@ -618,13 +618,14 @@
 - **下次怎么验证**：在用户实际使用的入口（Work 的频道会话、对话会话）各看一次已落库的回复：头部耗时可打开瀑布图、工具可展开到输入输出；再刷新页面确认不依赖实时视图。依据：`src/lib/agents/turn-timeline.ts`、`src/components/dashboard/work/WorkspaceWork.tsx`、`src/components/dashboard/agents/AgentConversation.tsx`。
 - **确认日期**：2026-11-17（用户报告）。
 
-### TP-L057：滚动容器不能用 flex 居中，超高内容会把首屏顶出可达范围
+### TP-L057：弹窗外层遮罩不得滚动，超高内容只能限制在弹窗内部滚动
 
-**规则**：`overflow` 滚动容器上的 `items-center justify-center` 只在内容不超高时成立；内容一旦超过滚动视口，flex 居中会让内容上下对称溢出，scrollTop=0 仍看不到顶部，滚动到底部反而把它推得更远。居中应放在 `min-h-full` 的内层 flex 包裹器上：内容不超高时照常居中，超高时包裹器随内容撑高、整段内容可在滚动容器里完整滚到。
+**规则**：`CenterMorphModalContent` 等弹窗定位层（`fixed inset-4`）禁止挂 `overflow-y-auto` 或让外层出现视口级滚动条；弹窗面板自身通过 `flex max-h-full flex-col overflow-hidden` 约束在 `inset` 视口盒内，仅由内部正文/分栏容器（`min-h-0 flex-1 overflow-auto overscroll-contain`）滚动。若确需对某个非弹窗滚动容器居中内容，居中应放在 `min-h-full` 内层包裹器上，避免 flex 居中导致超高内容顶部不可达。
 
-- **错误与原因**：2026-11-17 用户报告线上 10030 的 A2A 任务耗时瀑布图“太长溢出视窗”。`CenterMorphModalContent` 的滚动层 `fixed inset-4 flex items-center justify-center overflow-y-auto` 在瀑布图（每个 span 一行 42px，长任务上百行）超过视口后，面板顶部被裁到视口上方且任何滚动都不可达；真实浏览器 480px 视口、531px 瀑布图实测面板顶部在 -25.5px，滚到底反而到 -99.5px。
-- **下次怎么验证**：打开内容必然超高的浮层（瀑布图、长列表、长 diff），把视口高度临时压小制造溢出，分别记录 scrollTop=0 与 scrollTop=max 时面板首尾是否都在滚动容器可视范围内；内容不超高时居中位置不变。本修复把居中移到 `min-h-full` 内层包裹器，同一真实瀑布图首屏与底部均可达。依据：[中心展开浮层](src/components/motion/center-morph-modal.tsx)。
-- **确认日期**：2026-11-17（用户报告）。
+- **错误与原因**：2026-11-17 线上 10030 的 A2A 耗时瀑布图超高溢出视窗，当时保留了 `CenterMorphModalContent` 外层 `fixed inset-4 overflow-y-auto` 并加了内层 `py-8`，导致所有高弹窗（设置弹窗、瀑布图等）都在视口全局右侧出现外层滚动条，且瀑布图头部、工具栏与详情面板随整窗滚出视野。2026-11-20 按用户纠正改为外层完全不滚动、面板默认 `flex max-h-full flex-col overflow-hidden`，瀑布图改由弹窗内部分栏独立滚动并移除回放按钮。
+- **约束层（结构）**：[中心展开浮层](src/components/motion/center-morph-modal.tsx)、[耗时瀑布图](src/components/agents/agent-traces.tsx)、[回合耗时弹窗](src/components/dashboard/work/WorkTurnTrace.tsx)。
+- **下次怎么验证**：打开耗时瀑布图与设置类弹窗，在常规视口与压矮视口（如 520px）下检查：`html`/`body` 与 `CenterMorphModalContent` 外层均无滚动条且 `scrollHeight <= clientHeight`；仅弹窗内部容器可滚动，瀑布图头部、时间标尺与选中详情面板始终可达。
+- **确认日期**：2026-11-17、2026-11-20（用户报告）。
 
 ### TP-L058：安全检查要放进共享鉴权入口，不能靠每个路由自己记得加
 

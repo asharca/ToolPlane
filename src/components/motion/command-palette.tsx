@@ -236,9 +236,9 @@ export function CommandPalette({
                 transition={reduce ? { duration: 0.1 } : PANEL_SPRING}
                 {...gate}
                 onKeyDown={onKeyDown}
-                className="pointer-events-auto w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-card shadow-2xl will-change-transform"
+                className="pointer-events-auto flex max-h-full w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl will-change-transform"
               >
-                <div className="flex items-center gap-3 border-b border-border px-4">
+                <div className="flex shrink-0 items-center gap-3 border-b border-border px-4">
                   <Search className="h-4 w-4 text-muted-foreground" />
                   <input
                     ref={inputRef}
@@ -272,7 +272,7 @@ export function CommandPalette({
                   id={`${uid}-list`}
                   role="listbox"
                   aria-label="Commands"
-                  className="max-h-[60vh] overflow-y-auto overscroll-contain p-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  className="min-h-0 flex-1 max-h-[60vh] overflow-y-auto overscroll-contain p-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                 >
                   {rows.length === 0 ? (
                     <div className="p-8 text-center text-sm text-muted-foreground">

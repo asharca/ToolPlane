@@ -244,7 +244,7 @@ export function SandboxCreateForm({
           description={t("chooseASandboxSource")}
           className="border-b border-border"
         />
-        <div className="grid gap-3 border-b border-border px-6 py-4 sm:grid-cols-3">
+        <div className="grid shrink-0 gap-3 border-b border-border px-6 py-4 sm:grid-cols-3">
           <ModeButton
             active={mode === "docker"}
             icon={Container}

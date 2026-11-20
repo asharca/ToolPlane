@@ -67,13 +67,27 @@ export function WorkTurnTrace({
         tool: t("kindTool"),
         runtime: t("kindRuntime"),
       },
-      replay: t("replay"),
-      pause: t("pause"),
       span: t("span"),
-      playhead: t("playhead"),
       expand: (name) => t("expand", { name }),
       collapse: (name) => t("collapse", { name }),
+      expandAll: t("expandAll"),
+      collapseAll: t("collapseAll"),
+      search: t("search"),
+      clearSearch: t("clearSearch"),
+      errorsOnly: t("errorsOnly"),
+      zoomIn: t("zoomIn"),
+      zoomOut: t("zoomOut"),
+      zoomReset: t("zoomReset"),
+      previousSpan: t("previousSpan"),
+      nextSpan: t("nextSpan"),
+      shareOfTotal: t("shareOfTotal"),
+      copy: t("copy"),
+      copied: t("copied"),
+      expandText: t("expandText"),
+      collapseText: t("collapseText"),
       noSpans: t("noSpans"),
+      noMatches: t("noMatches"),
+      resetFilters: t("resetFilters"),
       clearSelection: t("clearSelection"),
       timing: t("timing"),
       start: t("start"),
@@ -147,18 +161,22 @@ export function WorkTurnTrace({
       <CenterMorphModalContent
         ariaLabel={t("open")}
         closeButtonLabel={agentsT("close")}
-        className={run ? "max-w-6xl" : "max-w-lg"}
+        className={
+          run
+            ? run.spans.length > 6
+              ? "flex h-[min(52rem,calc(100dvh-2rem))] w-full max-w-6xl flex-col overflow-hidden"
+              : "flex min-h-[min(28rem,calc(100dvh-2rem))] max-h-[min(52rem,calc(100dvh-2rem))] w-full max-w-6xl flex-col overflow-hidden"
+            : "max-w-lg"
+        }
       >
         {run ? (
-          <div className="pt-8">
-            <TraceWaterfall
-              run={run}
-              labels={labels}
-              className="max-w-none rounded-none border-0"
-            />
-          </div>
+          <TraceWaterfall
+            run={run}
+            labels={labels}
+            className="min-h-0 flex-1 max-w-none rounded-none border-0"
+          />
         ) : toolTime ? (
-          <div className="space-y-4 p-6 pt-14 text-sm">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-6 pt-14 text-sm">
             <dl className="grid grid-cols-3 gap-4">
               {[
                 [t("total"), durationMs],

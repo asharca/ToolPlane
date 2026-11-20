@@ -217,10 +217,13 @@ export function CenterMorphModalContent({
 
   useEffect(() => {
     if (!backgroundScrollLocked) return;
-    const previousOverflow = document.body.style.overflow;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
     document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
     return () => {
-      document.body.style.overflow = previousOverflow;
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
     };
   }, [backgroundScrollLocked]);
 
@@ -302,15 +305,12 @@ export function CenterMorphModalContent({
                   tests/fixed-overlay-edge-sampling.test.tsx. */}
               <div
                 inert={!isPresent}
-                className="pointer-events-none fixed inset-4 z-[100] overflow-y-auto"
+                className="pointer-events-none fixed inset-4 z-[100] flex items-center justify-center"
               >
-                {/* Centering lives on this `min-h-full` wrapper, not the scroll
-                  container: a flex-centered child taller than the scrollport
-                  (e.g. a long trace waterfall) overflows symmetrically and its
-                  top becomes unreachable. A `min-h-full` flex column instead
-                  grows with the content, so centering holds when content fits
-                  and the full panel stays scrollable into view when it does not. */}
-                <div className="flex min-h-full w-full flex-col items-center justify-center py-8 drop-shadow-2xl">
+                {/* Outer overlay never scrolls: the panel is bounded by
+                  `max-h-full` inside `inset-4` so only internal modal panes
+                  scroll when content overflows. */}
+                <div className="flex h-full max-h-full w-full items-center justify-center drop-shadow-2xl">
                   <motion.div
                     ref={panelRef}
                     id={context.contentId}
@@ -358,7 +358,7 @@ export function CenterMorphModalContent({
                         : CENTER_UNFOLD_TRANSITION
                     }
                     className={cn(
-                      "pointer-events-auto relative w-full max-w-[26rem] origin-center overflow-hidden rounded-[30px] border border-border bg-background [opacity:var(--modal-opacity)] [clip-path:var(--modal-clip)]",
+                      "pointer-events-auto relative flex max-h-full w-full max-w-[26rem] origin-center flex-col overflow-hidden rounded-[30px] border border-border bg-background [opacity:var(--modal-opacity)] [clip-path:var(--modal-clip)]",
                       className,
                     )}
                   >
@@ -385,7 +385,7 @@ export function CenterMorphModalContent({
                           duration: reduce ? 0.12 : 0.2,
                           ease: EASE_OUT,
                         }}
-                        className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-foreground/[0.05] text-muted-foreground transition-colors hover:bg-foreground/[0.08] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [opacity:var(--modal-opacity)]"
+                        className="absolute right-4 top-4 z-20 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-foreground/[0.05] text-muted-foreground transition-colors hover:bg-foreground/[0.08] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [opacity:var(--modal-opacity)]"
                       >
                         <X className="h-4 w-4" aria-hidden="true" />
                       </motion.button>
