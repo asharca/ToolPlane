@@ -345,6 +345,42 @@ export class GithubRegistryTransport {
       parseJsonFile(await this.blob(repository, commit, entry)),
     );
   }
+  async unregisteredDirectories(
+    repository: string,
+    commit: string,
+    registeredPaths: string[],
+  ) {
+    const registered = new Set(registeredPaths);
+    const parents = new Set<string>();
+    for (const path of registered) {
+      const slash = path.lastIndexOf("/");
+      if (slash > 0) parents.add(path.slice(0, slash));
+    }
+    if (!parents.size) return [];
+
+    const candidates = new Set<string>();
+    for (const entry of await this.tree(repository, commit)) {
+      if (
+        !entry.path.endsWith("/package.json") ||
+        entry.type !== "blob" ||
+        (entry.mode !== "100644" && entry.mode !== "100755")
+      )
+        continue;
+      const directory = entry.path.slice(0, -"/package.json".length);
+      const slash = directory.lastIndexOf("/");
+      if (
+        slash > 0 &&
+        parents.has(directory.slice(0, slash)) &&
+        !registered.has(directory) &&
+        pathSchema.safeParse(directory).success &&
+        !(this.token && directory.includes(this.token))
+      ) {
+        candidates.add(directory);
+        if (candidates.size === 50) break;
+      }
+    }
+    return [...candidates].sort();
+  }
   async directory(repository: string, commit: string, path: string) {
     if (path !== "" && !pathSchema.safeParse(path).success)
       throw new GithubRegistryError("github_path_invalid");

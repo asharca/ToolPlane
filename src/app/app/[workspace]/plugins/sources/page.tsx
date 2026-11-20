@@ -13,6 +13,11 @@ import {
   PluginSourceCreateDialog,
   PluginWebhook,
 } from "@/components/dashboard/plugins/PluginForms";
+import {
+  PluginSourceSyncProgress,
+  PluginSourceSyncResult,
+  PluginSourceSyncWatcher,
+} from "@/components/dashboard/plugins/PluginSourceSyncStatus";
 import { getCurrentUser } from "@/lib/auth/current-user";
 
 import { db } from "@/lib/db";
@@ -98,6 +103,10 @@ export default async function PluginSourcesPage({
           })}
         </p>
       </DashboardToolbar>
+      <PluginSourceSyncWatcher
+        workspace={slug}
+        activeJobs={sources.map((source) => source.activeJob)}
+      />
       {sources.length ? (
         <ul className="space-y-3">
           {sources.map((source) => {
@@ -129,13 +138,15 @@ export default async function PluginSourcesPage({
                           {t("private")}
                         </span>
                       ) : null}
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs ${tone}`}
-                      >
-                        {t.has(`sourceStatuses.${source.status}`)
-                          ? t(`sourceStatuses.${source.status}`)
-                          : source.status}
-                      </span>
+                      {source.activeJob ? null : (
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs ${tone}`}
+                        >
+                          {t.has(`sourceStatuses.${source.status}`)
+                            ? t(`sourceStatuses.${source.status}`)
+                            : source.status}
+                        </span>
+                      )}
                     </div>
                     <a
                       className="inline-flex min-w-0 items-center gap-1.5 break-words text-sm hover:underline"
@@ -173,25 +184,23 @@ export default async function PluginSourcesPage({
                       )}
                     </p>
                   </div>
-                  {source.canSync ? (
-                    <PluginActionForm
-                      workspace={slug}
-                      operation="source-sync"
-                      id={source.id}
-                      label={t("syncNow")}
-                    />
-                  ) : null}
+                  <div className="flex shrink-0 items-center">
+                    <PluginSourceSyncProgress job={source.activeJob} />
+                    {source.canSync && !source.activeJob ? (
+                      <PluginActionForm
+                        workspace={slug}
+                        operation="source-sync"
+                        id={source.id}
+                        label={t("syncNow")}
+                      />
+                    ) : null}
+                  </div>
                 </div>
-                {source.error ? (
-                  <p
-                    role="alert"
-                    className="mt-3 break-words rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                  >
-                    {t.has(`errors.${source.error}`)
-                      ? t(`errors.${source.error}`)
-                      : t("errors.registry_sync_failed")}
-                  </p>
-                ) : null}
+                <PluginSourceSyncResult
+                  activeJob={source.activeJob}
+                  lastJob={source.lastJob}
+                  error={source.error}
+                />
                 {!source.official && canManage ? (
                   <details className="mt-3 border-t border-border pt-3">
                     <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">

@@ -2125,6 +2125,9 @@ model GithubResourceSyncJob {
   finishedAt DateTime?
   createdAt DateTime @default(now())
 
+  summary Json?
+  failedPath String?
+  retried Boolean @default(false)
   @@unique([registryId, deliveryId])
   @@index([status, createdAt])
 }
