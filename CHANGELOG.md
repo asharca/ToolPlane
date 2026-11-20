@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.43.1](https://github.com/asharca/ToolPlane/compare/v0.43.0...v0.43.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **agents:** 修复频道回复长时间停顿并补充插件同步反馈 ([#279](https://github.com/asharca/ToolPlane/issues/279)) ([d65d08b](https://github.com/asharca/ToolPlane/commit/d65d08beebeb7fb6860d17c735fe50afe407b349))
+* **agents:** 工具执行后切换兜底模型并原地续跑 ([#280](https://github.com/asharca/ToolPlane/issues/280)) ([f3f9870](https://github.com/asharca/ToolPlane/commit/f3f9870388681f0f6eb4ea41957a5a17ca67bd23))
+
 ## [0.43.0](https://github.com/asharca/ToolPlane/compare/v0.42.1...v0.43.0) (2026-11-19)
 
 
