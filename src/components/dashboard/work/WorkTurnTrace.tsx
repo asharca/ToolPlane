@@ -163,9 +163,7 @@ export function WorkTurnTrace({
         closeButtonLabel={agentsT("close")}
         className={
           run
-            ? run.spans.length > 6
-              ? "flex h-[min(52rem,calc(100dvh-2rem))] w-full max-w-6xl flex-col overflow-hidden"
-              : "flex min-h-[min(28rem,calc(100dvh-2rem))] max-h-[min(52rem,calc(100dvh-2rem))] w-full max-w-6xl flex-col overflow-hidden"
+            ? "flex h-[min(52rem,calc(100dvh-2rem))] w-full max-w-6xl flex-col overflow-hidden"
             : "max-w-lg"
         }
       >
