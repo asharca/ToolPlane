@@ -3503,7 +3503,7 @@ describe("official Pi SDK headless session host", () => {
     });
     expect(f.requests).toHaveLength(5);
   }, 60000);
-  it("exhausts same-model retries before switching gateways without duplicating the prompt, then resets next turn", async () => {
+  it("switches gateways on the first failure without duplicating the prompt, then keeps the fallback while the primary cools down", async () => {
     const f = await setup();
     f.behavior.tool = "";
     f.behavior.streamCompletion = async (response) => {
@@ -3546,8 +3546,8 @@ describe("official Pi SDK headless session host", () => {
         },
       },
     });
+    // The fallback is taken at once; same-model retries are not spent first.
     expect(f.requests.map((request) => request.body.model)).toEqual([
-      "controlled",
       "controlled",
       "backup",
     ]);
@@ -3557,10 +3557,68 @@ describe("official Pi SDK headless session host", () => {
         request.body.messages.filter((message) => message.role === "user"),
       ).toHaveLength(1);
     f.behavior.streamCompletion = undefined;
-    expect(await host.request("prompt", "Next turn")).toMatchObject({
+    expect(
+      await host.request("prompt", "Next turn", {
+        ...f.context,
+        model: { ...f.config.model, toolplaneProviderId: "primary" },
+        fallbackModels: [
+          {
+            ...f.config.model,
+            provider: "toolplane-secondary",
+            id: "backup",
+            toolplaneProviderId: "secondary",
+            baseUrl: f.config.model.baseUrl.replace("/v1", "/secondary/v1"),
+          },
+        ],
+      }),
+    ).toMatchObject({
+      success: true,
+      result: { actualModel: { providerId: "secondary", model: "backup" } },
+    });
+    expect(f.requests.at(-1)?.body.model).toBe("backup");
+  }, 60000);
+  it("returns to the primary once its stated retry-after cooldown expires", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    let primaryFailures = 1;
+    f.behavior.streamCompletion = async (response) => {
+      if (
+        f.requests.at(-1)?.body.model === "controlled" &&
+        primaryFailures-- > 0
+      ) {
+        response.writeHead(503, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            error: { message: "Model is overloaded, retry after 1 seconds" },
+          }),
+        );
+      } else completion(response, { content: "OK" }, "stop");
+    };
+    const host = await f.launch();
+    const context = {
+      ...f.context,
+      modelRetries: 3,
+      fallbackModels: [{ ...f.config.model, id: "backup" }],
+    };
+    expect(await host.request("prompt", "First", context)).toMatchObject({
       success: true,
     });
-    expect(f.requests.at(-1)?.body.model).toBe("controlled");
+    expect(await host.request("prompt", "Cooling", context)).toMatchObject({
+      success: true,
+    });
+    // The host is a separate process with its own clock; fake timers cannot reach it.
+    const cooled = Promise.withResolvers<void>();
+    setTimeout(cooled.resolve, 1_200);
+    await cooled.promise;
+    expect(await host.request("prompt", "Recovered", context)).toMatchObject({
+      success: true,
+    });
+    expect(f.requests.map((request) => request.body.model)).toEqual([
+      "controlled",
+      "backup",
+      "backup",
+      "controlled",
+    ]);
   }, 60000);
   it("never switches models or replays a native tool after its execution starts", async () => {
     const f = await setup();
@@ -3599,21 +3657,45 @@ describe("official Pi SDK headless session host", () => {
     ]);
     expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("1");
   }, 60000);
-  it("does not use fallback for a non-retryable provider rejection", async () => {
+  it("consults the fallback for a non-retryable provider rejection and fails at once without one", async () => {
     const f = await setup();
+    f.behavior.tool = "";
     f.behavior.streamCompletion = async (response) => {
+      if (f.requests.at(-1)?.body.model === "controlled") {
+        response.writeHead(401);
+        response.end(
+          JSON.stringify({ error: { message: "private rejection" } }),
+        );
+      } else completion(response, { content: "FALLBACK_RECOVERED" }, "stop");
+    };
+    const host = await f.launch();
+    const switched = await host.request("prompt", "Rejected", {
+      ...f.context,
+      fallbackModels: [{ ...f.config.model, id: "backup" }],
+    });
+    expect(switched).toMatchObject({
+      success: true,
+      result: { text: "FALLBACK_RECOVERED" },
+    });
+    expect(f.requests.map((request) => request.body.model)).toEqual([
+      "controlled",
+      "backup",
+    ]);
+
+    const fresh = await setup();
+    fresh.behavior.streamCompletion = async (response) => {
       response.writeHead(401);
       response.end(JSON.stringify({ error: { message: "private rejection" } }));
     };
-    const result = await (await f.launch()).request("prompt", "Rejected", {
-      ...f.context,
-      fallbackModels: [{ ...f.config.model, id: "backup" }],
+    const result = await (await fresh.launch()).request("prompt", "Rejected", {
+      ...fresh.context,
+      modelRetries: 3,
     });
     expect(result).toMatchObject({
       success: false,
       error: { code: "PI_SDK_MODEL_FAILED", reason: "HTTP_401" },
     });
-    expect(f.requests).toHaveLength(1);
+    expect(fresh.requests).toHaveLength(1);
     expect(JSON.stringify(result)).not.toContain("private rejection");
   }, 60000);
 

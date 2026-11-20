@@ -70,8 +70,11 @@ export default async function AgentDetailPage({
     if (c) query.set("c", c);
     redirect(`/app/${slug}/work?${query}`);
   }
-  const selectedDeps = new Set(
-    agent.servers.map((server) => server.deploymentId),
+  const toolTimeouts = new Map(
+    agent.servers.map(({ deploymentId, toolTimeoutSeconds }) => [
+      deploymentId,
+      toolTimeoutSeconds,
+    ]),
   );
   const selectedSkills = new Set(
     agent.skills.map((skill) => skill.installedSkillId),
@@ -90,7 +93,7 @@ export default async function AgentDetailPage({
   ] = await Promise.all([
     listAgentChannelConnections(ws.id, agentId),
     listProviders(ws.id),
-    listAgentDeploymentOptions(ws.id, selectedDeps),
+    listAgentDeploymentOptions(ws.id, toolTimeouts),
     listAgentSkillOptions(ws.id, selectedSkills),
     listSandboxes(ws.id),
     listPlugins(ws, { installedOnly: true }),
@@ -176,6 +179,7 @@ export default async function AgentDetailPage({
           maxSteps: agent.maxSteps,
           taskTimeoutSeconds: agent.taskTimeoutSeconds,
           defaultTaskTimeoutSeconds: A2A_LIMITS.deadlineSeconds,
+          mcpToolTimeoutSeconds: agent.mcpToolTimeoutSeconds,
           reasoningEffort:
             normalizeReasoningLevel(agent.reasoningEffort) ?? null,
           toolApproval: ToolApprovalPolicySchema.parse(

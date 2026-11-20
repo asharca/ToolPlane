@@ -5,6 +5,7 @@ import { StreamRulesSchema } from "./stream-rules";
 import {
   AGENT_STEP_BOUNDS,
   AGENT_TASK_TIMEOUT_BOUNDS,
+  AGENT_MCP_TOOL_TIMEOUT_BOUNDS,
   REASONING_LEVELS,
 } from "./constants";
 import { OMP_VERSION, OmpConfigSnapshotSchema } from "./omp-config";
@@ -174,6 +175,12 @@ export const AgentAdvisorSchema = z
   .strict();
 export type AgentAdvisor = z.infer<typeof AgentAdvisorSchema>;
 
+const mcpToolTimeoutSeconds = z
+  .number()
+  .int()
+  .min(AGENT_MCP_TOOL_TIMEOUT_BOUNDS.min)
+  .max(AGENT_MCP_TOOL_TIMEOUT_BOUNDS.max);
+
 // Resource identifiers and credential references only. Runtime materialization
 // resolves live grants and secrets separately; it must never persist their values.
 const PiRevisionConfigSchema = z
@@ -206,6 +213,8 @@ const PiRevisionConfigSchema = z
       .min(AGENT_TASK_TIMEOUT_BOUNDS.min)
       .max(AGENT_TASK_TIMEOUT_BOUNDS.max)
       .optional(),
+    // No default: historical revision JSON and checksums remain unchanged.
+    mcpToolTimeoutSeconds: mcpToolTimeoutSeconds.optional(),
     maxSteps: z
       .number()
       .int()
@@ -268,6 +277,8 @@ const PiRevisionConfigSchema = z
               .nullable(),
             runtimeFilesChecksum: checksum,
             allowedToolNames: references,
+            // Per-MCP override of mcpToolTimeoutSeconds; absent in history.
+            toolTimeoutSeconds: mcpToolTimeoutSeconds.optional(),
           })
           .strict(),
       )

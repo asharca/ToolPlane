@@ -10,6 +10,7 @@ export type RevisionChangedField =
   | "secretObfuscation"
   | "maxSteps"
   | "taskTimeout"
+  | "mcpToolTimeout"
   | "packages"
   | "knowledge"
   | "environment"

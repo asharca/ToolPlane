@@ -186,6 +186,14 @@ export function diffAgentRevisions(
 ): RevisionUpgradeDiff {
   const a = from.config,
     b = to.config;
+  const mcpTimeouts = (config: AgentRevisionConfig) => {
+    const overrides = new Map<string, number>();
+    for (const { deploymentId, toolTimeoutSeconds } of config.mcpGrants) {
+      if (toolTimeoutSeconds !== undefined)
+        overrides.set(deploymentId, toolTimeoutSeconds);
+    }
+    return [config.mcpToolTimeoutSeconds, overrides];
+  };
   const fields: Array<[RevisionChangedField, unknown, unknown]> = [
     ["systemPrompt", a.systemPrompt, b.systemPrompt],
     ["contextFiles", a.contextFiles ?? false, b.contextFiles ?? false],
@@ -212,6 +220,7 @@ export function diffAgentRevisions(
     ],
     ["maxSteps", a.maxSteps, b.maxSteps],
     ["taskTimeout", a.taskTimeoutSeconds ?? null, b.taskTimeoutSeconds ?? null],
+    ["mcpToolTimeout", mcpTimeouts(a), mcpTimeouts(b)],
     ["reasoningEffort", a.reasoningEffort ?? null, b.reasoningEffort ?? null],
     ["streamRules", a.streamRules ?? [], b.streamRules ?? []],
     [

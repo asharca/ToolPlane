@@ -10,6 +10,7 @@ import {
   useDeferredValue,
   useMemo,
   useState,
+  type ReactNode,
   type SyntheticEvent,
 } from "react";
 import { Plus, Search, X, type LucideIcon } from "lucide-react";
@@ -30,6 +31,8 @@ export type AgentResourceOption = {
   source?: string | null;
   status?: string | null;
   keywords?: string[];
+  /** MCP bindings only: per-MCP tool-call timeout override, in seconds. */
+  toolTimeoutSeconds?: number | null;
 };
 
 function sourceLabel(
@@ -406,6 +409,8 @@ export function AgentResourceList({
   onSelectionChange,
   disabled = false,
   empty,
+  itemControl,
+  footer,
 }: {
   id: string;
   icon: LucideIcon;
@@ -417,6 +422,10 @@ export function AgentResourceList({
   disabled?: boolean;
   /** Shown in place of the list until something is added. */
   empty: { title: string; description: string };
+  /** Extra control on each selected row, before its status. */
+  itemControl?: (option: AgentResourceOption) => ReactNode;
+  /** Section-wide fields below the list. */
+  footer?: ReactNode;
 }) {
   const t = useTranslations("console.agents");
   const [adding, setAdding] = useState(false);
@@ -481,6 +490,7 @@ export function AgentResourceList({
                   </span>
                 ) : null}
               </span>
+              {itemControl?.(option)}
               {option.status ? (
                 <span className="shrink-0 text-xs text-muted-foreground">
                   {statusLabel(option.status, t)}
@@ -512,6 +522,7 @@ export function AgentResourceList({
           className="rounded-xl bg-muted/30"
         />
       )}
+      {footer}
     </SettingsSection>
   );
 }

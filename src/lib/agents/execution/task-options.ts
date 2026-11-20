@@ -21,7 +21,6 @@ import {
 import {
   AGENT_TASK_RUNTIME_TOKEN_MAX_TTL_SECONDS,
   createAgentRuntimeToken,
-  runtimeMcpProxyUrl,
   runtimeModelProxyBase,
   sandboxRuntimeOrigin,
 } from "@/lib/agents/runtime-access";
@@ -43,6 +42,7 @@ import {
   resolveConversationModelOverride,
 } from "@/lib/agents/turn-model";
 import { resolveSessionExternalSandboxes } from "@/lib/agents/external-sandboxes";
+import { sessionMcpServers as pinnedSessionMcpServers } from "@/lib/agents/session-mcp-servers";
 import {
   activeConversationMessages,
   hasNativeConversationHistory,
@@ -218,6 +218,10 @@ export async function localTaskOptions(
     agentId: agent.id,
     pinned: agent.revisionConfig.externalSandboxes,
   });
+  const sessionMcpServers = pinnedSessionMcpServers(
+    agent.revisionConfig,
+    deploymentIds,
+  );
   // Task-bound: revoked with the lease, so it may last until the task deadline.
   const exp = Math.floor(
     Math.min(
@@ -405,10 +409,7 @@ export async function localTaskOptions(
     piPackages,
     messages,
     mcpServers: [
-      ...deploymentIds.map((deploymentId) => ({
-        deploymentId,
-        url: runtimeMcpProxyUrl(deploymentId),
-      })),
+      ...sessionMcpServers,
       ...externalSandboxes,
       // Always attached: artifact publication does not depend on outbound communication.
       // Delegation waits for child results, so allow the adapter's maximum request time.

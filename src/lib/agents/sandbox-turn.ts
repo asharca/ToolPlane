@@ -3,7 +3,6 @@ import "server-only";
 import { db } from "@/lib/db";
 import {
   createAgentRuntimeToken,
-  runtimeMcpProxyUrl,
   runtimeModelProxyBase,
   sandboxRuntimeOrigin,
 } from "./runtime-access";
@@ -37,6 +36,7 @@ import {
   resolveConversationModelOverride,
 } from "./turn-model";
 import { resolveSessionExternalSandboxes } from "./external-sandboxes";
+import { sessionMcpServers as pinnedSessionMcpServers } from "./session-mcp-servers";
 
 import { withWorkUiLease } from "./execution/work-ui";
 type SandboxTurnAgent = {
@@ -231,6 +231,10 @@ export async function runDedicatedSandboxTurn(
             agentId: input.agent.id,
             pinned: agent.revisionConfig.externalSandboxes,
           });
+          const sessionMcpServers = pinnedSessionMcpServers(
+            agent.revisionConfig,
+            deploymentIds,
+          );
           const now = Math.floor(Date.now() / 1000);
           const runtimeAccessToken = await createAgentRuntimeToken({
             workspaceId: input.agent.workspaceId,
@@ -280,13 +284,7 @@ export async function runDedicatedSandboxTurn(
             messages: input.messages,
             skills: input.skills,
             piPackages: piSession?.packages,
-            mcpServers: [
-              ...deploymentIds.map((deploymentId) => ({
-                deploymentId,
-                url: runtimeMcpProxyUrl(deploymentId),
-              })),
-              ...externalSandboxes,
-            ],
+            mcpServers: [...sessionMcpServers, ...externalSandboxes],
             workingDirectory: input.workingDirectory,
             runtimeSessionId,
             agentRevisionId: agent.agentRevisionId,

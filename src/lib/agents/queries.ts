@@ -22,6 +22,7 @@ export type AgentResourceOption = {
   status: string;
   keywords: string[];
   checked: boolean;
+  toolTimeoutSeconds?: number | null;
 };
 
 const INSTALLED_SKILL_INCLUDE = {
@@ -147,7 +148,7 @@ export async function listProviders(workspaceId: string) {
 
 export async function listAgentDeploymentOptions(
   workspaceId: string,
-  selectedIds?: ReadonlySet<string>,
+  selectedBindings?: ReadonlyMap<string, number | null>,
 ): Promise<AgentResourceOption[]> {
   const deployments = await db.deployment.findMany({
     where: {
@@ -190,7 +191,8 @@ export async function listAgentDeploymentOptions(
         ...(deployment.server?.categories.map((category) => category.slug) ??
           []),
       ].filter((keyword) => keyword.length > 0),
-      checked: selectedIds?.has(deployment.id) ?? false,
+      checked: selectedBindings?.has(deployment.id) ?? false,
+      toolTimeoutSeconds: selectedBindings?.get(deployment.id) ?? null,
     };
   });
 }
@@ -266,9 +268,14 @@ export async function getAgentPageData(workspaceId: string, agentId: string) {
       toolApproval: true,
       secretObfuscation: true,
       taskTimeoutSeconds: true,
+      mcpToolTimeoutSeconds: true,
       provider: { select: { name: true } },
       servers: {
-        select: { deploymentId: true, allowedToolNames: true },
+        select: {
+          deploymentId: true,
+          allowedToolNames: true,
+          toolTimeoutSeconds: true,
+        },
       },
       skills: { select: { installedSkillId: true } },
       toolkits: { select: { toolkitId: true } },

@@ -50,6 +50,7 @@ import {
 import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
 import { buildAgentRevisionDiff } from "@/lib/revisions/config-diff";
 import {
+  AGENT_MCP_TOOL_TIMEOUT_BOUNDS,
   DEFAULT_REASONING_LEVEL,
   REASONING_LEVELS,
   normalizeReasoningEffort,
@@ -177,6 +178,8 @@ type Props = {
   /** Seconds; null uses the system default. */
   taskTimeoutSeconds: number | null;
   defaultTaskTimeoutSeconds: number;
+  /** Seconds for each MCP tool call; null uses the system default. */
+  mcpToolTimeoutSeconds: number | null;
   providers: Array<ModelProviderOption & { format: string }>;
   deployments: AgentResourceOption[];
   skills: AgentResourceOption[];
@@ -297,6 +300,41 @@ export function AgentSettingsForm(props: Props) {
   const [deploymentIds, setDeploymentIds] = useState(() =>
     selected(deployments),
   );
+  const initialMcpToolTimeout =
+    props.mcpToolTimeoutSeconds === null
+      ? ""
+      : String(props.mcpToolTimeoutSeconds);
+  const [mcpToolTimeout, setMcpToolTimeout] = useState(initialMcpToolTimeout);
+  const initialMcpToolTimeoutOverride = (deploymentId: string) => {
+    const seconds = deployments.find(
+      (option) => option.id === deploymentId,
+    )?.toolTimeoutSeconds;
+    return seconds == null ? "" : String(seconds);
+  };
+  const [mcpToolTimeoutOverrides, setMcpToolTimeoutOverrides] = useState<
+    Record<string, string>
+  >(() =>
+    Object.fromEntries(
+      deployments.flatMap((option) =>
+        option.toolTimeoutSeconds == null
+          ? []
+          : [[option.id, String(option.toolTimeoutSeconds)]],
+      ),
+    ),
+  );
+  const mcpToolTimeoutOverride = (deploymentId: string) =>
+    (mcpToolTimeoutOverrides[deploymentId] ?? "").trim();
+  const mcpToolTimeoutDefaultDirty =
+    mcpToolTimeout.trim() !== initialMcpToolTimeout;
+  const mcpToolTimeoutDirty =
+    mcpToolTimeoutDefaultDirty ||
+    [...deploymentIds].some(
+      (deploymentId) =>
+        mcpToolTimeoutOverride(deploymentId) !==
+        initialMcpToolTimeoutOverride(deploymentId),
+    );
+  const mcpToolTimeoutPlaceholder =
+    mcpToolTimeout.trim() || String(AGENT_MCP_TOOL_TIMEOUT_BOUNDS.default);
   const [skillIds, setSkillIds] = useState(() => selected(skills));
   const initialAttachments = externalSandboxes.flatMap((sandbox) =>
     sandbox.access ? [{ sandboxId: sandbox.id, access: sandbox.access }] : [],
@@ -389,7 +427,7 @@ export function AgentSettingsForm(props: Props) {
       JSON.stringify(props.toolApproval ?? { mode: "off" }),
     secretObfuscation: secretObfuscation !== props.secretObfuscation,
     advisor: JSON.stringify(advisor) !== JSON.stringify(props.advisor ?? null),
-    mcp: !sameSet(deploymentIds, selected(deployments)),
+    mcp: !sameSet(deploymentIds, selected(deployments)) || mcpToolTimeoutDirty,
     skills: !sameSet(skillIds, selected(skills)),
     sandboxes:
       attachmentsDirty ||
@@ -458,6 +496,14 @@ export function AgentSettingsForm(props: Props) {
       (appliedConfig.reasoningEffort ?? DEFAULT_REASONING_LEVEL) ||
     props.maxSteps !== appliedConfig.maxSteps ||
     props.taskTimeoutSeconds !== (appliedConfig.taskTimeoutSeconds ?? null) ||
+    props.mcpToolTimeoutSeconds !==
+      (appliedConfig.mcpToolTimeoutSeconds ?? null) ||
+    appliedConfig.mcpGrants.some(
+      (grant) =>
+        (grant.toolTimeoutSeconds ?? null) !==
+        (deployments.find((option) => option.id === grant.deploymentId)
+          ?.toolTimeoutSeconds ?? null),
+    ) ||
     props.secretObfuscation !== (appliedConfig.secretObfuscation ?? true) ||
     JSON.stringify(props.advisor ?? null) !==
       JSON.stringify(appliedConfig.advisor ?? null) ||
@@ -798,15 +844,17 @@ export function AgentSettingsForm(props: Props) {
               onChange={changed}
               onInvalidCapture={(event) => {
                 const target = event.target as HTMLInputElement;
-                if (
-                  target.name !== "name" &&
-                  target.name !== "maxSteps" &&
-                  target.name !== "taskTimeoutMinutes"
-                )
-                  return;
                 const invalidSection =
-                  target.name === "name" ? "general" : "advanced";
-                reveal(invalidSection);
+                  target.name === "name"
+                    ? "general"
+                    : target.name === "maxSteps" ||
+                        target.name === "taskTimeoutMinutes"
+                      ? "advanced"
+                      : target.name === "mcpToolTimeoutSeconds" ||
+                          "mcpToolTimeout" in target.dataset
+                        ? "mcp"
+                        : null;
+                if (invalidSection) reveal(invalidSection);
               }}
               data-unsaved-changes={hasUnsavedChanges ? "true" : "false"}
               className={fillBody ? "flex flex-1 flex-col gap-5" : "space-y-5"}
@@ -849,6 +897,15 @@ export function AgentSettingsForm(props: Props) {
                     : ""
                 }
               />
+              {/* Overrides follow the binding, even while the selector replaces the rows. */}
+              {[...deploymentIds].map((deploymentId) => (
+                <input
+                  key={deploymentId}
+                  type="hidden"
+                  name={`mcpToolTimeoutSeconds:${deploymentId}`}
+                  value={mcpToolTimeoutOverride(deploymentId)}
+                />
+              ))}
               <input
                 type="hidden"
                 name="piPackages"
@@ -1026,6 +1083,55 @@ export function AgentSettingsForm(props: Props) {
                         setDeploymentIds(next);
                         changed();
                       }}
+                      itemControl={(option) => (
+                        <Input
+                          type="number"
+                          step={1}
+                          min={AGENT_MCP_TOOL_TIMEOUT_BOUNDS.min}
+                          max={AGENT_MCP_TOOL_TIMEOUT_BOUNDS.max}
+                          data-mcp-tool-timeout=""
+                          aria-label={t("mcpToolTimeoutOverride", {
+                            name: option.label,
+                          })}
+                          title={t("mcpToolTimeoutOverride", {
+                            name: option.label,
+                          })}
+                          placeholder={mcpToolTimeoutPlaceholder}
+                          value={mcpToolTimeoutOverrides[option.id] ?? ""}
+                          onChange={(value) =>
+                            setMcpToolTimeoutOverrides((previous) => ({
+                              ...previous,
+                              [option.id]: value,
+                            }))
+                          }
+                          className="w-20 shrink-0"
+                        />
+                      )}
+                      footer={
+                        <DialogField
+                          label={t("mcpToolTimeout")}
+                          description={t("mcpToolTimeoutDescription")}
+                          htmlFor={`${formId}-mcp-tool-timeout`}
+                          dirty={mcpToolTimeoutDefaultDirty}
+                          layout="row"
+                        >
+                          <Input
+                            id={`${formId}-mcp-tool-timeout`}
+                            aria-label={t("mcpToolTimeout")}
+                            name="mcpToolTimeoutSeconds"
+                            type="number"
+                            step={1}
+                            min={AGENT_MCP_TOOL_TIMEOUT_BOUNDS.min}
+                            max={AGENT_MCP_TOOL_TIMEOUT_BOUNDS.max}
+                            placeholder={String(
+                              AGENT_MCP_TOOL_TIMEOUT_BOUNDS.default,
+                            )}
+                            value={mcpToolTimeout}
+                            onChange={setMcpToolTimeout}
+                            className="w-24"
+                          />
+                        </DialogField>
+                      }
                     />
                   </div>
                   <div hidden={!showSection("skills")}>

@@ -5,6 +5,13 @@ export const AGENT_STEP_BOUNDS = { min: 1, max: 1000, default: 100 } as const;
 // Like OMP, long runs are bounded by step limits rather than a tight clock; the
 // ceiling is the 7-day A2A context retention that bounds every task anyway.
 export const AGENT_TASK_TIMEOUT_BOUNDS = { min: 300, max: 604_800 } as const;
+// Per tools/call wait, in seconds: an Agent-wide default plus optional per-MCP
+// overrides, both pinned in the revision.
+export const AGENT_MCP_TOOL_TIMEOUT_BOUNDS = {
+  min: 1,
+  max: 300,
+  default: 30,
+} as const;
 
 /** Concrete levels, lowest first. */
 export const REASONING_LEVELS = [
