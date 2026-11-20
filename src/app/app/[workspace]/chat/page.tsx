@@ -6,7 +6,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth/current-user";
 
 import { listProviders } from "@/lib/agents/queries";
-import { listChatDeploymentOptions } from "@/lib/chat/resources";
+import { listChatDeploymentChoices } from "@/lib/chat/resources";
 import { getChatThreadForWorkspace } from "@/lib/chat/threads";
 import { listChatAssistantsForWorkspace } from "@/lib/chat/assistants";
 import { listRunningChatThreadIds } from "@/lib/chat/admission";
@@ -85,7 +85,7 @@ export default async function WorkspaceChatPage({
     await Promise.all([
       listChatAssistantsForWorkspace(workspace),
       listProviders(workspace.id),
-      listChatDeploymentOptions(workspace),
+      listChatDeploymentChoices(workspace),
       listRunningChatThreadIds(workspace),
     ]);
   // The MCP change notice shows until the first thread runs on that revision.

@@ -640,3 +640,12 @@
 - **错误与原因**：Assistant 请求迁移时，恢复回调和断线订阅都依赖翻译函数。函数身份变化后，恢复结果触发渲染，每次渲染又启动一次恢复，回归卡在第一条对话用例。
 - **约束层（结构）**：在渲染时求出 `processFailedText`；恢复和订阅用所需的字符串作为依赖，不捕获翻译函数。
 - **下次怎么验证**：用 [`workspace-assistant-chat.test.tsx`](tests/unit/workspace-assistant-chat.test.tsx) 验收挂载后的恢复、轮询、订阅重连和停止操作；验证失败时区分请求没结束与请求被反复重建。
+
+### TP-L061：页面渲染不能等远端网络发现，只为弹窗准备的数据更不能
+
+**规则**：导航进入的服务端页面只读数据库和进程内状态。远端 MCP 的 `tools/list`、目录持久化和授权同步属于显式刷新或执行入口，不放在页面渲染路径上；页面需要的字段（名称、状态）单独提供无网络的查询。
+
+- **错误与原因（2026-11-20，用户反馈“点击助手都会卡一下”）**：`/chat` 页面调用 `listChatDeploymentOptions()`，对每个运行中的远端 MCP 获取连接锁、建立连接并分页拉取 `tools/list`，再写回目录、触发授权同步；而页面只把 `id`／`name`／`status` 传给助手编辑弹窗。本机对公共远端 MCP 单次 `initialize` 或 `tools/list` 实测 1.5–2.2 秒，每次进入助手页都要等这一轮。改为 `listChatDeploymentChoices()`，只查库和 supervisor 状态；带工具列表的实时发现保留在 `/api/v1/chat/assistants/resources`。
+- **下次怎么验证**：给页面加数据加载时，沿调用链检查是否有 `mcpRpc`、`startProcess`、外部 `fetch` 或写库副作用；用浏览器从其他页面点击进入，对比 RSC 请求耗时，不只看热缓存下的 curl。MCP 详情页按设计会实时检查单个部署，不适用本条。
+- **约束层（结构）**：[`src/lib/chat/resources.ts`](src/lib/chat/resources.ts) 分开无网络的选项查询与实时发现。
+- **确认日期**：2026-11-20。
