@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.2](https://github.com/asharca/ToolPlane/compare/v0.43.1...v0.43.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **runtime:** 避免瞬时超时锁死运行时导致在线更新停机 ([#282](https://github.com/asharca/ToolPlane/issues/282)) ([6195407](https://github.com/asharca/ToolPlane/commit/6195407b5c712f5af5c0697be621df68b90631cf))
+
 ## [0.43.1](https://github.com/asharca/ToolPlane/compare/v0.43.0...v0.43.1) (2026-11-20)
 
 

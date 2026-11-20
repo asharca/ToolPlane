@@ -16,15 +16,36 @@ import {
   loadMcpToolPolicies,
 } from "@/lib/workspace/mcp-tool-exposure";
 
+function listRemoteDeployments(scope: WorkspaceScope) {
+  return db.deployment
+    .findMany({
+      where: { workspace: workspaceScopeWhere(scope), sandbox: { is: null } },
+      include: { server: { select: { name: true } } },
+      orderBy: { createdAt: "asc" },
+    })
+    .then((deployments) => deployments.filter(isRemoteMcpDeployment));
+}
+
+function deploymentName(deployment: {
+  name: string | null;
+  server: { name: string } | null;
+}) {
+  return deployment.name ?? deployment.server?.name ?? "Remote MCP";
+}
+
+/** Page-render choices: database and supervisor state only, never a remote round trip. */
+export async function listChatDeploymentChoices(scope: WorkspaceScope) {
+  return (await listRemoteDeployments(scope)).map((deployment) => ({
+    id: deployment.id,
+    name: deploymentName(deployment),
+    status: liveStatus(deployment.id) ?? deployment.status,
+  }));
+}
+
 // Editor options expose neither connection recipes nor credential values.
 export async function listChatDeploymentOptions(scope: WorkspaceScope) {
   const workspaceId = scope.id;
-  const deployments = await db.deployment.findMany({
-    where: { workspace: workspaceScopeWhere(scope), sandbox: { is: null } },
-    include: { server: { select: { name: true } } },
-    orderBy: { createdAt: "asc" },
-  });
-  const remote = deployments.filter(isRemoteMcpDeployment);
+  const remote = await listRemoteDeployments(scope);
   const policies = await loadMcpToolPolicies(
     remote.map((deployment) => deployment.id),
     workspaceId,
@@ -64,7 +85,7 @@ export async function listChatDeploymentOptions(scope: WorkspaceScope) {
       }
       return {
         id: deployment.id,
-        name: deployment.name ?? deployment.server?.name ?? "Remote MCP",
+        name: deploymentName(deployment),
         status,
         available,
         tools,
