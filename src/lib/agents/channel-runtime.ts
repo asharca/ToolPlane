@@ -797,13 +797,23 @@ export async function stopAgentChannelRunner(
 export async function shutdownAgentChannelRunners() {
   // Do not write persisted channel state: running channels should resume on a clean restart.
   await Promise.allSettled([...starts().values()]);
-  const active = [...runners().values()];
+  const active = [...runners()];
   runners().clear();
-  for (const runner of active) runner.cleanup();
+  for (const [, runner] of active) runner.cleanup();
   await stopChannelInboundRecovery();
   await Promise.all(
-    active.map(async (runner) => {
-      await runner.adapter.disconnect();
+    active.map(async ([channelId, runner]) => {
+      // The connection closes with this process; a failed farewell request
+      // (e.g. Telegram's final getUpdates) leaves nothing for the next owner.
+      await runner.adapter.disconnect().catch((error: unknown) => {
+        logSystemEvent("channel.runner.disconnect_failed", {
+          domain: "channel",
+          level: "warn",
+          channelId,
+          workspaceId: runner.workspaceId,
+          error,
+        });
+      });
       await runner.pendingWrite;
     }),
   );

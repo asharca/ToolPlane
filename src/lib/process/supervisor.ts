@@ -361,7 +361,7 @@ export function ensureSandboxNetwork(): Promise<void> {
         else resolve();
       };
       const timer = setTimeout(() => {
-        markRuntimeUncertain();
+        markRuntimeUncertain("DOCKER_COMMAND_TIMEOUT");
         child?.kill("SIGKILL");
         finish(new Error("Sandbox network setup timed out."));
       }, 30_000);

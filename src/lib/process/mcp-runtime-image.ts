@@ -127,7 +127,7 @@ async function captureDocker(
       else resolve(output);
     };
     const timer = setTimeout(() => {
-      markRuntimeUncertain();
+      markRuntimeUncertain("DOCKER_COMMAND_TIMEOUT");
       child.kill("SIGKILL");
       finish(new Error("MCP_CAPTURE_DOCKER_TIMEOUT"));
     }, options.timeoutMs ?? 30_000);
@@ -335,7 +335,7 @@ async function captureRuntimeImage(
         cleanup: true,
       });
     } catch (cleanupError) {
-      markRuntimeUncertain();
+      markRuntimeUncertain("MCP_CAPTURE_CLEANUP_FAILED");
       throw new AggregateError(
         failed ? [failure, cleanupError] : [cleanupError],
         "MCP_CAPTURE_CLEANUP_FAILED",

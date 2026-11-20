@@ -113,7 +113,7 @@ function runDockerOwned(args: string[], timeoutMs: number): Promise<void> {
     };
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      markRuntimeUncertain();
+      markRuntimeUncertain("DOCKER_COMMAND_TIMEOUT");
       finish(
         new AttachmentStorageError(
           `Docker command timed out after ${timeoutMs}ms.`,
@@ -252,7 +252,7 @@ async function streamIntoHelperOwned(
   signal?.addEventListener("abort", abort, { once: true });
   const stopChild = () => {
     child.kill("SIGKILL");
-    markRuntimeUncertain();
+    markRuntimeUncertain("ATTACHMENT_HELPER_STOPPED");
   };
   controller.signal.addEventListener("abort", stopChild, { once: true });
   const timer = setTimeout(

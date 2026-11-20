@@ -239,6 +239,10 @@ export function shutdownRuntimeOwner(): Promise<boolean> {
         domain: "runtime",
         error: new Error("Runtime operations did not drain."),
         errorCode: "RUNTIME_DRAIN_INCOMPLETE",
+        attributes: {
+          pending: ownership.pending,
+          reasons: [...ownership.uncertainReasons],
+        },
       });
     const clean = !lost && stopped && drained;
     await g.__toolplaneOwnerLease?.release(clean);

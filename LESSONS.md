@@ -73,6 +73,15 @@
 - **证据**：[运行维护文档中的 Docker/OpenSSL 修复与验收要求](https://asharca.github.io/toolplane-docs/docs/zh/developers/docs/RUNTIME_OPERATIONS#user-content-升级顺序)。
 - **确认日期**：历史日期未知；初始整理于 2026-10-18，未统计复发次数。
 
+### TP-L060：运行时 uncertain 只能记录真正未落定的外部操作，且置位时必须留下原因
+
+**规则**：`markRuntimeUncertain` 是进程级锁存，直到重启都不会清除，并会让之后的受管停机留下 dirty 标记。只有结果确实无法确认的外部操作才能置位；能被后续步骤确认已完成的瞬时超时，不能置位。置位时必须给出固定原因码并记录日志。在线更新发现已置位时直接拒绝，不能先排空、停掉仍在服务的 owner。
+
+- **错误与原因**：10030 在线更新于 2026-11-17、2026-11-20 01:09、06:11 三次报 `SYSTEM_UPDATE_DRAIN_FAILED`，排空后运行时停止，readiness 一直是 503，直到用 ACK 恢复。三次的 `RUNTIME_DRAIN_INCOMPLETE` 都在排空后几毫秒内出现：没有待处理操作，只是锁存早已置位。11-17 的原因是 Telegram 断开时最后一次 `getUpdates` 失败，被当成运行时不确定。另外两次的原因在 socket-proxy 日志里：任务截止时工具仍在运行，`terminateDockerExec` 发出的 kill exec 一直挂到原 exec 结束（11-19 02:37 用了 28s，11-20 03:36 用了 34s），`runDockerOnce` 10s 超时后置位；后续某次 kill 尝试其实已成功退出，锁存却已无法撤销。因为置位不留日志，只能靠代理日志反推。
+- **下次怎么验证**：[`docker-exec-termination.test.ts`](tests/unit/docker-exec-termination.test.ts) 覆盖两种情况：前两次 kill 超时、第三次完成时不置位；全部超时时以 `SANDBOX_PROCESS_STOP_UNCONFIRMED` 置位并记日志（旧实现下第一例失败）。[`release-update.test.ts`](tests/unit/release-update.test.ts) 覆盖已置位时更新不调用 shutdown、保留旧文件。若再出现排空失败，先查 `runtime.owner.uncertain` 事件的错误码和栈，以及 `RUNTIME_DRAIN_INCOMPLETE` 里的 `pending`／`reasons`。
+- **约束层（结构）**：`markRuntimeUncertain(reason)` 的原因码由 `RuntimeUncertainReason` 类型限定，见 [`ownership-state.ts`](src/lib/runtime/ownership-state.ts)；kill 重试的落定判断在 [`docker-exec.ts`](src/lib/agents/sandbox-runtime/docker-exec.ts)；更新预检在 [`release-update.ts`](src/lib/system/release-update.ts)；频道断开在 [`channel-runtime.ts`](src/lib/agents/channel-runtime.ts) 只记录 warn。
+- **确认日期**：2026-11-17、2026-11-19、2026-11-20。
+
 ## 开发工具与验证
 
 ### TP-L003：检查暂存文件，也要使用暂存版本的项目上下文
