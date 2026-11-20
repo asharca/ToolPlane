@@ -940,7 +940,7 @@ export default function(pi) {
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       },
       systemPrompt: "SDK daemon command fixture",
-      defaultTools: [],
+      defaultTools: ["bash"],
       excludeTools: [],
       resources: {
         extensions: [extension],
@@ -1354,12 +1354,38 @@ export default function(pi) {
     {
       // Exercise real HTTP requests, Pi continuation and the broker whitelist together.
       const attempts: string[] = [];
+      const backupInputs: unknown[] = [];
       const gateway = createServer((request, response) => {
         void (async () => {
           let raw = "";
           for await (const chunk of request) raw += String(chunk);
           const input = JSON.parse(raw);
           attempts.push(input.model);
+          if (input.model === "primary" && attempts.length === 1) {
+            response.writeHead(200, { "content-type": "text/event-stream" });
+            const toolCall = {
+              index: 0,
+              id: "call_once",
+              type: "function",
+              function: {
+                name: "bash",
+                arguments: JSON.stringify({
+                  command:
+                    "echo once >> fallback-count.txt; cat fallback-count.txt",
+                }),
+              },
+            };
+            for (const [delta, finish_reason] of [
+              [{ role: "assistant", tool_calls: [toolCall] }, null],
+              [{}, "tool_calls"],
+            ]) {
+              response.write(
+                `data: ${JSON.stringify({ id: "dispatch", object: "chat.completion.chunk", created: 1, model: "primary", choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
+              );
+            }
+            response.end("data: [DONE]\n\n");
+            return;
+          }
           if (input.model === "primary") {
             response.writeHead(503, { "content-type": "application/json" });
             response.end(
@@ -1367,6 +1393,7 @@ export default function(pi) {
             );
             return;
           }
+          backupInputs.push(input.messages);
           response.writeHead(200, { "content-type": "text/event-stream" });
           response.write(
             `data: ${JSON.stringify({ id: "fallback", object: "chat.completion.chunk", created: 1, model: "backup", choices: [{ index: 0, delta: { role: "assistant", content: "BROKER_FALLBACK_OK" }, finish_reason: null }] })}\n\n`,
@@ -1403,6 +1430,18 @@ export default function(pi) {
         ];
         const recovered = await run();
         expect(attempts).toEqual(["primary", "primary", "backup"]);
+        expect(backupInputs).toEqual([
+          expect.arrayContaining([
+            expect.objectContaining({
+              role: "tool",
+              tool_call_id: "call_once",
+              content: expect.stringContaining("once"),
+            }),
+          ]),
+        ]);
+        expect(await readFile(join(dir, "fallback-count.txt"), "utf8")).toBe(
+          "once\n",
+        );
         // Live output switches to the answering model before the turn ends.
         expect(recovered).toContainEqual(
           expect.objectContaining({

@@ -3620,16 +3620,19 @@ describe("official Pi SDK headless session host", () => {
       "controlled",
     ]);
   }, 60000);
-  it("never switches models or replays a native tool after its execution starts", async () => {
+  it("continues with the fallback after a native tool without replaying it", async () => {
     const f = await setup();
     f.behavior.streamCompletion = async (response) => {
-      if (f.requests.at(-1)?.body.messages.at(-1)?.role === "tool") {
-        response.writeHead(503, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: { message: "unavailable" } }));
+      const request = f.requests.at(-1)?.body;
+      if (request?.model === "backup") {
+        completion(response, { content: "FALLBACK_AFTER_TOOL" }, "stop");
+      } else if (request?.messages.at(-1)?.role === "tool") {
+        emptyStream(response);
       } else
         completion(
           response,
           {
+            content: "BEFORE_TOOL",
             tool_calls: [
               {
                 index: 0,
@@ -3648,12 +3651,20 @@ describe("official Pi SDK headless session host", () => {
       { ...f.context, fallbackModels: [{ ...f.config.model, id: "backup" }] },
     );
     expect(result).toMatchObject({
-      success: false,
-      error: { code: "PI_SDK_MODEL_FAILED", reason: "HTTP_503" },
+      success: true,
+      result: { text: "BEFORE_TOOL\n\nFALLBACK_AFTER_TOOL" },
     });
     expect(f.requests.map((request) => request.body.model)).toEqual([
       "controlled",
       "controlled",
+      "backup",
+    ]);
+    const messages = f.requests.at(-1)?.body.messages ?? [];
+    expect(messages.filter((message) => message.role === "user")).toEqual([
+      { role: "user", content: [{ type: "text", text: "Increment once" }] },
+    ]);
+    expect(messages.filter((message) => message.role === "tool")).toEqual([
+      { role: "tool", tool_call_id: "once", content: "1" },
     ]);
     expect(await readFile(join(f.workspace, "count.txt"), "utf8")).toBe("1");
   }, 60000);
