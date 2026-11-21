@@ -137,7 +137,7 @@ export function ModelTestRow({
   return (
     <article
       aria-label={model.name}
-      className={`${MODEL_ROW_GRID} px-4 py-2.5 transition-colors hover:bg-muted/40`}
+      className={`${MODEL_ROW_GRID} px-6 py-2.5 transition-colors hover:bg-muted/40`}
     >
       <div className="flex min-w-0 items-center gap-3">
         <Tooltip content={typeLabel}>

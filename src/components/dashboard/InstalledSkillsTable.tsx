@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { Brain, MoreHorizontal, Search, Trash2 } from "lucide-react";
@@ -33,9 +33,11 @@ const PAGE_SIZE = 20;
 export function InstalledSkillsTable({
   slug,
   skills,
+  actions,
 }: {
   slug: string;
   skills: InstalledSkillListItem[];
+  actions?: ReactNode;
 }) {
   const t = useTranslations("console.skills");
   const common = useTranslations("common");
@@ -64,17 +66,22 @@ export function InstalledSkillsTable({
 
   return (
     <section className="min-w-0 space-y-4">
-      <Input
-        value={query}
-        onChange={(value) => {
-          setQuery(value);
-          setPage(1);
-        }}
-        placeholder={t("searchSkills")}
-        aria-label={t("searchSkills")}
-        leftIcon={<Search className="size-4" />}
-        className="w-full sm:max-w-md"
-      />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Input
+          value={query}
+          onChange={(value) => {
+            setQuery(value);
+            setPage(1);
+          }}
+          placeholder={t("searchSkills")}
+          aria-label={t("searchSkills")}
+          leftIcon={<Search className="size-4" />}
+          className="w-full sm:w-72"
+        />
+        {actions ? (
+          <div className="flex flex-wrap items-center gap-2">{actions}</div>
+        ) : null}
+      </div>
       {filtered.length ? (
         <DashboardTable
           selectedRowIds={activeSelectedIds}

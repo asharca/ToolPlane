@@ -1,22 +1,16 @@
 import { startUrl } from "@/lib/remote-mcp/oauth/protocol";
 import { resolveWorkspaceScope } from "@/lib/workspace/scope";
-import { ButtonLink } from "@/components/motion/button";
-
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
-import { Store } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { getDeployments } from "@/lib/workspace/queries";
 import { effectiveStatus } from "@/lib/process/supervisor";
 import { deploymentLabel } from "@/lib/workspace/deployment-label";
 import { ProvisioningRefresher } from "@/components/dashboard/ProvisioningRefresher";
-import {
-  DashboardPage,
-  DashboardToolbar,
-} from "@/components/dashboard/DashboardUI";
+import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
+import { DashboardPage } from "@/components/dashboard/DashboardUI";
 import { McpDeploymentsBrowser } from "@/components/dashboard/McpDeploymentsBrowser";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
-import { AddMcpDialog } from "@/components/dashboard/AddMcpDialog";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 
 export const dynamic = "force-dynamic";
@@ -75,37 +69,12 @@ export default async function McpServersPage({
   const anyProvisioning = deploymentItems.some(
     (deployment) => deployment.status === "provisioning",
   );
-  const marketHref = `/app/${encodeURIComponent(slug)}/plugins`;
 
   return (
     <>
+      <DashboardHeader title={t("title")} />
       <ProvisioningRefresher active={anyProvisioning} />
       <DashboardPage className="flex min-h-0 flex-1 flex-col gap-5 space-y-0">
-        <DashboardToolbar
-          className="shrink-0"
-          actions={
-            <>
-              <ButtonLink href={marketHref} variant="secondary" size="md">
-                <Store className="size-4" />
-                {t("pluginCenter")}
-              </ButtonLink>
-              <AddMcpDialog
-                slug={slug}
-                allowHttp={allowHttp}
-                defaultOpen={query.create === "1"}
-              />
-            </>
-          }
-        >
-          <div className="flex items-baseline gap-2.5">
-            <h1 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
-              {t("title")}
-            </h1>
-            <span className="text-sm tabular-nums text-muted-foreground">
-              {deploymentItems.length}
-            </span>
-          </div>
-        </DashboardToolbar>
         {query.error === "unsafeHttpConfirmationRequired" && !allowHttp ? (
           <p role="alert" className="text-sm text-destructive">
             {t("unsafeHttpConsentDescription")}
@@ -120,6 +89,7 @@ export default async function McpServersPage({
           slug={slug}
           deployments={deploymentItems}
           allowHttp={allowHttp}
+          defaultCreateOpen={query.create === "1"}
         />
       </DashboardPage>
     </>

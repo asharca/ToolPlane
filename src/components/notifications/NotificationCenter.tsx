@@ -144,27 +144,24 @@ export function NotificationCenter({
   return (
     <section className="min-w-0 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-sm font-semibold">{t("title")}</h1>
+        <Tabs
+          value={unreadOnly ? "unread" : "all"}
+          onValueChange={(value) =>
+            router.push(value === "unread" ? unreadHref : allHref)
+          }
+          variant="segment"
+        >
+          <TabsList aria-label={t("filterLabel")}>
+            <TabsTrigger value="all">{t("all")}</TabsTrigger>
+            <TabsTrigger value="unread">
+              {t("unread")}
+              {unread > 0 ? (
+                <span className="ml-1.5 tabular-nums opacity-70">{unread}</span>
+              ) : null}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
         <div className="flex flex-wrap items-center gap-2">
-          <Tabs
-            value={unreadOnly ? "unread" : "all"}
-            onValueChange={(value) =>
-              router.push(value === "unread" ? unreadHref : allHref)
-            }
-            variant="segment"
-          >
-            <TabsList aria-label={t("filterLabel")}>
-              <TabsTrigger value="all">{t("all")}</TabsTrigger>
-              <TabsTrigger value="unread">
-                {t("unread")}
-                {unread > 0 ? (
-                  <span className="ml-1.5 tabular-nums opacity-70">
-                    {unread}
-                  </span>
-                ) : null}
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
           {unread > 0 ? (
             <Button
               type="button"

@@ -197,7 +197,7 @@ export function ProviderDetail({
       aria-label={provider.name}
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
     >
-      <header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-3 px-5 py-2">
+      <header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-border/60 px-6 py-3">
         <div className="flex min-w-0 flex-1 basis-64 items-center gap-3">
           <ProviderMonogram name={provider.name} large />
           <div className="min-w-0">
@@ -255,7 +255,7 @@ export function ProviderDetail({
         </div>
       </header>
 
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-y border-border px-4 py-2.5">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-6 py-2.5">
         {filterTypes.length > 1 ? (
           <Tabs
             variant="segment"
@@ -348,7 +348,7 @@ export function ProviderDetail({
       </div>
 
       {refreshMessage || refreshState.error ? (
-        <div className="shrink-0 border-b border-border px-5 py-2">
+        <div className="shrink-0 border-b border-border/60 px-6 py-2">
           {refreshMessage ? (
             <p role="status" className="text-xs text-muted-foreground">
               {refreshMessage}
@@ -371,7 +371,7 @@ export function ProviderDetail({
           <>
             <div
               aria-hidden="true"
-              className={`${MODEL_ROW_GRID} sticky top-0 z-10 hidden border-b border-border bg-card px-4 py-2 text-[11px] font-medium text-muted-foreground xl:grid`}
+              className={`${MODEL_ROW_GRID} sticky top-0 z-10 hidden border-b border-border bg-card px-6 py-2 text-[11px] font-medium text-muted-foreground xl:grid`}
             >
               <span>{t("model")}</span>
               <span className="text-right">{t("modelColumnContext")}</span>
@@ -399,7 +399,7 @@ export function ProviderDetail({
                           return next;
                         })
                       }
-                      className="flex w-full items-center gap-2 border-b border-border/60 bg-muted/30 px-4 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                      className="flex w-full items-center gap-2 border-b border-border/60 bg-muted/30 px-6 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
                     >
                       <ChevronRight
                         aria-hidden="true"
@@ -428,7 +428,7 @@ export function ProviderDetail({
                 </section>
               );
             })}
-            <p className="px-4 py-3 text-[11px] text-muted-foreground">
+            <p className="px-6 py-3 text-[11px] text-muted-foreground">
               {[
                 t("providerModelCount", { count: provider.models.length }),
                 provider.modelsFetchedAt &&

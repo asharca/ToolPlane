@@ -415,13 +415,12 @@ export function WorkspaceKnowledge({
     <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-[var(--workspace-surface,var(--background))] lg:grid-cols-[16rem_minmax(0,1fr)] lg:grid-rows-1">
       <aside
         aria-label={t("title")}
-        className="flex max-h-56 min-h-0 flex-col lg:max-h-none"
+        className="flex max-h-56 min-h-0 flex-col border-b border-border/50 bg-muted/25 lg:max-h-none lg:border-b-0 lg:border-r"
       >
-        <AnimatedSidebarHeader className="h-14 flex-row items-center justify-between px-3 py-0">
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <LibraryBig className="size-4 text-muted-foreground" />
-            {t("title")}
-          </div>
+        <AnimatedSidebarHeader className="flex h-11 shrink-0 flex-row items-center justify-between px-3 py-0">
+          <span className="truncate text-xs font-medium text-muted-foreground">
+            {t("title")} ({bases.length})
+          </span>
           <Button
             type="button"
             onClick={beginCreate}
@@ -470,7 +469,7 @@ export function WorkspaceKnowledge({
         {creatingBase ? (
           <div className="mx-auto w-full max-w-3xl px-5 py-7 sm:px-8 sm:py-10">
             <div className="pb-5">
-              <h1 className="text-lg font-semibold">{t("newBase")}</h1>
+              <h2 className="text-lg font-semibold">{t("newBase")}</h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 {t("newBaseDescription")}
               </p>
@@ -482,14 +481,13 @@ export function WorkspaceKnowledge({
               />
             ) : (
               <div className="grid gap-x-5 gap-y-4 py-6 sm:grid-cols-2">
-                <div className="sm:col-span-2 text-xs font-medium text-muted-foreground">
-                  {t("name")}
+                <div className="sm:col-span-2">
                   <Input
                     placeholder={t("namePlaceholder")}
                     value={String(name)}
                     label={t("name")}
                     onChange={(value) => setName(value)}
-                    className="mt-1.5 w-full"
+                    className="w-full"
                   />
                 </div>
                 <div className="sm:col-span-2 text-xs font-medium text-muted-foreground">
@@ -518,8 +516,7 @@ export function WorkspaceKnowledge({
                     }
                   />
                 </div>
-                <div className="text-xs font-medium text-muted-foreground">
-                  {t("chunkSize")}
+                <div>
                   <Input
                     min={200}
                     max={8000}
@@ -527,22 +524,20 @@ export function WorkspaceKnowledge({
                     value={String(chunkSize)}
                     label={t("chunkSize")}
                     onChange={(value) => setChunkSize(Number(value))}
-                    className="mt-1.5 w-full"
+                    className="w-full"
                   />
                 </div>
-                <div className="text-xs font-medium text-muted-foreground">
-                  {t("chunkOverlap")}
+                <div>
                   <Input
                     min={0}
                     type={"number"}
                     value={String(chunkOverlap)}
                     label={t("chunkOverlap")}
                     onChange={(value) => setChunkOverlap(Number(value))}
-                    className="mt-1.5 w-full"
+                    className="w-full"
                   />
                 </div>
-                <div className="text-xs font-medium text-muted-foreground">
-                  {t("resultsPerSearch")}
+                <div>
                   <Input
                     min={1}
                     max={20}
@@ -550,11 +545,10 @@ export function WorkspaceKnowledge({
                     value={String(topK)}
                     label={t("resultsPerSearch")}
                     onChange={(value) => setTopK(Number(value))}
-                    className="mt-1.5 w-full"
+                    className="w-full"
                   />
                 </div>
-                <div className="text-xs font-medium text-muted-foreground">
-                  {t("similarityThreshold")}
+                <div>
                   <Input
                     min={-1}
                     max={1}
@@ -563,7 +557,7 @@ export function WorkspaceKnowledge({
                     value={String(threshold)}
                     label={t("similarityThreshold")}
                     onChange={(value) => setThreshold(Number(value))}
-                    className="mt-1.5 w-full"
+                    className="w-full"
                   />
                 </div>
               </div>
@@ -603,12 +597,12 @@ export function WorkspaceKnowledge({
           </div>
         ) : selected ? (
           <div className="flex min-h-full flex-col">
-            <header className="shrink-0 px-5 py-4 sm:px-7">
+            <header className="shrink-0 border-b border-border/60 px-5 pt-4 sm:px-7">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <h1 className="truncate text-lg font-semibold">
+                  <h2 className="truncate text-lg font-semibold">
                     {selected.name}
-                  </h1>
+                  </h2>
                   <p className="mt-1 truncate text-xs text-muted-foreground">
                     {selected.providerName ?? t("providerUnavailable")}{" "}
                     <span aria-hidden="true">·</span> {selected.embeddingModel}{" "}
@@ -874,13 +868,12 @@ export function WorkspaceKnowledge({
             {activeTab === "settings" ? (
               <div className="mx-auto w-full max-w-3xl p-5 sm:p-7">
                 <div className="grid gap-x-5 gap-y-4 sm:grid-cols-2">
-                  <div className="sm:col-span-2 text-xs font-medium text-muted-foreground">
-                    {t("name")}
+                  <div className="sm:col-span-2">
                     <Input
                       value={String(name)}
                       label={t("name")}
                       onChange={(value) => setName(value)}
-                      className="mt-1.5 w-full"
+                      className="w-full"
                     />
                   </div>
                   <div className="sm:col-span-2 text-xs font-medium text-muted-foreground">
@@ -910,8 +903,7 @@ export function WorkspaceKnowledge({
                       }
                     />
                   </div>
-                  <div className="text-xs font-medium text-muted-foreground">
-                    {t("chunkSize")}
+                  <div>
                     <Input
                       min={200}
                       max={8000}
@@ -919,22 +911,20 @@ export function WorkspaceKnowledge({
                       value={String(chunkSize)}
                       label={t("chunkSize")}
                       onChange={(value) => setChunkSize(Number(value))}
-                      className="mt-1.5 w-full"
+                      className="w-full"
                     />
                   </div>
-                  <div className="text-xs font-medium text-muted-foreground">
-                    {t("chunkOverlap")}
+                  <div>
                     <Input
                       min={0}
                       type={"number"}
                       value={String(chunkOverlap)}
                       label={t("chunkOverlap")}
                       onChange={(value) => setChunkOverlap(Number(value))}
-                      className="mt-1.5 w-full"
+                      className="w-full"
                     />
                   </div>
-                  <div className="text-xs font-medium text-muted-foreground">
-                    {t("resultsPerSearch")}
+                  <div>
                     <Input
                       min={1}
                       max={20}
@@ -942,11 +932,10 @@ export function WorkspaceKnowledge({
                       value={String(topK)}
                       label={t("resultsPerSearch")}
                       onChange={(value) => setTopK(Number(value))}
-                      className="mt-1.5 w-full"
+                      className="w-full"
                     />
                   </div>
-                  <div className="text-xs font-medium text-muted-foreground">
-                    {t("similarityThreshold")}
+                  <div>
                     <Input
                       min={-1}
                       max={1}
@@ -955,7 +944,7 @@ export function WorkspaceKnowledge({
                       value={String(threshold)}
                       label={t("similarityThreshold")}
                       onChange={(value) => setThreshold(Number(value))}
-                      className="mt-1.5 w-full"
+                      className="w-full"
                     />
                   </div>
                 </div>
