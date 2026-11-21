@@ -5,7 +5,6 @@ import { useTranslations } from "next-intl";
 import Link from "next/link";
 import { ChevronRight, Save, Wrench } from "lucide-react";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
-import { BouncyAccordion } from "@/components/motion/bouncy-accordion";
 import { Button } from "@/components/motion/button";
 import { Switch } from "@/components/motion/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
@@ -316,35 +315,19 @@ export function McpToolExposureEditor({
 
       {editable ? (
         <>
-          <BouncyAccordion
-            defaultValue={initialPublicInvocable ? "advanced" : null}
-            className="border-t border-border"
-            classNames={{
-              item: "bg-transparent",
-              trigger: "min-h-11 px-5",
-              title: "text-xs font-medium text-muted-foreground",
-              description: "text-sm",
-            }}
-            items={[
-              {
-                id: "advanced",
-                title: t("advanced"),
-                description: (
-                  <div className="space-y-1.5">
-                    <FormCheckbox
-                      checked={effectivePublic}
-                      onCheckedChange={setPublicInvocable}
-                      disabled={isPending || !publicAllowed}
-                      label={t("publicAgentInvocable")}
-                    />
-                    <p className="pl-8 text-xs leading-5 text-muted-foreground">
-                      {t("publicAgentInvocableHelp")}
-                    </p>
-                  </div>
-                ),
-              },
-            ]}
-          />
+          <div className="border-t border-border px-5 py-3.5">
+            <div className="space-y-1">
+              <FormCheckbox
+                checked={effectivePublic}
+                onCheckedChange={setPublicInvocable}
+                disabled={isPending || !publicAllowed}
+                label={t("publicAgentInvocable")}
+              />
+              <p className="pl-7 text-xs leading-5 text-muted-foreground">
+                {t("publicAgentInvocableHelp")}
+              </p>
+            </div>
+          </div>
           <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-3 rounded-b-xl border-t border-border bg-card/95 px-5 py-3 backdrop-blur">
             {state.error ? (
               <p role="alert" className="mr-auto text-sm text-destructive">

@@ -650,3 +650,12 @@
 - **下次怎么验证**：给页面加数据加载时，沿调用链检查是否有 `mcpRpc`、`startProcess`、外部 `fetch` 或写库副作用；用浏览器从其他页面点击进入，对比 RSC 请求耗时，不只看热缓存下的 curl。MCP 详情页按设计会实时检查单个部署，不适用本条。
 - **约束层（结构）**：[`src/lib/chat/resources.ts`](src/lib/chat/resources.ts) 分开无网络的选项查询与实时发现。
 - **确认日期**：2026-11-20。
+
+### TP-L062：导入失败要说出哪一项、怎么改；重设计不能把原有入口藏进折叠
+
+**规则**：解析用户粘贴的配置时，拒绝原因要落到具体字段、参数或行号，并给出可本地化的修改建议；客户端常见写法（如 `docker run` 的加固参数、`-e`、宿主文件挂载）能映射到 ToolPlane 模型的就自动转换，不能映射的才拒绝。重做入口时，旧流程里的功能要在新流程同等可见。
+
+- **错误与原因（2026-11-21，用户反馈“不友好，用户不知道哪有问题，之前还能添加配置文件，现在没有了”）**：新添加弹窗把 `unsupported docker run option` 等解析细节过滤掉，只显示“MCP 配置无效”；一份带 `--read-only`、`--tmpfs`、`--mount type=bind` 的常见 Docker 配置因此无从修改。运行时文件输入框被收进默认折叠的“高级”，用户以为该功能被删除。改为 `McpIntakeIssue` 结构化原因（JSON 行号、字段、docker 参数、挂载），`importDockerRun` 丢弃沙箱已强制的加固参数、把 `-e` 并入环境变量、把绑定挂载转为必填运行时文件并改写参数路径；弹窗加宽为两栏，网络、配置文件和 JSON 编辑不再折叠。
+- **下次怎么验证**：用各客户端 README 里的真实配置（含 Docker 加固和挂载）在浏览器里走一遍，错误文案要指出具体项；新旧流程逐项对照入口，确认每个旧功能在新流程中无需展开即可看到。
+- **约束层（结构）**：[`src/lib/workspace/mcp-intake-docker.ts`](src/lib/workspace/mcp-intake-docker.ts)、[`McpIntakeIssue`](src/lib/workspace/mcp-intake-types.ts)；回归见 `tests/unit/mcp-intake.test.ts`。
+- **确认日期**：2026-11-21。

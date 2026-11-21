@@ -385,6 +385,7 @@ export async function prepareSshRuntime(input: {
   sandboxId: string;
   workspaceId: string;
   deploymentId: string;
+  credentialOwnerId?: string;
 }) {
   const row = await db.sandboxSshServer.findFirst({
     where: {
@@ -398,7 +399,9 @@ export async function prepareSshRuntime(input: {
   if (!row) throw new SshServerError("SSH_NOT_CONFIGURED");
   const hostKeys = z.array(SshHostKey).min(1).parse(row.hostKeys);
   const address = await resolveSshAddress(row.host);
-  const directory = sshRuntimeDirectory(input.deploymentId);
+  const directory = sshRuntimeDirectory(
+    input.credentialOwnerId ?? input.deploymentId,
+  );
   const config = await materialize(
     directory,
     {

@@ -47,7 +47,11 @@ import {
 import { disconnectConnector } from "./connector-broker";
 import { setConnectorSetupTokenCookie } from "./connector-setup-token";
 import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
-import { enqueueSandboxOperation, quiesceDockerSandbox } from "./lifecycle";
+import {
+  enqueueSandboxOperation,
+  quiesceDockerSandbox,
+  stopWorkspaceSandboxMcps,
+} from "./lifecycle";
 import { stopAgentSandboxSessionMcp } from "@/lib/agents/conversation-sandbox";
 
 function slugify(input: string): string {
@@ -902,6 +906,7 @@ export async function updateSandboxEnvAction(formData: FormData) {
       }),
     ]);
 
+    if (wasActive) await stopWorkspaceSandboxMcps(ctx.ws.id, sandbox.id);
     if (sandbox.kind === "docker") {
       await killProcess(sandbox.deploymentId);
       await removeDockerSandboxContainer(sandbox.id);
@@ -1007,6 +1012,8 @@ function runSandboxLifecycle(
     }
     if (operation !== "stop" && !(await genericSandboxMutationAllowed(sandbox)))
       return result("skipped", "agent_session_managed");
+    if (operation !== "start")
+      await stopWorkspaceSandboxMcps(workspaceId, sandboxId);
     if (
       operation === "stop" &&
       (sandbox.conversations.length || sandbox.a2aContexts.length)
@@ -1234,6 +1241,7 @@ export async function deleteSandboxAction(formData: FormData) {
         )
           return false;
 
+        await stopWorkspaceSandboxMcps(ctx.ws.id, sandbox.id);
         if (sandbox.kind === "connector") {
           await stopProcess(sandbox.deploymentId);
           disconnectConnector(sandbox.id, "sandbox deleted");

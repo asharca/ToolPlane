@@ -3,8 +3,27 @@
 export const SECRET_ENV_BOOTSTRAP =
   'IFS= read -r toolplane_env || exit 125; eval "unset toolplane_env; $toolplane_env"; exec "$@"';
 
-export function secretEnvironmentLine(env) {
-  return `${Object.entries(env)
+export function expandMcpArguments(args, env) {
+  return args.map((arg) =>
+    arg.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, key) => {
+      if (!Object.hasOwn(env, key))
+        throw new Error("Missing MCP argument variable");
+      return env[key];
+    }),
+  );
+}
+
+function octal(value) {
+  if (typeof value !== "string" || value.includes("\0"))
+    throw new Error("Invalid MCP launch value");
+  return Array.from(
+    Buffer.from(value),
+    (byte) => `\\0${byte.toString(8).padStart(3, "0")}`,
+  ).join("");
+}
+
+export function secretEnvironmentLine(env, argv = undefined) {
+  const variables = Object.entries(env)
     .map(([key, value]) => {
       if (
         !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) ||
@@ -15,13 +34,24 @@ export function secretEnvironmentLine(env) {
       }
       // POSIX printf octal escapes keep newlines, quotes and shell metacharacters
       // inert. A sentinel preserves trailing newlines through command substitution.
-      const octal = Array.from(
-        Buffer.from(value),
-        (byte) => `\\0${byte.toString(8).padStart(3, "0")}`,
-      ).join("");
-      return `${key}=$(printf '%b_' '${octal}'); ${key}=\${${key}%_}; export ${key};`;
+      return `${key}=$(printf '%b_' '${octal(value)}'); ${key}=\${${key}%_}; export ${key};`;
     })
-    .join(" ")}\n`;
+    .join(" ");
+  // Single-line shell literals on the private stdin channel. The extra sentinel
+  // protects trailing newlines and is removed before forming each argument.
+  let argumentsScript = "";
+  if (argv) {
+    argumentsScript =
+      "set --; " +
+      argv
+        .map(
+          (arg) =>
+            `tp_arg=$(printf '%b_' '${octal(arg)}'); set -- "$@" "\${tp_arg%_}";`,
+        )
+        .join(" ") +
+      " unset tp_arg;";
+  }
+  return `${argumentsScript} ${variables}\n`;
 }
 
 export function withSecretEnvironmentBootstrap(args, image, metadata) {

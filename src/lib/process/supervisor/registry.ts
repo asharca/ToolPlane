@@ -33,6 +33,9 @@ export type Entry = {
   redactionValues: string[];
   remoteConnectionIdentity?: string;
   credentialIdentity: string;
+  oauthRevision?: string;
+  oauthRefreshTimer?: NodeJS.Timeout;
+  oauthRefreshAbort?: AbortController;
   // A launch-private capability used only to authenticate lifecycle events
   // emitted by the bridge. It never enters the runtime record or log file.
   runtimeEventToken: string;

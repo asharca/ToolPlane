@@ -3,7 +3,6 @@ import {
   isValidMcpRef,
   parseMcpJsonConfig,
   type McpSource,
-  type StdioMcpCommand,
 } from "./custom-mcp";
 import {
   hasMcpToolCatalog,
@@ -20,7 +19,7 @@ export type ServerRecipe = {
   ref: string;
   sourceUrl?: string;
   startCommand?: string;
-  command?: StdioMcpCommand;
+  command?: string;
   args?: string[];
   env: string[];
   // Preset fixed env values baked into the recipe (infra wiring like a
@@ -95,7 +94,7 @@ export function parseServerRecipe(installCfg: unknown): ServerRecipe | null {
   )
     return null;
   const ref = typeof c.ref === "string" ? c.ref.trim() : "";
-  let command: StdioMcpCommand | undefined;
+  let command: string | undefined;
   let args: string[] | undefined;
   if (source === "config") {
     try {
@@ -192,7 +191,7 @@ export type DeploymentRecipeData = {
     env: Record<string, string>;
     requiredEnv?: string[];
     startCommand?: string;
-    command?: StdioMcpCommand;
+    command?: string;
     args?: string[];
     network?: "none";
     transport?: "streamable-http" | "sse";

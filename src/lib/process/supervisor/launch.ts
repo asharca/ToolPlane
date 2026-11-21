@@ -29,6 +29,8 @@ import {
   removeDeploymentContainer,
 } from "../deployment-runtime-container";
 import type { SpawnSpec } from "../spawn-spec";
+import { resolveMcpRuntimeSandbox } from "../mcp-runtime-target";
+import { deploymentWorkspaceMount } from "../deployment-workspace-volume";
 import { dockerCliEnv } from "./docker-env";
 import {
   type Entry,
@@ -75,6 +77,12 @@ type LaunchHooks = {
   launchPrevented: (deploymentId: string, workspaceId?: string) => boolean;
   persist: (deploymentId: string, status: string) => Promise<void>;
   mcpRuntimeCredentialIdentity: (spec: SpawnSpec) => string;
+  scheduleOAuthRefresh: (
+    id: string,
+    workspaceId: string,
+    entry: Entry,
+    refreshAt: number,
+  ) => void;
 };
 
 type LaunchResult = {
@@ -88,7 +96,9 @@ function initialRuntimeRecord(
 ): RuntimeRecord {
   const now = new Date().toISOString();
   const containerName =
-    spec.kind === "bridge" && spec.command === "docker"
+    spec.kind === "bridge" &&
+    !spec.workspaceSandbox &&
+    spec.command === "docker"
       ? deploymentContainerName(deploymentId)
       : spec.kind === "sandbox" &&
           spec.sandboxKind === "docker" &&
@@ -166,7 +176,12 @@ function withDeploymentConfigVolume(
 }
 
 export async function launchProcess(
-  { launchPrevented, persist, mcpRuntimeCredentialIdentity }: LaunchHooks,
+  {
+    launchPrevented,
+    persist,
+    mcpRuntimeCredentialIdentity,
+    scheduleOAuthRefresh,
+  }: LaunchHooks,
   deploymentId: string,
   spec: SpawnSpec,
   workspaceId?: string,
@@ -246,6 +261,7 @@ export async function launchProcess(
   }
   let configRedactionValues: string[] = [];
   let launchSpec = spec;
+  let workspaceTransport: Record<string, unknown> | undefined;
   try {
     // Credentials are written only by the launch-lock holder: a concurrent
     // launch must never rewrite files a live child is reading.
@@ -255,10 +271,40 @@ export async function launchProcess(
         workspaceId: sshWorkspaceId ?? "",
         deploymentId,
       });
+    if (spec.kind === "bridge" && spec.workspaceSandbox) {
+      if (!workspaceId) throw new Error("sandboxUnavailable");
+      const sandbox = await resolveMcpRuntimeSandbox({
+        workspaceId,
+        target: "workspace_sandbox",
+        sandboxId: spec.workspaceSandbox.id,
+        command: spec.command,
+      });
+      if (!sandbox) throw new Error("sandboxUnavailable");
+      workspaceTransport = {
+        kind: sandbox.kind,
+        cwd: spec.workspaceSandbox.cwd,
+      };
+      if (sandbox.kind === "docker")
+        workspaceTransport.container = sandboxContainerName(sandbox.id);
+      else if (sandbox.kind === "connector") {
+        const broker = await ensureConnectorBroker();
+        workspaceTransport.url = `${broker.internalUrl}/internal/connectors/${encodeURIComponent(sandbox.id)}/request`;
+        workspaceTransport.token = broker.internalToken;
+      } else if (sandbox.kind === "ssh") {
+        sshRuntime = await prepareSshRuntime({
+          workspaceId,
+          sandboxId: sandbox.id,
+          deploymentId: sandbox.deploymentId,
+          credentialOwnerId: deploymentId,
+        });
+        workspaceTransport.ssh = sshRuntime.config;
+      } else throw new Error("sandboxUnavailable");
+    }
     if (
       spec.kind === "bridge" &&
       spec.command === "docker" &&
-      spec.args[0] === "run"
+      spec.args[0] === "run" &&
+      !spec.workspaceSandbox
     ) {
       // A bridge can exit after Docker has created the named runtime container.
       // The per-deployment launch lock lets this launch safely clear that stale
@@ -272,10 +318,29 @@ export async function launchProcess(
       configRedactionValues = config.redactionValues;
       if (config.hasFiles)
         launchSpec = withDeploymentConfigVolume(spec, deploymentId);
+      if (spec.workspaceVolume) {
+        if (
+          launchSpec.kind !== "bridge" ||
+          (configSourceDeploymentId &&
+            configSourceDeploymentId !== deploymentId)
+        )
+          throw new Error("MCP_SESSION_RECIPE_UNSUPPORTED");
+        launchSpec = {
+          ...launchSpec,
+          args: [
+            "run",
+            ...(await deploymentWorkspaceMount(deploymentId)),
+            ...launchSpec.args.slice(1),
+          ],
+        };
+      }
     }
   } catch (error) {
     releaseLaunchLock();
-    if (spec.kind === "sandbox" && spec.sandboxKind === "ssh")
+    if (
+      workspaceTransport?.kind === "ssh" ||
+      (spec.kind === "sandbox" && spec.sandboxKind === "ssh")
+    )
       await removeSshRuntimeDirectory(sshRuntimeDirectory(deploymentId));
     await persist(deploymentId, "error");
     throw error;
@@ -286,6 +351,7 @@ export async function launchProcess(
   }
   const managedSpec: SpawnSpec =
     launchSpec.kind === "bridge" &&
+    !launchSpec.workspaceSandbox &&
     launchSpec.command === "docker" &&
     launchSpec.args[0] === "run"
       ? {
@@ -340,12 +406,15 @@ export async function launchProcess(
           MCP_PORT: "0",
           MCP_NAME: managedSpec.name,
           MCP_COMMAND: managedSpec.command,
+          ...(workspaceTransport
+            ? { MCP_WORKSPACE_TRANSPORT: JSON.stringify(workspaceTransport) }
+            : {}),
           MCP_ARGS: JSON.stringify(managedSpec.args),
           MCP_CHILD_ENV: JSON.stringify(
             managedSpec.containerEnv ?? managedSpec.env,
           ),
           MCP_CONTAINER_NAME:
-            managedSpec.command === "docker"
+            managedSpec.command === "docker" && !workspaceTransport
               ? deploymentContainerName(deploymentId)
               : "",
           MCP_IMAGE: managedBridgeImage,
@@ -364,6 +433,8 @@ export async function launchProcess(
               transport: managedSpec.transport,
               headers: managedSpec.headers,
               timeoutMs: managedSpec.timeoutMs,
+              oauth: managedSpec.requiresOAuth === true,
+              expiresAt: managedSpec.oauth?.expiresAt,
               allowUnsafeHttp: managedSpec.allowUnsafeHttp,
             }),
             // Only the bridge sees this admin-controlled setting; deployment
@@ -443,6 +514,8 @@ export async function launchProcess(
         ? remoteMcpConnectionIdentity(managedSpec)
         : undefined,
     credentialIdentity: mcpRuntimeCredentialIdentity(managedSpec),
+    oauthRevision:
+      managedSpec.kind === "remote" ? managedSpec.oauth?.revision : undefined,
     stderrBuffer: "",
     stderrDecoder: new StringDecoder("utf8"),
   };
@@ -490,6 +563,20 @@ export async function launchProcess(
         entry.status = "running";
         updateRuntime(entry, { status: "running", phase: "ready" }, true);
         void persist(deploymentId, "running");
+        if (
+          managedSpec.kind === "remote" &&
+          managedSpec.oauth?.refreshAt != null &&
+          workspaceId &&
+          (!configSourceDeploymentId ||
+            configSourceDeploymentId === deploymentId)
+        ) {
+          scheduleOAuthRefresh(
+            deploymentId,
+            workspaceId,
+            entry,
+            managedSpec.oauth.refreshAt,
+          );
+        }
         resolve();
       }
     });
@@ -518,6 +605,8 @@ export async function launchProcess(
   });
 
   child.on("exit", (code, signal) => {
+    clearTimeout(entry.oauthRefreshTimer);
+    entry.oauthRefreshAbort?.abort();
     // Remove materialized SSH credentials unless a newer launch now owns them.
     const current = store().get(deploymentId);
     if (sshRuntime && (!current || current === entry))
@@ -547,6 +636,8 @@ export async function launchProcess(
     void persist(deploymentId, entry.status);
   });
   child.on("error", () => {
+    clearTimeout(entry.oauthRefreshTimer);
+    entry.oauthRefreshAbort?.abort();
     entry.status = entry.stopping ? "stopped" : "error";
     if (child.pid) deleteRegistry(deploymentId, child.pid);
     if (entry.stopping || store().get(deploymentId) !== entry) return;
@@ -598,6 +689,8 @@ export async function terminateChild(
   entry: Entry,
   force: boolean,
 ): Promise<void> {
+  clearTimeout(entry.oauthRefreshTimer);
+  entry.oauthRefreshAbort?.abort();
   entry.stopping = true;
   entry.status = "stopped";
   if (childTerminated(entry.child)) return;

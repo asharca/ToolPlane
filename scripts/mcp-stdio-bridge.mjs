@@ -6,8 +6,12 @@
 // mirroring scripts/mcp-server.mjs so the supervisor/gateway are unchanged.
 import http from "node:http";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { spawnWorkspaceProcess } from "./mcp-workspace-stdio.mjs";
+import { closeSessions, sessionHttp } from "./mcp-session-http.mjs";
 import { buildBridgeChildEnv } from "./bridge-env.mjs";
 import {
+  expandMcpArguments,
   secretEnvironmentLine,
   withSecretEnvironmentBootstrap,
 } from "./mcp-secret-bootstrap.mjs";
@@ -52,7 +56,12 @@ const STARTUP_MAX_TIMEOUT_MS = positiveTimeout(
 const CONTAINER_NAME = (process.env.MCP_CONTAINER_NAME || "").trim();
 const MCP_IMAGE = (process.env.MCP_IMAGE || "").trim();
 const RUNTIME_EVENT_TOKEN = (process.env.MCP_RUNTIME_EVENT_TOKEN || "").trim();
-const IS_DOCKER_BRIDGE = /(?:^|[\\/])docker(?:\.exe)?$/i.test(COMMAND || "");
+const workspaceTransport =
+  process.env.MCP_WORKSPACE_TRANSPORT &&
+  JSON.parse(process.env.MCP_WORKSPACE_TRANSPORT);
+delete process.env.MCP_WORKSPACE_TRANSPORT;
+const IS_DOCKER_BRIDGE =
+  !workspaceTransport && /(?:^|[\\/])docker(?:\.exe)?$/i.test(COMMAND || "");
 const IS_MANAGED_DOCKER_BRIDGE = IS_DOCKER_BRIDGE && Boolean(CONTAINER_NAME);
 
 if (!COMMAND) {
@@ -65,6 +74,8 @@ if (!COMMAND) {
 let childEnv = {};
 let runtimeEnv = {};
 let runtimeEnvironmentLine = "";
+let sessionCommand;
+let supportsTrackedExec;
 try {
   childEnv = buildBridgeChildEnv(process.env, "{}");
   runtimeEnv = buildBridgeChildEnv({}, process.env.MCP_CHILD_ENV);
@@ -422,10 +433,18 @@ function attachChildListeners(watchdog) {
 
 function launchChild(watchdog) {
   try {
-    child = spawn(COMMAND, ARGS, {
-      env: childEnv,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    child = workspaceTransport
+      ? spawnWorkspaceProcess(
+          workspaceTransport,
+          COMMAND,
+          ARGS,
+          runtimeEnv,
+          childEnv,
+        )
+      : spawn(COMMAND, ARGS, {
+          env: childEnv,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
   } catch (error) {
     throw startupFailure(`spawn failed: ${messageFor(error)}`);
   }
@@ -498,8 +517,155 @@ function waitForContainerRunning(watchdog, imageState) {
   });
 }
 
+async function openStdioSession({ onmessage, onclose }) {
+  if (!bridgeReady || shuttingDown)
+    throw new Error("MCP_TRANSPORT_UNAVAILABLE");
+  let proc;
+  let sessionContainer;
+  const target =
+    workspaceTransport ||
+    (IS_MANAGED_DOCKER_BRIDGE && { kind: "docker", container: CONTAINER_NAME });
+  if (target) {
+    if (!workspaceTransport && supportsTrackedExec === undefined) {
+      const probe = await runDockerCli([
+        "exec",
+        CONTAINER_NAME,
+        "sh",
+        "-c",
+        "command -v setsid && command -v mkfifo && command -v mktemp && command -v cat",
+      ]);
+      supportsTrackedExec = probe.code === 0;
+    }
+    if (!workspaceTransport && !supportsTrackedExec) {
+      // Shell-free Docker images cannot use our exec supervisor. Create a
+      // sibling with the same hardening, pinned image and work/config mounts.
+      // Joining the primary's PID namespace ties its lifetime to the server.
+      const inspected = await runDockerCli([
+        "inspect",
+        "--format",
+        "{{.Image}}",
+        CONTAINER_NAME,
+      ]);
+      const digest = inspected.stdout.trim();
+      if (shuttingDown || !/^sha256:[a-f0-9]{64}$/.test(digest))
+        throw new Error("MCP_TRANSPORT_UNAVAILABLE");
+      const args = ARGS.slice(1);
+      const image = args.indexOf(sessionCommand ? digest : MCP_IMAGE);
+      if (image < 0) throw new Error("MCP_TRANSPORT_UNAVAILABLE");
+      const flags = args.slice(0, image);
+      const name = flags.indexOf("--name");
+      if (name < 0) throw new Error("MCP_TRANSPORT_UNAVAILABLE");
+      flags.splice(name, 2);
+      const pid = flags.indexOf("--pid");
+      if (pid >= 0) flags.splice(pid, 2);
+      const created = await runDockerCli([
+        "create",
+        ...flags,
+        "--pid",
+        `container:${CONTAINER_NAME}`,
+        digest,
+        ...args.slice(image + 1),
+      ]);
+      sessionContainer = created.stdout.trim();
+      if (created.code !== 0 || !/^[a-f0-9]{64}$/.test(sessionContainer))
+        throw new Error("MCP_TRANSPORT_UNAVAILABLE");
+      if (shuttingDown) {
+        await runDockerCli(["rm", "-f", sessionContainer]);
+        throw new Error("MCP_TRANSPORT_UNAVAILABLE");
+      }
+      proc = spawn(COMMAND, ["start", "-ai", sessionContainer], {
+        env: childEnv,
+        stdio: "pipe",
+      });
+      if (sessionCommand && Object.keys(runtimeEnv).length)
+        proc.stdin.write(
+          secretEnvironmentLine(runtimeEnv, [
+            sessionCommand[0],
+            ...expandMcpArguments(sessionCommand.slice(1), runtimeEnv),
+          ]),
+        );
+    } else {
+      if (!workspaceTransport && !sessionCommand) {
+        // Use the running container's resolved image entrypoint + CMD, including
+        // distroless/custom entrypoints not present in the deployment document.
+        const result = await runDockerCli([
+          "inspect",
+          "--format",
+          "{{json .Path}}{{println}}{{json .Args}}",
+          CONTAINER_NAME,
+        ]);
+        if (result.code !== 0) throw new Error("MCP_TRANSPORT_UNAVAILABLE");
+        const [command, args] = result.stdout
+          .trim()
+          .split("\n")
+          .map((v) => JSON.parse(v));
+        sessionCommand = [command, ...args];
+      }
+      if (shuttingDown) throw new Error("MCP_TRANSPORT_UNAVAILABLE");
+      const [command, ...args] = workspaceTransport
+        ? [COMMAND, ...ARGS]
+        : sessionCommand;
+      proc = spawnWorkspaceProcess(target, command, args, runtimeEnv, childEnv);
+    }
+  } else {
+    if (IS_DOCKER_BRIDGE) throw new Error("MCP_TRANSPORT_UNAVAILABLE");
+    proc = spawn(COMMAND, ARGS, { env: childEnv, stdio: "pipe" });
+  }
+  let closed = false;
+  const finished = new Promise((resolve) =>
+    proc.once("close", () => {
+      closed = true;
+      resolve();
+      onclose();
+    }),
+  );
+  const close = async () => {
+    if (!closed) {
+      proc.stdin.end();
+      if (!target) proc.kill("SIGTERM");
+    }
+    if (sessionContainer)
+      await runDockerCli(["rm", "--force", sessionContainer]);
+    await finished;
+  };
+  proc.stdin.on("error", () => {
+    void close();
+  });
+  proc.stderr.resume();
+  proc.stdout.setEncoding("utf8");
+  let buffer = "";
+  proc.stdout.on("data", (text) => {
+    buffer += text;
+    try {
+      for (let i = buffer.indexOf("\n"); i >= 0; i = buffer.indexOf("\n")) {
+        if (i > 4_000_000) throw new Error();
+        const line = buffer.slice(0, i);
+        buffer = buffer.slice(i + 1);
+        if (line.trim()) onmessage(JSON.parse(line));
+      }
+      if (buffer.length > 4_000_000) throw new Error();
+    } catch {
+      void close();
+    }
+  });
+  await once(proc, "spawn");
+  return {
+    close,
+    send: (msg) =>
+      new Promise((resolve, reject) =>
+        proc.stdin.write(JSON.stringify(msg) + "\n", (error) =>
+          error ? reject(error) : resolve(),
+        ),
+      ),
+  };
+}
+
 // --- HTTP surface (mirrors scripts/mcp-server.mjs) ---
 const server = http.createServer((req, res) => {
+  if (req.url === "/session") {
+    void sessionHttp(req, res, openStdioSession);
+    return;
+  }
   if (req.method === "GET" && req.url === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ status: "ok", name: NAME }));
@@ -563,7 +729,15 @@ const server = http.createServer((req, res) => {
 
 function stopChild() {
   try {
-    child?.kill("SIGTERM");
+    if (workspaceTransport) child?.stdin.end();
+    else if (child && IS_MANAGED_DOCKER_BRIDGE) {
+      child.stdin.end();
+      // docker run proxies SIGTERM to PID 1; a server may legally ignore it.
+      // The named container (not its CLI process) owns all its stdio sessions.
+      void runDockerCli(["rm", "--force", CONTAINER_NAME]).finally(() =>
+        child?.kill("SIGTERM"),
+      );
+    } else child?.kill("SIGTERM");
   } catch {
     // The child may already have exited.
   }
@@ -581,6 +755,7 @@ function requestExit(code) {
   // child after SIGTERM.
   startupWatchdog?.abort();
   rejectPending(new Error("MCP bridge is shutting down"));
+  void closeSessions();
   stopChild();
   // Setting exitCode lets Node flush stderr and close the child stdio pipes.
   // Calling process.exit() here loses exactly the final diagnostics needed to
@@ -670,9 +845,14 @@ async function startBridge() {
       ARGS = withSecretEnvironmentBootstrap(ARGS, MCP_IMAGE, metadata.Config);
       // Pin the inspected image so tag drift cannot change its exec contract.
       ARGS[ARGS.indexOf(MCP_IMAGE, 1)] = metadata.Id;
-      runtimeEnvironmentLine = secretEnvironmentLine(runtimeEnv);
-      runtimeEnv = {};
-    } else if (!IS_DOCKER_BRIDGE) {
+      sessionCommand = ARGS.slice(
+        ARGS.indexOf("toolplane-mcp", ARGS.indexOf(metadata.Id, 1)) + 1,
+      );
+      runtimeEnvironmentLine = secretEnvironmentLine(runtimeEnv, [
+        sessionCommand[0],
+        ...expandMcpArguments(sessionCommand.slice(1), runtimeEnv),
+      ]);
+    } else if (!IS_DOCKER_BRIDGE && !workspaceTransport) {
       childEnv = { ...childEnv, ...runtimeEnv };
       runtimeEnv = {};
     }

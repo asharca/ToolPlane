@@ -1,13 +1,26 @@
 // Isolation policy for custom MCP servers. Every custom source runs in its own
 // throwaway container: no capabilities, no privilege escalation, a read-only
-// root fs (writable /tmp only), capped resources, and a dedicated network off
-// the app/db network. Only the MCP's own env (installCfg.env) ever enters it.
+// root fs (writable tmpfs and an optional per-deployment workspace), capped resources,
+// and a dedicated network off the app/db network. Only MCP env enters it.
 
 export type McpNetwork = "isolated" | "none";
 
 // Dedicated bridge network for MCP containers — present egress to the internet
 // but not on the app/db compose network. `ensureSandboxNetwork()` creates it.
 export const MCP_NETWORK = "mcp-sandbox";
+
+export const MCP_RUNTIME_IMAGE =
+  process.env.MCP_RUNTIME_IMAGE ||
+  "ghcr.io/asharca/toolplane-mcp-runtime:latest";
+
+export function isPackagedStdioCommand(command: string): boolean {
+  return (
+    command === "npx" ||
+    command === "uvx" ||
+    command === "uv" ||
+    command === "docker"
+  );
+}
 
 export const SANDBOX = {
   memory: "512m",

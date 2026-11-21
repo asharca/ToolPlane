@@ -1,43 +1,45 @@
 "use client";
-import { AnimatedBadge } from "@/components/motion/animated-badge";
-
-import { ButtonLink, Button } from "@/components/motion/button";
-import { Input } from "@/components/motion/input";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/motion/popover";
-import { FormSelect } from "@/components/ui/FormSelect";
 
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
+  LogIn,
   MoreHorizontal,
   Pause,
   Play,
   Plug,
   RotateCcw,
   Search,
+  Store,
   Trash2,
   X,
 } from "lucide-react";
+import { AnimatedBadge } from "@/components/motion/animated-badge";
+import { Button, ButtonLink } from "@/components/motion/button";
+import { Input } from "@/components/motion/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/motion/popover";
+import { Checkbox } from "@/components/motion/checkbox";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import {
-  removeDeploymentsAction,
   removeDeploymentAction,
+  removeDeploymentsAction,
   restartDeploymentAction,
-  startDeploymentsAction,
   startDeploymentAction,
-  stopDeploymentsAction,
+  startDeploymentsAction,
   stopDeploymentAction,
+  stopDeploymentsAction,
 } from "@/lib/workspace/actions";
+import { cn } from "@/lib/utils";
 import { DashboardEmptyState, DashboardTable } from "./DashboardUI";
-import { DeployCustomMcpDialog } from "./DeployCustomMcpDialog";
+import { AddMcpDialog } from "./AddMcpDialog";
 
 export type McpDeploymentListItem = {
   id: string;
@@ -47,6 +49,8 @@ export type McpDeploymentListItem = {
   status: string;
   createdAt: string;
   iconUrl: string | null;
+  /** Present for OAuth deployments; setup means signing in, not variables. */
+  signInUrl: string | null;
 };
 
 type FilterStatus =
@@ -56,17 +60,34 @@ type FilterStatus =
   | "provisioning"
   | "error"
   | "stopped";
+
 const PAGE_SIZE = 20;
+
+const KNOWN_SOURCES: Record<string, true> = {
+  catalog: true,
+  custom: true,
+  config: true,
+  docker: true,
+  remote: true,
+  npm: true,
+  pypi: true,
+  github: true,
+};
+
+const FILTER_DOT: Record<Exclude<FilterStatus, "all">, string> = {
+  running: "bg-emerald-500",
+  setup_required: "bg-amber-500",
+  provisioning: "bg-primary",
+  error: "bg-destructive",
+  stopped: "bg-muted-foreground/50",
+};
 
 function McpSourceBadge({ source }: { source: string }) {
   const t = useTranslations("console.mcp");
-  if (source === "catalog") return null;
-  const knownSource =
-    source === "custom" || source === "config" || source === "docker";
-
+  const label = KNOWN_SOURCES[source] ? t(`source.${source}`) : source;
   return (
     <AnimatedBadge status="neutral" size="sm" showIcon={false}>
-      {knownSource ? t(`source.${source}`) : source}
+      {label}
     </AnimatedBadge>
   );
 }
@@ -92,7 +113,10 @@ function McpDeploymentActions({
 
   return (
     <div
-      className={`flex items-center justify-end gap-1 ${compact ? "w-full" : ""}`}
+      className={cn(
+        "flex items-center justify-end gap-1.5",
+        compact && "w-full",
+      )}
     >
       {isRunning || isProvisioning ? (
         <form action={stopDeploymentAction}>
@@ -110,11 +134,14 @@ function McpDeploymentActions({
         </form>
       ) : needsSetup ? (
         <ButtonLink
-          href={`${base}?tab=variables`}
-          variant="secondary"
+          href={deployment.signInUrl ?? `${base}?tab=variables`}
+          variant={deployment.signInUrl ? "primary" : "secondary"}
           size="sm"
         >
-          {t("variables")}
+          {deployment.signInUrl ? (
+            <LogIn className="size-3.5" aria-hidden="true" />
+          ) : null}
+          {deployment.signInUrl ? t("oauth.signIn") : t("variables")}
         </ButtonLink>
       ) : (
         <form action={startDeploymentAction}>
@@ -170,7 +197,7 @@ function McpDeploymentActions({
           ) : null}
           <form
             action={removeDeploymentAction}
-            className="border-t border-border pt-1"
+            className={isRunning ? "border-t border-border pt-1" : undefined}
           >
             <input type="hidden" name="workspace" value={slug} />
             <input type="hidden" name="deploymentId" value={deployment.id} />
@@ -187,7 +214,7 @@ function McpDeploymentActions({
               pendingLabel={`${t("remove")}…`}
               promptClassName="w-full break-words text-xs text-muted-foreground"
               className="flex-wrap"
-              triggerClassName="w-full justify-start"
+              triggerClassName="w-full justify-start text-destructive hover:text-destructive"
               triggerVariant="ghost"
               triggerSize="sm"
               confirmVariant="secondary"
@@ -219,7 +246,7 @@ function McpBulkDeploymentActions({
   const selectedIds = [...deploymentIds];
 
   return (
-    <fieldset aria-label={t("actions")} className={`min-w-0 ${className}`}>
+    <fieldset aria-label={t("actions")} className={cn("min-w-0", className)}>
       <div className="flex flex-wrap items-center gap-1.5">
         <form action={startDeploymentsAction}>
           <input type="hidden" name="workspace" value={slug} />
@@ -299,8 +326,10 @@ function McpBulkDeploymentActions({
 
 function DeploymentIdentity({
   deployment,
+  showSourceInline = false,
 }: {
   deployment: McpDeploymentListItem;
+  showSourceInline?: boolean;
 }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
@@ -311,25 +340,27 @@ function DeploymentIdentity({
           decoding="auto"
           src={deployment.iconUrl}
           alt=""
-          width={32}
-          height={32}
-          className="size-8 shrink-0 rounded-lg border border-border bg-card object-cover"
+          width={34}
+          height={34}
+          className="size-8.5 shrink-0 rounded-lg border border-border bg-card object-cover"
         />
       ) : (
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-primary">
+        <span className="flex size-8.5 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-muted/60 text-muted-foreground">
           <Plug className="size-4" />
         </span>
       )}
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <span className="truncate font-semibold text-foreground">
+          <span className="truncate text-sm font-medium text-foreground">
             {deployment.name}
           </span>
-          <McpSourceBadge source={deployment.source} />
+          {showSourceInline ? (
+            <McpSourceBadge source={deployment.source} />
+          ) : null}
         </div>
         {deployment.reference ? (
           <p
-            className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground"
+            className="mt-0.5 truncate font-mono text-xs text-muted-foreground"
             title={deployment.reference}
           >
             {deployment.reference}
@@ -349,9 +380,10 @@ export function McpDeploymentsBrowser({
   deployments: McpDeploymentListItem[];
   allowHttp: boolean;
 }) {
-  const [t, common] = [
+  const [t, common, selection] = [
     useTranslations("console.mcp"),
     useTranslations("common"),
+    useTranslations("console.agents"),
   ];
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<FilterStatus>("all");
@@ -361,8 +393,8 @@ export function McpDeploymentsBrowser({
   const [page, setPage] = useState(1);
   const tableAreaRef = useRef<HTMLDivElement>(null);
   const [tableHeight, setTableHeight] = useState(0);
-  // The table area only mounts once the workspace has a deployment.
   const hasDeployments = deployments.length > 0;
+
   useEffect(() => {
     const area = hasDeployments ? tableAreaRef.current : null;
     if (!area) return;
@@ -372,6 +404,7 @@ export function McpDeploymentsBrowser({
     observer.observe(area);
     return () => observer.disconnect();
   }, [hasDeployments]);
+
   const counts = useMemo(
     () => ({
       all: deployments.length,
@@ -392,6 +425,7 @@ export function McpDeploymentsBrowser({
     }),
     [deployments],
   );
+
   const filteredDeployments = useMemo(() => {
     const term = query.trim().toLocaleLowerCase();
     return deployments.filter((deployment) => {
@@ -403,6 +437,7 @@ export function McpDeploymentsBrowser({
         .some((value) => value.toLocaleLowerCase().includes(term));
     });
   }, [deployments, query, status]);
+
   const totalPages = Math.max(
     1,
     Math.ceil(filteredDeployments.length / PAGE_SIZE),
@@ -412,6 +447,7 @@ export function McpDeploymentsBrowser({
     (currentPage - 1) * PAGE_SIZE,
     currentPage * PAGE_SIZE,
   );
+
   const availableDeploymentIds = useMemo(
     () => new Set(deployments.map((deployment) => deployment.id)),
     [deployments],
@@ -426,24 +462,58 @@ export function McpDeploymentsBrowser({
     [availableDeploymentIds, selectedDeploymentIds],
   );
 
-  const filters: Array<{ key: FilterStatus; label: string; count: number }> = [
-    { key: "all", label: common("all"), count: counts.all },
-    { key: "running", label: t("running"), count: counts.running },
-    {
-      key: "setup_required",
-      label: t("setupRequiredFilter"),
-      count: counts.setup_required,
-    },
-    { key: "provisioning", label: t("deploying"), count: counts.provisioning },
-    { key: "error", label: t("error"), count: counts.error },
-    { key: "stopped", label: t("stopped"), count: counts.stopped },
-  ];
+  const visibleFilters = useMemo(() => {
+    const allFilters: Array<{
+      key: FilterStatus;
+      label: string;
+      count: number;
+    }> = [
+      { key: "all", label: common("all"), count: counts.all },
+      { key: "running", label: t("running"), count: counts.running },
+      {
+        key: "setup_required",
+        label: t("setupRequiredFilter"),
+        count: counts.setup_required,
+      },
+      {
+        key: "provisioning",
+        label: t("deploying"),
+        count: counts.provisioning,
+      },
+      { key: "error", label: t("error"), count: counts.error },
+      { key: "stopped", label: t("stopped"), count: counts.stopped },
+    ];
+    return allFilters.filter(
+      (filter) =>
+        filter.key === "all" || filter.count > 0 || filter.key === status,
+    );
+  }, [common, counts, status, t]);
+
+  const toggleMobileSelection = (deploymentId: string, checked: boolean) => {
+    setSelectedDeploymentIds((previous) => {
+      const next = new Set(previous);
+      if (checked) next.add(deploymentId);
+      else next.delete(deploymentId);
+      return next;
+    });
+  };
+
   if (deployments.length === 0) {
+    const marketHref = `/app/${encodeURIComponent(slug)}/plugins`;
     return (
       <DashboardEmptyState
         icon={Plug}
         title={t("noServersDeployedYet")}
-        actions={<DeployCustomMcpDialog slug={slug} allowHttp={allowHttp} />}
+        className="rounded-xl border border-dashed border-border bg-card/50 py-14"
+        actions={
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <AddMcpDialog slug={slug} allowHttp={allowHttp} />
+            <ButtonLink href={marketHref} variant="secondary" size="md">
+              <Store className="size-4" />
+              {t("pluginCenter")}
+            </ButtonLink>
+          </div>
+        }
       />
     );
   }
@@ -453,8 +523,8 @@ export function McpDeploymentsBrowser({
       className="flex min-h-0 flex-1 flex-col gap-4"
       aria-label={t("allMcps")}
     >
-      <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center">
-        <div className="min-w-0 flex-1 sm:max-w-md">
+      <div className="flex shrink-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0 flex-1 lg:max-w-sm">
           <Input
             value={query}
             onChange={(value) => {
@@ -482,117 +552,234 @@ export function McpDeploymentsBrowser({
             }
           />
         </div>
-        <FormSelect
-          label={t("status")}
-          value={status}
-          onValueChange={(value) => {
-            setStatus(value as FilterStatus);
-            setPage(1);
-          }}
-          options={filters.map((filter) => ({
-            value: filter.key,
-            label: `${filter.label} (${filter.count})`,
-          }))}
-          className="w-full sm:w-44"
-        />
+        <fieldset
+          aria-label={t("status")}
+          className="m-0 flex min-w-0 flex-wrap items-center gap-1.5 border-0 p-0"
+        >
+          {visibleFilters.map((filter) => {
+            const active = status === filter.key;
+            return (
+              <button
+                key={filter.key}
+                type="button"
+                aria-pressed={active}
+                onClick={() => {
+                  setStatus(filter.key);
+                  setPage(1);
+                }}
+                className={cn(
+                  "inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  active
+                    ? "border-border bg-card text-foreground shadow-xs"
+                    : "border-transparent bg-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                )}
+              >
+                {filter.key !== "all" ? (
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "size-1.5 shrink-0 rounded-full",
+                      FILTER_DOT[filter.key],
+                    )}
+                  />
+                ) : null}
+                <span>{filter.label}</span>
+                <span className="tabular-nums text-muted-foreground">
+                  {filter.count}
+                </span>
+              </button>
+            );
+          })}
+        </fieldset>
       </div>
 
-      <div ref={tableAreaRef} className="min-h-0 flex-1 overflow-auto">
-        {filteredDeployments.length === 0 ? (
-          <DashboardEmptyState
-            icon={Search}
-            title={t("noMcpFound")}
-            actions={
-              query || status !== "all" ? (
-                <Button
-                  type="button"
-                  onClick={() => {
-                    setQuery("");
-                    setStatus("all");
-                    setPage(1);
-                  }}
-                  variant="secondary"
-                  size="md"
-                >
-                  {common("all")}
-                </Button>
-              ) : undefined
-            }
-          />
-        ) : (
-          <DashboardTable
-            minWidth="36rem"
-            ariaLabel={t("allMcps")}
-            height={tableHeight || undefined}
-            selectedRowIds={[...activeSelectedDeploymentIds]}
-            onSelectionChange={(ids) => setSelectedDeploymentIds(new Set(ids))}
-            selectionActions={({ selectedRowIds }) => (
-              <McpBulkDeploymentActions
-                slug={slug}
-                deploymentIds={new Set(selectedRowIds)}
-                className="flex flex-wrap items-center gap-1.5"
-              />
-            )}
-            headers={[
-              { label: t("serverColumn") },
-              { label: t("status") },
-              { label: t("actions"), align: "right" },
-            ]}
-            rows={pageDeployments.map((deployment) => {
-              const href = `/app/${encodeURIComponent(slug)}/mcp/${deployment.id}`;
-              return {
-                id: deployment.id,
-                cells: [
-                  <Link
-                    key="identity"
-                    href={href}
-                    className="block px-4 py-3 transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+      {filteredDeployments.length === 0 ? (
+        <DashboardEmptyState
+          icon={Search}
+          title={t("noMcpFound")}
+          className="rounded-xl border border-dashed border-border"
+          actions={
+            query || status !== "all" ? (
+              <Button
+                type="button"
+                onClick={() => {
+                  setQuery("");
+                  setStatus("all");
+                  setPage(1);
+                }}
+                variant="secondary"
+                size="sm"
+              >
+                {common("all")}
+              </Button>
+            ) : undefined
+          }
+        />
+      ) : (
+        <>
+          {/* Mobile card list: zero horizontal scroll at 390px */}
+          <div className="space-y-3 md:hidden">
+            {activeSelectedDeploymentIds.size > 0 ? (
+              <div
+                role="toolbar"
+                aria-label={selection("selectedResources", {
+                  count: activeSelectedDeploymentIds.size,
+                })}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2"
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-medium tabular-nums">
+                    {selection("selectedResources", {
+                      count: activeSelectedDeploymentIds.size,
+                    })}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={selection("clearSelection")}
+                    onClick={() => setSelectedDeploymentIds(new Set())}
                   >
-                    <DeploymentIdentity deployment={deployment} />
-                  </Link>,
-                  <StatusBadge key="status" status={deployment.status} />,
-                  <McpDeploymentActions
-                    key="actions"
-                    slug={slug}
-                    deployment={deployment}
-                  />,
-                ],
-              };
-            })}
-          />
-        )}
-      </div>
-      <nav
-        aria-label={common("pagination")}
-        className="flex shrink-0 items-center justify-between gap-3 border-t border-border pt-3"
-      >
-        <p
-          className="text-sm tabular-nums text-muted-foreground"
-          aria-live="polite"
+                    <X className="size-3.5" />
+                  </Button>
+                </div>
+                <McpBulkDeploymentActions
+                  slug={slug}
+                  deploymentIds={activeSelectedDeploymentIds}
+                  className="flex flex-wrap items-center gap-1.5"
+                />
+              </div>
+            ) : null}
+
+            <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+              {pageDeployments.map((deployment) => {
+                const href = `/app/${encodeURIComponent(slug)}/mcp/${deployment.id}`;
+                const checked = activeSelectedDeploymentIds.has(deployment.id);
+                return (
+                  <li key={deployment.id} className="space-y-3 p-3.5">
+                    <div className="flex items-start gap-2.5">
+                      <div className="pt-1">
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(next) =>
+                            toggleMobileSelection(deployment.id, Boolean(next))
+                          }
+                          aria-label={t("selectServer", {
+                            name: deployment.name,
+                          })}
+                        />
+                      </div>
+                      <Link
+                        href={href}
+                        className="min-w-0 flex-1 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <DeploymentIdentity
+                          deployment={deployment}
+                          showSourceInline
+                        />
+                      </Link>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 pl-7">
+                      <StatusBadge status={deployment.status} />
+                      <McpDeploymentActions
+                        slug={slug}
+                        deployment={deployment}
+                      />
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          {/* Desktop table: clean fixed columns, no drag/resize grip clutter */}
+          <div
+            ref={tableAreaRef}
+            className="hidden min-h-0 flex-1 overflow-auto md:block"
+          >
+            <DashboardTable
+              minWidth="40rem"
+              ariaLabel={t("allMcps")}
+              adjustableColumns={false}
+              selectionPlacement="above"
+              height={tableHeight || undefined}
+              selectedRowIds={[...activeSelectedDeploymentIds]}
+              onSelectionChange={(ids) =>
+                setSelectedDeploymentIds(new Set(ids))
+              }
+              selectionActions={({ selectedRowIds }) => (
+                <McpBulkDeploymentActions
+                  slug={slug}
+                  deploymentIds={new Set(selectedRowIds)}
+                  className="flex flex-wrap items-center gap-1.5"
+                />
+              )}
+              headers={[
+                { label: t("serverColumn") },
+                { label: t("sourceColumn"), width: "7.5rem" },
+                { label: t("status"), width: "8.5rem" },
+                { label: t("actions"), align: "right", width: "10rem" },
+              ]}
+              rows={pageDeployments.map((deployment) => {
+                const href = `/app/${encodeURIComponent(slug)}/mcp/${deployment.id}`;
+                return {
+                  id: deployment.id,
+                  cells: [
+                    <Link
+                      key="identity"
+                      href={href}
+                      className="block rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+                    >
+                      <DeploymentIdentity deployment={deployment} />
+                    </Link>,
+                    <McpSourceBadge key="source" source={deployment.source} />,
+                    <StatusBadge key="status" status={deployment.status} />,
+                    <McpDeploymentActions
+                      key="actions"
+                      slug={slug}
+                      deployment={deployment}
+                    />,
+                  ],
+                };
+              })}
+            />
+          </div>
+        </>
+      )}
+
+      {totalPages > 1 ? (
+        <nav
+          aria-label={common("pagination")}
+          className="flex shrink-0 items-center justify-between gap-3 border-t border-border pt-3"
         >
-          {currentPage} / {totalPages}
-        </p>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            disabled={currentPage === 1}
-            onClick={() => setPage(currentPage - 1)}
+          <p
+            className="text-sm tabular-nums text-muted-foreground"
+            aria-live="polite"
           >
-            {common("previous")}
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            disabled={currentPage === totalPages}
-            onClick={() => setPage(currentPage + 1)}
-          >
-            {common("next")}
-          </Button>
-        </div>
-      </nav>
+            {currentPage} / {totalPages}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={currentPage === 1}
+              onClick={() => setPage(currentPage - 1)}
+            >
+              {common("previous")}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={currentPage === totalPages}
+              onClick={() => setPage(currentPage + 1)}
+            >
+              {common("next")}
+            </Button>
+          </div>
+        </nav>
+      ) : null}
     </section>
   );
 }

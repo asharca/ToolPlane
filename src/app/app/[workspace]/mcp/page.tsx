@@ -1,3 +1,4 @@
+import { startUrl } from "@/lib/remote-mcp/oauth/protocol";
 import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { ButtonLink } from "@/components/motion/button";
 
@@ -15,7 +16,7 @@ import {
 } from "@/components/dashboard/DashboardUI";
 import { McpDeploymentsBrowser } from "@/components/dashboard/McpDeploymentsBrowser";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
-import { DeployCustomMcpDialog } from "@/components/dashboard/DeployCustomMcpDialog";
+import { AddMcpDialog } from "@/components/dashboard/AddMcpDialog";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 
 export const dynamic = "force-dynamic";
@@ -68,6 +69,7 @@ export default async function McpServersPage({
       status: effectiveStatus(deployment.id, deployment.status),
       createdAt: formatDate(deployment.createdAt, timeZone, locale),
       iconUrl: deployment.server?.iconUrl ?? null,
+      signInUrl: deployment.oauth ? startUrl(slug, deployment.id) : null,
     };
   });
   const anyProvisioning = deploymentItems.some(
@@ -78,7 +80,7 @@ export default async function McpServersPage({
   return (
     <>
       <ProvisioningRefresher active={anyProvisioning} />
-      <DashboardPage className="flex min-h-0 flex-1 flex-col space-y-0 gap-6">
+      <DashboardPage className="flex min-h-0 flex-1 flex-col gap-5 space-y-0">
         <DashboardToolbar
           className="shrink-0"
           actions={
@@ -87,7 +89,7 @@ export default async function McpServersPage({
                 <Store className="size-4" />
                 {t("pluginCenter")}
               </ButtonLink>
-              <DeployCustomMcpDialog
+              <AddMcpDialog
                 slug={slug}
                 allowHttp={allowHttp}
                 defaultOpen={query.create === "1"}
@@ -95,10 +97,14 @@ export default async function McpServersPage({
             </>
           }
         >
-          <h1 className="text-xl font-semibold">{t("title")}</h1>
-          <p className="text-sm text-muted-foreground">
-            {t("deploymentCountSummary", { count: deploymentItems.length })}
-          </p>
+          <div className="flex items-baseline gap-2.5">
+            <h1 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+              {t("title")}
+            </h1>
+            <span className="text-sm tabular-nums text-muted-foreground">
+              {deploymentItems.length}
+            </span>
+          </div>
         </DashboardToolbar>
         {query.error === "unsafeHttpConfirmationRequired" && !allowHttp ? (
           <p role="alert" className="text-sm text-destructive">

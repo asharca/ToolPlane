@@ -1,3 +1,4 @@
+import { isOAuthConfig } from "@/lib/remote-mcp/oauth/config";
 import { createHash } from "node:crypto";
 import { resolveSpawnSpec, type DeploymentForSpawn } from "./spawn-spec";
 import {
@@ -64,6 +65,14 @@ export function mcpDefinitionChecksum(deployment: DeploymentForSpawn): string {
           left.localeCompare(right),
         )
       : [];
+  const envBindings =
+    cfg.envBindings &&
+    typeof cfg.envBindings === "object" &&
+    !Array.isArray(cfg.envBindings)
+      ? Object.entries(cfg.envBindings).sort(([left], [right]) =>
+          left.localeCompare(right),
+        )
+      : [];
   return createHash("sha256")
     .update(
       JSON.stringify({
@@ -80,6 +89,14 @@ export function mcpDefinitionChecksum(deployment: DeploymentForSpawn): string {
         timeoutMs: cfg.timeoutMs ?? 60_000,
         allowUnsafeHttp: cfg.allowUnsafeHttp === true,
         environmentKeys: Object.keys(env).sort(),
+        ...(cfg.cwd !== undefined ? { cwd: cfg.cwd } : {}),
+        ...(envBindings.length ? { envBindings } : {}),
+        ...(deployment.runtimeTarget && deployment.runtimeTarget !== "managed"
+          ? {
+              runtimeTarget: deployment.runtimeTarget,
+              runtimeSandboxId: deployment.runtimeSandboxId ?? null,
+            }
+          : {}),
       }),
     )
     .digest("hex");
@@ -94,6 +111,7 @@ export function mcpRunsInAgentSandbox(deployment: {
     !!cfg &&
     typeof cfg === "object" &&
     !Array.isArray(cfg) &&
+    !isOAuthConfig(cfg) &&
     (cfg as Record<string, unknown>).runInAgentSandbox === true
   );
 }
@@ -102,7 +120,8 @@ export function mcpRunsInAgentSandbox(deployment: {
 export function supportsAgentSandboxPlacement(
   deployment: DeploymentForSpawn,
 ): boolean {
-  if (deployment.source === "sandbox") return false;
+  if (deployment.source === "sandbox" || isOAuthConfig(deployment.installCfg))
+    return false;
   try {
     const spec = resolveSpawnSpec(deployment);
     return (

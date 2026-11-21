@@ -21,13 +21,16 @@ import {
   charge,
   createProposal,
   createRecord,
-  newSkillSchema,
   ownedRecord,
   payload,
   recordEpisode,
   type Scope,
 } from "./service";
-import { casePayload, reflectionCheckpoint } from "./schemas";
+import {
+  casePayload,
+  privateSkillSchema,
+  reflectionCheckpoint,
+} from "./schemas";
 import { getAgentForRun } from "@/lib/agents/queries";
 import { resolvePinnedAgent } from "@/lib/agents/revisions";
 
@@ -52,7 +55,7 @@ const reflectionOutput = z
             title: z.string().min(1).max(240),
             rationale: z.string().min(1).max(10_000),
             systemPrompt: z.string().max(50_000).optional(),
-            newSkill: newSkillSchema.optional(),
+            newSkill: privateSkillSchema.optional(),
           })
           .strict(),
       )

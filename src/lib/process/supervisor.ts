@@ -4,8 +4,12 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
 import { db } from "@/lib/db";
 import { logSystemEvent } from "@/lib/observability/system";
+import { runMcpDeploymentOperation } from "@/lib/workspace/mcp-operation";
+import { remoteMcpConnectionIdentity } from "@/lib/remote-mcp/classification";
+import { resolveMcpConnectionSpawnSpec } from "./mcp-credentials";
 import {
   assertRuntimeOwner,
+  runtimeCanOperate,
   trackRuntimeOperation,
   runtimeAbortSignal,
   markRuntimeUncertain,
@@ -25,6 +29,7 @@ import {
 } from "./supervisor/launch";
 import {
   deleteRegistry,
+  type Entry,
   liveRegistry,
   localLiveEntry,
   readRegistry,
@@ -79,6 +84,8 @@ export type LiveMcpRuntimeSnapshot = {
   redactionValues: string[];
   remoteConnectionIdentity?: string;
   credentialIdentity?: string;
+  oauthRevision?: string;
+  oauthDeploymentId?: string;
 };
 
 // Keep lifecycle state across module re-evaluation in the same worker.
@@ -477,6 +484,11 @@ export function liveMcpRuntimeSnapshot(
     redactionValues: [...entry.redactionValues],
     remoteConnectionIdentity: entry.remoteConnectionIdentity,
     credentialIdentity: entry.credentialIdentity,
+    oauthRevision: entry.oauthRevision,
+    ...(entry.oauthRevision && {
+      oauthDeploymentId:
+        g.__mcpSupervisorProcessSources?.get(deploymentId) ?? deploymentId,
+    }),
   };
 }
 
@@ -501,10 +513,79 @@ type StartProcessOptions = {
   expectedConfigChecksum?: string;
 };
 
+// Tied to this exact child generation. The stop/exit paths clear its timer;
+// queued work rechecks ownership, desired state and generation under the edit lock.
+function scheduleOAuthRefresh(
+  id: string,
+  workspaceId: string,
+  entry: Entry,
+  refreshAt: number,
+) {
+  clearTimeout(entry.oauthRefreshTimer);
+  const live = () =>
+    runtimeCanOperate() &&
+    store().get(id) === entry &&
+    entry.status === "running" &&
+    !entry.stopping &&
+    !launchPrevented(id, workspaceId);
+  entry.oauthRefreshTimer = setTimeout(
+    () => {
+      if (!live()) return;
+      void runMcpDeploymentOperation(workspaceId, id, async () => {
+        if (!live()) return;
+        await trackRuntimeOperation(async () => {
+          const dep = await db.deployment.findFirst({
+            where: { id, workspaceId },
+            select: { status: true },
+          });
+          if (dep?.status === "setup_required") {
+            await killProcess(id, { finalStatus: "setup_required" });
+            return;
+          }
+          if (dep?.status !== "running") return;
+          try {
+            entry.oauthRefreshAbort = new AbortController();
+            const { spec } = await resolveMcpConnectionSpawnSpec({
+              workspaceId,
+              deploymentId: id,
+              signal: entry.oauthRefreshAbort.signal,
+            });
+            if (!live() || spec.kind !== "remote" || !spec.oauth) return;
+            if (spec.oauth.revision !== entry.oauthRevision)
+              await startProcess(id, spec, { workspaceId });
+            else if (spec.oauth.refreshAt !== null)
+              scheduleOAuthRefresh(
+                id,
+                workspaceId,
+                entry,
+                spec.oauth.refreshAt,
+              );
+          } catch (error) {
+            if (
+              live() &&
+              error instanceof Error &&
+              ["MCP_REAUTH_REQUIRED", "MCP_CREDENTIAL_REQUIRED"].includes(
+                error.message,
+              )
+            ) {
+              await killProcess(id, { finalStatus: "setup_required" });
+            } else throw error;
+          }
+        });
+      }).catch(() => {
+        if (live())
+          scheduleOAuthRefresh(id, workspaceId, entry, Date.now() + 30_000);
+      });
+    },
+    Math.max(10, Math.min(2_147_483_647, refreshAt - Date.now())),
+  ).unref();
+}
+
 const launchHooks = {
   launchPrevented,
   persist,
   mcpRuntimeCredentialIdentity,
+  scheduleOAuthRefresh,
 };
 
 async function launchOwnedProcess(
@@ -532,6 +613,19 @@ async function launchOwnedProcess(
     return { ready: null };
   // Admission can await the workspace lookup, so recheck the lease before launch.
   assertRuntimeOwner();
+  if (spec.kind === "remote" && spec.requiresOAuth) {
+    if (!spec.oauth || !spec.headers.authorization)
+      throw new Error("MCP_CREDENTIAL_REQUIRED");
+    const existing = localLiveEntry(deploymentId);
+    if (
+      existing &&
+      (existing.oauthRevision !== spec.oauth.revision ||
+        existing.remoteConnectionIdentity !== remoteMcpConnectionIdentity(spec))
+    ) {
+      await stopProcessUnlocked(deploymentId);
+      assertRuntimeOwner();
+    }
+  }
   return launchProcess(
     launchHooks,
     deploymentId,

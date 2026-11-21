@@ -1,4 +1,5 @@
 import "server-only";
+import { db } from "@/lib/db";
 import type { Deployment, Sandbox } from "@prisma/client";
 import { beginWorkspaceOperation } from "@/lib/workspace/operation-gate";
 import { trackRuntimeOperation } from "@/lib/runtime/ownership-state";
@@ -7,6 +8,7 @@ import {
   effectiveStatus,
   killProcess,
   startProcess,
+  stopProcess,
 } from "@/lib/process/supervisor";
 import { resolveSpawnSpec } from "@/lib/process/spawn-spec";
 import { stopDockerSandboxContainer } from "./runtime";
@@ -53,6 +55,23 @@ export function enqueueSandboxOperation<T>(
   });
 }
 
+// Caller holds the sandbox lifecycle lease. Join in-flight MCP launches and
+// release their exec streams before stopping, deleting, or replacing the target.
+export async function stopWorkspaceSandboxMcps(
+  workspaceId: string,
+  sandboxId: string,
+) {
+  const consumers = await db.deployment.findMany({
+    where: {
+      workspaceId,
+      runtimeTarget: "workspace_sandbox",
+      runtimeSandboxId: sandboxId,
+    },
+    select: { id: true },
+  });
+  await Promise.all(consumers.map(({ id }) => stopProcess(id)));
+}
+
 export async function quiesceDockerSandbox<T>(
   sandbox: Sandbox & { deployment: Deployment },
   operation: (control: { preventResume: () => void }) => Promise<T>,
@@ -76,6 +95,7 @@ export async function quiesceDockerSandbox<T>(
     throw new Error("Wait for the sandbox data operation to finish.");
   const shouldResume = status === "running";
   let resumeAllowed = true;
+  await stopWorkspaceSandboxMcps(sandbox.workspaceId, sandbox.id);
   await killProcess(
     sandbox.deploymentId,
     options.quiescedStatus ? { finalStatus: options.quiescedStatus } : {},

@@ -1,7 +1,7 @@
 "use client";
 import { Button } from "@/components/motion/button";
 
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   useCallback,
@@ -228,33 +228,37 @@ export function ContainerLogs({
   }
 
   return (
-    <section className="space-y-3">
+    <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-          <dl className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            <div className="flex gap-1">
-              <dt>{statusLabel}:</dt>
+          <dl className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
+            <div className="flex items-center gap-1.5">
+              <dt className="sr-only">{statusLabel}</dt>
               <dd>
                 <StatusBadge status={currentStatus} />
               </dd>
             </div>
-            <div className="flex gap-1">
+            <div className="flex items-center gap-1">
               <dt>{phaseLabel}:</dt>
               <dd className="font-medium text-foreground">
                 {readablePhase(snapshot?.phase)}
               </dd>
             </div>
             {snapshot?.imageState ? (
-              <div className="flex gap-1">
+              <div className="flex items-center gap-1">
                 <dt>{imageStateLabel}:</dt>
-                <dd>{snapshot.imageState}</dd>
+                <dd className="font-medium text-foreground">
+                  {snapshot.imageState}
+                </dd>
               </div>
             ) : null}
             {snapshot?.containerState ? (
-              <div className="flex gap-1">
+              <div className="flex items-center gap-1">
                 <dt>{containerStateLabel}:</dt>
-                <dd>{snapshot.containerState}</dd>
+                <dd className="font-medium text-foreground">
+                  {snapshot.containerState}
+                </dd>
               </div>
             ) : null}
           </dl>
@@ -279,6 +283,7 @@ export function ContainerLogs({
           onChange={changeQuery}
           aria-label={t("searchRuntimeLogs")}
           placeholder={t("searchRuntimeLogs")}
+          leftIcon={<Search className="size-4" />}
           className="w-full sm:max-w-xs"
         />
         <Button

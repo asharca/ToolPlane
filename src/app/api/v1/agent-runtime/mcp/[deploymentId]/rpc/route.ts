@@ -1,3 +1,4 @@
+import { recordEvent } from "@/lib/observability/events";
 import { withRequestLogging } from "@/lib/observability/http";
 import { NextResponse } from "next/server";
 import {
@@ -32,11 +33,12 @@ const preEffectDenials: Record<string, true> = {
   MCP_CREDENTIAL_SCOPE_INVALID: true,
   MCP_CREDENTIAL_INVALID: true,
   MCP_CREDENTIAL_REQUIRED: true,
+  MCP_REAUTH_REQUIRED: true,
   AGENT_CREDENTIAL_REVOKED: true,
 };
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 320;
 const runtimeRpc = z
   .object({
     jsonrpc: z.literal("2.0"),
@@ -144,14 +146,28 @@ export const POST = withRequestLogging(
           deploymentId,
           params.name,
           args as Record<string, unknown>,
+          { token, signal: req.signal },
         );
         return NextResponse.json({ jsonrpc: "2.0", id, result });
       }
+      await recordEvent({
+        domain: "mcp",
+        eventName: "mcp.rpc",
+        workspaceId: context.workspaceId,
+        deploymentId,
+        rpcMethod: body.method,
+        outcome: "denied",
+        errorCode: "MCP_METHOD_FORBIDDEN",
+      });
       return NextResponse.json(
         {
           jsonrpc: "2.0",
           id,
-          error: { code: -32601, message: "Method not allowed" },
+          error: {
+            code: -32601,
+            message: "Method not allowed",
+            data: { reason: "MCP_METHOD_FORBIDDEN" },
+          },
         },
         { status: 403 },
       );
@@ -163,6 +179,17 @@ export const POST = withRequestLogging(
             ? "MCP_LISTING_UNAVAILABLE"
             : null;
       const unknown = body.method === "tools/call" && !reason;
+      await recordEvent({
+        domain: "mcp",
+        eventName: "mcp.rpc",
+        workspaceId: context.workspaceId,
+        deploymentId,
+        rpcMethod: body.method,
+        outcome: reason ? "denied" : "error",
+        errorCode:
+          reason ??
+          (unknown ? "MCP_TOOL_EXECUTION_UNKNOWN" : "MCP_SESSION_UNAVAILABLE"),
+      });
       return NextResponse.json(
         {
           jsonrpc: "2.0",

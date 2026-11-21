@@ -25,6 +25,19 @@ ENV TOOLPLANE_CHROMIUM_PATH=/usr/bin/chromium
 # Runtime isolation still drops all capabilities and forbids privilege escalation.
 WORKDIR /workspace
 
+# ---- mcp-runtime: managed stdio commands, no application files or credentials ----
+FROM node:26-bookworm AS mcp-runtime
+ARG PNPM_VERSION
+COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential default-jre-headless python3-pip python-is-python3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install --global --no-update-notifier pnpm@${PNPM_VERSION} bun@1.3.13 deno@2.7.12 \
+    && install -d -o node -g node /workspace
+ENV HOME=/tmp DENO_DIR=/tmp/deno BUN_INSTALL_CACHE_DIR=/tmp/bun-cache
+WORKDIR /workspace
+USER node
+ENTRYPOINT []
+
 # ---- Python is used only for agent archive imports, not channels ----
 FROM ${NODE_IMAGE} AS python-runtime-base
 RUN set -eux; \

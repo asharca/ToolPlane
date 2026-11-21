@@ -16,6 +16,9 @@ const nextConfig: NextConfig = {
   allowedDevOrigins,
   output: "standalone",
   poweredByHeader: false,
+  // Server actions carry pasted credentials (MCP configs, tokens); never echo
+  // their arguments into the dev server log.
+  logging: { serverFunctions: false },
   serverExternalPackages: ["@earendil-works/pi-ai", "@larksuiteoapi/node-sdk"],
   async redirects() {
     const docs = "https://asharca.github.io/toolplane-docs/docs";

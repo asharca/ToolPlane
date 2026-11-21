@@ -458,7 +458,6 @@ export async function recordEpisode(row: A2ATask) {
     ],
   });
 }
-export const newSkillSchema = privateSkillSchema;
 export async function createProposal(
   scope: Scope,
   input: {
@@ -467,7 +466,7 @@ export async function createProposal(
     rationale: string;
     baseRevisionId: string;
     after?: unknown;
-    newSkill?: z.infer<typeof newSkillSchema>;
+    newSkill?: z.infer<typeof privateSkillSchema>;
     evidence?: { episodeIds: string[]; feedbackIds: string[] };
   },
   sourceKey?: string,
@@ -577,7 +576,7 @@ export async function reviewProposal(
         throw new EvolutionError("CONFLICT");
       const after = AgentRevisionConfigSchema.parse(p.after);
       if (decision === "approve" && p.newSkill) {
-        const skill = newSkillSchema.parse(p.newSkill);
+        const skill = privateSkillSchema.parse(p.newSkill);
         const created = await tx.installedSkill.create({
           data: {
             workspaceId: scope.workspaceId,

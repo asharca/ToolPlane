@@ -124,7 +124,7 @@ describe("resolveSpawnSpec", () => {
     expect(args.slice(imageIndex + 1)).toEqual(["npx", ...commandArgs]);
   });
 
-  it("runs uvx and uv JSON configs in the Python wrapper and rejects arbitrary commands", () => {
+  it("runs uvx and uv JSON configs in the Python wrapper", () => {
     const uvx = buildStdioConfigSpawnSpec("uvx", ["mcp-server-fetch"]);
     const uvxImageIndex = uvx.args.findIndex((arg) =>
       arg.startsWith("ghcr.io/astral-sh/uv"),
@@ -140,10 +140,6 @@ describe("resolveSpawnSpec", () => {
       arg.startsWith("ghcr.io/astral-sh/uv"),
     );
     expect(uv.args.slice(uvImageIndex + 1)).toEqual(["uv", ...uvArgs]);
-
-    expect(() => buildStdioConfigSpawnSpec("bash", ["-lc", "whoami"])).toThrow(
-      /Unsupported/,
-    );
   });
 
   it("uses Git-capable wrappers for documented Git source forms on any forge", () => {

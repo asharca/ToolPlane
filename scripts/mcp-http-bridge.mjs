@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { ResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { sessionHttp, closeSessions } from "./mcp-session-http.mjs";
 import undici from "undici";
 import {
   isPrivateRemoteMcpIp,
@@ -99,6 +100,8 @@ function parseConfig() {
     timeoutMs: value.timeoutMs,
     headers,
     allowUnsafeHttp: value.allowUnsafeHttp === true,
+    oauth: value.oauth === true,
+    expiresAt: value.expiresAt ?? null,
   };
 }
 
@@ -302,17 +305,19 @@ async function safeFetch(input, init) {
 }
 
 const requestInit = { headers: CONFIG.headers, redirect: "error" };
-const transport =
-  CONFIG.transport === "sse"
+function openTransport(sessionFetch = safeFetch) {
+  return CONFIG.transport === "sse"
     ? new SSEClientTransport(CONFIG.url, {
         requestInit,
-        eventSourceInit: { fetch: safeFetch },
-        fetch: safeFetch,
+        eventSourceInit: { fetch: sessionFetch },
+        fetch: sessionFetch,
       })
     : new StreamableHTTPClientTransport(CONFIG.url, {
         requestInit,
-        fetch: safeFetch,
+        fetch: sessionFetch,
       });
+}
+const transport = openTransport();
 let negotiatedProtocolVersion;
 const setProtocolVersion = transport.setProtocolVersion.bind(transport);
 transport.setProtocolVersion = (version) => {
@@ -327,7 +332,104 @@ let initResult = null;
 let shuttingDown = false;
 let pinnedDispatcher = null;
 
+// Fail closed if upstream echoes a launch secret, including inside object keys.
+function rpcResult(id, result) {
+  const body = JSON.stringify({ jsonrpc: "2.0", id, result });
+  if (
+    CONFIG.oauth &&
+    secretValues.some((secret) =>
+      body.includes(JSON.stringify(secret).slice(1, -1)),
+    )
+  ) {
+    return JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32000, message: "MCP_RESULT_REDACTION_REQUIRED" },
+    });
+  }
+  return body;
+}
+
+async function openRemoteSession({ onmessage, onclose }) {
+  const lifetime = new AbortController();
+  const remote = openTransport((url, init) =>
+    safeFetch(url, {
+      ...init,
+      signal: AbortSignal.any([
+        lifetime.signal,
+        ...(init?.signal ? [init.signal] : []),
+      ]),
+    }),
+  );
+  const current = () =>
+    !shuttingDown &&
+    (!CONFIG.oauth || !CONFIG.expiresAt || Date.now() < CONFIG.expiresAt);
+  let expiry;
+  const close = async () => {
+    clearTimeout(expiry);
+    const deadline = setTimeout(() => lifetime.abort(), 3000).unref();
+    try {
+      if (remote.sessionId) await remote.terminateSession?.();
+    } finally {
+      clearTimeout(deadline);
+      lifetime.abort();
+      await remote.close();
+    }
+  };
+  remote.onmessage = (message) => {
+    const data = JSON.stringify(message);
+    if (
+      !current() ||
+      secretValues.some((secret) =>
+        data.includes(JSON.stringify(secret).slice(1, -1)),
+      )
+    ) {
+      onclose();
+      return;
+    }
+    onmessage(message);
+  };
+  remote.onclose = onclose;
+  if (!current()) throw new Error("MCP_CONNECTION_RESTART_REQUIRED");
+  const startup = setTimeout(() => lifetime.abort(), CONFIG.timeoutMs).unref();
+  try {
+    await Promise.race([
+      remote.start(),
+      new Promise((_, reject) =>
+        lifetime.signal.addEventListener(
+          "abort",
+          () => reject(new Error("MCP_OPEN_TIMEOUT")),
+          { once: true },
+        ),
+      ),
+    ]);
+  } catch (error) {
+    lifetime.abort();
+    await remote.close();
+    throw error;
+  } finally {
+    clearTimeout(startup);
+  }
+  if (CONFIG.oauth && CONFIG.expiresAt)
+    expiry = setTimeout(
+      onclose,
+      Math.min(2_147_483_647, Math.max(0, CONFIG.expiresAt - Date.now())),
+    ).unref();
+  return {
+    close,
+    setProtocolVersion: (version) => remote.setProtocolVersion(version),
+    send: async (message) => {
+      if (!current()) throw new Error("MCP_CONNECTION_RESTART_REQUIRED");
+      await remote.send(message);
+    },
+  };
+}
+
 const server = http.createServer((req, res) => {
+  if (req.url === "/session") {
+    void sessionHttp(req, res, openRemoteSession);
+    return;
+  }
   if (req.method === "GET" && req.url === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ status: "ok", name: NAME }));
@@ -376,12 +478,16 @@ const server = http.createServer((req, res) => {
     }
     if (msg.method === "initialize") {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(
-        JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: initResult }),
-      );
+      res.end(rpcResult(msg.id, initResult));
       return;
     }
     try {
+      if (
+        CONFIG.oauth &&
+        CONFIG.expiresAt !== null &&
+        Date.now() >= CONFIG.expiresAt
+      )
+        throw new Error("MCP_CONNECTION_RESTART_REQUIRED");
       const result = await client.request(
         {
           method: msg.method,
@@ -391,7 +497,7 @@ const server = http.createServer((req, res) => {
         { timeout: CONFIG.timeoutMs },
       );
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }));
+      res.end(rpcResult(msg.id, result));
     } catch (error) {
       const code = Number.isInteger(error?.code) ? error.code : -32000;
       res.writeHead(200, { "content-type": "application/json" });
@@ -410,6 +516,7 @@ async function shutdown(code) {
   if (shuttingDown) return;
   shuttingDown = true;
   server.close();
+  await closeSessions();
   try {
     await client.close();
   } catch {

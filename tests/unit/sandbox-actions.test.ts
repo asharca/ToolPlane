@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   sandboxSnapshotUpdateMany: vi.fn(),
   sandboxSnapshotDeleteMany: vi.fn(),
   deploymentCreate: vi.fn(),
+  deploymentFindMany: vi.fn(),
   deploymentDeleteMany: vi.fn(),
   deploymentUpdate: vi.fn(),
   deploymentUpdateMany: vi.fn(),
@@ -72,6 +73,7 @@ vi.mock("@/lib/db", () => ({
     },
     deployment: {
       create: mocks.deploymentCreate,
+      findMany: mocks.deploymentFindMany,
       deleteMany: mocks.deploymentDeleteMany,
       update: mocks.deploymentUpdate,
       updateMany: mocks.deploymentUpdateMany,
@@ -183,6 +185,7 @@ function historicalSandbox(overrides: Record<string, unknown> = {}) {
 describe("renameSandboxAction", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mocks.deploymentFindMany.mockResolvedValue([]);
     mocks.agentFindFirst.mockResolvedValue(null);
     mocks.getCurrentUser.mockResolvedValue({ id: "user1" });
     mocks.resolveWorkspaceScope.mockResolvedValue({
@@ -1211,15 +1214,16 @@ describe("renameSandboxAction", () => {
       kind: "connector",
       deployment: { id: "dep1", status: "running" },
     });
+    mocks.deploymentFindMany.mockResolvedValue([{ id: "dependent-mcp" }]);
 
     await stopSandboxAction(renameForm("Ignored"));
 
-    expect(mocks.stopProcess).toHaveBeenCalledWith("dep1");
+    expect(mocks.stopProcess.mock.calls).toEqual([["dependent-mcp"], ["dep1"]]);
     expect(mocks.disconnectConnector).toHaveBeenCalledWith(
       "sb1",
       "sandbox stopped",
     );
-    expect(mocks.stopProcess.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mocks.stopProcess.mock.invocationCallOrder[1]).toBeLessThan(
       mocks.disconnectConnector.mock.invocationCallOrder[0],
     );
   });

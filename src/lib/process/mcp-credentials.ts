@@ -5,6 +5,8 @@ import { decryptSecretText, encryptSecretText } from "@/lib/security/secrets";
 import { mcpDefinitionChecksum } from "./mcp-definition";
 import { resolveSpawnSpec } from "./spawn-spec";
 import { missingDeploymentRequiredEnvironment } from "@/lib/workspace/server-recipe";
+import { resolveOAuthToken } from "@/lib/remote-mcp/oauth/store";
+import { mcpHeaderSecrets } from "./mcp-result-redaction";
 
 function config(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -91,6 +93,7 @@ export async function resolveMcpConnectionSpawnSpec(input: {
   deploymentId: string;
   expectedDefinitionChecksum?: string;
   rebuild?: boolean;
+  signal?: AbortSignal;
 }) {
   const deployment = await db.deployment.findFirst({
     where: { id: input.deploymentId, workspaceId: input.workspaceId },
@@ -103,12 +106,51 @@ export async function resolveMcpConnectionSpawnSpec(input: {
   )
     throw new Error("MCP_DEFINITION_CHANGED");
   const env = resolveMcpEnvironment(deployment.installCfg, input.workspaceId);
+  const bindings = config(config(deployment.installCfg).envBindings);
+  const projected = Object.fromEntries(
+    Object.entries(bindings).map(([name, key]) => {
+      if (
+        !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ||
+        typeof key !== "string" ||
+        !Object.hasOwn(env, key)
+      )
+        throw new Error("MCP_CREDENTIAL_INVALID");
+      return [name, env[key]];
+    }),
+  );
   if (missingDeploymentRequiredEnvironment(deployment.installCfg).length)
     throw new Error("MCP_CREDENTIAL_REQUIRED");
   const spec = resolveSpawnSpec(
-    { ...deployment, installCfg: { ...config(deployment.installCfg), env } },
+    {
+      ...deployment,
+      installCfg: {
+        ...config(deployment.installCfg),
+        env: { ...env, ...projected },
+      },
+    },
     input.rebuild,
     await getTransportSettings(),
   );
+  if (
+    spec.kind === "remote" &&
+    config(deployment.installCfg).authType === "oauth"
+  ) {
+    const { token, oauth } = await resolveOAuthToken(
+      input.workspaceId,
+      deployment.id,
+      spec.url,
+      config(deployment.installCfg).issuer,
+      input.signal,
+    );
+    spec.headers.authorization = `Bearer ${token}`;
+    spec.oauth = oauth;
+    return {
+      spec,
+      redactionValues: [
+        ...Object.values(env).filter(Boolean),
+        ...mcpHeaderSecrets(spec.headers),
+      ],
+    };
+  }
   return { spec, redactionValues: Object.values(env).filter(Boolean) };
 }

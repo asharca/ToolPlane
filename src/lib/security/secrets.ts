@@ -6,7 +6,7 @@ import {
   randomBytes,
 } from "node:crypto";
 
-type SecretEnvelope = {
+export type SecretEnvelope = {
   v: 1;
   alg: "aes-256-gcm";
   iv: string;

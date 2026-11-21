@@ -1,3 +1,4 @@
+import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
 import "server-only";
 import { createHash } from "node:crypto";
 import { db } from "@/lib/db";
@@ -282,6 +283,11 @@ export async function listSessionMcpTools(
   return runSessionMcpOperation(context, deploymentId, async () => {
     const runtime = await resolveSessionMcp(context, deploymentId);
     const tools = await listMcpTools(runtime.processId, {
+      callbackContext: {
+        deploymentId,
+        workspaceId: context.workspaceId,
+        session: context,
+      },
       // A shared remote connection is the deployment itself: keep its catalog
       // current so grant sync can publish the next revision.
       persistCatalog: runtime.processId === deploymentId,
@@ -295,10 +301,17 @@ export async function callSessionMcpTool(
   deploymentId: string,
   name: string,
   args: Record<string, unknown>,
+  callbacks?: { token: AgentRuntimeTokenPayload; signal: AbortSignal },
 ) {
   return runSessionMcpOperation(context, deploymentId, async () => {
     const runtime = await resolveSessionMcp(context, deploymentId, true, name);
     const tools = await listMcpTools(runtime.processId, {
+      callbackContext: {
+        deploymentId,
+        workspaceId: context.workspaceId,
+        session: context,
+        token: callbacks?.token,
+      },
       persistCatalog: false,
     });
     if (!tools.some((tool) => tool.name === name))
@@ -310,6 +323,15 @@ export async function callSessionMcpTool(
       "tools/call",
       { name, arguments: args },
       fresh.toolDeadlineMs,
+      {
+        signal: callbacks?.signal,
+        callbackContext: {
+          deploymentId,
+          workspaceId: context.workspaceId,
+          session: context,
+          token: callbacks?.token,
+        },
+      },
     );
     if (!result) throw new Error("MCP_TOOL_EXECUTION_UNKNOWN");
     const redacted = redactMcpResult(result, [
@@ -343,7 +365,19 @@ export async function sessionMcpRequest(
     throw new Error("MCP_METHOD_FORBIDDEN");
   return runSessionMcpOperation(context, deploymentId, async () => {
     const runtime = await resolveSessionMcp(context, deploymentId, false);
-    const result = await mcpRpc(runtime.processId, method, params);
+    const result = await mcpRpc(
+      runtime.processId,
+      method,
+      params,
+      runtime.toolDeadlineMs,
+      {
+        callbackContext: {
+          deploymentId,
+          workspaceId: context.workspaceId,
+          session: context,
+        },
+      },
+    );
     if (!result) throw new Error("MCP_RESOURCE_UNAVAILABLE");
     const redacted = redactMcpResult(result, [
       ...runtime.redactionValues,

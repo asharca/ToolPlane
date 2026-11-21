@@ -129,7 +129,7 @@ export function remotePair(
     throw new RemoteA2AError("REMOTE_PATHS_INVALID");
   return { cardUrl: card.href, rpcUrl: rpc.href };
 }
-async function addresses(
+export async function addresses(
   host: string,
   signal: AbortSignal,
   privateHosts: PrivateHostsPolicy | null = null,

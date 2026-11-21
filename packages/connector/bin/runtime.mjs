@@ -8,7 +8,7 @@ import process from "node:process";
 import pty from "node-pty";
 import WebSocket from "ws";
 
-export const VERSION = "0.1.13";
+export const VERSION = "0.1.14";
 export const PROTOCOL_VERSION = "2026-07-connector-ws-v2";
 const MAX_OUTPUT = 128_000;
 const MAX_WRITE = 2_000_000;
@@ -29,7 +29,11 @@ const CONNECTOR_FLAGS = new Set([
   "android",
   "screen-vnc",
 ]);
-const CONNECTOR_CAPABILITIES = ["process_exec", "write_file_base64"];
+const CONNECTOR_CAPABILITIES = [
+  "process_exec",
+  "write_file_base64",
+  "mcp_stdio",
+];
 
 function usage(exitCode = 0) {
   const out = exitCode === 0 ? process.stdout : process.stderr;
@@ -322,6 +326,7 @@ export function createRuntime(rootInput, options = {}) {
   const terminals = new Map();
   const screenSessions = new Map();
   const activeChildren = new Set();
+  const mcpSessions = new Map();
   let canonicalRootPromise;
   const platform = process.platform;
   const shell = connectorShell(platform);
@@ -815,7 +820,124 @@ export function createRuntime(rootInput, options = {}) {
     return { ok: true, sessionId, displayId: "vnc" };
   }
 
+  // Sessions are private to this connection. Loss of its broker relay also
+  // releases the process (even if no explicit close request can be sent).
+  async function mcpStdio(op, args) {
+    const { id } = args;
+    if (typeof id !== "string" || !/^[0-9a-f-]{36}$/.test(id))
+      throw new Error("Invalid MCP session");
+    if (op === "mcp_stdio_open") {
+      const { absolute } = await assertCanonicalPath(resolvePath(args.cwd));
+      if (
+        mcpSessions.has(id) ||
+        mcpSessions.size >= 32 ||
+        !Array.isArray(args.argv) ||
+        !args.argv.length ||
+        args.argv.some((v) => typeof v !== "string" || v.includes("\0"))
+      )
+        throw new Error("Invalid MCP launch");
+      const host = Object.fromEntries(
+        [
+          "PATH",
+          "HOME",
+          "TMPDIR",
+          "SystemRoot",
+          "TEMP",
+          "USERPROFILE",
+          "PATHEXT",
+        ].flatMap((k) => (process.env[k] ? [[k, process.env[k]]] : [])),
+      );
+      const child = spawn(args.argv[0], args.argv.slice(1), {
+        env: { ...host, ...cleanEnv(args.env) },
+        cwd: absolute,
+        detached: !isWindows(platform),
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+      const s = {
+        child,
+        chunks: [],
+        bytes: 0,
+        exited: false,
+        timer: null,
+        wake: null,
+      };
+      const finished = new Promise((resolve) => child.once("close", resolve));
+      s.close = () => {
+        if (mcpSessions.get(id) !== s) return finished;
+        clearTimeout(s.timer);
+        terminateChild(child, platform);
+        s.exited = true;
+        s.wake?.();
+        mcpSessions.delete(id);
+        return finished;
+      };
+      s.refresh = () => {
+        clearTimeout(s.timer);
+        s.timer = setTimeout(s.close, 20_000);
+      };
+      mcpSessions.set(id, s);
+      s.refresh();
+      child.stdin.on("error", s.close);
+      child.stdout.on("data", (chunk) => {
+        s.bytes += chunk.length;
+        if (s.bytes > 1_000_000) return s.close();
+        s.chunks.push(chunk);
+        s.wake?.();
+      });
+      child.once("close", () => {
+        s.exited = true;
+        s.wake?.();
+      });
+      await new Promise((resolve, reject) => {
+        child.once("spawn", resolve);
+        child.once("error", () => {
+          s.close();
+          reject(new Error("MCP launch failed"));
+        });
+      });
+      return { ok: true };
+    }
+    const s = mcpSessions.get(id);
+    if (op === "mcp_stdio_close") {
+      await s?.close();
+      return { ok: true };
+    }
+    if (!s) throw new Error("MCP session unavailable");
+    s.refresh();
+    if (op === "mcp_stdio_write") {
+      if (
+        typeof args.data !== "string" ||
+        args.data.length > 1_400_000 ||
+        s.exited
+      )
+        throw new Error("Invalid MCP input");
+      await new Promise((resolve, reject) =>
+        s.child.stdin.write(Buffer.from(args.data, "base64"), (e) =>
+          e ? reject(e) : resolve(),
+        ),
+      );
+      return { ok: true };
+    }
+    if (op !== "mcp_stdio_read" || s.wake)
+      throw new Error("Invalid MCP request");
+    if (!s.exited && !s.bytes)
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 2000);
+        s.wake = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+    s.wake = null;
+    const data = Buffer.concat(s.chunks, s.bytes).toString("base64");
+    s.chunks.length = 0;
+    s.bytes = 0;
+    return { data, exited: s.exited };
+  }
+
   function closeAllTerminals() {
+    for (const session of mcpSessions.values()) session.close();
     for (const term of terminals.values()) term.kill();
     terminals.clear();
     for (const session of screenSessions.values()) session.close();
@@ -825,6 +947,7 @@ export function createRuntime(rootInput, options = {}) {
   }
 
   async function handle(ws, op, args) {
+    if (op.startsWith("mcp_stdio_")) return mcpStdio(op, args);
     switch (op) {
       case "ping":
         await fs.mkdir(root, { recursive: true });

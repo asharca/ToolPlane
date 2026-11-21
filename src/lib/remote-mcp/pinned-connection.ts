@@ -65,7 +65,7 @@ async function withPinnedRemoteConnection<T>(
         throw new Error("ASSISTANT_REMOTE_MCP_REQUIRED");
       const identity = remoteMcpConnectionIdentity(spec);
       const before = liveMcpRuntimeSnapshot(deployment.id);
-      if (before && before.remoteConnectionIdentity !== identity)
+      if (!spec.oauth && before && before.remoteConnectionIdentity !== identity)
         throw new Error("MCP_CONNECTION_RESTART_REQUIRED");
       await startProcess(deployment.id, spec, {
         workspaceId: context.workspaceId,
@@ -160,7 +160,10 @@ export async function listPinnedRemoteMcpTools(
   options: McpRpcOptions = {},
 ) {
   return withPinnedRemoteConnection(context, ({ secrets }) =>
-    readPinnedRemoteToolCatalog(context.deploymentId, secrets, options),
+    readPinnedRemoteToolCatalog(context.deploymentId, secrets, {
+      ...options,
+      callbackContext: context,
+    }),
   );
 }
 
@@ -187,7 +190,7 @@ export async function callPinnedRemoteMcpTool(
         const tools = await readPinnedRemoteToolCatalog(
           context.deploymentId,
           secrets,
-          options,
+          { ...options, callbackContext: context },
         );
         if (!tools.some((tool) => tool.name === name))
           throw new Error("MCP_TOOL_UNAVAILABLE");
@@ -207,6 +210,12 @@ export async function callPinnedRemoteMcpTool(
         });
         if (spec.kind !== "remote")
           throw new Error("ASSISTANT_REMOTE_MCP_REQUIRED");
+        if (spec.oauth) {
+          await startProcess(live.id, spec, {
+            workspaceId: context.workspaceId,
+          });
+          secrets.push(...mcpHeaderSecrets(spec.headers));
+        }
         if (
           liveMcpRuntimeSnapshot(live.id)?.remoteConnectionIdentity !==
           remoteMcpConnectionIdentity(spec)
@@ -219,8 +228,14 @@ export async function callPinnedRemoteMcpTool(
           live.id,
           "tools/call",
           { name, arguments: args },
-          30_000,
-          options,
+          spec.timeoutMs,
+          {
+            ...options,
+            callbackContext: {
+              deploymentId: live.id,
+              workspaceId: context.workspaceId,
+            },
+          },
         );
         return value ? redactMcpResult(value, secrets) : null;
       },
