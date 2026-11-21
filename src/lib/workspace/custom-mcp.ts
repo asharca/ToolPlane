@@ -82,7 +82,7 @@ const CREDENTIAL_URL = /:\/\/[^/@\s]+@/;
 const URL_WITH_QUERY = /^https?:\/\/\S+\?\S+/i;
 const AUTHORIZATION_VALUE = /^(?:authorization\s*:\s*)?(?:basic|bearer)\s+\S+/i;
 
-function isSensitiveArgName(value: string): boolean {
+export function isSensitiveArgName(value: string): boolean {
   const name = value.replace(/^-+/, "").toLowerCase();
   return /auth|credential|pass(?:word|wd)?|secret|token|(?:api|private|access)[-_]?key|key[-_]?id|(?:^|[-_])pat(?:$|[-_])/.test(
     name,
@@ -90,7 +90,8 @@ function isSensitiveArgName(value: string): boolean {
 }
 
 type StdioMcpInstallConfig = {
-  command: StdioMcpCommand;
+  command: string;
+  cwd?: string;
   args: string[];
   env: Record<string, string>;
   network?: "none";
@@ -192,7 +193,7 @@ function serializedEnv(installCfg: unknown): Record<string, string> {
   return env;
 }
 
-function serializedArgs(value: unknown): string[] {
+export function serializedArgs(value: unknown): string[] {
   const args = Array.isArray(value)
     ? value.filter((arg): arg is string => typeof arg === "string")
     : [];
@@ -473,13 +474,17 @@ function packageNameFromArg(
   return PYPI_NAME.test(name) && /[A-Za-z]/.test(name) ? name : null;
 }
 
-function inferredConfigName(command: StdioMcpCommand, args: string[]): string {
+function inferredConfigName(
+  command: StdioMcpCommand,
+  args: string[],
+  fallback: string,
+): string {
   if (command === "docker") {
     const { image } = parseDockerJsonArgs(args);
     const name = image.split("/").at(-1)?.split(":")[0] ?? "";
-    return name && /[A-Za-z]/.test(name) ? name.slice(0, 80) : "mcp-server";
+    return name && /[A-Za-z]/.test(name) ? name.slice(0, 80) : fallback;
   }
-  if (command === "uv") return "mcp-server";
+  if (command === "uv") return fallback;
   let optionsEnded = false;
   let skipNext = false;
   for (const arg of args) {
@@ -499,7 +504,36 @@ function inferredConfigName(command: StdioMcpCommand, args: string[]): string {
     const name = packageNameFromArg(command, arg);
     if (name) return name.slice(0, 80);
   }
-  return "mcp-server";
+  return fallback;
+}
+
+function launchName(command: string, args: string[], clientEntry: boolean) {
+  const executable = command.split(/[\\/]/).at(-1) ?? command;
+  const runner = executable.toLowerCase().replace(/\.(?:exe|cmd)$/, "");
+  const fallback = clientEntry ? executable.slice(0, 80) : "mcp-server";
+  if (isSupportedJsonCommand(runner))
+    return inferredConfigName(runner, args, fallback);
+  if (runner === "pnpm" && args[0] === "dlx")
+    return inferredConfigName("npx", args.slice(1), fallback);
+  if (runner === "bunx") return inferredConfigName("npx", args, fallback);
+  if (runner === "pipx" && args[0] === "run")
+    return inferredConfigName("uvx", args.slice(1), fallback);
+  const python = /^python(?:\d+(?:\.\d+)*)?$/.test(runner);
+  if (!python && runner !== "node" && !(runner === "deno" && args[0] === "run"))
+    return fallback;
+  for (let i = runner === "deno" ? 1 : 0; i < args.length; i++) {
+    const arg = args[i];
+    if (python && arg === "-m") {
+      const module = args[i + 1];
+      return module && /^[\w.]+$/.test(module) ? module.slice(0, 80) : fallback;
+    }
+    if (["-c", "-e", "--eval", "-p", "--print"].includes(arg)) return fallback;
+    if (arg.startsWith("-")) continue;
+    const file = arg.split(/[?#]/, 1)[0].split(/[\\/]/).at(-1);
+    const stem = file?.replace(/\.[^.]+$/, "");
+    return stem && !stem.includes("${") ? stem.slice(0, 80) : fallback;
+  }
+  return fallback;
 }
 
 const REMOTE_HTTP_FIELDS = new Set([
@@ -654,6 +688,7 @@ export function parseMcpJsonConfig(
   fallbackName?: string,
   options: {
     allowEnvironment?: boolean;
+    allowArbitraryCommand?: boolean;
     allowUnsafeHttp?: boolean;
     allowHttp?: boolean;
   } = {},
@@ -724,14 +759,29 @@ export function parseMcpJsonConfig(
   const allowedKeys = new Set([
     "command",
     "args",
+    ...(options.allowArbitraryCommand ? ["cwd"] : []),
     ...(options.allowEnvironment === false ? [] : ["env"]),
     "network",
   ]);
   const unknownKey = Object.keys(config).find((key) => !allowedKeys.has(key));
   if (unknownKey) return configError(`unsupported field: ${unknownKey}.`);
 
-  const command = normalizedCommand(config.command);
-  const args = parsedArgs(config.args, true);
+  const command =
+    options.allowArbitraryCommand && typeof config.command === "string"
+      ? config.command.trim()
+      : normalizedCommand(config.command);
+  if (!command || command.length > MAX_ARG_LENGTH || /[\p{Cc}]/u.test(command))
+    return configError("command must be a bounded executable name or path.");
+  const cwd = config.cwd;
+  if (
+    cwd !== undefined &&
+    (typeof cwd !== "string" ||
+      !cwd ||
+      cwd.length > MAX_ARG_LENGTH ||
+      /[\p{Cc}]/u.test(cwd))
+  )
+    return configError("cwd must be a bounded path.");
+  const args = parsedArgs(config.args, isSupportedJsonCommand(command));
   if (command === "docker") {
     try {
       parseDockerJsonArgs(args);
@@ -744,7 +794,8 @@ export function parseMcpJsonConfig(
   const env = parsedEnv(config.env);
   const network = parsedNetwork(config.network);
 
-  const resolvedName = name || inferredConfigName(command, args as string[]);
+  const resolvedName =
+    name || launchName(command, args, options.allowArbitraryCommand === true);
   if (!resolvedName || resolvedName.length > 80)
     return configError("the server name must be 1-80 characters.");
 
@@ -752,7 +803,13 @@ export function parseMcpJsonConfig(
     source: "config",
     ref: command,
     name: resolvedName,
-    installCfg: { command, args, env, ...(network ? { network } : {}) },
+    installCfg: {
+      command,
+      args,
+      env,
+      ...(cwd ? { cwd } : {}),
+      ...(network ? { network } : {}),
+    },
   };
 }
 

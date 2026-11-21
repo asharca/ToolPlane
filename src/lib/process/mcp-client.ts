@@ -7,6 +7,7 @@ import {
   runtimeAbortSignal,
 } from "@/lib/runtime/ownership-state";
 import { liveMcpRuntimeSnapshot, livePort } from "./supervisor";
+import { checkedOAuthBridge } from "@/lib/remote-mcp/oauth/live";
 import {
   parseMcpToolCatalogResult,
   redactMcpToolCatalogResult,
@@ -15,6 +16,8 @@ import {
 import { persistDeploymentMcpToolCatalog } from "./mcp-tool-catalog-store";
 import { recordEvent } from "@/lib/observability/events";
 import { getLogContext, withLogContext } from "@/lib/observability/context";
+import type { McpCallbackContext } from "./mcp-callbacks";
+import { callWithCallbacks } from "./mcp-session-client";
 
 export type McpTool = McpToolDefinition;
 
@@ -54,6 +57,7 @@ export class McpPayloadTooLargeError extends Error {
 
 export type McpRpcOptions = {
   signal?: AbortSignal;
+  callbackContext?: McpCallbackContext;
   maxRequestBytes?: number;
   maxResponseBytes?: number;
   onResponseBytes?: (bytes: number) => void;
@@ -230,32 +234,50 @@ async function mcpRpcAtPort(
     }
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const ownerSignal = runtimeAbortSignal();
-    const res = await fetch(`http://127.0.0.1:${port}/`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body,
-      signal: AbortSignal.any([
-        timeoutSignal,
-        ...(options.signal ? [options.signal] : []),
-        ...(ownerSignal ? [ownerSignal] : []),
-      ]),
-      cache: "no-store",
-    });
-    httpStatus = res.status;
-    const json = (await readJsonResponse(
-      res,
-      options.maxResponseBytes,
-      options.onResponseBytes,
-    )) as {
+    const signal = AbortSignal.any([
+      timeoutSignal,
+      ...(options.signal ? [options.signal] : []),
+      ...(ownerSignal ? [ownerSignal] : []),
+    ]);
+    let json: {
       result?: Record<string, unknown>;
       error?: { code?: number; message?: string };
     } | null;
-    response = json;
-    if (!res.ok || json?.error) {
-      const error = new Error(
-        json?.error?.message ?? `MCP upstream HTTP ${res.status}`,
+    if (options.callbackContext) {
+      const reply = await callWithCallbacks(
+        port,
+        options.callbackContext,
+        method,
+        params,
+        timeoutMs,
+        signal,
+        options.maxResponseBytes ?? 16_777_216,
+        () => new McpPayloadTooLargeError(),
       );
-      Object.assign(error, { code: json?.error?.code ?? `HTTP_${res.status}` });
+      options.onResponseBytes?.(reply.bytes);
+      json = { result: reply.result };
+      httpStatus = 200;
+    } else {
+      const res = await fetch(`http://127.0.0.1:${port}/`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+        signal,
+        cache: "no-store",
+      });
+      httpStatus = res.status;
+      json = (await readJsonResponse(
+        res,
+        options.maxResponseBytes,
+        options.onResponseBytes,
+      )) as typeof json;
+    }
+    response = json;
+    if (httpStatus >= 400 || json?.error) {
+      const error = new Error(
+        json?.error?.message ?? `MCP upstream HTTP ${httpStatus}`,
+      );
+      Object.assign(error, { code: json?.error?.code ?? `HTTP_${httpStatus}` });
       throw error;
     }
     await recordEvent({
@@ -305,18 +327,29 @@ async function sessionActorId(): Promise<string | undefined> {
 
 async function assertCurrentRemoteTransport(
   deploymentId: string,
-): Promise<void> {
-  if (!liveMcpRuntimeSnapshot(deploymentId)?.remoteConnectionIdentity) return;
+  allowPortOnly = false,
+) {
+  const snapshot = liveMcpRuntimeSnapshot(deploymentId);
+  if (snapshot?.oauthDeploymentId)
+    return checkedOAuthBridge(deploymentId, snapshot.oauthDeploymentId);
+  if (
+    snapshot
+      ? !snapshot.remoteConnectionIdentity
+      : !allowPortOnly || !livePort(deploymentId)
+  )
+    return;
   const deployment = await db.deployment.findUnique({
     where: { id: deploymentId },
     select: { source: true, sourceRef: true, installCfg: true },
   });
+  const config = deployment?.installCfg as Record<string, unknown> | null;
+  if (config?.authType === "oauth")
+    return checkedOAuthBridge(deploymentId, deploymentId);
   if (
     deployment?.source !== "remote" ||
     !deployment.sourceRef?.startsWith("http:")
   )
     return;
-  const config = deployment.installCfg as Record<string, unknown> | null;
   if (
     config?.allowUnsafeHttp !== true &&
     !(await getTransportSettings()).allowHttp
@@ -333,13 +366,15 @@ export async function mcpRpc(
   timeoutMs = 30000,
   options: McpRpcOptions = {},
 ): Promise<Record<string, unknown> | null> {
-  await assertCurrentRemoteTransport(deploymentId);
-  const port = livePort(deploymentId);
+  const oauth = await assertCurrentRemoteTransport(deploymentId, true);
+  const port = oauth?.port ?? livePort(deploymentId);
   return withLogContext(
     {
       deploymentId,
       callId: getLogContext()?.callId ?? randomUUID(),
-      secrets: liveMcpRuntimeSnapshot(deploymentId)?.redactionValues,
+      secrets:
+        oauth?.redactionValues ??
+        liveMcpRuntimeSnapshot(deploymentId)?.redactionValues,
     },
     async () => {
       if (port) return mcpRpcAtPort(port, method, params, timeoutMs, options);
@@ -376,13 +411,13 @@ export async function listMcpTools(
   deploymentId: string,
   options: McpToolCatalogOptions = {},
 ): Promise<McpTool[]> {
-  await assertCurrentRemoteTransport(deploymentId);
+  const oauth = await assertCurrentRemoteTransport(deploymentId);
   let tools: McpTool[] = [];
   let cursor: string | undefined;
   const seenCursors = new Set<string>();
   const requestRedactionValues = new Set<string>();
-  let requestGeneration: string | undefined;
-  let requestPort: number | undefined;
+  let requestGeneration = oauth?.generation;
+  let requestPort = oauth?.port;
   let remainingResponseBytes = MAX_TOOLS_RESPONSE_BYTES;
   const deadline = Date.now() + MAX_TOOLS_TOTAL_MS;
   for (let page = 0; page < MAX_TOOL_PAGES; page += 1) {

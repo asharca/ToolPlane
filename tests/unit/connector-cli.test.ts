@@ -91,7 +91,9 @@ describe("connector CLI portability", () => {
         encoding: "utf8",
       });
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain("toolplane connector 0.1.13");
+      expect(result.stdout).toContain(
+        `toolplane connector ${CONNECTOR_PACKAGE_VERSION}`,
+      );
     } finally {
       rmSync(temp, { recursive: true, force: true });
     }
@@ -154,7 +156,9 @@ describe("connector CLI portability", () => {
             timeout: 120_000,
           });
           expect(result.status, `${shell.name}: ${result.stderr}`).toBe(0);
-          expect(result.stdout).toContain("toolplane connector 0.1.13");
+          expect(result.stdout).toContain(
+            `toolplane connector ${CONNECTOR_PACKAGE_VERSION}`,
+          );
         }
       } finally {
         rmSync(temp, { recursive: true, force: true });
@@ -280,7 +284,11 @@ describe("connector CLI portability", () => {
         protocolVersion: PROTOCOL_VERSION,
         root: path.resolve(root),
         platform: process.platform,
-        capabilities: ["process_exec", "write_file_base64"],
+        capabilities: expect.arrayContaining([
+          "process_exec",
+          "write_file_base64",
+          "mcp_stdio",
+        ]),
       });
       expect(result.ping).toMatchObject({ ok: true, root: path.resolve(root) });
     } finally {
@@ -420,6 +428,40 @@ describe("connector CLI portability", () => {
           content: "nope",
         }),
       ).rejects.toThrow(/link/i);
+
+      const id = crypto.randomUUID();
+      await expect(
+        runtime.handle(ws, "mcp_stdio_open", {
+          id,
+          cwd: "escape",
+          argv: [process.execPath, "--version"],
+        }),
+      ).rejects.toThrow(/link/i);
+      await runtime.handle(ws, "mcp_stdio_open", {
+        id,
+        cwd: ".",
+        env: { MCP_LABEL: "test" },
+        argv: [
+          process.execPath,
+          "-e",
+          "process.stdin.on('data', data => process.stdout.write(process.env.MCP_LABEL + ':' + data))",
+        ],
+      });
+      try {
+        await runtime.handle(ws, "mcp_stdio_write", {
+          id,
+          data: Buffer.from("first\n").toString("base64"),
+        });
+        const output = await runtime.handle(ws, "mcp_stdio_read", { id });
+        expect(Buffer.from(output.data, "base64").toString()).toBe(
+          "test:first\n",
+        );
+      } finally {
+        await runtime.handle(ws, "mcp_stdio_close", { id });
+      }
+      await expect(
+        runtime.handle(ws, "mcp_stdio_write", { id, data: "" }),
+      ).rejects.toThrow(/unavailable/i);
 
       const result = await runtime.handle(ws, "process_exec", {
         runtime: "node",

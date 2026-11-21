@@ -8,6 +8,7 @@ import {
 } from "@/lib/sandboxes/runtime";
 import { disconnectConnector } from "@/lib/sandboxes/connector-broker";
 import { removeDeploymentConfigVolume } from "@/lib/process/deployment-config-volume";
+import { removeDeploymentWorkspaceVolume } from "@/lib/process/deployment-workspace-volume";
 import { removeWorkspaceAttachmentVolume } from "@/lib/attachments/storage";
 import { closeWorkspaceOperations } from "./operation-gate";
 import { cancelWorkSession } from "@/lib/work/sessions";
@@ -80,6 +81,7 @@ export async function killWorkspaceProcesses(
     configVolumeDeployments.map(async ({ id }) => {
       await removeDeploymentContainer(id);
       await removeDeploymentConfigVolume(id);
+      await removeDeploymentWorkspaceVolume(id);
     }),
   );
   // Supervisor writes intentionally tolerate rows deleted by other cleanup

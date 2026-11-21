@@ -1,3 +1,5 @@
+import { posix } from "node:path";
+import { isPackagedStdioCommand, MCP_RUNTIME_IMAGE } from "./sandbox";
 import {
   DEFAULT_TRANSPORT_POLICY,
   type TransportPolicy,
@@ -33,6 +35,12 @@ export type SpawnSpec =
       headers: Record<string, string>;
       timeoutMs: number;
       allowUnsafeHttp: boolean;
+      requiresOAuth?: true;
+      oauth?: {
+        revision: string;
+        expiresAt: number | null;
+        refreshAt: number | null;
+      };
     }
   | {
       kind: "bridge";
@@ -47,6 +55,8 @@ export type SpawnSpec =
       // When runtime files are attached, the supervisor supplies the managed
       // config mount and makes it the container working directory.
       configWorkingDirectory?: boolean;
+      workspaceVolume?: true;
+      workspaceSandbox?: { id: string; cwd: string };
     }
   | {
       kind: "sandbox";
@@ -69,6 +79,8 @@ export type DeploymentForSpawn = {
   source: string | null;
   sourceRef: string | null;
   installCfg: unknown;
+  runtimeTarget?: string;
+  runtimeSandboxId?: string | null;
 };
 
 export type DockerSpawnSpec = {
@@ -126,7 +138,12 @@ function readRemoteCfg(
     throw new Error("Remote MCP transport must be streamable-http or sse.");
   }
   const authType = cfg.authType ?? "none";
-  if (authType !== "none" && authType !== "bearer" && authType !== "headers") {
+  if (
+    authType !== "none" &&
+    authType !== "bearer" &&
+    authType !== "headers" &&
+    authType !== "oauth"
+  ) {
     throw new Error("Remote MCP authentication type is invalid.");
   }
   const timeoutMs = cfg.timeoutMs ?? 60_000;
@@ -193,6 +210,7 @@ function readRemoteCfg(
     url: url.href,
     transport,
     headers,
+    ...(authType === "oauth" && { requiresOAuth: true as const }),
     timeoutMs: Number(timeoutMs),
     allowUnsafeHttp:
       cfg.allowUnsafeHttp === true ||
@@ -256,14 +274,35 @@ export function buildSpawnSpec(
   }
 }
 
+export function mcpWorkingDirectory(cwd?: string): string {
+  if (cwd === undefined) return "/workspace";
+  if (typeof cwd !== "string" || !cwd || cwd.includes("\\"))
+    throw new Error("MCP_CWD_INVALID");
+  for (let i = 0; i < cwd.length; i++) {
+    if (cwd.charCodeAt(i) < 32) throw new Error("MCP_CWD_INVALID");
+  }
+  const path = posix.resolve("/workspace", cwd);
+  const allowed = posix.isAbsolute(cwd)
+    ? ["/workspace", "/toolplane/config"]
+    : ["/workspace"];
+  if (!allowed.some((root) => path === root || path.startsWith(`${root}/`)))
+    throw new Error("MCP_CWD_INVALID");
+  return path;
+}
+
 export function buildStdioConfigSpawnSpec(
   command: string,
   commandArgs: string[],
   env: Record<string, string> = {},
   rebuild = false,
   network: McpNetwork = "isolated",
+  cwd?: string,
 ): DockerSpawnSpec {
-  const run = ["run", ...sandboxFlags(network)];
+  const workdir =
+    cwd !== undefined || !isPackagedStdioCommand(command)
+      ? ["--workdir", mcpWorkingDirectory(cwd)]
+      : [];
+  const run = ["run", ...sandboxFlags(network), ...workdir];
   if (command === "npx") {
     const refresh = rebuild ? ["--prefer-online"] : [];
     const image = commandArgsNeedGit(command, commandArgs)
@@ -301,7 +340,14 @@ export function buildStdioConfigSpawnSpec(
       env,
     };
   }
-  throw new Error(`Unsupported stdio MCP command: ${command || "(none)"}`);
+  if (!command || typeof command !== "string" || command.includes("\0"))
+    throw new Error("MCP_COMMAND_INVALID");
+  return {
+    command: "docker",
+    args: [...run, MCP_RUNTIME_IMAGE, command, ...commandArgs],
+    image: MCP_RUNTIME_IMAGE,
+    env: { HOME: "/tmp", ...env },
+  };
 }
 
 function readCfg(installCfg: unknown): {
@@ -309,6 +355,7 @@ function readCfg(installCfg: unknown): {
   startCommand?: string;
   command?: string;
   args: string[];
+  cwd?: string;
   network: McpNetwork;
 } {
   const c = (installCfg ?? {}) as {
@@ -316,6 +363,7 @@ function readCfg(installCfg: unknown): {
     startCommand?: string;
     command?: string;
     args?: string[];
+    cwd?: string;
     network?: string;
   };
   return {
@@ -323,6 +371,7 @@ function readCfg(installCfg: unknown): {
     startCommand: c.startCommand,
     command: c.command,
     args: Array.isArray(c.args) ? c.args : [],
+    cwd: c.cwd,
     network: c.network === "none" ? "none" : "isolated",
   };
 }
@@ -376,6 +425,34 @@ export function resolveSpawnSpec(
   rebuild = false,
   policy: Pick<TransportPolicy, "allowHttp"> = DEFAULT_TRANSPORT_POLICY,
 ): SpawnSpec {
+  if (d.runtimeTarget && d.runtimeTarget !== "managed") {
+    const cfg = readCfg(d.installCfg);
+    if (
+      d.runtimeTarget !== "workspace_sandbox" ||
+      !d.runtimeSandboxId ||
+      !d.source ||
+      !["config", "github", "npm", "pypi"].includes(d.source)
+    )
+      throw new Error("sandboxUnavailable");
+    const cwd = mcpWorkingDirectory(cfg.cwd);
+    if (cwd !== "/workspace" && !cwd.startsWith("/workspace/"))
+      throw new Error("sandboxUnavailable");
+    const command =
+      d.source === "config" ? cfg.command : d.source === "pypi" ? "uvx" : "npx";
+    if (!command || command === "docker") throw new Error("sandboxUnavailable");
+    const args =
+      d.source === "config"
+        ? cfg.args
+        : [...(command === "npx" ? ["-y"] : []), d.sourceRef ?? ""];
+    return {
+      kind: "bridge",
+      name: d.name ?? d.server?.name ?? "custom",
+      command,
+      args,
+      env: cfg.env,
+      workspaceSandbox: { id: d.runtimeSandboxId, cwd },
+    };
+  }
   if (d.source === "sandbox") {
     const cfg = readSandboxCfg(d.installCfg);
     return {
@@ -413,6 +490,7 @@ export function resolveSpawnSpec(
     command,
     args: commandArgs,
     network,
+    cwd,
   } = readCfg(d.installCfg);
   if (d.source === "config") {
     const configSpec = buildStdioConfigSpawnSpec(
@@ -421,6 +499,7 @@ export function resolveSpawnSpec(
       env,
       rebuild,
       network,
+      cwd,
     );
     return {
       kind: "bridge",
@@ -432,7 +511,12 @@ export function resolveSpawnSpec(
       image: configSpec.image,
       // Docker JSON preserves the image's own WORKDIR. Its mounted runtime
       // files are still available at /toolplane/config via absolute paths.
-      ...(command !== "docker" ? { configWorkingDirectory: true } : {}),
+      ...(command && !isPackagedStdioCommand(command)
+        ? { workspaceVolume: true }
+        : {}),
+      ...(command !== "docker" && isPackagedStdioCommand(command ?? "") && !cwd
+        ? { configWorkingDirectory: true }
+        : {}),
     };
   }
   const packageSpec = buildSpawnSpec(

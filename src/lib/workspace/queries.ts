@@ -11,6 +11,7 @@ import {
   readMcpToolCatalog,
 } from "@/lib/process/mcp-tool-catalog";
 import { deploymentPinnedPackage } from "@/lib/workspace/deployment-label";
+import { isOAuthConfig } from "@/lib/remote-mcp/oauth/config";
 
 export async function getDefaultWorkspace(userId: string, lastSlug?: string) {
   if (lastSlug) {
@@ -64,6 +65,7 @@ export async function getDeployments(workspaceId: string) {
     ...deployment,
     // The package selector is a public registry identity, never launch arguments.
     pinnedPackage: deploymentPinnedPackage(deployment),
+    oauth: isOAuthConfig(deployment.installCfg),
     // Lists expose readiness and catalog metadata, never stored credentials or
     // arbitrary launch configuration (including inline argument secrets).
     installCfg: {

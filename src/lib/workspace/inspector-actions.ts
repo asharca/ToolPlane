@@ -6,6 +6,8 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 
 import { effectiveStatus } from "@/lib/process/supervisor";
+import { isOAuthConfig } from "@/lib/remote-mcp/oauth/config";
+import { withCurrentOAuthBridge } from "@/lib/remote-mcp/oauth/live";
 import type { SpawnSpec } from "@/lib/process/spawn-spec";
 import { resolveMcpConnectionSpawnSpec } from "@/lib/process/mcp-credentials";
 import { resolvePrivateHostsSettings } from "@/lib/admin/settings";
@@ -126,7 +128,20 @@ async function inspectorContext(input: {
   }
   let remote: RemoteSpec | undefined;
   let remotePrivateHosts: string | undefined;
-  if (deployment.source === "remote") {
+  const oauth = isOAuthConfig(deployment.installCfg);
+  if (oauth) {
+    try {
+      await withCurrentOAuthBridge(
+        workspace.id,
+        deployment.id,
+        async () => undefined,
+      );
+    } catch {
+      return { error: "connectorFailed" };
+    }
+  }
+  // OAuth tokens belong to the supervised bridge, never to the selected sandbox.
+  if (deployment.source === "remote" && !oauth) {
     const config =
       deployment.installCfg &&
       typeof deployment.installCfg === "object" &&

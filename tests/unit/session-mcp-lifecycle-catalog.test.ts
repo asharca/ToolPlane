@@ -141,6 +141,66 @@ function rpcResult(result: Record<string, unknown>) {
   });
 }
 
+// Exercise the real SDK client, including initialization, notification GET,
+// protocol headers and teardown. Record business requests separately so the
+// assertions describe catalog pagination and dispatch, not HTTP packet counts.
+function sessionBridge(
+  reply: (
+    method: string,
+    params: Record<string, unknown>,
+  ) => Record<string, unknown>,
+) {
+  const sessions = new Map<string, string>();
+  const business = vi.fn(reply);
+  const http = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async (url, init) => {
+      expect(String(url)).toBe("http://127.0.0.1:4321/session");
+      const headers = new Headers(init?.headers);
+      const owner = headers.get("x-toolplane-mcp-owner");
+      const session = headers.get("mcp-session-id");
+      if (!owner) throw new Error("Missing session owner");
+      if (!session) {
+        const msg = JSON.parse(String(init?.body));
+        expect(msg.method).toBe("initialize");
+        expect(msg.params.capabilities).toMatchObject({
+          roots: {},
+          sampling: {},
+          elicitation: {},
+        });
+        const id = crypto.randomUUID();
+        sessions.set(id, owner);
+        return Response.json(
+          {
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: {
+              protocolVersion: msg.params.protocolVersion,
+              capabilities: { tools: {} },
+              serverInfo: { name: "catalog", version: "1" },
+            },
+          },
+          { headers: { "mcp-session-id": id } },
+        );
+      }
+      expect(sessions.get(session)).toBe(owner);
+      if (init?.method === "GET") return new Response(null, { status: 405 });
+      if (init?.method === "DELETE") {
+        sessions.delete(session);
+        return new Response(null, { status: 200 });
+      }
+      const msg = JSON.parse(String(init?.body));
+      if (msg.method === "notifications/initialized")
+        return new Response(null, { status: 202 });
+      return Response.json({
+        jsonrpc: "2.0",
+        id: msg.id,
+        result: business(msg.method, msg.params ?? {}),
+      });
+    });
+  return { http, business, sessions };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.agent.mockResolvedValue({ id: "agent", currentRevisionVersion: 1 });
@@ -197,84 +257,77 @@ describe("session catalog without a Deployment row", () => {
       persistDeploymentMcpToolCatalog(processId, [approved]),
     ).resolves.toEqual([]);
     mocks.persistedDeployment.mockClear();
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        rpcResult({
-          tools: [
-            { name: "newly_discovered", inputSchema: { type: "object" } },
-          ],
-          nextCursor: "second",
-        }),
-      )
-      .mockResolvedValueOnce(rpcResult({ tools: [approved] }));
+    const bridge = sessionBridge((_method, params) =>
+      params.cursor === "second"
+        ? { tools: [approved] }
+        : {
+            tools: [
+              { name: "newly_discovered", inputSchema: { type: "object" } },
+            ],
+            nextCursor: "second",
+          },
+    );
 
     const tools = await listSessionMcpTools(context, recipe.id);
     expect(tools).toEqual([{ ...approved, description: "[REDACTED]" }]);
     expect(JSON.stringify(tools)).not.toContain("session-private-token");
     expect(mocks.persistedDeployment).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(
-      fetchMock.mock.calls.map(
-        (call) => JSON.parse(String(call[1]?.body)).method,
-      ),
-    ).toEqual(["tools/list", "tools/list"]);
-    expect(
-      JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).params,
-    ).toEqual({ cursor: "second" });
+    expect(bridge.business.mock.calls).toEqual([
+      ["tools/list", {}],
+      ["tools/list", { cursor: "second" }],
+    ]);
+    expect(bridge.sessions.size).toBe(0);
   });
 
   it("dispatches an approved second-page tool through the real RPC client", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(rpcResult({ tools: [], nextCursor: "second" }))
-      .mockResolvedValueOnce(rpcResult({ tools: [approved] }))
-      .mockResolvedValueOnce(
-        rpcResult({
-          content: [{ type: "text", text: "session-private-token" }],
-        }),
-      );
+    const bridge = sessionBridge((method, params) => {
+      if (method === "tools/call")
+        return { content: [{ type: "text", text: "session-private-token" }] };
+      return params.cursor === "second"
+        ? { tools: [approved] }
+        : { tools: [], nextCursor: "second" };
+    });
 
     await expect(
       callSessionMcpTool(context, recipe.id, "approved", {}),
     ).resolves.toEqual({
       content: [{ type: "text", text: "[REDACTED]" }],
     });
-    expect(
-      JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body)),
-    ).toMatchObject({
-      method: "tools/call",
-      params: { name: "approved", arguments: {} },
-    });
+    expect(bridge.business.mock.calls).toEqual([
+      ["tools/list", {}],
+      ["tools/list", { cursor: "second" }],
+      ["tools/call", { name: "approved", arguments: {} }],
+    ]);
     expect(mocks.persistedDeployment).not.toHaveBeenCalled();
   });
 
   it("does not grant a newly discovered name", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      rpcResult({
-        tools: [
-          approved,
-          { name: "newly_discovered", inputSchema: { type: "object" } },
-        ],
-      }),
-    );
+    const bridge = sessionBridge(() => ({
+      tools: [
+        approved,
+        { name: "newly_discovered", inputSchema: { type: "object" } },
+      ],
+    }));
     await expect(listSessionMcpTools(context, recipe.id)).resolves.toHaveLength(
       1,
     );
-    fetchMock.mockClear();
+    bridge.http.mockClear();
     await expect(
       callSessionMcpTool(context, recipe.id, "newly_discovered", {}),
     ).rejects.toThrow("MCP_TOOL_FORBIDDEN");
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(bridge.http).not.toHaveBeenCalled();
   });
 
   it("never returns a partial session catalog for a repeated pagination cursor", async () => {
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        rpcResult({ tools: [approved], nextCursor: "again" }),
-      )
-      .mockResolvedValueOnce(rpcResult({ tools: [], nextCursor: "again" }));
+    const bridge = sessionBridge(() => ({
+      tools: [approved],
+      nextCursor: "again",
+    }));
     await expect(listSessionMcpTools(context, recipe.id)).resolves.toEqual([]);
+    expect(bridge.business.mock.calls).toEqual([
+      ["tools/list", {}],
+      ["tools/list", { cursor: "again" }],
+    ]);
     expect(mocks.persistedDeployment).not.toHaveBeenCalled();
   });
 });

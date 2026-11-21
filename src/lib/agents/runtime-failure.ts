@@ -10,6 +10,7 @@ const mcpFailures = defineFailures({
   MCP_CREDENTIAL_INVALID: "its credential is invalid",
   MCP_CREDENTIAL_MIGRATION_REQUIRED: "its credential must be migrated first",
   MCP_CREDENTIAL_REQUIRED: "a required credential is missing",
+  MCP_REAUTH_REQUIRED: "sign in to this MCP connection again",
   MCP_CREDENTIAL_SCOPE_INVALID: "its credential scope does not match",
   MCP_DEFINITION_CHANGED:
     "its configuration changed after the Agent was saved; save the Agent configuration again",

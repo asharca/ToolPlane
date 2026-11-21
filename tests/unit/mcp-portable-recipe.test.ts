@@ -12,10 +12,55 @@ import {
   parseDockerJsonArgs,
 } from "@/lib/workspace/docker-json-command";
 import { resolvePinnedMcpRecipe } from "@/lib/process/mcp-pinning";
-import { assertSessionMcpRecipePinned } from "@/lib/process/mcp-definition";
+import {
+  assertSessionMcpRecipePinned,
+  mcpDefinitionChecksum,
+} from "@/lib/process/mcp-definition";
 
 describe("portable MCP recipes", () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  it("preserves legacy immutable grants but detects cwd, binding and sandbox changes", () => {
+    const installCfg = {
+      command: "npx",
+      args: ["server@1.0.0"],
+      env: { API_KEY: "" },
+    };
+    const recipe = {
+      serverId: null,
+      name: null,
+      source: "config",
+      sourceRef: "npx",
+      installCfg,
+    };
+    const legacy =
+      "53dd503eb0ee3e9e8163804549a556e8e41967b4d78d61640a8f16022f8a325a";
+    expect(mcpDefinitionChecksum(recipe)).toBe(legacy);
+    expect(
+      mcpDefinitionChecksum({
+        ...recipe,
+        runtimeTarget: "managed",
+        runtimeSandboxId: null,
+      }),
+    ).toBe(legacy);
+    const hashes = [
+      legacy,
+      ...[{ cwd: "src" }, { envBindings: { KEY: "API_KEY" } }].map((config) =>
+        mcpDefinitionChecksum({
+          ...recipe,
+          installCfg: { ...installCfg, ...config },
+        }),
+      ),
+      ...["one", "two"].map((runtimeSandboxId) =>
+        mcpDefinitionChecksum({
+          ...recipe,
+          runtimeTarget: "workspace_sandbox",
+          runtimeSandboxId,
+        }),
+      ),
+    ];
+    expect(new Set(hashes).size).toBe(hashes.length);
+  });
 
   it.each([
     {

@@ -57,6 +57,7 @@ type VariablesEditorProps = {
   slug: string;
   deploymentId: string;
   initial: InitialVariable[];
+  canManage?: boolean;
 };
 
 export function VariablesEditor(props: VariablesEditorProps) {
@@ -70,6 +71,7 @@ function VariablesEditorForm({
   slug,
   deploymentId,
   initial,
+  canManage = true,
 }: VariablesEditorProps) {
   // Metadata only; a stored value is decrypted per variable on explicit reveal.
   const t = useTranslations("console.mcp");
@@ -123,6 +125,7 @@ function VariablesEditorForm({
       !row.value,
   );
   const canSave =
+    canManage &&
     !invalidKey &&
     !duplicateKey &&
     !incompleteNewVariable &&
@@ -205,8 +208,9 @@ function VariablesEditorForm({
 
   return (
     <form
+      id="variables"
       action={formAction}
-      className="rounded-xl border border-border bg-card max-w-5xl overflow-hidden"
+      className="max-w-4xl scroll-mt-6 overflow-hidden rounded-xl border border-border bg-card"
     >
       <input type="hidden" name="workspace" value={slug} />
       <input type="hidden" name="deploymentId" value={deploymentId} />
@@ -227,37 +231,27 @@ function VariablesEditorForm({
             {t("environmentVariablesDescription")}
           </p>
         </div>
-        <Button
-          type="button"
-          onClick={addRow}
-          variant="secondary"
-          size="sm"
-          className="shrink-0"
-        >
-          <Plus className="size-3.5" />
-          {t("addVariable")}
-        </Button>
-      </header>
-
-      {rows.length === 0 ? (
-        <div className="px-5 py-10 text-center">
-          <KeyRound className="mx-auto size-6 text-muted-foreground" />
-          <p className="mt-3 text-sm font-medium text-foreground">
-            {t("noEnvironmentVariables")}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t("environmentVariablesDescription")}
-          </p>
+        {canManage ? (
           <Button
             type="button"
             onClick={addRow}
             variant="secondary"
             size="sm"
-            className="mt-4"
+            className="shrink-0"
           >
             <Plus className="size-3.5" />
             {t("addVariable")}
           </Button>
+        ) : (
+          <AnimatedBadge status="warning" size="sm" showIcon={false}>
+            {t("config.readOnlyBadge")}
+          </AnimatedBadge>
+        )}
+      </header>
+
+      {rows.length === 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-6 text-sm text-muted-foreground">
+          <span>{t("noEnvironmentVariables")}</span>
         </div>
       ) : (
         <div className="divide-y divide-border">
@@ -354,10 +348,10 @@ function VariablesEditorForm({
                                 : common("value")
                             }
                             required={valueRequired}
-                            disabled={row.removed}
+                            disabled={row.removed || !canManage}
                             error={revealFailedId === row.id || undefined}
                             rightIcon={
-                              row.configured || row.value ? (
+                              canManage && (row.configured || row.value) ? (
                                 <Button
                                   type="button"
                                   variant="ghost"
@@ -389,29 +383,33 @@ function VariablesEditorForm({
                           />
                         )}
                       </div>
-                      {row.removed ? (
-                        <Button
-                          type="button"
-                          onClick={() => updateRow(row.id, { removed: false })}
-                          variant="secondary"
-                          size="sm"
-                          className="shrink-0"
-                        >
-                          <Undo2 className="size-3.5" />
-                          {t("undo")}
-                        </Button>
-                      ) : (
-                        <Button
-                          type="button"
-                          onClick={() => removeRow(row)}
-                          variant="secondary"
-                          size="sm"
-                          className="inline-flex shrink-0 items-center"
-                        >
-                          <Trash2 className="size-3.5" />
-                          {row.isNew ? t("discardVariable") : t("remove")}
-                        </Button>
-                      )}
+                      {canManage ? (
+                        row.removed ? (
+                          <Button
+                            type="button"
+                            onClick={() =>
+                              updateRow(row.id, { removed: false })
+                            }
+                            variant="secondary"
+                            size="sm"
+                            className="shrink-0"
+                          >
+                            <Undo2 className="size-3.5" />
+                            {t("undo")}
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            onClick={() => removeRow(row)}
+                            variant="secondary"
+                            size="sm"
+                            className="inline-flex shrink-0 items-center"
+                          >
+                            <Trash2 className="size-3.5" />
+                            {row.isNew ? t("discardVariable") : t("remove")}
+                          </Button>
+                        )
+                      ) : null}
                     </div>
                     {revealFailedId === row.id && !row.removed ? (
                       <p role="alert" className="text-[11px] text-destructive">
@@ -425,47 +423,55 @@ function VariablesEditorForm({
           })}
         </div>
       )}
-      <div className="space-y-3 px-5 py-4">
-        <McpSharedChangeConfirmation
-          workspace={slug}
-          deploymentId={deploymentId}
-          impactedObjects={state?.impactedObjects}
-        />
-        {state?.error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {t(state.error)}
-          </p>
-        ) : null}
-        {state.savedAt ? (
-          <p role="status" className="text-sm">
-            {t("variablesSaved")}
-          </p>
-        ) : null}
-      </div>
-
-      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-5 py-4">
-        <div className="text-xs text-muted-foreground" aria-live="polite">
-          {invalidKey
-            ? t("validEnvironmentVariableName")
-            : duplicateKey
-              ? t("duplicateEnvironmentVariable")
-              : incompleteNewVariable
-                ? t("enterValueForNewVariable")
-                : missingRequiredValue
-                  ? t("enterRequiredVariableValue")
-                  : t("variablesSaveHint")}
+      {state?.impactedObjects || state?.error || state.savedAt ? (
+        <div className="space-y-3 border-t border-border px-5 py-4">
+          <McpSharedChangeConfirmation
+            workspace={slug}
+            deploymentId={deploymentId}
+            impactedObjects={state?.impactedObjects}
+          />
+          {state?.error ? (
+            <p role="alert" className="text-sm text-destructive">
+              {t(state.error)}
+            </p>
+          ) : null}
+          {state.savedAt ? (
+            <p role="status" className="text-sm">
+              {t("variablesSaved")}
+            </p>
+          ) : null}
         </div>
-        <SubmitButton
-          error={state?.error ? t(state.error) : null}
-          pendingLabel={t("savingVariables")}
-          savedLabel={t("variablesSaved")}
-          disabled={!canSave}
-          variant="primary"
-          size="sm"
-        >
-          {common("save")}
-        </SubmitButton>
-      </footer>
+      ) : null}
+
+      {canManage ? (
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-5 py-3.5">
+          <div className="text-xs text-muted-foreground" aria-live="polite">
+            {invalidKey
+              ? t("validEnvironmentVariableName")
+              : duplicateKey
+                ? t("duplicateEnvironmentVariable")
+                : incompleteNewVariable
+                  ? t("enterValueForNewVariable")
+                  : missingRequiredValue
+                    ? t("enterRequiredVariableValue")
+                    : t("variablesSaveHint")}
+          </div>
+          <SubmitButton
+            error={state?.error ? t(state.error) : null}
+            pendingLabel={t("savingVariables")}
+            savedLabel={t("variablesSaved")}
+            disabled={!canSave}
+            variant="primary"
+            size="sm"
+          >
+            {common("save")}
+          </SubmitButton>
+        </footer>
+      ) : (
+        <footer className="border-t border-border bg-muted/20 px-5 py-3 text-xs text-muted-foreground">
+          {t("config.readOnlyNotice")}
+        </footer>
+      )}
     </form>
   );
 }

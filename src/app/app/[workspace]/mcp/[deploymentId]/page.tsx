@@ -3,7 +3,6 @@ import { McpHttpApprovalForm } from "@/components/dashboard/McpHttpConsent";
 import { RemoteMcpTransportNotice } from "@/components/dashboard/RemoteMcpTransportNotice";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
-
 import { ButtonLink } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import { FormCheckbox } from "@/components/ui/FormCheckbox";
@@ -13,16 +12,19 @@ import { headers } from "next/headers";
 import Link from "next/link";
 import {
   Activity,
+  ArrowLeft,
   CopyPlus,
   KeyRound,
+  LogIn,
+  Pause,
   Pencil,
   Play,
   Plug,
   RefreshCw,
+  RotateCcw,
   Wrench,
 } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth/current-user";
-
 import { db } from "@/lib/db";
 import { originFromHeaders } from "@/lib/http/origin";
 import {
@@ -60,7 +62,14 @@ import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton"
 import { ContainerLogs } from "@/components/dashboard/ContainerLogs";
 import { ProvisioningRefresher } from "@/components/dashboard/ProvisioningRefresher";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
-import { McpJsonConfigEditor } from "@/components/dashboard/McpJsonConfigEditor";
+import {
+  McpConfigDocumentEditor,
+  McpConfigResolvedPanel,
+  McpConfigVariablesPanel,
+} from "@/components/dashboard/McpConfigDocumentEditor";
+import { McpConfigRevisions } from "@/components/dashboard/McpConfigRevisions";
+import { McpRuntimeTargetControl } from "@/components/dashboard/McpRuntimeTargetControl";
+import { McpSamplingToggle } from "@/components/dashboard/McpSamplingToggle";
 import { McpToolExposureEditor } from "@/components/dashboard/McpToolExposureEditor";
 import { McpSandboxPlacementEditor } from "@/components/dashboard/McpSandboxPlacementEditor";
 import {
@@ -73,10 +82,8 @@ import {
 } from "@/components/dashboard/McpConnectedChips";
 import { RuntimeFilesEditor } from "@/components/dashboard/RuntimeFilesEditor";
 import { SafeStreamdown } from "@/components/dashboard/SafeStreamdown";
-import {
-  isEditableMcpSource,
-  serializeMcpDeploymentConfig,
-} from "@/lib/workspace/custom-mcp";
+import { getMcpConfigAction } from "@/lib/workspace/mcp-config-actions";
+import type { McpRuntimeTarget } from "@/lib/workspace/mcp-config-types";
 import {
   parseServerRecipe,
   storedRequiredEnvironment,
@@ -87,6 +94,8 @@ import {
   DashboardPage,
   DashboardPanel,
 } from "@/components/dashboard/DashboardUI";
+import { McpOAuthConnectionPanel } from "@/components/dashboard/McpOAuthConnectionPanel";
+import { getMcpOAuthConnectionSummary } from "@/lib/remote-mcp/oauth-status";
 
 export const dynamic = "force-dynamic";
 
@@ -103,13 +112,24 @@ function fmtDate(d: Date, timeZone: string, locale: string): string {
   );
 }
 
-const transitioningStatuses = new Set([
-  "provisioning",
-  "copying",
-  "restoring",
-  "upgrading",
-  "deleting",
-]);
+const TRANSITIONING_STATUSES: Record<string, true> = {
+  provisioning: true,
+  copying: true,
+  restoring: true,
+  upgrading: true,
+  deleting: true,
+};
+
+const KNOWN_SOURCES: Record<string, true> = {
+  catalog: true,
+  custom: true,
+  config: true,
+  docker: true,
+  remote: true,
+  npm: true,
+  pypi: true,
+  github: true,
+};
 
 export default async function DeploymentInspectorPage({
   params,
@@ -153,23 +173,29 @@ export default async function DeploymentInspectorPage({
     },
   });
   if (!dep) notFound();
-  const [usingAgents, usingAssistants, { allowHttp }] = await Promise.all([
-    db.agent.findMany({
-      where: {
+  const [usingAgents, usingAssistants, { allowHttp }, oauthSummary] =
+    await Promise.all([
+      db.agent.findMany({
+        where: {
+          workspaceId: ws.id,
+          retiredAt: null,
+          servers: { some: { deploymentId } },
+        },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      }),
+      db.chatAssistant.findMany({
+        where: { workspaceId: ws.id, mcpGrants: { some: { deploymentId } } },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      }),
+      getTransportSettings(),
+      getMcpOAuthConnectionSummary({
         workspaceId: ws.id,
-        retiredAt: null,
-        servers: { some: { deploymentId } },
-      },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-    }),
-    db.chatAssistant.findMany({
-      where: { workspaceId: ws.id, mcpGrants: { some: { deploymentId } } },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-    }),
-    getTransportSettings(),
-  ]);
+        workspaceSlug: slug,
+        deploymentId,
+      }),
+    ]);
   const connected: McpConnectedObject[] = [
     ...usingAgents.map((agent) => ({
       id: agent.id,
@@ -185,20 +211,6 @@ export default async function DeploymentInspectorPage({
     })),
   ];
 
-  const editableConfiguration = isEditableMcpSource(dep.source);
-  const baseTabs = [
-    { key: "overview", label: t("overview") },
-    { key: "tools", label: t("tools") },
-    { key: "runtime", label: t("runtimeLogs") },
-    ...(editableConfiguration
-      ? [{ key: "configuration", label: t("configuration") }]
-      : []),
-    { key: "variables", label: t("variables") },
-    { key: "settings", label: t("settings") },
-  ];
-  const tabs = baseTabs;
-  const current = tabs.find((item) => item.key === tab)?.key ?? "overview";
-
   const label = deploymentLabel(dep);
   const pinnedPackage = deploymentPinnedPackage(dep);
   const pinnedVersion = pinnedPackage
@@ -210,6 +222,7 @@ export default async function DeploymentInspectorPage({
   const envCfg = (dep.installCfg ?? {}) as {
     network?: string;
     command?: string;
+    args?: string[];
   };
   const environmentState = mcpEnvironmentState(dep.installCfg);
   const declaredEnvironment =
@@ -226,24 +239,12 @@ export default async function DeploymentInspectorPage({
   const missingRequiredVariables = envRows.filter(
     (row) => row.required && !row.configured,
   );
-  const configuredVariables = envRows.filter((row) => row.configured).length;
-  // Credentials live in Variables after the initial deployment. Keep the
-  // editable runtime config focused on commands, references, and networking.
-  const serializedConfig = editableConfiguration
-    ? serializeMcpDeploymentConfig(dep, { includeEnv: false })
-    : "";
-
+  const canManage = ws.role === "owner" || ws.role === "admin";
   const status = effectiveStatus(deploymentId, dep.status);
   const running = status === "running";
-  const transitioning = transitioningStatuses.has(status);
-  let discoveryFailed = false;
-  const liveTools =
-    running && current === "tools"
-      ? await listMcpTools(deploymentId).catch(() => {
-          discoveryFailed = true;
-          return [];
-        })
-      : [];
+  const transitioning = Boolean(TRANSITIONING_STATUSES[status]);
+
+  const requestedTab = tab === "variables" ? "configuration" : tab;
   const deploymentToolCatalogKnown = hasMcpToolCatalog(dep.installCfg);
   const serverToolCatalogKnown =
     dep.source !== "remote" && hasMcpToolCatalog(dep.server?.installCfg);
@@ -252,21 +253,66 @@ export default async function DeploymentInspectorPage({
     : serverToolCatalogKnown
       ? readMcpToolCatalog(dep.server?.installCfg)
       : [];
+
+  const preliminaryTab =
+    requestedTab === "tools" ||
+    requestedTab === "configuration" ||
+    requestedTab === "runtime" ||
+    requestedTab === "settings"
+      ? requestedTab
+      : "overview";
+
+  let discoveryFailed = false;
+  const liveTools =
+    running && preliminaryTab === "tools"
+      ? await listMcpTools(deploymentId).catch(() => {
+          discoveryFailed = true;
+          return [];
+        })
+      : [];
   const refreshedConfig =
-    running && current === "tools" && liveTools.length === 0
+    running && preliminaryTab === "tools" && liveTools.length === 0
       ? await db.deployment.findFirst({
           where: { id: deploymentId, workspaceId: ws.id },
           select: { installCfg: true },
         })
       : null;
   const tools =
-    running && current === "tools"
+    running && preliminaryTab === "tools"
       ? liveTools.length
         ? liveTools
         : hasMcpToolCatalog(refreshedConfig?.installCfg)
           ? readMcpToolCatalog(refreshedConfig?.installCfg)
           : savedTools
       : savedTools;
+
+  const knownToolCount =
+    running && preliminaryTab === "tools"
+      ? tools.length
+      : deploymentToolCatalogKnown || serverToolCatalogKnown
+        ? savedTools.length
+        : dep.server?.verifiedTools;
+
+  const tabs = [
+    { key: "overview", label: t("overview") },
+    {
+      key: "tools",
+      label: t("tools"),
+      count: typeof knownToolCount === "number" ? knownToolCount : undefined,
+    },
+    { key: "configuration", label: t("configuration") },
+    { key: "runtime", label: t("logs") },
+    { key: "settings", label: t("settings") },
+  ];
+  const current =
+    tabs.find((item) => item.key === preliminaryTab)?.key ?? "overview";
+
+  const configResult =
+    dep.source !== null &&
+    (current === "configuration" || current === "settings")
+      ? await getMcpConfigAction({ workspace: slug, deploymentId })
+      : null;
+  const configView = configResult?.ok ? configResult.view : null;
   const runtimeSnapshot =
     current === "runtime" ? getDeploymentRuntimeSnapshot(deploymentId) : null;
   const initialRuntimeLogs =
@@ -276,33 +322,32 @@ export default async function DeploymentInspectorPage({
   const playgroundAvailable = running;
 
   const endpoint = `${originFromHeaders(await headers())}/api/v1/mcp/${deploymentId}/rpc`;
+  const listHref = `/app/${encodeURIComponent(slug)}/mcp`;
   const base = `/app/${slug}/mcp/${deploymentId}`;
   const provisioning = status === "provisioning";
   const setupRequired =
     status === "setup_required" &&
-    !(
-      allowHttp &&
-      dep.source === "remote" &&
-      dep.sourceRef?.startsWith("http:") &&
-      missingRequiredVariables.length === 0
-    );
+    (oauthSummary !== null ||
+      !(
+        allowHttp &&
+        dep.source === "remote" &&
+        dep.sourceRef?.startsWith("http:") &&
+        missingRequiredVariables.length === 0
+      ));
   const runtimePolling = provisioning || running;
-  const sourceLabel =
-    label.source === "catalog"
-      ? t("catalog")
-      : ["custom", "config", "docker"].includes(label.source)
-        ? t(`source.${label.source}`)
-        : label.source;
+  const sourceLabel = KNOWN_SOURCES[label.source]
+    ? t(`source.${label.source}`)
+    : label.source;
   const networkLabel =
     envCfg.network === "none" ? t("networkNone") : t("networkIsolated");
-  const knownToolCount =
-    running && current === "tools"
-      ? tools.length
-      : deploymentToolCatalogKnown || serverToolCatalogKnown
-        ? savedTools.length
-        : dep.server?.verifiedTools;
   const aboutMarkdown = dep.server?.readme?.trim() || null;
   const aboutDescription = dep.server?.description?.trim() || null;
+  const commandSummary =
+    envCfg.command && Array.isArray(envCfg.args)
+      ? [envCfg.command, ...envCfg.args].join(" ")
+      : (envCfg.command ?? null);
+  const targetSummary = pinnedPackage ?? label.ref ?? commandSummary ?? null;
+  const showStatusNotice = setupRequired || status === "error" || transitioning;
 
   return (
     <>
@@ -325,54 +370,124 @@ export default async function DeploymentInspectorPage({
         ) : dep.source === "remote" ? (
           <RemoteMcpTransportNotice url={dep.sourceRef} />
         ) : null}
-        <header className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex min-w-0 items-center gap-3.5">
-            <span className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-border bg-card text-primary shadow-sm">
-              <Plug className="size-5" />
-            </span>
-            <div className="min-w-0">
-              <h1
-                title={label.name}
-                className="truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl"
-              >
-                {label.name}
-              </h1>
-              <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2">
-                <StatusBadge status={status} />
-                <AnimatedBadge status="neutral" size="sm" showIcon={false}>
-                  {sourceLabel}
-                </AnimatedBadge>
-                {pinnedPackage || label.ref ? (
-                  <code
-                    title={pinnedPackage ?? label.ref ?? undefined}
-                    className="max-w-full truncate rounded-md bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground"
+
+        <header className="space-y-3">
+          <Link
+            href={listHref}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="size-3.5" aria-hidden="true" />
+            {t("title")}
+          </Link>
+
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-3.5">
+              <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl border border-border bg-card text-muted-foreground">
+                <Plug className="size-5" />
+              </span>
+              <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <h1
+                    title={label.name}
+                    className="truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl"
                   >
-                    {pinnedPackage ?? label.ref}
-                  </code>
+                    {label.name}
+                  </h1>
+                  <StatusBadge status={status} />
+                  <AnimatedBadge status="neutral" size="sm" showIcon={false}>
+                    {sourceLabel}
+                  </AnimatedBadge>
+                </div>
+                {targetSummary ? (
+                  <p
+                    title={targetSummary}
+                    className="mt-1 max-w-2xl truncate font-mono text-xs text-muted-foreground"
+                  >
+                    {targetSummary}
+                  </p>
                 ) : null}
               </div>
             </div>
-          </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {running ? (
-              <ConnectDialog
-                endpoint={endpoint}
-                name={label.name}
-                label={t("connect")}
-                variant="outline"
-              />
-            ) : null}
-            {transitioning ? (
-              <>
-                <ButtonLink
-                  href={`${base}?tab=runtime`}
-                  variant="secondary"
-                  size="sm"
-                >
-                  {t("viewRuntimeLogs")}
-                </ButtonLink>
-                {status !== "deleting" ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {running ? (
+                <ConnectDialog
+                  endpoint={endpoint}
+                  name={label.name}
+                  label={t("connect")}
+                  variant="banner"
+                />
+              ) : null}
+              {transitioning ? (
+                <>
+                  <ButtonLink
+                    href={`${base}?tab=runtime`}
+                    variant="secondary"
+                    size="sm"
+                  >
+                    {t("viewRuntimeLogs")}
+                  </ButtonLink>
+                  {status !== "deleting" ? (
+                    <form action={stopDeploymentAction}>
+                      <input type="hidden" name="workspace" value={slug} />
+                      <input
+                        type="hidden"
+                        name="deploymentId"
+                        value={deploymentId}
+                      />
+                      <SubmitButton
+                        flash={false}
+                        pendingLabel={t("stopping")}
+                        variant="secondary"
+                        size="sm"
+                      >
+                        <Pause className="size-3.5" />
+                        {t("stop")}
+                      </SubmitButton>
+                    </form>
+                  ) : null}
+                </>
+              ) : setupRequired ? (
+                oauthSummary ? (
+                  <ButtonLink
+                    href={oauthSummary.startUrl}
+                    variant="primary"
+                    size="sm"
+                  >
+                    <LogIn className="size-4" aria-hidden="true" />
+                    {oauthSummary.status === "reauth_required"
+                      ? t("oauth.reSignIn")
+                      : t("oauth.signIn")}
+                  </ButtonLink>
+                ) : (
+                  <ButtonLink
+                    href={`${base}?tab=configuration#variables`}
+                    variant="primary"
+                    size="sm"
+                  >
+                    <KeyRound className="size-4" />
+                    {t("configureVariables")}
+                  </ButtonLink>
+                )
+              ) : running ? (
+                <>
+                  <form action={restartDeploymentAction}>
+                    <input type="hidden" name="workspace" value={slug} />
+                    <input
+                      type="hidden"
+                      name="deploymentId"
+                      value={deploymentId}
+                    />
+                    <SubmitButton
+                      flash={false}
+                      pendingLabel={t("restarting")}
+                      variant="secondary"
+                      size="sm"
+                    >
+                      <RotateCcw className="size-3.5" />
+                      {t("restart")}
+                    </SubmitButton>
+                  </form>
                   <form action={stopDeploymentAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input
@@ -386,77 +501,82 @@ export default async function DeploymentInspectorPage({
                       variant="secondary"
                       size="sm"
                     >
+                      <Pause className="size-3.5" />
                       {t("stop")}
                     </SubmitButton>
                   </form>
-                ) : null}
-              </>
-            ) : setupRequired ? (
-              <ButtonLink
-                href={`${base}?tab=variables`}
-                variant="primary"
-                size="sm"
-              >
-                <KeyRound className="size-4" />
-                {t("configureVariables")}
-              </ButtonLink>
-            ) : running ? (
-              <form action={stopDeploymentAction}>
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="deploymentId" value={deploymentId} />
-                <SubmitButton
-                  flash={false}
-                  pendingLabel={t("stopping")}
+                </>
+              ) : (
+                <form action={startDeploymentAction}>
+                  <input type="hidden" name="workspace" value={slug} />
+                  <input
+                    type="hidden"
+                    name="deploymentId"
+                    value={deploymentId}
+                  />
+                  <SubmitButton
+                    flash={false}
+                    pendingLabel={t("starting")}
+                    variant="primary"
+                    size="sm"
+                  >
+                    <Play className="size-3.5" />
+                    {t("start")}
+                  </SubmitButton>
+                </form>
+              )}
+              {status === "error" ? (
+                <ButtonLink
+                  href={`${base}?tab=runtime`}
                   variant="secondary"
                   size="sm"
                 >
-                  {t("stop")}
-                </SubmitButton>
-              </form>
-            ) : (
-              <form action={startDeploymentAction}>
-                <input type="hidden" name="workspace" value={slug} />
-                <input type="hidden" name="deploymentId" value={deploymentId} />
-                <SubmitButton
-                  flash={false}
-                  pendingLabel={t("starting")}
-                  variant="secondary"
-                  size="sm"
-                >
-                  <Play className="size-3.5" />
-                  {t("start")}
-                </SubmitButton>
-              </form>
-            )}
-            {status === "error" ? (
-              <ButtonLink
-                href={`${base}?tab=runtime`}
-                variant="primary"
-                size="sm"
-              >
-                {t("viewRuntimeLogs")}
-              </ButtonLink>
-            ) : null}
+                  {t("viewRuntimeLogs")}
+                </ButtonLink>
+              ) : null}
+            </div>
           </div>
         </header>
-        {!running ? (
-          <p
+
+        {showStatusNotice ? (
+          <div
             role="status"
-            className={`rounded-xl border px-4 py-3 text-sm ${status === "error" ? "border-destructive/30 bg-destructive/10 text-destructive" : "border-border bg-muted/40 text-muted-foreground"}`}
+            className={`rounded-xl border px-4 py-3 text-sm ${
+              status === "error"
+                ? "border-destructive/30 bg-destructive/10 text-destructive"
+                : setupRequired
+                  ? "border-amber-500/30 bg-amber-500/[0.07] text-foreground"
+                  : "border-border bg-muted/40 text-muted-foreground"
+            }`}
           >
-            {setupRequired
-              ? t("variablesNeedAttention", {
-                  count: missingRequiredVariables.length,
-                })
-              : transitioning
-                ? t("runtimeStartingDescription")
-                : status === "error"
-                  ? t("runtimeErrorDescription")
-                  : t("stoppedNextStep")}
-            {setupRequired && missingRequiredVariables.length
-              ? ` ${missingRequiredVariables.map((row) => row.key).join(" · ")}`
-              : null}
-          </p>
+            <span>
+              {setupRequired
+                ? oauthSummary
+                  ? oauthSummary.status === "reauth_required"
+                    ? t("oauth.reauthRequiredBanner")
+                    : t("oauth.signInRequiredBanner")
+                  : t("variablesNeedAttention", {
+                      count: missingRequiredVariables.length,
+                    })
+                : transitioning
+                  ? t("runtimeStartingDescription")
+                  : t("runtimeErrorDescription")}
+            </span>
+            {setupRequired &&
+            !oauthSummary &&
+            missingRequiredVariables.length ? (
+              <span className="mt-1.5 flex flex-wrap gap-1.5">
+                {missingRequiredVariables.map((row) => (
+                  <code
+                    key={row.key}
+                    className="rounded bg-background/80 px-1.5 py-0.5 font-mono text-xs text-foreground"
+                  >
+                    {row.key}
+                  </code>
+                ))}
+              </span>
+            ) : null}
+          </div>
         ) : null}
 
         <div className="-mx-4 overflow-hidden px-4 sm:mx-0 sm:px-0">
@@ -464,23 +584,99 @@ export default async function DeploymentInspectorPage({
         </div>
 
         {current === "overview" ? (
-          <div
-            className={
-              aboutMarkdown || aboutDescription
-                ? "grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start"
-                : "max-w-3xl"
-            }
-          >
-            <DashboardPanel
-              title={t("connectionDetails")}
-              className="lg:order-2"
+          <div className="max-w-4xl space-y-5">
+            {oauthSummary ? (
+              <McpOAuthConnectionPanel
+                workspace={slug}
+                deploymentId={deploymentId}
+                summary={oauthSummary}
+              />
+            ) : null}
+
+            <section
+              aria-label={t("connectionDetails")}
+              className="overflow-hidden rounded-xl border border-border bg-card"
             >
-              <dl className="space-y-5 text-sm">
-                <div>
+              <dl className="grid grid-cols-2 divide-y divide-border sm:grid-cols-4 sm:divide-x sm:divide-y-0">
+                <div className="min-w-0 px-5 py-4">
                   <dt className="text-xs text-muted-foreground">
-                    {t("endpoint")}
+                    {pinnedVersion
+                      ? t("pinnedVersion")
+                      : commandSummary && dep.source !== "remote"
+                        ? t("startCommand")
+                        : t("sourceLabel")}
                   </dt>
-                  <dd className="mt-1.5 flex min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/40 py-1 pr-1 pl-3">
+                  <dd
+                    title={pinnedPackage ?? commandSummary ?? sourceLabel}
+                    className={`mt-1 truncate text-sm font-medium text-foreground ${
+                      pinnedVersion ||
+                      (commandSummary && dep.source !== "remote")
+                        ? "font-mono text-xs leading-5"
+                        : ""
+                    }`}
+                  >
+                    {pinnedVersion ??
+                      (dep.source !== "remote" && commandSummary
+                        ? commandSummary
+                        : sourceLabel)}
+                  </dd>
+                </div>
+
+                <div className="min-w-0 px-5 py-4">
+                  <dt className="text-xs text-muted-foreground">
+                    {t("tools")}
+                  </dt>
+                  <dd className="mt-1 text-sm font-medium text-foreground tabular-nums">
+                    {typeof knownToolCount === "number" ? (
+                      <Link
+                        href={`${base}?tab=tools`}
+                        className="hover:underline"
+                      >
+                        {knownToolCount.toLocaleString(locale)}
+                      </Link>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </dd>
+                </div>
+
+                <div className="min-w-0 px-5 py-4">
+                  <dt className="text-xs text-muted-foreground">
+                    {t("network")}
+                  </dt>
+                  <dd className="mt-1 truncate text-sm font-medium text-foreground">
+                    {networkLabel}
+                  </dd>
+                </div>
+
+                <div className="min-w-0 px-5 py-4">
+                  <dt className="text-xs text-muted-foreground">
+                    {t("created")}
+                  </dt>
+                  <dd
+                    title={`${t("updated")}: ${fmtDate(dep.updatedAt, timeZone, locale)}`}
+                    className="mt-1 truncate text-sm font-medium text-foreground"
+                  >
+                    {fmtDate(dep.createdAt, timeZone, locale)}
+                  </dd>
+                </div>
+              </dl>
+
+              <div className="space-y-4 border-t border-border px-5 py-4">
+                <div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      {t("endpoint")}
+                    </span>
+                    <Link
+                      href={`/app/${slug}/settings/tokens`}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      <KeyRound className="size-3.5" aria-hidden="true" />
+                      {t("manageTokens")}
+                    </Link>
+                  </div>
+                  <div className="mt-1.5 flex min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/30 py-1 pr-1 pl-3">
                     <code
                       title={endpoint}
                       className="min-w-0 flex-1 truncate font-mono text-xs text-foreground"
@@ -488,106 +684,32 @@ export default async function DeploymentInspectorPage({
                       {endpoint}
                     </code>
                     <CopyButton text={endpoint} />
-                  </dd>
+                  </div>
                 </div>
-                {connected.length ? (
-                  <div>
-                    <dt className="text-xs text-muted-foreground">
-                      {t("connectedTo")}
-                    </dt>
-                    <dd className="mt-1.5">
-                      <McpConnectedChips objects={connected} />
-                    </dd>
+
+                {dep.server?.author ? (
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                    <span>{t("author")}:</span>
+                    <span className="font-medium text-foreground">
+                      {dep.server.author}
+                    </span>
                   </div>
                 ) : null}
-                <div className="grid grid-cols-2 gap-x-4 gap-y-4">
-                  <div className="min-w-0">
-                    <dt className="text-xs text-muted-foreground">
-                      {t("sourceLabel")}
-                    </dt>
-                    <dd className="mt-1 truncate font-medium text-foreground">
-                      {sourceLabel}
-                    </dd>
+
+                {connected.length ? (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border pt-4">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      {t("connectedTo")}
+                    </span>
+                    <McpConnectedChips objects={connected} />
                   </div>
-                  {pinnedVersion ? (
-                    <div className="min-w-0">
-                      <dt className="text-xs text-muted-foreground">
-                        {t("pinnedVersion")}
-                      </dt>
-                      <dd
-                        title={pinnedPackage ?? undefined}
-                        className="mt-1 truncate font-mono text-foreground"
-                      >
-                        {pinnedVersion}
-                      </dd>
-                    </div>
-                  ) : null}
-                  <div className="min-w-0">
-                    <dt className="text-xs text-muted-foreground">
-                      {t("network")}
-                    </dt>
-                    <dd className="mt-1 truncate font-medium text-foreground">
-                      {networkLabel}
-                    </dd>
-                  </div>
-                  {typeof knownToolCount === "number" ? (
-                    <div className="min-w-0">
-                      <dt className="text-xs text-muted-foreground">
-                        {t("tools")}
-                      </dt>
-                      <dd className="mt-1">
-                        <Link
-                          href={`${base}?tab=tools`}
-                          className="font-medium text-foreground tabular-nums hover:underline"
-                        >
-                          {knownToolCount.toLocaleString(locale)}
-                        </Link>
-                      </dd>
-                    </div>
-                  ) : null}
-                  {dep.server?.author ? (
-                    <div className="col-span-2 min-w-0">
-                      <dt className="text-xs text-muted-foreground">
-                        {t("author")}
-                      </dt>
-                      <dd
-                        title={dep.server.author}
-                        className="mt-1 truncate font-medium text-foreground"
-                      >
-                        {dep.server.author}
-                      </dd>
-                    </div>
-                  ) : null}
-                  <div className="min-w-0">
-                    <dt className="text-xs text-muted-foreground">
-                      {t("created")}
-                    </dt>
-                    <dd className="mt-1 text-foreground">
-                      {fmtDate(dep.createdAt, timeZone, locale)}
-                    </dd>
-                  </div>
-                  <div className="min-w-0">
-                    <dt className="text-xs text-muted-foreground">
-                      {t("updated")}
-                    </dt>
-                    <dd className="mt-1 text-foreground">
-                      {fmtDate(dep.updatedAt, timeZone, locale)}
-                    </dd>
-                  </div>
-                </div>
-              </dl>
-              <Link
-                href={`/app/${slug}/settings/tokens`}
-                className="mt-5 flex items-center gap-1.5 border-t border-border pt-4 text-sm font-medium text-foreground hover:underline"
-              >
-                <KeyRound className="size-3.5 text-muted-foreground" />
-                {t("manageTokens")}
-              </Link>
-            </DashboardPanel>
+                ) : null}
+              </div>
+            </section>
+
             {aboutMarkdown || aboutDescription ? (
               <DashboardPanel
                 title={t("aboutThisMcp")}
-                className="lg:order-1"
                 bodyClassName="px-5 py-5 sm:px-6"
               >
                 {aboutMarkdown ? (
@@ -608,48 +730,93 @@ export default async function DeploymentInspectorPage({
           </div>
         ) : null}
 
-        {current === "variables" ? (
-          <VariablesEditor
-            slug={slug}
-            deploymentId={deploymentId}
-            initial={envRows}
-          />
-        ) : null}
-
-        {current === "configuration" && editableConfiguration ? (
-          <div className="space-y-6">
-            <McpJsonConfigEditor
-              slug={slug}
-              deploymentId={deploymentId}
-              remote={dep.source === "remote"}
-              allowHttp={allowHttp}
-              maskedConfig={serializedConfig}
-              requiresReveal={false}
-              initialNetwork={envCfg.network === "none" ? "none" : "isolated"}
-              warnAboutPackageInstall={dep.source !== "docker"}
-              variablesHref={`${base}?tab=variables`}
-              configuredVariables={configuredVariables}
-            />
-            {dep.source !== "remote" ? (
-              <RuntimeFilesEditor
-                workspace={slug}
+        {current === "configuration" ? (
+          dep.source !== null && configView ? (
+            <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+              <div className="min-w-0 space-y-6">
+                <McpConfigDocumentEditor
+                  key={configView.activeRevisionId}
+                  workspace={slug}
+                  deploymentId={deploymentId}
+                  view={configView}
+                />
+                <McpConfigRevisions
+                  workspace={slug}
+                  deploymentId={deploymentId}
+                  revisions={configView.revisions}
+                  canManage={configView.canManage}
+                />
+              </div>
+              <div className="min-w-0 space-y-6">
+                <McpConfigVariablesPanel
+                  key={JSON.stringify(configView.variables)}
+                  workspace={slug}
+                  deploymentId={deploymentId}
+                  variables={configView.variables}
+                  canManage={configView.canManage}
+                />
+                <McpConfigResolvedPanel
+                  workspace={slug}
+                  deploymentId={deploymentId}
+                  resolved={configView.resolved}
+                  canManage={configView.canManage}
+                />
+                {configView.kind !== "remote" ? (
+                  <RuntimeFilesEditor
+                    workspace={slug}
+                    deploymentId={deploymentId}
+                    relativePathArgumentsWork={
+                      dep.source === "config" && envCfg.command !== "docker"
+                    }
+                    initialFiles={dep.configFiles.map((file) => ({
+                      id: file.id,
+                      path: file.path,
+                      size: file.size,
+                      updatedAt: file.updatedAt.toISOString(),
+                    }))}
+                  />
+                ) : null}
+                {supportsAgentSandboxPlacement(dep) ? (
+                  <DashboardPanel
+                    title={t("agentSandboxPlacement")}
+                    description={t("agentSandboxPlacementDescription")}
+                  >
+                    <McpSandboxPlacementEditor
+                      workspace={slug}
+                      deploymentId={deploymentId}
+                      initialEnabled={mcpRunsInAgentSandbox(dep)}
+                    />
+                  </DashboardPanel>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <VariablesEditor
+                slug={slug}
                 deploymentId={deploymentId}
-                relativePathArgumentsWork={
-                  dep.source === "config" && envCfg.command !== "docker"
-                }
-                initialFiles={dep.configFiles.map((file) => ({
-                  id: file.id,
-                  path: file.path,
-                  size: file.size,
-                  updatedAt: file.updatedAt.toISOString(),
-                }))}
+                initial={envRows}
+                canManage={canManage}
               />
-            ) : null}
-          </div>
+              {supportsAgentSandboxPlacement(dep) ? (
+                <DashboardPanel
+                  title={t("agentSandboxPlacement")}
+                  description={t("agentSandboxPlacementDescription")}
+                  className="max-w-4xl"
+                >
+                  <McpSandboxPlacementEditor
+                    workspace={slug}
+                    deploymentId={deploymentId}
+                    initialEnabled={mcpRunsInAgentSandbox(dep)}
+                  />
+                </DashboardPanel>
+              ) : null}
+            </div>
+          )
         ) : null}
 
         {current === "tools" ? (
-          <div className="space-y-5">
+          <div className="max-w-4xl space-y-5">
             {discoveryFailed ? (
               <p
                 role="alert"
@@ -697,12 +864,12 @@ export default async function DeploymentInspectorPage({
                   <ButtonLink
                     href={`${base}?tab=runtime`}
                     variant="secondary"
-                    size="md"
+                    size="sm"
                   >
                     {t("viewRuntimeLogs")}
                   </ButtonLink>
                 }
-                className="min-h-44 rounded-xl border border-dashed border-border"
+                className="min-h-40 rounded-xl border border-dashed border-border"
               />
             )}
           </div>
@@ -710,6 +877,38 @@ export default async function DeploymentInspectorPage({
 
         {current === "settings" ? (
           <div className="max-w-4xl space-y-5">
+            <McpRuntimeTargetControl
+              workspace={slug}
+              deploymentId={deploymentId}
+              kind={
+                configView?.kind ??
+                (dep.source === "remote" ? "remote" : "stdio")
+              }
+              initialTarget={
+                configView?.runtime.target ??
+                (dep as { runtimeTarget?: McpRuntimeTarget }).runtimeTarget ??
+                "managed"
+              }
+              initialSandboxId={
+                configView?.runtime.sandboxId ??
+                (dep as { runtimeSandboxId?: string | null })
+                  .runtimeSandboxId ??
+                null
+              }
+              sandboxes={configView?.runtime.sandboxes ?? []}
+              canManage={configView?.canManage ?? canManage}
+            />
+
+            <McpSamplingToggle
+              workspace={slug}
+              deploymentId={deploymentId}
+              initialEnabled={
+                configView?.samplingEnabled ??
+                Boolean((dep as { samplingEnabled?: boolean }).samplingEnabled)
+              }
+              canManage={configView?.canManage ?? canManage}
+            />
+
             <DashboardPanel
               title={t("generalSettings")}
               description={t("renameMcpDescription")}
@@ -748,19 +947,6 @@ export default async function DeploymentInspectorPage({
               </form>
             </DashboardPanel>
 
-            {supportsAgentSandboxPlacement(dep) ? (
-              <DashboardPanel
-                title={t("agentSandboxPlacement")}
-                description={t("agentSandboxPlacementDescription")}
-              >
-                <McpSandboxPlacementEditor
-                  workspace={slug}
-                  deploymentId={deploymentId}
-                  initialEnabled={mcpRunsInAgentSandbox(dep)}
-                />
-              </DashboardPanel>
-            ) : null}
-
             <DashboardPanel
               title={t("cloneMcp")}
               description={t("cloneMcpDescription")}
@@ -797,34 +983,32 @@ export default async function DeploymentInspectorPage({
                     title={t("nameCannotBeBlank")}
                   />
                 </label>
-                <p className="rounded-xl border border-border bg-muted/[0.06] px-3 py-2 text-xs leading-5 text-foreground text-foreground">
+                <p className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">
                   {t("cloneSensitiveDataHint")}
                 </p>
-                <div className="flex items-start gap-2.5 rounded-lg border border-border p-3">
-                  <FormCheckbox
-                    name="copyEnvironmentVariables"
-                    value="true"
-                    defaultChecked
-                    label={t("copyEnvironmentVariables")}
-                  />
-                  <span>
+                <div className="space-y-2.5">
+                  <div className="flex items-start gap-2.5 rounded-lg border border-border p-3">
+                    <FormCheckbox
+                      name="copyEnvironmentVariables"
+                      value="true"
+                      defaultChecked
+                      label={t("copyEnvironmentVariables")}
+                    />
                     <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
                       {t("copyEnvironmentVariablesDescription")}
                     </span>
-                  </span>
-                </div>
-                <div className="flex items-start gap-2.5 rounded-lg border border-border p-3">
-                  <FormCheckbox
-                    name="copyRuntimeFiles"
-                    value="true"
-                    defaultChecked
-                    label={t("copyRuntimeFiles")}
-                  />
-                  <span>
+                  </div>
+                  <div className="flex items-start gap-2.5 rounded-lg border border-border p-3">
+                    <FormCheckbox
+                      name="copyRuntimeFiles"
+                      value="true"
+                      defaultChecked
+                      label={t("copyRuntimeFiles")}
+                    />
                     <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
                       {t("copyRuntimeFilesDescription")}
                     </span>
-                  </span>
+                  </div>
                 </div>
                 <SubmitButton
                   flash={false}
@@ -844,13 +1028,32 @@ export default async function DeploymentInspectorPage({
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-start gap-2.5">
-                  <Activity className="mt-0.5 size-4 text-muted-foreground" />
+                  <Activity className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <p className="max-w-xl text-sm leading-6 text-muted-foreground">
                     {t("rebuildDescription")}
                   </p>
                 </div>
-                {running ? (
-                  <form action={restartDeploymentAction}>
+                <div className="flex flex-wrap items-center gap-2">
+                  {running ? (
+                    <form action={restartDeploymentAction}>
+                      <input type="hidden" name="workspace" value={slug} />
+                      <input
+                        type="hidden"
+                        name="deploymentId"
+                        value={deploymentId}
+                      />
+                      <SubmitButton
+                        flash={false}
+                        pendingLabel={t("restarting")}
+                        variant="secondary"
+                        size="sm"
+                      >
+                        <RefreshCw className="size-3.5" />
+                        {t("restart")}
+                      </SubmitButton>
+                    </form>
+                  ) : null}
+                  <form action={rebuildDeploymentAction}>
                     <input type="hidden" name="workspace" value={slug} />
                     <input
                       type="hidden"
@@ -859,32 +1062,15 @@ export default async function DeploymentInspectorPage({
                     />
                     <SubmitButton
                       flash={false}
-                      pendingLabel={t("restarting")}
+                      pendingLabel={t("rebuilding")}
                       variant="secondary"
                       size="sm"
                     >
                       <RefreshCw className="size-3.5" />
-                      {t("restart")}
+                      {t("rebuild")}
                     </SubmitButton>
                   </form>
-                ) : null}
-                <form action={rebuildDeploymentAction}>
-                  <input type="hidden" name="workspace" value={slug} />
-                  <input
-                    type="hidden"
-                    name="deploymentId"
-                    value={deploymentId}
-                  />
-                  <SubmitButton
-                    flash={false}
-                    pendingLabel={t("rebuilding")}
-                    variant="secondary"
-                    size="sm"
-                  >
-                    <RefreshCw className="size-3.5" />
-                    {t("rebuild")}
-                  </SubmitButton>
-                </form>
+                </div>
               </div>
             </DashboardPanel>
 
@@ -927,7 +1113,7 @@ export default async function DeploymentInspectorPage({
         {current === "runtime" ? (
           <section
             id="runtime-logs"
-            className="rounded-xl border border-border bg-card scroll-mt-6 px-5 py-5"
+            className="max-w-4xl scroll-mt-6 rounded-xl border border-border bg-card p-5"
           >
             <ContainerLogs
               key={`${deploymentId}:${runtimeSnapshot?.generation ?? status}`}

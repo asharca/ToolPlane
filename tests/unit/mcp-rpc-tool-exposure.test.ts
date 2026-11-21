@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  resolveRequestUser: vi.fn(),
+  resolveRequestPrincipal: vi.fn(),
   deploymentFindFirst: vi.fn(),
   livePort: vi.fn(),
   logRequest: vi.fn(),
@@ -10,13 +10,18 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/auth/request-user", () => ({
-  resolveRequestUser: mocks.resolveRequestUser,
+  resolveRequestPrincipal: mocks.resolveRequestPrincipal,
 }));
 vi.mock("@/lib/db", () => ({
   db: { deployment: { findFirst: mocks.deploymentFindFirst } },
 }));
-vi.mock("@/lib/process/supervisor", () => ({ livePort: mocks.livePort }));
-vi.mock("@/lib/observability/log", () => ({ logRequest: mocks.logRequest }));
+vi.mock("@/lib/process/supervisor", () => ({
+  livePort: mocks.livePort,
+  liveRedactionValues: () => [],
+}));
+vi.mock("@/lib/observability/events", () => ({
+  recordEvent: mocks.logRequest,
+}));
 
 import { POST } from "@/app/api/v1/mcp/[deploymentId]/rpc/route";
 import { proxyMcpRpcRequest } from "@/lib/process/mcp-gateway";
@@ -42,7 +47,11 @@ function batchRequest(method: string) {
 describe("direct MCP gateway tool exposure", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.resolveRequestUser.mockResolvedValue({ id: "user1" });
+    mocks.resolveRequestPrincipal.mockResolvedValue({
+      user: { id: "user1" },
+      credential: "session",
+      token: null,
+    });
     mocks.deploymentFindFirst.mockResolvedValue({
       id: "dep1",
       workspaceId: "ws1",
@@ -121,4 +130,87 @@ describe("direct MCP gateway tool exposure", () => {
       expect(mocks.fetch).not.toHaveBeenCalled();
     },
   );
+  it("removes non-tool server capabilities from a restricted initialization", async () => {
+    mocks.fetch.mockResolvedValue(
+      Response.json({
+        jsonrpc: "2.0",
+        id: 1,
+        result: {
+          capabilities: {
+            tools: {},
+            resources: { subscribe: true },
+            prompts: {},
+          },
+        },
+      }),
+    );
+    const response = await proxyMcpRpcRequest(request("initialize"), {
+      id: "dep1",
+      workspaceId: "ws1",
+      mcpToolExposure: "all",
+      mcpAllowedTools: [],
+      toolsOnly: true,
+    });
+    expect((await response.json()).result.capabilities).toEqual({ tools: {} });
+  });
+  it("rejects retired toolkit credentials on the account endpoint", async () => {
+    mocks.resolveRequestPrincipal.mockResolvedValue({
+      user: { id: "user1" },
+      credential: "toolkit-token",
+      token: { id: "t1" },
+    });
+    const response = await POST(request("tools/list"), {
+      params: Promise.resolve({ deploymentId: "dep1" }),
+    });
+    expect(response.status).toBe(401);
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it("filters fragmented streamed tool lists inside a negotiated legacy batch", async () => {
+    const req = batchRequest("tools/list");
+    req.headers.set("mcp-session-id", "s");
+    req.headers.set("mcp-protocol-version", "2025-03-26");
+    const wire =
+      "data: " +
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        result: { tools: [{ name: "read" }, { name: "unknown" }] },
+      }) +
+      "\r\n\r\n";
+    const encoder = new TextEncoder();
+    mocks.fetch.mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(c) {
+            for (const part of [
+              wire.slice(0, 35),
+              wire.slice(35, -1),
+              wire.slice(-1),
+            ])
+              c.enqueue(encoder.encode(part));
+            c.close();
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+    );
+    const res = await POST(req, {
+      params: Promise.resolve({ deploymentId: "dep1" }),
+    });
+    const stream = await res.text();
+    expect(stream).toContain('"read"');
+    expect(stream).not.toContain("unknown");
+  });
+
+  it("rejects a batch at the modern protocol version even with a session id", async () => {
+    const req = batchRequest("tools/list");
+    req.headers.set("mcp-session-id", "s");
+    req.headers.set("mcp-protocol-version", "2025-11-25");
+    const res = await POST(req, {
+      params: Promise.resolve({ deploymentId: "dep1" }),
+    });
+    expect(res.status).toBe(400);
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
 });

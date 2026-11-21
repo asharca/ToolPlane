@@ -12,6 +12,7 @@ type RunningDeployment = DeploymentForSpawn & {
   id: string;
   workspaceId?: string;
   sandbox?: {
+    id?: string;
     config?: unknown;
   } | null;
 };
@@ -37,6 +38,7 @@ const defaultDeps: ReconcileDeps = {
         server: { select: { name: true } },
         sandbox: {
           select: {
+            id: true,
             config: true,
           },
         },
@@ -82,13 +84,24 @@ export async function reconcileDeployments(
   deps: ReconcileDeps = defaultDeps,
 ): Promise<number> {
   const deployments = await deps.loadRunning();
+  const targets = new Set(
+    deployments.flatMap((d) =>
+      d.runtimeTarget === "workspace_sandbox" && d.runtimeSandboxId
+        ? [d.runtimeSandboxId]
+        : [],
+    ),
+  );
+  const isDependency = (d: RunningDeployment) =>
+    d.source === "sandbox" && targets.has(d.sandbox?.id ?? "");
+  // Only target sandboxes must be ready before their stdio consumers launch.
+  deployments.sort((a, b) => Number(isDependency(b)) - Number(isDependency(a)));
   let started = 0;
   for (const d of deployments) {
     if (isReadOnlySandbox(d)) continue;
     try {
       const spec = deps.resolve ? await deps.resolve(d) : resolveSpawnSpec(d);
       await deps.start(d.id, spec, {
-        awaitReady: false,
+        awaitReady: isDependency(d),
         workspaceId: d.workspaceId,
       });
       started += 1;

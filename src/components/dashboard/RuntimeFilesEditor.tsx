@@ -323,10 +323,11 @@ export function RuntimeFilesEditor({
   return (
     <section
       ref={sectionRef}
-      className="max-w-4xl rounded-lg border border-border"
+      id="runtime-files"
+      className="max-w-4xl scroll-mt-6 overflow-hidden rounded-xl border border-border bg-card"
       aria-labelledby="runtime-files-heading"
     >
-      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-border px-4 py-4">
+      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-border px-5 py-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <FileText className="size-4 text-muted-foreground" />
@@ -340,16 +341,11 @@ export function RuntimeFilesEditor({
               {files.length}
             </AnimatedBadge>
           </div>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {t("runtimeFilesDescription")}
-          </p>
-          {relativePathArgumentsWork ? (
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              {t("runtimeFilesRelativeArgumentHint")}
-            </p>
-          ) : null}
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {t("runtimeFilesAbsolutePathHint")}
+          <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
+            {t("runtimeFilesDescription")}{" "}
+            {relativePathArgumentsWork
+              ? t("runtimeFilesRelativeArgumentHint")
+              : t("runtimeFilesAbsolutePathHint")}
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
@@ -384,21 +380,23 @@ export function RuntimeFilesEditor({
           />
         </div>
       </header>
-      <div className="p-4">
-        <McpSharedChangeConfirmation
-          workspace={workspace}
-          deploymentId={deploymentId}
-          impactedObjects={impactState.impactedObjects}
-        />
-      </div>
+      {impactState.impactedObjects ? (
+        <div className="border-b border-border px-5 py-4">
+          <McpSharedChangeConfirmation
+            workspace={workspace}
+            deploymentId={deploymentId}
+            impactedObjects={impactState.impactedObjects}
+          />
+        </div>
+      ) : null}
 
       <div className="divide-y divide-border">
         {files.length === 0 ? (
-          <p className="px-4 py-10 text-center text-sm text-muted-foreground">
+          <p className="px-5 py-6 text-sm text-muted-foreground">
             {t("noRuntimeFiles")}
           </p>
         ) : (
-          <div className="grid min-w-0 gap-3 p-3 sm:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
+          <div className="grid min-w-0 gap-3 p-4 sm:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
             <div className="max-h-80 min-w-0 overflow-auto">
               <FilePathTree
                 files={files.map((file) => ({
@@ -597,19 +595,17 @@ export function RuntimeFilesEditor({
             </Button>
           </div>
         </form>
-      ) : (
-        <div className="min-h-5 px-4 py-3" aria-live="polite">
-          {error ? (
-            <p
-              id="runtime-file-error"
-              className="text-sm text-destructive dark:text-destructive"
-              role="alert"
-            >
-              {error}
-            </p>
-          ) : null}
+      ) : error ? (
+        <div className="border-t border-border px-5 py-3" aria-live="polite">
+          <p
+            id="runtime-file-error"
+            className="text-sm text-destructive dark:text-destructive"
+            role="alert"
+          >
+            {error}
+          </p>
         </div>
-      )}
+      ) : null}
     </section>
   );
 }

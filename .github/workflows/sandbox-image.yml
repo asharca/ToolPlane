@@ -70,3 +70,21 @@ jobs:
           tags: ${{ steps.desktop-meta.outputs.tags }}
           labels: ${{ steps.desktop-meta.outputs.labels }}
           cache-from: type=gha,scope=sandbox
+      - uses: docker/metadata-action@v5
+        id: mcp-meta
+        with:
+          images: ghcr.io/${{ github.repository }}-mcp-runtime
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha
+            type=semver,pattern={{version}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: mcp-runtime
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.mcp-meta.outputs.tags }}
+          labels: ${{ steps.mcp-meta.outputs.labels }}
+          cache-from: type=gha,scope=mcp-runtime
+          cache-to: type=gha,scope=mcp-runtime,mode=min

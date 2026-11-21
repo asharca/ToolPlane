@@ -17,7 +17,6 @@ import {
   createProposal,
   createRecord,
   mutatePlaybook,
-  newSkillSchema,
   ownedRecord,
   recordDto,
   reviewProposal,
@@ -33,7 +32,7 @@ import {
   enqueueReflection,
   tickEvolutionJobs,
 } from "./jobs";
-import { recordedToolSchema } from "./schemas";
+import { privateSkillSchema, recordedToolSchema } from "./schemas";
 import { getConsoleTaskTree } from "@/lib/a2a/console-tasks";
 import { isLocalGrant, type TaskGrant } from "@/lib/a2a/principal";
 import { ADVISOR_SUGGESTIONS_PART } from "@/lib/agents/advisor";
@@ -330,7 +329,7 @@ export async function handleEvolution(
                     rationale: z.string().min(1).max(10_000),
                     baseRevisionId: id,
                     after: AgentRevisionConfigSchema.optional(),
-                    newSkill: newSkillSchema.optional(),
+                    newSkill: privateSkillSchema.optional(),
                     evidence: z
                       .object({
                         episodeIds: z.array(id).max(100),

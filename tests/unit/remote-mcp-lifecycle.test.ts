@@ -416,6 +416,7 @@ describe("pinned remote credential access", () => {
       installCfg: sealMcpEnvironment(
         {
           ...remote.installCfg,
+          timeoutMs: 75_000,
           authType: "bearer",
           bearerEnv: "TOKEN",
           requiredEnv: ["TOKEN"],
@@ -547,8 +548,8 @@ describe("pinned remote credential access", () => {
       "remote",
       "tools/call",
       { name: "read", arguments: {} },
-      30_000,
-      {},
+      75_000,
+      { callbackContext: { workspaceId: "workspace", deploymentId: "remote" } },
     );
   });
 
@@ -587,8 +588,8 @@ describe("pinned remote credential access", () => {
       "remote",
       "tools/call",
       { name: "read", arguments: {} },
-      30_000,
-      {},
+      75_000,
+      { callbackContext: { workspaceId: "workspace", deploymentId: "remote" } },
     );
   });
 
@@ -823,8 +824,8 @@ it("redacts resolved credential values from an approved pinned tool result", asy
     "remote",
     "tools/call",
     { name: "read", arguments: {} },
-    30_000,
-    {},
+    60_000,
+    { callbackContext: { workspaceId: "workspace", deploymentId: "remote" } },
   );
   expect(JSON.stringify(result)).not.toContain("private-token");
 });

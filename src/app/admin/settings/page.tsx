@@ -21,6 +21,8 @@ import { RuntimeSettingsForm } from "@/components/admin/RuntimeSettingsForm";
 import { SkillImportSettingsForm } from "@/components/admin/SkillImportSettingsForm";
 import { TransportSettingsForm } from "@/components/admin/TransportSettingsForm";
 import { UserLimitsSettingsForm } from "@/components/admin/UserLimitsSettingsForm";
+import { McpOAuthClientsSettings } from "@/components/admin/McpOAuthClientsSettings";
+import { getMcpOAuthAdminOverview } from "@/lib/admin/mcp-oauth-clients";
 import { getUserLimitDefaults } from "@/lib/storage/user-quota";
 import { LogSettings } from "@/components/admin/LogSettings";
 import { getLogSettings, LOG_SETTINGS_KEY } from "@/lib/observability/settings";
@@ -60,6 +62,7 @@ export default async function AdminSettingsPage() {
     transportSettings,
     userLimitDefaults,
     logSettings,
+    mcpOAuthOverview,
   ] = await Promise.all([
     getTranslations("admin"),
     resolveAgentAttachmentLimit(),
@@ -71,6 +74,7 @@ export default async function AdminSettingsPage() {
     getTransportSettings(),
     getUserLimitDefaults(),
     getLogSettings(),
+    getMcpOAuthAdminOverview(),
   ]);
   const [ops, locale, changes] = await Promise.all([
     getTranslations("adminOps"),
@@ -211,6 +215,7 @@ export default async function AdminSettingsPage() {
           )}
         </div>
       </SettingsChanges>
+      <McpOAuthClientsSettings overview={mcpOAuthOverview} />
     </AdminPage>
   );
 }

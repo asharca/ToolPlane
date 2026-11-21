@@ -112,27 +112,28 @@ export default async function DeploymentToolPage({
   };
 
   return (
-    <DashboardPage className="space-y-6">
-      <header>
+    <DashboardPage className="max-w-4xl space-y-6">
+      <header className="space-y-3">
         <Link
           href={`${base}?tab=tools`}
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
         >
-          <ArrowLeft className="size-3.5" /> {t("tools")}
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          {t("tools")}
         </Link>
-        <div className="mt-4 flex min-w-0 items-start gap-3">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+        <div className="flex min-w-0 items-start gap-3.5">
+          <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl border border-border bg-card text-muted-foreground">
             <Wrench className="size-5" />
           </span>
           <div className="min-w-0">
-            <h1 className="break-all text-2xl font-semibold text-foreground">
+            <h1 className="break-all text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
               {tool.title ?? tool.annotations?.title ?? tool.name}
             </h1>
             <code className="mt-1 block break-all font-mono text-xs text-muted-foreground">
               {tool.name}
             </code>
             {tool.description ? (
-              <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
+              <p className="mt-2.5 max-w-3xl text-sm leading-6 text-muted-foreground">
                 {tool.description}
               </p>
             ) : null}

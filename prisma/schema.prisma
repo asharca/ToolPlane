@@ -200,6 +200,7 @@ model DailySnapshot {
 }
 
 model Workspace {
+  mcpOAuthCredentials McpOAuthCredential[]
   agentMemories AgentMemory[]
   agentEnvironmentCredentials AgentEnvironmentCredential[]
   subagentDefinitions WorkspaceSubagent[]
@@ -299,7 +300,64 @@ model NotificationRecipient {
   @@index([userId, readAt, createdAt, notificationId])
 }
 
+model McpOAuthClient {
+  id              String @id @default(cuid())
+  issuer          String @unique
+  clientId        String
+  encryptedSecret Json?
+  authMethod      String
+  source          String
+  createdById     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  credentials     McpOAuthCredential[]
+}
+
+model McpOAuthCredential {
+  id                    String @id @default(cuid())
+  deploymentId          String @unique
+  deployment            Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  workspaceId           String
+  workspace             Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  issuer                String
+  clientId              String
+  oauthClientId         String?
+  oauthClient           McpOAuthClient? @relation(fields: [oauthClientId], references: [id], onDelete: SetNull)
+  resource              String
+  scopes                String[]
+  encryptedAccessToken  Json
+  encryptedRefreshToken Json?
+  expiresAt             DateTime?
+  accountLabel          String?
+  status                String @default("active")
+  refreshLeaseUntil     DateTime?
+  connectedById         String?
+  connectedAt           DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([workspaceId])
+}
+
+model McpOAuthPending {
+  stateHash         String @id
+  workspaceId       String
+  deploymentId      String
+  userId            String
+  issuer            String
+  clientId          String
+  encryptedVerifier Json
+  resource          String
+  redirectUri       String
+  scopes            String[]
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+
+  @@index([expiresAt])
+  @@index([deploymentId])
+}
+
 model Deployment {
+  mcpOAuthCredential McpOAuthCredential?
   id                  String                  @id @default(cuid())
   workspaceId         String
   workspace           Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -322,6 +380,16 @@ model Deployment {
   chatAssistantGrants ChatAssistantMcpGrant[]
   configFiles         DeploymentConfigFile[]
   sandbox             Sandbox?
+  /// Original user configuration history; the active one drives installCfg.
+  configRevisions     McpConfigRevision[]
+  activeRevisionId    String?
+  /// Where a stdio MCP runs: "managed" (ToolPlane MCP runtime container) or
+  /// "workspace_sandbox" (runtimeSandbox). Remote MCPs ignore it.
+  runtimeTarget       String                  @default("managed")
+  runtimeSandboxId    String?
+  runtimeSandbox      Sandbox?                @relation("McpRuntimeSandbox", fields: [runtimeSandboxId], references: [id], onDelete: SetNull)
+  /// Manage-only opt-in: the MCP may ask the workspace model provider to sample.
+  samplingEnabled     Boolean                 @default(false)
 
   @@unique([workspaceId, serverId])
 }
@@ -339,6 +407,26 @@ model DeploymentConfigFile {
 
   @@unique([deploymentId, pathKey])
   @@index([deploymentId, updatedAt])
+}
+
+/// Immutable snapshot of the configuration text a user pasted or edited.
+/// `document` is one MCP client server entry (JSONC allowed) whose secrets are
+/// `${KEY}` references to the deployment's sealed variables; never plaintext.
+model McpConfigRevision {
+  id           String     @id @default(cuid())
+  deploymentId String
+  deployment   Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  revision     Int
+  document     String
+  /// McpConfigFormat
+  format       String
+  /// Resolved lock (exact package versions, image digests) derived at save.
+  resolved     Json
+  createdById  String?
+  createdAt    DateTime   @default(now())
+
+  @@unique([deploymentId, revision])
+  @@index([deploymentId, createdAt])
 }
 
 model Sandbox {
@@ -368,6 +456,7 @@ model Sandbox {
   conversations      Conversation[]
   a2aContexts         A2AContext[]
   piPackageSets       PiSessionPackageSet[]
+  mcpRuntimeDeployments Deployment[]      @relation("McpRuntimeSandbox")
 
   @@unique([workspaceId, slug])
 }

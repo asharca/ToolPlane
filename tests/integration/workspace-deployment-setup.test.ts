@@ -250,8 +250,6 @@ describe("catalog MCP deployment setup", () => {
     const deployment = await db.deployment.create({
       data: {
         workspaceId,
-        source: "npm",
-        sourceRef: "optional-mcp",
         status: "running",
         installCfg: sealMcpEnvironment({}, workspaceId, {
           TOKEN: "initial-secret",
@@ -303,8 +301,6 @@ describe("catalog MCP deployment setup", () => {
     const deployment = await db.deployment.create({
       data: {
         workspaceId,
-        source: "npm",
-        sourceRef: "reveal-mcp",
         status: "stopped",
         installCfg: sealMcpEnvironment({}, workspaceId, {
           TOKEN: "visible-secret",

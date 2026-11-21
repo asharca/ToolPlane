@@ -1,9 +1,15 @@
 // @vitest-environment node
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { getSandbox, listSandboxes } from "@/lib/sandboxes/queries";
+import { validateMcpRuntimeTarget } from "@/lib/process/mcp-runtime-target";
+
+// These tests exercise DB authority; the live Docker suite exercises liveness.
+vi.mock("@/lib/process/supervisor/registry", () => ({
+  liveRegistry: () => ({ status: "running" }),
+}));
 
 const stamp = randomUUID();
 const userIds: string[] = [];
@@ -238,6 +244,33 @@ afterAll(async () => {
   if (userIds.length)
     await db.user.deleteMany({ where: { id: { in: userIds } } });
   await db.$disconnect();
+});
+
+it("admits only a running workspace-owned external sandbox as an MCP process target", async () => {
+  const own = await createSandbox(
+    "MCP execution target",
+    {},
+    workspaceId,
+    "running",
+  );
+  const validate = (workspace: string, sandboxId: string) =>
+    validateMcpRuntimeTarget({
+      workspaceId: workspace,
+      target: "workspace_sandbox",
+      sandboxId,
+      source: "config",
+      command: "node",
+    });
+  const unavailable = { ok: false, error: "sandboxUnavailable" };
+  expect(await validate(workspaceId, own.id)).toEqual({ ok: true });
+  expect(await validate(foreignWorkspaceId, own.id)).toEqual(unavailable);
+  expect(await validate(workspaceId, runtimeId)).toEqual(unavailable);
+  expect(await validate(workspaceId, templateId)).toEqual(unavailable);
+  await db.deployment.update({
+    where: { id: own.deploymentId },
+    data: { status: "stopped" },
+  });
+  expect(await validate(workspaceId, own.id)).toEqual(unavailable);
 });
 
 it("distinguishes current runtimes, templates, retained history and external attachments with real Agent owners", async () => {

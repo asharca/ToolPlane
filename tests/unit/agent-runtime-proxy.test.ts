@@ -621,6 +621,10 @@ describe("pinned Agent runtime proxy authorization", () => {
       "deployment-1",
       "read",
       { path: "report.txt" },
+      {
+        token: expect.objectContaining(identity),
+        signal: expect.any(AbortSignal),
+      },
     );
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
