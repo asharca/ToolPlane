@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.44.0](https://github.com/asharca/ToolPlane/compare/v0.43.2...v0.44.0) (2026-11-20)
+
+
+### Features
+
+* **site:** 将落地页重设计为交互式产品演示 ([#286](https://github.com/asharca/ToolPlane/issues/286)) ([db1c100](https://github.com/asharca/ToolPlane/commit/db1c10009be001dc12149f3fa7b9192fef740884))
+* **ui:** 优化耗时瀑布图交互并禁止弹窗外层滚动 ([#285](https://github.com/asharca/ToolPlane/issues/285)) ([a5d5cab](https://github.com/asharca/ToolPlane/commit/a5d5cab660ed80a06f0491cb0a25d7d19cf84693))
+
+
+### Performance Improvements
+
+* **chat:** 进入助手页时不再等待远端 MCP 工具发现 ([#284](https://github.com/asharca/ToolPlane/issues/284)) ([2bb43cc](https://github.com/asharca/ToolPlane/commit/2bb43ccdb64842a195417cfe2972ff4937e00ce0))
+
 ## [0.43.2](https://github.com/asharca/ToolPlane/compare/v0.43.1...v0.43.2) (2026-11-20)
 
 

@@ -9,7 +9,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const locale = await getLocale();
   const { home } = getMarketingContent(locale);
   return siteMetadata({
-    title: `${SITE.name} | ${home.eyebrow}`,
+    title: `${SITE.name} | ${home.metaTitle}`,
     description: home.description,
     path: "/",
   });
