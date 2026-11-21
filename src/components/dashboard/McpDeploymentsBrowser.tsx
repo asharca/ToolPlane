@@ -375,10 +375,12 @@ export function McpDeploymentsBrowser({
   slug,
   deployments,
   allowHttp,
+  defaultCreateOpen,
 }: {
   slug: string;
   deployments: McpDeploymentListItem[];
   allowHttp: boolean;
+  defaultCreateOpen?: boolean;
 }) {
   const [t, common, selection] = [
     useTranslations("console.mcp"),
@@ -498,8 +500,9 @@ export function McpDeploymentsBrowser({
     });
   };
 
+  const marketHref = `/app/${encodeURIComponent(slug)}/plugins`;
+
   if (deployments.length === 0) {
-    const marketHref = `/app/${encodeURIComponent(slug)}/plugins`;
     return (
       <DashboardEmptyState
         icon={Plug}
@@ -507,7 +510,11 @@ export function McpDeploymentsBrowser({
         className="rounded-xl border border-dashed border-border bg-card/50 py-14"
         actions={
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <AddMcpDialog slug={slug} allowHttp={allowHttp} />
+            <AddMcpDialog
+              slug={slug}
+              allowHttp={allowHttp}
+              defaultOpen={defaultCreateOpen}
+            />
             <ButtonLink href={marketHref} variant="secondary" size="md">
               <Store className="size-4" />
               {t("pluginCenter")}
@@ -523,74 +530,87 @@ export function McpDeploymentsBrowser({
       className="flex min-h-0 flex-1 flex-col gap-4"
       aria-label={t("allMcps")}
     >
-      <div className="flex shrink-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0 flex-1 lg:max-w-sm">
-          <Input
-            value={query}
-            onChange={(value) => {
-              setQuery(value);
-              setPage(1);
-            }}
-            placeholder={t("searchMcp")}
-            leftIcon={<Search className="size-4" />}
-            aria-label={t("searchMcp")}
-            rightIcon={
-              query ? (
-                <Button
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5">
+          <div className="w-full sm:w-64 lg:w-72">
+            <Input
+              value={query}
+              onChange={(value) => {
+                setQuery(value);
+                setPage(1);
+              }}
+              placeholder={t("searchMcp")}
+              leftIcon={<Search className="size-4" />}
+              aria-label={t("searchMcp")}
+              rightIcon={
+                query ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      setQuery("");
+                      setPage(1);
+                    }}
+                    aria-label={t("clearSearch")}
+                  >
+                    <X className="size-4" />
+                  </Button>
+                ) : undefined
+              }
+            />
+          </div>
+          <fieldset
+            aria-label={t("status")}
+            className="m-0 flex min-w-0 flex-wrap items-center gap-1.5 border-0 p-0"
+          >
+            {visibleFilters.map((filter) => {
+              const active = status === filter.key;
+              return (
+                <button
+                  key={filter.key}
                   type="button"
-                  variant="ghost"
-                  size="icon"
+                  aria-pressed={active}
                   onClick={() => {
-                    setQuery("");
+                    setStatus(filter.key);
                     setPage(1);
                   }}
-                  aria-label={t("clearSearch")}
+                  className={cn(
+                    "inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    active
+                      ? "border-border bg-card text-foreground shadow-xs"
+                      : "border-transparent bg-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                  )}
                 >
-                  <X className="size-4" />
-                </Button>
-              ) : undefined
-            }
+                  {filter.key !== "all" ? (
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "size-1.5 shrink-0 rounded-full",
+                        FILTER_DOT[filter.key],
+                      )}
+                    />
+                  ) : null}
+                  <span>{filter.label}</span>
+                  <span className="tabular-nums text-muted-foreground">
+                    {filter.count}
+                  </span>
+                </button>
+              );
+            })}
+          </fieldset>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <ButtonLink href={marketHref} variant="secondary" size="md">
+            <Store className="size-4" />
+            {t("pluginCenter")}
+          </ButtonLink>
+          <AddMcpDialog
+            slug={slug}
+            allowHttp={allowHttp}
+            defaultOpen={defaultCreateOpen}
           />
         </div>
-        <fieldset
-          aria-label={t("status")}
-          className="m-0 flex min-w-0 flex-wrap items-center gap-1.5 border-0 p-0"
-        >
-          {visibleFilters.map((filter) => {
-            const active = status === filter.key;
-            return (
-              <button
-                key={filter.key}
-                type="button"
-                aria-pressed={active}
-                onClick={() => {
-                  setStatus(filter.key);
-                  setPage(1);
-                }}
-                className={cn(
-                  "inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  active
-                    ? "border-border bg-card text-foreground shadow-xs"
-                    : "border-transparent bg-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                )}
-              >
-                {filter.key !== "all" ? (
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "size-1.5 shrink-0 rounded-full",
-                      FILTER_DOT[filter.key],
-                    )}
-                  />
-                ) : null}
-                <span>{filter.label}</span>
-                <span className="tabular-nums text-muted-foreground">
-                  {filter.count}
-                </span>
-              </button>
-            );
-          })}
-        </fieldset>
       </div>
 
       {filteredDeployments.length === 0 ? (

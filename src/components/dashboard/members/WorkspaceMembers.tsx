@@ -27,6 +27,7 @@ import {
 } from "@/components/motion/center-morph-modal";
 import { FormSelect } from "@/components/ui/FormSelect";
 import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
+import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import {
   DashboardFilterInput,
   DashboardEmptyState,
@@ -61,9 +62,6 @@ export type WorkspaceInvitationItem = {
   expired: boolean;
 };
 
-/** Search appears once the list no longer fits at a glance. */
-const SEARCH_THRESHOLD = 8;
-
 export function WorkspaceMembers({
   slug,
   members,
@@ -94,6 +92,7 @@ export function WorkspaceMembers({
 
   return (
     <div className="space-y-8">
+      <DashboardHeader title={t("members")} />
       <DashboardToolbar
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -136,15 +135,13 @@ export function WorkspaceMembers({
           </div>
         }
       >
-        <h1 className="text-xl font-semibold">{t("members")}</h1>
-      </DashboardToolbar>
-      {members.length + invitations.length > SEARCH_THRESHOLD ? (
         <DashboardFilterInput
           value={query}
           onChange={setQuery}
           placeholder={t("search")}
+          width="w-full sm:w-72"
         />
-      ) : null}
+      </DashboardToolbar>
       {visibleMembers.length ? (
         <RowList>
           {visibleMembers.map((member) => (

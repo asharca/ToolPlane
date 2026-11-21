@@ -1,9 +1,6 @@
 "use client";
-import {
-  DashboardEmptyState,
-  DashboardPage,
-  DashboardToolbar,
-} from "@/components/dashboard/DashboardUI";
+import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
+import { DashboardEmptyState } from "@/components/dashboard/DashboardUI";
 import { Input } from "@/components/motion/input";
 import { useTranslations } from "next-intl";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -112,36 +109,30 @@ export function ProvidersPanel({
     providers[0] ??
     null;
   return (
-    <DashboardPage className="flex min-h-0 flex-1 flex-col">
-      <DashboardToolbar
-        actions={
-          <AddProviderDialog
-            slug={slug}
-            piProviderPresets={piProviderPresets}
-            onCreated={handleCreated}
-          />
-        }
-      >
-        <h1 className="text-xl font-semibold">{t("modelProviders")}</h1>
-      </DashboardToolbar>
+    <>
+      <DashboardHeader title={t("modelProviders")} />
       {selectedProvider ? (
-        <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col md:flex-row">
+        <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-[var(--workspace-surface,var(--background))] md:flex-row">
           <aside
             aria-label={t("modelProviders")}
-            className="flex max-h-60 shrink-0 flex-col border-b border-border/60 md:max-h-none md:w-64 md:border-b-0 md:border-r"
+            className="flex max-h-60 shrink-0 flex-col border-b border-border/50 bg-muted/25 md:max-h-none md:w-64 md:border-b-0 md:border-r"
           >
-            {providers.length > 5 ? (
-              <div className="px-2 pb-1">
-                <Input
-                  leftIcon={<Search />}
-                  aria-label={`${common("search")} ${t("modelProviders")}`}
-                  placeholder={common("search")}
-                  value={providerQuery}
-                  onChange={setProviderQuery}
-                  className="w-full"
-                />
-              </div>
-            ) : null}
+            <div className="flex shrink-0 items-center gap-1.5 px-2.5 py-2.5">
+              <Input
+                leftIcon={<Search />}
+                aria-label={`${common("search")} ${t("modelProviders")}`}
+                placeholder={common("search")}
+                value={providerQuery}
+                onChange={setProviderQuery}
+                className="min-w-0 flex-1"
+              />
+              <AddProviderDialog
+                slug={slug}
+                piProviderPresets={piProviderPresets}
+                onCreated={handleCreated}
+                iconTrigger
+              />
+            </div>
             <nav
               aria-label={t("modelProviders")}
               className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2"
@@ -217,18 +208,20 @@ export function ProvidersPanel({
           />
         </div>
       ) : (
-        <DashboardEmptyState
-          icon={Cpu}
-          title={t("noProvidersYet")}
-          actions={
-            <AddProviderDialog
-              slug={slug}
-              piProviderPresets={piProviderPresets}
-              onCreated={handleCreated}
-            />
-          }
-        />
+        <div className="flex h-full min-h-0 flex-1 items-center justify-center p-6">
+          <DashboardEmptyState
+            icon={Cpu}
+            title={t("noProvidersYet")}
+            actions={
+              <AddProviderDialog
+                slug={slug}
+                piProviderPresets={piProviderPresets}
+                onCreated={handleCreated}
+              />
+            }
+          />
+        </div>
       )}
-    </DashboardPage>
+    </>
   );
 }

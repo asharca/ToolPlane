@@ -174,6 +174,12 @@ export default async function PluginsPage({
         base={base}
         current="catalog"
         updateCount={catalog.updateCount}
+        actions={
+          <ButtonLink href={`${base}/sources`} variant="secondary" size="sm">
+            <GitBranch className="size-4" />
+            {t("sources")}
+          </ButtonLink>
+        }
       />
       <div className="flex w-full flex-wrap items-center gap-2">
         <form key={q} action={base} method="get" className="w-full sm:w-72">
@@ -204,15 +210,6 @@ export default async function PluginsPage({
             options={filter.options}
           />
         ))}
-        <ButtonLink
-          href={`${base}/sources`}
-          variant="secondary"
-          size="md"
-          className="sm:ml-auto"
-        >
-          <GitBranch className="size-4" />
-          {t("sources")}
-        </ButtonLink>
       </div>
       {items.length ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

@@ -13,6 +13,7 @@ import { db } from "@/lib/db";
 import { LogExplorer } from "@/components/observability/LogExplorer";
 import { logFilterSchema } from "@/lib/observability/queries";
 import { TabBar } from "@/components/dashboard/TabBar";
+import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import {
   DashboardEmptyState,
   DashboardPage,
@@ -97,9 +98,7 @@ export default async function ObservabilityPage({
     return (
       <>
         <DashboardPage>
-          <DashboardToolbar>
-            <h1 className="text-xl font-semibold">{t("observability")}</h1>
-          </DashboardToolbar>
+          <DashboardHeader title={t("observability")} />
           <TabBar tabs={tabs} current={current} basePath={base} />
           <ChannelObservability
             key={`${ws.id}:${query.agentId ?? ""}:${query.channelId ?? ""}`}
@@ -133,9 +132,7 @@ export default async function ObservabilityPage({
     return (
       <>
         <DashboardPage>
-          <DashboardToolbar>
-            <h1 className="text-xl font-semibold">{t("observability")}</h1>
-          </DashboardToolbar>
+          <DashboardHeader title={t("observability")} />
           <TabBar tabs={tabs} current={current} basePath={base} />
           <LogExplorer
             key={`${ws.id}:${current}`}
@@ -161,9 +158,7 @@ export default async function ObservabilityPage({
     return (
       <>
         <DashboardPage>
-          <DashboardToolbar>
-            <h1 className="text-xl font-semibold">{t("observability")}</h1>
-          </DashboardToolbar>
+          <DashboardHeader title={t("observability")} />
           <TabBar tabs={tabs} current={current} basePath={base} />
           <WorkspaceAgentUsage key={`${ws.id}:agent-usage`} slug={slug} />
         </DashboardPage>
@@ -237,9 +232,7 @@ export default async function ObservabilityPage({
   return (
     <>
       <DashboardPage>
-        <DashboardToolbar>
-          <h1 className="text-xl font-semibold">{t("observability")}</h1>
-        </DashboardToolbar>
+        <DashboardHeader title={t("observability")} />
         <TabBar
           tabs={tabs}
           current={current}
@@ -248,22 +241,12 @@ export default async function ObservabilityPage({
         />
 
         {current === "usage" ? (
-          <DashboardToolbar
-            className="rounded-lg border border-border bg-muted/20 px-4 py-3"
-            actions={searchControls}
-          >
-            <div>
-              <p className="text-sm text-muted-foreground">
-                {t(
-                  "toolCallsLatencyAndErrorsAcrossEveryServerAggregatedOverTheLast24Hours",
-                )}
+          <DashboardToolbar actions={searchControls}>
+            {o.selectedDeployment ? (
+              <p className="text-xs font-medium text-foreground">
+                {t("filteredTo", { name: o.selectedDeployment })}
               </p>
-              {o.selectedDeployment ? (
-                <p className="mt-1 text-xs font-medium text-foreground">
-                  {t("filteredTo", { name: o.selectedDeployment })}
-                </p>
-              ) : null}
-            </div>
+            ) : null}
           </DashboardToolbar>
         ) : null}
 

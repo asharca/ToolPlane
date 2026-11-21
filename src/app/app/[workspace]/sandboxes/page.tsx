@@ -35,6 +35,7 @@ import { SandboxStatusRefresher } from "@/components/dashboard/sandboxes/Sandbox
 import { SandboxCreateForm } from "@/components/dashboard/sandboxes/SandboxCreateForm";
 import { SandboxConnectorStatus } from "@/components/dashboard/sandboxes/SandboxConnectorStatus";
 import { SandboxBatchTable } from "@/components/dashboard/sandboxes/SandboxBatchTable";
+import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import {
   DashboardEmptyState,
   DashboardPage,
@@ -181,16 +182,13 @@ export default async function SandboxesPage({
     <>
       <SandboxStatusRefresher transitioning={anyProvisioning} />
       <DashboardPage>
+        <DashboardHeader title={t("sandboxes")} />
         <DashboardToolbar
           actions={<SandboxCreateForm workspace={slug} workspaceId={ws.id} />}
         >
-          <h1 className="text-xl font-semibold">{t("sandboxes")}</h1>
-        </DashboardToolbar>
-
-        <section className="space-y-4">
           <nav
             aria-label={t("sandboxViews")}
-            className="flex flex-wrap items-center gap-1 rounded-lg border border-border p-1"
+            className="inline-flex flex-wrap items-center gap-1 rounded-lg border border-border p-1"
           >
             {filters.map((filter) => (
               <Link
@@ -207,6 +205,9 @@ export default async function SandboxesPage({
               </Link>
             ))}
           </nav>
+        </DashboardToolbar>
+
+        <section className="space-y-4">
           {sandboxRows.length === 0 ? (
             <DashboardEmptyState
               icon={Boxes}

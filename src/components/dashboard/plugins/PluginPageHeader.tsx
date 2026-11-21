@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { DashboardToolbar } from "@/components/dashboard/DashboardUI";
+import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { TabBar } from "@/components/dashboard/TabBar";
 
 export function PluginPageHeader({
@@ -19,22 +19,25 @@ export function PluginPageHeader({
   const t = useTranslations("console.plugins");
   return (
     <>
-      <DashboardToolbar actions={actions}>
-        <h1 className="text-xl font-semibold">{t("pageTitle")}</h1>
-      </DashboardToolbar>
-      <TabBar
-        basePath={base}
-        current={current}
-        tabs={[
-          { key: "catalog", label: t("title"), href: base },
-          {
-            key: "installed",
-            label: t("installed.title"),
-            href: `${base}/installed`,
-            count: updateCount > 0 ? updateCount : undefined,
-          },
-        ]}
-      />
+      <DashboardHeader title={t("pageTitle")} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <TabBar
+          basePath={base}
+          current={current}
+          tabs={[
+            { key: "catalog", label: t("title"), href: base },
+            {
+              key: "installed",
+              label: t("installed.title"),
+              href: `${base}/installed`,
+              count: updateCount > 0 ? updateCount : undefined,
+            },
+          ]}
+        />
+        {actions ? (
+          <div className="flex flex-wrap items-center gap-2">{actions}</div>
+        ) : null}
+      </div>
     </>
   );
 }

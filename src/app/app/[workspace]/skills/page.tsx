@@ -9,10 +9,10 @@ import { getSkillImportSettings } from "@/lib/admin/settings";
 import { getInstalledSkills } from "@/lib/workspace/queries";
 import { skillLabel } from "@/lib/workspace/skill-label";
 import { AddSkillDialog } from "@/components/dashboard/AddSkillDialog";
+import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import {
   DashboardEmptyState,
   DashboardPage,
-  DashboardToolbar,
 } from "@/components/dashboard/DashboardUI";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 import { InstalledSkillsTable } from "@/components/dashboard/InstalledSkillsTable";
@@ -65,37 +65,12 @@ export default async function SkillsPage({
       .filter(Boolean),
   );
   const importedSkills = skills.filter((skill) => importedIds.has(skill.id));
+  const defaultCreateOpen =
+    (Array.isArray(query.create) ? query.create[0] : query.create) === "1";
 
   return (
     <DashboardPage>
-      <DashboardToolbar
-        actions={
-          <>
-            <ButtonLink
-              href={`/app/${slug}/plugins`}
-              variant="secondary"
-              size="md"
-            >
-              <Store className="size-4" />
-              {t("browseSkillMarket")}
-            </ButtonLink>
-            <AddSkillDialog
-              slug={slug}
-              maxSkillImportSkills={skillImportSettings.maxSkills}
-              defaultOpen={
-                (Array.isArray(query.create)
-                  ? query.create[0]
-                  : query.create) === "1"
-              }
-            />
-          </>
-        }
-      >
-        <h1 className="text-xl font-semibold">{t("skills")}</h1>
-        <p className="text-sm text-muted-foreground">
-          {t("installedCount", { count: skills.length })}
-        </p>
-      </DashboardToolbar>
+      <DashboardHeader title={t("skills")} />
 
       {importedSkills.length > 0 ? (
         <section className="rounded-xl border border-border bg-card px-4 py-3">
@@ -137,10 +112,21 @@ export default async function SkillsPage({
           icon={Brain}
           title={t("emptyInstalledHint")}
           actions={
-            <AddSkillDialog
-              slug={slug}
-              maxSkillImportSkills={skillImportSettings.maxSkills}
-            />
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <ButtonLink
+                href={`/app/${slug}/plugins`}
+                variant="secondary"
+                size="md"
+              >
+                <Store className="size-4" />
+                {t("browseSkillMarket")}
+              </ButtonLink>
+              <AddSkillDialog
+                slug={slug}
+                maxSkillImportSkills={skillImportSettings.maxSkills}
+                defaultOpen={defaultCreateOpen}
+              />
+            </div>
           }
         />
       ) : null}
@@ -156,6 +142,23 @@ export default async function SkillsPage({
             iconUrl: skill.skill?.iconUrl ?? null,
             createdAt: fmt(skill.createdAt, timeZone, locale),
           }))}
+          actions={
+            <>
+              <ButtonLink
+                href={`/app/${slug}/plugins`}
+                variant="secondary"
+                size="md"
+              >
+                <Store className="size-4" />
+                {t("browseSkillMarket")}
+              </ButtonLink>
+              <AddSkillDialog
+                slug={slug}
+                maxSkillImportSkills={skillImportSettings.maxSkills}
+                defaultOpen={defaultCreateOpen}
+              />
+            </>
+          }
         />
       ) : null}
     </DashboardPage>
