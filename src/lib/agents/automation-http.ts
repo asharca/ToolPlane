@@ -6,13 +6,6 @@ import {
 } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { configSchema, permitsHost } from "@/lib/account-connections/config";
-import {
-  isSourceKind,
-  parseSourceConfig,
-  sourceKinds,
-  SourceFailure,
-} from "./trigger-sources";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { ORDINARY_AGENT_FILTER } from "./queries";
 import {
@@ -57,9 +50,6 @@ const deliveryConnectionSelect = {
 } as const;
 const triggerIncludes = {
   deliveryConnection: { select: deliveryConnectionSelect },
-  connection: {
-    select: { id: true, name: true, status: true, accountLabel: true },
-  },
 } as const;
 
 const deliverySchema = z
@@ -119,9 +109,7 @@ const ignoredSenders = (logins: string[] | undefined) =>
 
 const createSchema = z
   .object({
-    kind: z.enum(["schedule", "webhook", ...sourceKinds]),
-    sourceConfig: z.unknown().optional(),
-    connectionId: z.unknown().optional(),
+    kind: z.enum(["schedule", "webhook"]),
     webhook: webhookSchema.optional(),
     name: z.string().trim().min(1).max(120),
     prompt: z.string().trim().min(1).max(20_000),
@@ -136,42 +124,6 @@ const patchSchema = createSchema
   .partial()
   .extend({ rotateSecret: z.literal(true).optional() })
   .strict();
-async function sourceData(
-  workspaceId: string,
-  kind: string,
-  raw: unknown,
-  connectionId: unknown,
-) {
-  if (!isSourceKind(kind))
-    return raw === undefined && connectionId === undefined
-      ? { sourceConfig: undefined, connectionId: undefined }
-      : jsonError("INVALID_TRIGGER_SOURCE", 400);
-  if (
-    connectionId != null &&
-    (typeof connectionId !== "string" ||
-      !connectionId ||
-      connectionId.length > 200)
-  )
-    return jsonError("INVALID_TRIGGER_SOURCE", 400);
-  const id = typeof connectionId === "string" ? connectionId : null;
-  const sourceConfig = parseSourceConfig(kind, raw);
-  if (!sourceConfig) return jsonError("INVALID_TRIGGER_SOURCE", 400);
-  if (id) {
-    const connection = await db.accountConnection.findFirst({
-      where: { id, workspaceId },
-      select: { config: true },
-    });
-    if (!connection) return jsonError("INVALID_TRIGGER_SOURCE", 400);
-    if (
-      !permitsHost(
-        configSchema.parse(connection.config),
-        new URL(sourceConfig.url),
-      )
-    )
-      return jsonError("TRIGGER_SOURCE_HOST_NOT_ALLOWED", 400);
-  }
-  return { sourceConfig, connectionId: id };
-}
 const budgetSchema = z
   .object({
     monthlyUsd: z.number().finite().min(0).max(1_000_000_000).nullable(),
@@ -180,11 +132,6 @@ const budgetSchema = z
 const jsonError = (error: string, status: number) =>
   Response.json({ error }, { status });
 function apiFailure(error: unknown) {
-  if (error instanceof SourceFailure)
-    return jsonError(
-      error.code,
-      error.code === "SUBSCRIPTION_RATE_LIMITED" ? 429 : 502,
-    );
   if (error instanceof AgentApiError)
     return jsonError(error.code, error.status);
   if (
@@ -370,29 +317,15 @@ export async function handleAgentAutomation(
         "INVALID_TRIGGER",
         body.reason === "too_large" ? 413 : 400,
       );
-    const { delivery, sourceConfig, connectionId, webhook, ...value } =
-      body.value;
+    const { delivery, webhook, ...value } = body.value;
     if (webhook && value.kind !== "webhook")
       return jsonError("INVALID_TRIGGER", 400);
-    const source = await sourceData(
-      agent.workspaceId,
-      value.kind,
-      sourceConfig,
-      connectionId,
-    );
-    if (source instanceof Response) return source;
     const target = await deliveryData(delivery, agent.workspaceId, agentId);
     if (!target) return jsonError("INVALID_TRIGGER_DELIVERY", 400);
     let nextRunAt: Date | null = null;
     try {
-      if (value.kind !== "webhook") {
-        if (
-          isSourceKind(value.kind) &&
-          (!value.cron?.trim() || !value.timezone?.trim())
-        )
-          return jsonError("INVALID_TRIGGER", 400);
+      if (value.kind === "schedule")
         nextRunAt = nextTriggerRun(value.cron ?? "", value.timezone ?? "UTC");
-      }
     } catch {
       return jsonError("INVALID_TRIGGER", 400);
     }
@@ -402,10 +335,8 @@ export async function handleAgentAutomation(
       data: {
         ...value,
         ...target,
-        sourceConfig: source.sourceConfig,
-        connectionId: source.connectionId ?? null,
-        cron: value.kind !== "webhook" ? value.cron : null,
-        timezone: value.kind !== "webhook" ? (value.timezone ?? "UTC") : null,
+        cron: value.kind === "schedule" ? value.cron : null,
+        timezone: value.kind === "schedule" ? (value.timezone ?? "UTC") : null,
         nextRunAt: value.enabled === false ? null : nextRunAt,
         workspaceId: agent.workspaceId,
         agentId,
@@ -435,33 +366,7 @@ export async function handleAgentAutomation(
         "INVALID_TRIGGER",
         body.reason === "too_large" ? 413 : 400,
       );
-    const {
-      rotateSecret,
-      delivery,
-      sourceConfig,
-      connectionId,
-      webhook,
-      ...value
-    } = body.value;
-    const source = await sourceData(
-      agent.workspaceId,
-      trigger.kind,
-      sourceConfig === undefined && isSourceKind(trigger.kind)
-        ? trigger.sourceConfig
-        : sourceConfig,
-      connectionId === undefined && isSourceKind(trigger.kind)
-        ? trigger.connectionId
-        : connectionId,
-    );
-    if (source instanceof Response) return source;
-    const resetSource =
-      (connectionId !== undefined && connectionId !== trigger.connectionId) ||
-      (isSourceKind(trigger.kind) &&
-        sourceConfig !== undefined &&
-        JSON.stringify(parseSourceConfig(trigger.kind, sourceConfig)) !==
-          JSON.stringify(
-            parseSourceConfig(trigger.kind, trigger.sourceConfig),
-          ));
+    const { rotateSecret, delivery, webhook, ...value } = body.value;
     const target = await deliveryData(delivery, agent.workspaceId, agentId);
     if (!target) return jsonError("INVALID_TRIGGER_DELIVERY", 400);
     if (trigger.kind !== "webhook" && (rotateSecret || webhook))
@@ -473,13 +378,7 @@ export async function handleAgentAutomation(
       return jsonError("INVALID_TRIGGER", 400);
     let nextRunAt = trigger.nextRunAt;
     try {
-      if (trigger.kind === "schedule" || isSourceKind(trigger.kind)) {
-        if (
-          isSourceKind(trigger.kind) &&
-          (!(value.cron ?? trigger.cron)?.trim() ||
-            !(value.timezone ?? trigger.timezone)?.trim())
-        )
-          return jsonError("INVALID_TRIGGER", 400);
+      if (trigger.kind === "schedule") {
         const next = nextTriggerRun(
           value.cron ?? trigger.cron ?? "",
           value.timezone ?? trigger.timezone ?? "UTC",
@@ -504,17 +403,6 @@ export async function handleAgentAutomation(
       data: {
         ...value,
         ...target,
-        ...source,
-        ...(resetSource
-          ? {
-              syncCursor: null,
-              lastSyncAt: null,
-              lastSyncStatus: null,
-              lastSyncError: null,
-              syncRetryAt: null,
-              syncFailures: 0,
-            }
-          : {}),
         nextRunAt,
         ...(webhook
           ? {

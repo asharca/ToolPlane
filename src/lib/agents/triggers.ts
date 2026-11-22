@@ -32,13 +32,6 @@ import { notifyTaskOutput } from "./execution/live-output";
 import { sendChannelNotice } from "./channel-runtime";
 import { hostedRunnerSpec } from "./platform-runner";
 import { isSilentAgentReply } from "./messaging";
-import {
-  isSourceKind,
-  parseSourceConfig,
-  sourceKinds,
-  SourceFailure,
-  syncTriggerSource,
-} from "./trigger-sources";
 
 export const triggerSecretHash = (secret: string) =>
   createHash("sha256").update(secret).digest("hex");
@@ -67,12 +60,6 @@ export function nextTriggerRun(
 }
 export function triggerDto(
   trigger: AgentTrigger & {
-    connection: {
-      id: string;
-      name: string;
-      status: string;
-      accountLabel: string | null;
-    } | null;
     deliveryConnection: Pick<
       AgentChannelConnection,
       "id" | "name" | "platform"
@@ -87,16 +74,6 @@ export function triggerDto(
     cron: trigger.cron,
     timezone: trigger.timezone,
     prompt: trigger.prompt,
-    source: isSourceKind(trigger.kind)
-      ? {
-          config: parseSourceConfig(trigger.kind, trigger.sourceConfig) ?? {},
-          connection: trigger.connection,
-          lastSyncAt: trigger.lastSyncAt?.toISOString() ?? null,
-          lastSyncStatus: trigger.lastSyncStatus,
-          lastSyncError: trigger.lastSyncError,
-          syncRetryAt: trigger.syncRetryAt?.toISOString() ?? null,
-        }
-      : null,
     nextRunAt: trigger.nextRunAt?.toISOString() ?? null,
     lastRunAt: trigger.lastRunAt?.toISOString() ?? null,
     lastStatus: trigger.lastStatus,
@@ -311,12 +288,7 @@ export async function runAgentTrigger(
         throw new Error("TRIGGER_ACTOR_UNAVAILABLE");
       throw error;
     }
-    const prompt =
-      input?.prompt ??
-      (isSourceKind(trigger.kind)
-        ? await syncTriggerSource(trigger)
-        : triggerPrompt(trigger));
-    if (prompt === null) return { conversationId: null, taskId: null };
+    const prompt = input?.prompt ?? triggerPrompt(trigger);
     if (input?.conversationId) conversationId = input.conversationId;
     else {
       const conversation = await createConversation(
@@ -371,7 +343,6 @@ export async function runAgentTrigger(
     });
     return { conversationId, taskId: accepted.row.id };
   } catch (error) {
-    if (error instanceof SourceFailure) throw error;
     const code = triggerError(error);
     await db.$transaction(async (tx) => {
       await tx.agentTrigger.updateMany({
@@ -781,8 +752,7 @@ export function startAgentTriggerScheduler() {
         }
         const due = await db.agentTrigger.findMany({
           where: {
-            kind: { in: ["schedule", ...sourceKinds] },
-            OR: [{ syncRetryAt: null }, { syncRetryAt: { lte: new Date() } }],
+            kind: "schedule",
             enabled: true,
             nextRunAt: { lte: new Date() },
           },
@@ -811,7 +781,6 @@ export function startAgentTriggerScheduler() {
           try {
             await runAgentTrigger(claimed);
           } catch (error) {
-            if (error instanceof SourceFailure) continue; // Already recorded in sync status.
             logSystemEvent("scheduler.triggers.admission_failed", {
               domain: "agent",
               level: "warn",
