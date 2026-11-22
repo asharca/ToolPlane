@@ -362,7 +362,19 @@
       "cron": "Cron expression",
       "timezone": "Time zone",
       "prompt": "Prompt",
-      "payloadHint": "Use {placeholder} to insert the webhook JSON payload.",
+      "payloadHint": "Use {placeholder} for the JSON payload and {eventPlaceholder} for the GitHub event name.",
+      "webhookAuth": "Authentication",
+      "webhookAuthMode": {
+        "bearer": "Bearer token",
+        "github": "GitHub webhook"
+      },
+      "webhookAuthHint": {
+        "bearer": "Send Authorization: Bearer followed by the secret. Optional Idempotency-Key and X-ToolPlane-Thread-Key headers.",
+        "github": "Verifies GitHub signatures. Issue/PR events continue one thread per item; Bot accounts are skipped."
+      },
+      "webhookIgnoredSenders": "Ignored senders",
+      "webhookIgnoredSendersHint": "Comma or space-separated GitHub logins to skip (up to 20).",
+      "githubWebhookCardHint": "Paste this URL and secret into GitHub Settings → Webhooks with Content type application/json.",
       "noTriggers": "No triggers yet.",
       "loadFailed": "Could not load triggers.",
       "operationFailed": "Could not update the trigger. Check your permissions and try again.",
@@ -404,6 +416,7 @@
         "failed": "Failed"
       },
       "secretOnce": "Copy this secret now. It will not be shown again. Call the webhook URL with an Authorization header containing Bearer followed by this secret.",
+      "secretOnceGithub": "Copy this secret now. It will not be shown again. Paste it into the Secret field in GitHub Settings → Webhooks.",
       "rotateSecret": "Rotate secret",
       "runNow": "Run now",
       "runStarted": "Run started in a new conversation",

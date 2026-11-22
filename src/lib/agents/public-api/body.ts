@@ -100,7 +100,7 @@ export function requestBodyMayFit(
   return !Number.isFinite(announced) || announced <= 0 || announced <= maxBytes;
 }
 
-async function readRequestText(
+export async function readRequestText(
   req: Request,
   maxBytes: number,
 ): Promise<{ ok: true; text: string } | { ok: false }> {

@@ -362,7 +362,19 @@
       "cron": "Cron 表达式",
       "timezone": "时区",
       "prompt": "提示词",
-      "payloadHint": "使用 {placeholder} 插入 Webhook 的 JSON 请求体。",
+      "payloadHint": "使用 {placeholder} 插入 JSON 请求体，使用 {eventPlaceholder} 插入 GitHub 事件名。",
+      "webhookAuth": "鉴权方式",
+      "webhookAuthMode": {
+        "bearer": "Bearer 令牌",
+        "github": "GitHub Webhook"
+      },
+      "webhookAuthHint": {
+        "bearer": "请求头携带 Authorization: Bearer 加密钥；可选 Idempotency-Key 和 X-ToolPlane-Thread-Key。",
+        "github": "校验 GitHub 签名；Issue/PR 事件按条目延续同一会话，自动跳过 Bot 账号。"
+      },
+      "webhookIgnoredSenders": "忽略的发送者",
+      "webhookIgnoredSendersHint": "逗号或空格分隔的 GitHub 用户名（最多 20 个），防止触发循环。",
+      "githubWebhookCardHint": "将此 URL 和密钥填入 GitHub Settings → Webhooks，Content type 选择 application/json。",
       "noTriggers": "暂无触发器。",
       "loadFailed": "无法加载触发器。",
       "operationFailed": "无法更新触发器，请检查权限后重试。",
@@ -404,6 +416,7 @@
         "failed": "失败"
       },
       "secretOnce": "请立即复制密钥，关闭后不会再次显示。调用 Webhook 地址时，通过 Authorization 请求头传入 Bearer 加空格及此密钥。",
+      "secretOnceGithub": "请立即复制密钥，关闭后不会再次显示。请将其粘贴到 GitHub Settings → Webhooks 的 Secret 字段中。",
       "rotateSecret": "轮换密钥",
       "runNow": "立即运行",
       "runStarted": "已在新会话中开始运行",

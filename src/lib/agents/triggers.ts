@@ -3,11 +3,12 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Cron } from "croner";
 import { Task, TaskState } from "@a2a-js/sdk";
 import { TaskNotFoundError } from "@a2a-js/sdk/errors";
-import type {
-  A2ATask,
-  AgentTrigger,
-  AgentChannelConnection,
+import {
   Prisma,
+  type A2ATask,
+  type AgentTrigger,
+  type AgentTriggerEvent,
+  type AgentChannelConnection,
 } from "@prisma/client";
 import { db } from "@/lib/db";
 import { assertLocalActor } from "@/lib/a2a/local-policy";
@@ -113,9 +114,13 @@ export function triggerDto(
     lastDeliveryStatus: trigger.lastDeliveryStatus,
     lastDeliveryError: trigger.lastDeliveryError,
     lastDeliveryAt: trigger.lastDeliveryAt?.toISOString() ?? null,
-    webhookUrl:
+    webhook:
       trigger.kind === "webhook"
-        ? `/api/v1/triggers/${trigger.id}/webhook`
+        ? {
+            url: `/api/v1/triggers/${trigger.id}/webhook`,
+            auth: trigger.webhookAuth,
+            ignoredSenders: trigger.webhookIgnoredSenders,
+          }
         : null,
     createdAt: trigger.createdAt.toISOString(),
   };
@@ -281,9 +286,20 @@ export async function deliverPendingTrigger(triggerId: string) {
       });
   }
 }
+export function triggerPrompt(
+  trigger: Pick<AgentTrigger, "prompt">,
+  payload?: unknown,
+  event = "",
+) {
+  return trigger.prompt
+    .replaceAll("{{payload}}", () =>
+      payload === undefined ? "" : JSON.stringify(payload),
+    )
+    .replaceAll("{{event}}", () => event);
+}
 export async function runAgentTrigger(
   trigger: AgentTrigger,
-  payload?: unknown,
+  input?: { prompt: string; conversationId?: string },
 ) {
   assertRuntimeOwner();
   let conversationId: string | undefined;
@@ -295,30 +311,33 @@ export async function runAgentTrigger(
         throw new Error("TRIGGER_ACTOR_UNAVAILABLE");
       throw error;
     }
-    const prompt = isSourceKind(trigger.kind)
-      ? await syncTriggerSource(trigger)
-      : trigger.prompt.replaceAll("{{payload}}", () =>
-          payload === undefined ? "" : JSON.stringify(payload),
-        );
-    if (prompt === null) return { conversationId: null };
-    const conversation = await createConversation(
-      trigger.workspaceId,
-      trigger.agentId,
-      `${trigger.name} · ${triggerRunLabel(new Date(), trigger.timezone)}`,
-      undefined,
-      async (tx, id) => {
-        await tx.conversation.update({
-          where: {
-            id,
-            agentId: trigger.agentId,
-            agent: { workspaceId: trigger.workspaceId },
-          },
-          data: { triggerId: trigger.id },
-        });
-      },
-    );
-    if (!conversation) throw new Error("TRIGGER_EXECUTION_FAILED");
-    conversationId = conversation.id;
+    const prompt =
+      input?.prompt ??
+      (isSourceKind(trigger.kind)
+        ? await syncTriggerSource(trigger)
+        : triggerPrompt(trigger));
+    if (prompt === null) return { conversationId: null, taskId: null };
+    if (input?.conversationId) conversationId = input.conversationId;
+    else {
+      const conversation = await createConversation(
+        trigger.workspaceId,
+        trigger.agentId,
+        `${trigger.name} · ${triggerRunLabel(new Date(), trigger.timezone)}`,
+        undefined,
+        async (tx, id) => {
+          await tx.conversation.update({
+            where: {
+              id,
+              agentId: trigger.agentId,
+              agent: { workspaceId: trigger.workspaceId },
+            },
+            data: { triggerId: trigger.id },
+          });
+        },
+      );
+      if (!conversation) throw new Error("TRIGGER_EXECUTION_FAILED");
+      conversationId = conversation.id;
+    }
     const message = await db.message.create({
       data: {
         conversationId,
@@ -340,7 +359,7 @@ export async function runAgentTrigger(
         lastConversationId: conversationId,
       },
     });
-    await submitAgentEntry({
+    const accepted = await submitAgentEntry({
       kind: "trigger",
       sourceId: trigger.id,
       conversationId,
@@ -350,7 +369,7 @@ export async function runAgentTrigger(
       messageId: message.id,
       text: prompt,
     });
-    return { conversationId };
+    return { conversationId, taskId: accepted.row.id };
   } catch (error) {
     if (error instanceof SourceFailure) throw error;
     const code = triggerError(error);
@@ -391,6 +410,211 @@ export async function runAgentTrigger(
     });
     if (conversationId) void deliverPendingTrigger(trigger.id);
     throw error;
+  }
+}
+
+const EVENT_RETENTION_MS = 30 * 24 * 60 * 60_000;
+const UNSUBMITTED_EVENT_MS = 5 * 60_000;
+
+export type TriggerEventStatus = "queued" | "running" | "duplicate";
+
+/** Records one webhook delivery; a reused dedupe key returns the original outcome. */
+export async function acceptTriggerEvent(
+  trigger: AgentTrigger,
+  input: { dedupeKey: string; threadKey: string | null; prompt: string },
+): Promise<{ status: TriggerEventStatus; conversationId: string | null }> {
+  assertRuntimeOwner();
+  let event: AgentTriggerEvent;
+  try {
+    event = await db.agentTriggerEvent.create({
+      data: { triggerId: trigger.id, ...input, status: "queued" },
+    });
+  } catch (error) {
+    if (
+      !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+      error.code !== "P2002"
+    )
+      throw error;
+    const existing = await db.agentTriggerEvent.findUniqueOrThrow({
+      where: {
+        triggerId_dedupeKey: {
+          triggerId: trigger.id,
+          dedupeKey: input.dedupeKey,
+        },
+      },
+      select: { conversationId: true },
+    });
+    return { status: "duplicate", conversationId: existing.conversationId };
+  }
+  await db.agentTriggerEvent.deleteMany({
+    where: {
+      triggerId: trigger.id,
+      status: { in: ["done", "failed"] },
+      createdAt: { lt: new Date(Date.now() - EVENT_RETENTION_MS) },
+    },
+  });
+  if (input.threadKey === null) {
+    await db.agentTriggerEvent.update({
+      where: { id: event.id },
+      data: { status: "running" },
+    });
+    const started = await startTriggerEvent(trigger, event);
+    return { status: "running", conversationId: started };
+  }
+  await dispatchTriggerThread(trigger, input.threadKey);
+  const current = await db.agentTriggerEvent.findUniqueOrThrow({
+    where: { id: event.id },
+    select: { status: true, conversationId: true },
+  });
+  return {
+    status: current.status === "queued" ? "queued" : "running",
+    conversationId: current.conversationId,
+  };
+}
+
+async function threadConversation(trigger: AgentTrigger, threadKey: string) {
+  const where = {
+    triggerId_threadKey: { triggerId: trigger.id, threadKey },
+  };
+  const found = await db.agentTriggerThread.findUnique({ where });
+  if (found) return found.conversationId;
+  const conversation = await createConversation(
+    trigger.workspaceId,
+    trigger.agentId,
+    `${trigger.name} · ${threadKey}`.slice(0, 200),
+    undefined,
+    async (tx, id) => {
+      await tx.conversation.update({
+        where: {
+          id,
+          agentId: trigger.agentId,
+          agent: { workspaceId: trigger.workspaceId },
+        },
+        data: { triggerId: trigger.id },
+      });
+      await tx.agentTriggerThread.create({
+        data: { triggerId: trigger.id, threadKey, conversationId: id },
+      });
+    },
+  );
+  if (!conversation) throw new Error("TRIGGER_EXECUTION_FAILED");
+  return conversation.id;
+}
+
+/** Starts a claimed (running) event; failures settle the event and never throw. */
+async function startTriggerEvent(
+  trigger: AgentTrigger,
+  event: { id: string; threadKey: string | null; prompt: string },
+) {
+  let conversationId: string | undefined;
+  try {
+    if (event.threadKey !== null)
+      conversationId = await threadConversation(trigger, event.threadKey);
+    const started = await runAgentTrigger(trigger, {
+      prompt: event.prompt,
+      conversationId,
+    });
+    await db.agentTriggerEvent.updateMany({
+      where: { id: event.id, status: "running" },
+      data: { conversationId: started.conversationId, taskId: started.taskId },
+    });
+    return started.conversationId;
+  } catch (error) {
+    await db.agentTriggerEvent.updateMany({
+      where: { id: event.id, status: "running" },
+      data: {
+        status: "failed",
+        error: triggerError(error),
+        ...(conversationId ? { conversationId } : {}),
+      },
+    });
+    if (event.threadKey !== null)
+      void dispatchTriggerThread(trigger, event.threadKey).catch(() => {});
+    return conversationId ?? null;
+  }
+}
+
+/** Starts the oldest queued event of one thread when none of its events is running. */
+export async function dispatchTriggerThread(
+  trigger: AgentTrigger,
+  threadKey: string,
+) {
+  const claimed = await db.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${trigger.id}), hashtext(${threadKey}))`;
+    const where = { triggerId: trigger.id, threadKey };
+    if (
+      await tx.agentTriggerEvent.count({
+        where: { ...where, status: "running" },
+      })
+    )
+      return null;
+    const next = await tx.agentTriggerEvent.findFirst({
+      where: { ...where, status: "queued" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    if (!next) return null;
+    await tx.agentTriggerEvent.update({
+      where: { id: next.id },
+      data: { status: "running" },
+    });
+    return next;
+  });
+  if (claimed) await startTriggerEvent(trigger, claimed);
+}
+
+/** Closes events whose task settled and starts each thread's next queued event. */
+async function completeTriggerEvents(
+  where: Prisma.AgentTriggerEventWhereInput,
+) {
+  const events = await db.agentTriggerEvent.findMany({
+    where: { ...where, status: "running" },
+    include: { trigger: true },
+    take: 100,
+  });
+  for (const event of events) {
+    let status: "done" | "failed" | null = null;
+    let error: string | null = null;
+    if (event.taskId) {
+      const task = await db.a2ATask.findUnique({
+        where: { id: event.taskId },
+        select: { state: true },
+      });
+      if (!task || settled(task.state)) {
+        status =
+          task?.state === TaskState.TASK_STATE_COMPLETED ? "done" : "failed";
+        if (status === "failed") error = "TRIGGER_EXECUTION_FAILED";
+      }
+    } else if (Date.now() - event.updatedAt.getTime() >= UNSUBMITTED_EVENT_MS) {
+      status = "failed";
+      error = "TRIGGER_EXECUTION_INTERRUPTED";
+    }
+    if (!status) continue;
+    const closed = await db.agentTriggerEvent.updateMany({
+      where: { id: event.id, status: "running", updatedAt: event.updatedAt },
+      data: { status, error },
+    });
+    if (closed.count && event.threadKey !== null && event.trigger.enabled)
+      await dispatchTriggerThread(event.trigger, event.threadKey);
+  }
+}
+
+/** Scheduler recovery: settle interrupted events and restart idle threads. */
+async function recoverTriggerEvents() {
+  await completeTriggerEvents({});
+  const queued = await db.agentTriggerEvent.findMany({
+    where: {
+      status: "queued",
+      threadKey: { not: null },
+      trigger: { enabled: true },
+    },
+    distinct: ["triggerId", "threadKey"],
+    include: { trigger: true },
+    take: 100,
+  });
+  for (const event of queued) {
+    if (!runtimeCanOperate()) break;
+    if (event.threadKey !== null)
+      await dispatchTriggerThread(event.trigger, event.threadKey);
   }
 }
 export async function settleAgentTriggerTask(row: A2ATask) {
@@ -473,6 +697,18 @@ export async function settleAgentTriggerTask(row: A2ATask) {
   });
   notifyTaskOutput(row.id);
   void deliverPendingTrigger(entry.sourceId);
+  try {
+    await completeTriggerEvents({ taskId: row.id });
+  } catch (error) {
+    logSystemEvent("agent.trigger.event_dispatch_failed", {
+      domain: "agent",
+      level: "warn",
+      error,
+      workspaceId: grant.workspaceId,
+      agentId: grant.agentId,
+      attributes: { triggerId: entry.sourceId },
+    });
+  }
 }
 const globalTriggers = globalThis as typeof globalThis & {
   __agentTriggerTimer?: NodeJS.Timeout;
@@ -522,6 +758,7 @@ export function startAgentTriggerScheduler() {
           if (!runtimeCanOperate()) break;
           await deliverPendingTrigger(trigger.id);
         }
+        await recoverTriggerEvents();
         // Terminal task state is durable even if shutdown interrupted message projection.
         const running = await db.agentTrigger.findMany({
           where: { lastStatus: "running", lastConversationId: { not: null } },

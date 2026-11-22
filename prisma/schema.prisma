@@ -857,6 +857,12 @@ model AgentTrigger {
   timezone String?
   prompt String
   secretHash String?
+  // "bearer" compares secretHash; "github" verifies X-Hub-Signature-256 with the encrypted key.
+  webhookAuth String @default("bearer")
+  webhookSecret Json?
+  webhookIgnoredSenders String[] @default([])
+  events AgentTriggerEvent[]
+  threads AgentTriggerThread[]
   sourceConfig Json?
   connectionId String?
   connection AccountConnection? @relation(fields: [connectionId], references: [id], onDelete: Restrict)
@@ -896,6 +902,39 @@ model AgentTriggerItem {
   revision String
   createdAt DateTime @default(now())
   @@unique([triggerId, externalId, revision])
+}
+
+// One durable row per accepted webhook delivery: deduplication plus per-thread FIFO.
+model AgentTriggerEvent {
+  id String @id @default(cuid())
+  triggerId String
+  trigger AgentTrigger @relation(fields: [triggerId], references: [id], onDelete: Cascade)
+  dedupeKey String
+  threadKey String?
+  prompt String
+  // queued -> running -> done | failed
+  status String
+  conversationId String?
+  taskId String?
+  error String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([triggerId, dedupeKey])
+  @@index([triggerId, threadKey, status, createdAt])
+  @@index([status, updatedAt])
+  @@index([triggerId, createdAt])
+}
+
+// An external thread (e.g. owner/repo#12) continues one conversation until it is deleted.
+model AgentTriggerThread {
+  id String @id @default(cuid())
+  triggerId String
+  trigger AgentTrigger @relation(fields: [triggerId], references: [id], onDelete: Cascade)
+  threadKey String
+  conversationId String @unique
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  @@unique([triggerId, threadKey])
 }
 
 // Private encrypted values; revisions contain only credential IDs and names.
@@ -1424,6 +1463,7 @@ model Conversation {
   workspaceAttachments  WorkspaceAttachment[]
   publicApiConversation AgentPublicConversation?
   workSession           WorkSession?
+  triggerThread         AgentTriggerThread?
   piPackageSet PiSessionPackageSet?
   agentUsage AgentUsage[]
 

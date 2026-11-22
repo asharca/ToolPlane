@@ -46,6 +46,14 @@ type TriggerSourceConnection = {
   accountLabel: string | null;
 };
 
+type WebhookAuth = "bearer" | "github";
+
+type TriggerWebhook = {
+  url: string;
+  auth: WebhookAuth;
+  ignoredSenders: string[];
+};
+
 type TriggerDTO = {
   id: string;
   kind: TriggerKind;
@@ -59,7 +67,7 @@ type TriggerDTO = {
   lastStatus: "running" | "succeeded" | "failed" | null;
   lastError: string | null;
   lastConversationId: string | null;
-  webhookUrl: string | null;
+  webhook: TriggerWebhook | null;
   createdAt: string;
   delivery: {
     connectionId: string;
@@ -95,6 +103,8 @@ type Draft = {
   cron: string;
   timezone: string;
   delivery: TriggerDTO["delivery"];
+  webhookAuth: WebhookAuth;
+  webhookIgnoredSenders: string;
   connectionId: string;
   existingConnection: TriggerSourceConnection | null;
   url: string;
@@ -131,6 +141,13 @@ const CONNECTION_STATUS_TONE: Record<string, AnimatedBadgeStatus> = {
 const TEXTAREA_CLASS =
   "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 
+function parseIgnoredSenders(raw: string): string[] {
+  return raw
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function emptySourceDraft() {
   return {
     connectionId: "",
@@ -161,6 +178,8 @@ function draftFromTrigger(
     cron: trigger.cron ?? "",
     timezone: trigger.timezone ?? "UTC",
     delivery: trigger.delivery,
+    webhookAuth: trigger.webhook?.auth ?? "bearer",
+    webhookIgnoredSenders: trigger.webhook?.ignoredSenders.join(", ") ?? "",
     ...emptySourceDraft(),
     connectionId: trigger.source?.connection?.id ?? "",
     existingConnection: trigger.source?.connection ?? null,
@@ -514,6 +533,8 @@ export function AgentTriggersPanel({
                 prompt: "",
                 cron: "",
                 delivery: null,
+                webhookAuth: "bearer",
+                webhookIgnoredSenders: "",
                 ...emptySourceDraft(),
                 timezone:
                   Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
@@ -554,6 +575,19 @@ export function AgentTriggersPanel({
                   : null,
                 ...(draft.kind === "schedule" || source
                   ? { cron: draft.cron, timezone: draft.timezone }
+                  : {}),
+                ...(draft.kind === "webhook"
+                  ? {
+                      webhook:
+                        draft.webhookAuth === "github"
+                          ? {
+                              auth: "github" as const,
+                              ignoredSenders: parseIgnoredSenders(
+                                draft.webhookIgnoredSenders,
+                              ),
+                            }
+                          : { auth: "bearer" as const },
+                    }
                   : {}),
                 ...(source
                   ? {
@@ -994,12 +1028,56 @@ export function AgentTriggersPanel({
             </div>
           ) : null}
 
+          {draft.kind === "webhook" ? (
+            <div className="space-y-4">
+              <DialogField
+                label={t("webhookAuth")}
+                htmlFor="trigger-webhook-auth"
+                description={t(`webhookAuthHint.${draft.webhookAuth}`)}
+              >
+                <FormSelect
+                  id="trigger-webhook-auth"
+                  label={t("webhookAuth")}
+                  value={draft.webhookAuth}
+                  disabled={locked}
+                  onValueChange={(value) =>
+                    setDraft({ ...draft, webhookAuth: value as WebhookAuth })
+                  }
+                  options={[
+                    { value: "bearer", label: t("webhookAuthMode.bearer") },
+                    { value: "github", label: t("webhookAuthMode.github") },
+                  ]}
+                />
+              </DialogField>
+              {draft.webhookAuth === "github" ? (
+                <DialogField
+                  label={t("webhookIgnoredSenders")}
+                  htmlFor="trigger-webhook-ignored-senders"
+                  description={t("webhookIgnoredSendersHint")}
+                >
+                  <Input
+                    id="trigger-webhook-ignored-senders"
+                    placeholder="octocat, my-agent"
+                    value={draft.webhookIgnoredSenders}
+                    disabled={locked}
+                    onChange={(webhookIgnoredSenders) =>
+                      setDraft({ ...draft, webhookIgnoredSenders })
+                    }
+                  />
+                </DialogField>
+              ) : null}
+            </div>
+          ) : null}
+
           <DialogField
             label={t("prompt")}
             htmlFor="trigger-prompt"
             description={
               draft.kind === "webhook"
-                ? t("payloadHint", { placeholder: "{{payload}}" })
+                ? t("payloadHint", {
+                    placeholder: "{{payload}}",
+                    eventPlaceholder: "{{event}}",
+                  })
                 : undefined
             }
           >
@@ -1154,6 +1232,9 @@ export function AgentTriggersPanel({
                 <h3 className="text-sm font-semibold">{trigger.name}</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {t(trigger.kind)}
+                  {trigger.webhook
+                    ? ` · ${t(`webhookAuthMode.${trigger.webhook.auth}`)}`
+                    : ""}
                   {trigger.cron
                     ? ` · ${trigger.cron} · ${trigger.timezone}`
                     : ""}
@@ -1291,12 +1372,22 @@ export function AgentTriggersPanel({
                 ) : null}
               </div>
             ) : null}
-            {trigger.webhookUrl ? (
-              <div className="flex items-center gap-2">
-                <code className="min-w-0 flex-1 break-all text-xs">
-                  {trigger.webhookUrl}
-                </code>
-                <CopyButton text={trigger.webhookUrl} label={common("copy")} />
+            {trigger.webhook?.url ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <code className="min-w-0 flex-1 break-all text-xs">
+                    {trigger.webhook.url}
+                  </code>
+                  <CopyButton
+                    text={trigger.webhook.url}
+                    label={common("copy")}
+                  />
+                </div>
+                {trigger.webhook.auth === "github" ? (
+                  <p className="text-xs text-muted-foreground">
+                    {t("githubWebhookCardHint")}
+                  </p>
+                ) : null}
               </div>
             ) : null}
             {secret?.id === trigger.id ? (
@@ -1304,7 +1395,11 @@ export function AgentTriggersPanel({
                 role="status"
                 className="space-y-2 rounded-lg border border-border bg-muted/40 p-3"
               >
-                <p className="text-xs">{t("secretOnce")}</p>
+                <p className="text-xs">
+                  {trigger.webhook?.auth === "github"
+                    ? t("secretOnceGithub")
+                    : t("secretOnce")}
+                </p>
                 <div className="flex items-center gap-2">
                   <code className="min-w-0 flex-1 break-all text-xs">
                     {secret.value}
