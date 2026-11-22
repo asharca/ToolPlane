@@ -173,6 +173,7 @@ export function agentRuntimeSupportsProviderFormat(
 ): boolean {
   return (
     isExecutableAgentRuntimeKind(runtime) &&
-    GENERIC_PROXY_PROVIDER_FORMATS.has(format)
+    (GENERIC_PROXY_PROVIDER_FORMATS.has(format) ||
+      /^pi:[a-z0-9-]+$/.test(format))
   );
 }

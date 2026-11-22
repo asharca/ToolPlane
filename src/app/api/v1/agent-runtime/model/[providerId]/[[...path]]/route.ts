@@ -27,6 +27,7 @@ import { ANTHROPIC_GATEWAY_MAX_BODY_BYTES } from "@/lib/agents/anthropic-gateway
 import { db } from "@/lib/db";
 import { recordAgentModelUsage } from "@/lib/agents/usage";
 import { ModelResponseUsage } from "@/lib/agents/model-response-usage";
+import { providerSecrets } from "@/lib/agents/provider-credentials";
 
 export const runtime = "nodejs";
 
@@ -146,7 +147,7 @@ async function proxyProviderRequest(
   if (!provider)
     return NextResponse.json({ error: "provider not found" }, { status: 404 });
   bindRuntimeLogContext(token);
-  enrichLogContext({ secrets: [provider.apiKey] });
+  enrichLogContext({ secrets: providerSecrets(provider.apiKey) });
 
   enrichLogContext({ providerId });
   let secrets: AgentSecretObfuscator | undefined;

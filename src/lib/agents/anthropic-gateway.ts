@@ -331,10 +331,17 @@ function reasoningLevel(
 function applyToolChoice(
   payload: unknown,
   choice: BaseRequest["tool_choice"],
-  format: string,
+  apiOrFormat: string,
   names: ToolNames,
 ): unknown {
-  if (!choice || !objectValue(payload)) return undefined;
+  if (
+    !choice ||
+    !objectValue(payload) ||
+    apiOrFormat === "anthropic" ||
+    apiOrFormat === "anthropic-messages" ||
+    apiOrFormat === "pi-messages"
+  )
+    return undefined;
   const next = { ...objectValue(payload) } as Record<string, unknown>;
   const type = choice.type;
   if (type === "any") next.tool_choice = "required";
@@ -342,7 +349,9 @@ function applyToolChoice(
   else if (type === "tool" && stringValue(choice.name)) {
     const name = names.toProvider(stringValue(choice.name));
     next.tool_choice =
-      format === "openai-responses"
+      apiOrFormat === "openai-responses" ||
+      apiOrFormat === "openai-codex-responses" ||
+      apiOrFormat === "azure-openai-responses"
         ? { type: "function", name }
         : { type: "function", function: { name } };
   } else if (type === "auto") next.tool_choice = "auto";
@@ -715,7 +724,7 @@ export async function handleAnthropicMessages(
         const chosen = applyToolChoice(
           payload,
           body.tool_choice,
-          provider.format,
+          model.api || provider.format,
           names,
         );
         return secrets ? secrets.redactBody(chosen ?? payload) : chosen;

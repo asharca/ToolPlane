@@ -25,6 +25,7 @@ export type ProviderRow = {
   name: string;
   format: string;
   baseUrl: string;
+  authType?: "oauth" | "api_key" | "none";
   modelCount: number;
   models: string[];
   modelRecords?: Array<
@@ -90,10 +91,16 @@ export function ProvidersPanel({
     window.history.replaceState(null, "", url);
   }
 
-  function handleCreated(providerId: string) {
+  function handleCreated(
+    providerId: string,
+    options?: { skipRefresh?: boolean },
+  ) {
     selectProvider(providerId);
     setProviderQuery("");
-    void refreshProvider(providerId);
+    router.refresh();
+    if (!options?.skipRefresh) {
+      void refreshProvider(providerId);
+    }
   }
   const visibleProviders = useMemo(() => {
     const query = providerQuery.trim().toLocaleLowerCase();
@@ -153,10 +160,17 @@ export function ProvidersPanel({
                     >
                       <ProviderMonogram name={provider.name} />
                       <span className="min-w-0 flex-1">
-                        <span
-                          className={`block truncate text-sm text-foreground ${selected ? "font-medium" : ""}`}
-                        >
-                          {provider.name}
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span
+                            className={`truncate text-sm text-foreground ${selected ? "font-medium" : ""}`}
+                          >
+                            {provider.name}
+                          </span>
+                          {provider.authType === "oauth" ? (
+                            <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                              {t("oauthBadge")}
+                            </span>
+                          ) : null}
                         </span>
                         <span
                           className={`block truncate text-[11px] ${refresh?.state.error ? "text-destructive" : "text-muted-foreground"}`}

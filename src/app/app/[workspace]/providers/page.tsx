@@ -6,6 +6,7 @@ import { ProvidersPanel } from "@/components/dashboard/agents/ProvidersPanel";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { listProviders } from "@/lib/agents/queries";
 import { piProviderPresets } from "@/lib/agents/provider-catalog";
+import { providerAuthType } from "@/lib/agents/provider-credentials";
 import { backfillProviderModels } from "@/lib/agents/provider-mutations";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 
@@ -38,6 +39,7 @@ export default async function ProvidersPage({
         name: provider.name,
         format: provider.format,
         baseUrl: provider.baseUrl,
+        authType: providerAuthType(provider.apiKey),
         modelCount: provider.models.length,
         models: provider.models,
         modelRecords: provider.modelRecords.map((model) => ({

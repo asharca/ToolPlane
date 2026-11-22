@@ -25,6 +25,7 @@ import { getProvider } from "@/lib/agents/queries";
 import { generateConsoleConversationTitle } from "@/lib/agents/conversation-naming";
 import { buildModel } from "@/lib/agents/model";
 import { providerPreset } from "@/lib/agents/provider-catalog";
+import { providerSecrets } from "@/lib/agents/provider-credentials";
 import {
   AgentExecutionBusyError,
   withAgentDraftLease,
@@ -365,11 +366,26 @@ export async function createProviderAction(
       error: "Name, base URL and API key are required for custom providers.",
     };
   }
+  const initialModelIds = [
+    ...new Set(
+      String(formData.get("initialModels") ?? "")
+        .split(/[\n,，]+/)
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0 && id.length <= 200),
+    ),
+  ];
   const ctx = await actionScope({ slug });
   if (!ctx) return { error: "Not authorized." };
   let provider: { id: string };
   try {
     provider = await createProvider(ctx.ws, { name, format, baseUrl, apiKey });
+    if (initialModelIds.length > 0) {
+      await addProviderModels(
+        ctx.ws.id,
+        provider.id,
+        initialModelIds.map((modelId) => defaultProviderModel(modelId)),
+      );
+    }
   } catch {
     return { error: "A provider with that name already exists." };
   }
@@ -659,10 +675,13 @@ export async function deleteProviderModelAction(
 
 function sanitizeProviderError(error: unknown, apiKey: string): string {
   const raw = error instanceof Error ? error.message : "Model test failed.";
-  const trimmed = raw.replaceAll(apiKey, "[redacted]").slice(0, 240);
+  let sanitized = raw;
+  for (const secret of providerSecrets(apiKey)) {
+    if (secret) sanitized = sanitized.replaceAll(secret, "[redacted]");
+  }
+  const trimmed = sanitized.slice(0, 240);
   return trimmed || "Model test failed.";
 }
-
 export async function testProviderModelAction(
   _prev: ActionState,
   formData: FormData,
