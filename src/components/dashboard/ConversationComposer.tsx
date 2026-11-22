@@ -378,6 +378,30 @@ export function ConversationFilePreview({
 
   useEffect(() => () => downloadAbortRef.current?.abort(), []);
 
+  // Unlike inline images, persisted document cards do not issue a GET until opened.
+  useEffect(() => {
+    if (
+      !inline ||
+      !producer ||
+      canInlineImage ||
+      !safeUrl ||
+      urlKind !== "attachment"
+    )
+      return;
+    const controller = new AbortController();
+    void fetchConversationFile(safeUrl, {
+      method: "HEAD",
+      signal: controller.signal,
+    })
+      .then((response) => {
+        const reason = unavailableForStatus(response.status, urlKind);
+        if (reason && !controller.signal.aborted)
+          setUnavailableState({ url: safeUrl, reason });
+      })
+      .catch(() => {}); // Transient network failures can still be retried by opening the card.
+    return () => controller.abort();
+  }, [inline, producer, canInlineImage, safeUrl, urlKind]);
+
   useEffect(() => {
     if (!file || !canInlineImage) return;
     const objectUrl = URL.createObjectURL(file);
