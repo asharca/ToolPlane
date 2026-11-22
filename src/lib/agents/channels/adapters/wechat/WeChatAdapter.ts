@@ -8,6 +8,9 @@ import { WeixinBot } from "./WeChatProtocol";
 
 // Cherry's iLink transport, with credentials supplied by ToolPlane's encrypted DB.
 export class WeChatAdapter extends ChannelAdapter {
+  override get supportsFileDelivery(): boolean {
+    return true;
+  }
   private bot: WeixinBot | null = null;
   constructor(private readonly options: ChannelAdapterConfig<"wechat">) {
     super(options);

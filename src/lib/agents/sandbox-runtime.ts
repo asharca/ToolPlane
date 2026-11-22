@@ -1,4 +1,5 @@
 import "server-only";
+import { attachedFileText } from "@/lib/attachments/attached-file-text";
 import type { StreamRule, StreamRuleTrigger } from "./stream-rules";
 import { withSandboxSessionLease } from "./sandbox-execution-gate";
 import {
@@ -344,8 +345,7 @@ function messagePartText(
     (typeof part.filename === "string" ? part.filename.trim() : "") ||
     "attachment";
   const path = runtimeFilePath(part, identity);
-  if (path)
-    return `[Attached file: ${filename.replace(/\s+/g, " ").slice(0, 240)} at ${path}]`;
+  if (path) return attachedFileText(filename, path);
   return `[Attached ${part.type === "image" ? "image" : "file"}: ${filename.replace(/\s+/g, " ").slice(0, 240)}; bytes are not mounted in this sandbox turn]`;
 }
 

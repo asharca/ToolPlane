@@ -1,5 +1,13 @@
 // @vitest-environment node
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { randomUUID } from "node:crypto";
 import { TaskState } from "@a2a-js/sdk";
 import { z } from "zod";
@@ -10,7 +18,10 @@ import {
   type AgentMessageResult,
 } from "@/lib/agents/message-service";
 import { submitAgentEntry } from "@/lib/agents/execution/entries";
-import { claimTask, finishTask } from "@/lib/a2a/store";
+import * as entries from "@/lib/agents/execution/entries";
+import { publishLocalArtifact } from "@/lib/a2a/local-artifacts";
+import { textArtifact } from "@/lib/a2a/model";
+import { claimTask, finishTask, getTask } from "@/lib/a2a/store";
 import { publishFixtureAgentRevision } from "./agent-revision-fixture";
 import { createConversation } from "@/lib/agents/conversation-mutations";
 import { buildMessagingSessionKey } from "@/lib/agents/messaging";
@@ -319,6 +330,166 @@ describe("durable channel sessions", () => {
     expect(upgraded.agentRevisionId).not.toBe(old.agentRevisionId);
     expect(upgraded.modelOverride).toEqual(old.modelOverride);
   });
+
+  it("stores channel files in order and returns reply artifacts", async () => {
+    const inboundFiles = [
+      { filename: "data.csv", mediaType: "text/csv", text: "x,y\n1,2" },
+      {
+        filename: "brief.txt",
+        mediaType: "text/plain",
+        text: "Sum the columns",
+      },
+    ].map(({ text, ...file }) => ({
+      ...file,
+      data: Buffer.from(text).toString("base64"),
+      size: Buffer.byteLength(text),
+    }));
+    const send = () =>
+      runAgentChannelMessage({
+        workspaceId,
+        agentId,
+        connectionId,
+        inboundFiles,
+        hostedIngress: true,
+        inboundPersisted: true,
+        rawBody: {
+          message: "Prepare the reports",
+          source: {
+            platform: "telegram",
+            chatId: "chat",
+            chatType: "dm",
+            userId: "admin",
+            messageId: "files",
+          },
+          attachments: inboundFiles.map(({ filename, mediaType, size }) => ({
+            type: "file",
+            name: filename,
+            mimeType: mediaType,
+            size,
+          })),
+        },
+      });
+    const outputs = ["summary.txt", "details.txt"];
+    const executor = vi
+      .spyOn(entries, "runAgentEntry")
+      .mockImplementation(async (input) => {
+        const accepted = await submitAgentEntry(input, () => {});
+        const task = await claimTask(accepted.row.id);
+        if (!task?.leaseToken) throw new Error("Task was not claimed");
+        await publishLocalArtifact(task.id, task.leaseToken, {
+          artifactId: "reports",
+          name: "Reports",
+          parts: outputs.map((filename) => ({
+            filename,
+            mediaType: "text/plain",
+            raw: Buffer.from(filename).toString("base64"),
+          })),
+        });
+        await finishTask(
+          task.id,
+          task.leaseToken,
+          TaskState.TASK_STATE_COMPLETED,
+          undefined,
+          textArtifact("Reports ready"),
+        );
+        return {
+          task: await getTask(accepted.grant, task.id),
+          path: `/app/channels/work?c=${input.sourceId}`,
+        };
+      });
+    try {
+      const result = await send();
+      expect(result.status).toBe(200);
+      if ("error" in result.body) throw new Error(result.body.error);
+      const { conversationId, files } = result.body;
+      expect(files).toMatchObject(
+        outputs.map((filename) => ({
+          filename,
+          mediaType: "text/plain",
+          size: filename.length,
+        })),
+      );
+      const history = () =>
+        db.message.findMany({
+          where: { conversationId },
+          orderBy: { createdAt: "asc" },
+        });
+      const messages = await history();
+      expect(messages.map(({ role }) => role)).toEqual(["user", "assistant"]);
+      expect(messages[0].parts).toMatchObject([
+        { type: "text", text: expect.stringContaining("Prepare the reports") },
+        ...inboundFiles.map(({ filename }) => ({
+          type: "file",
+          filename,
+          url: expect.stringMatching(/^\/api\/v1\/attachments\/[\w-]+$/),
+        })),
+      ]);
+      for (const { attachmentId, filename } of files) {
+        expect(messages[1].parts).toContainEqual(
+          expect.objectContaining({
+            type: "file",
+            filename,
+            url: `/api/v1/attachments/${attachmentId}`,
+            providerMetadata: {
+              toolplane: expect.objectContaining({ origin: "artifact" }),
+            },
+          }),
+        );
+        expect(
+          await db.workspaceAttachment.findUniqueOrThrow({
+            where: { id: attachmentId },
+          }),
+        ).toMatchObject({
+          workspaceId,
+          conversationId,
+          name: filename,
+          origin: "artifact",
+          status: "ready",
+          uploaderOnly: false,
+        });
+      }
+      const { task } = await executor.mock.results[0].value;
+      const request = await db.a2ATask.findUniqueOrThrow({
+        where: { id: task.id },
+        select: { request: true },
+      });
+      const prompt = z
+        .object({
+          message: z.object({ parts: z.array(z.object({ text: z.string() })) }),
+        })
+        .parse(request.request)
+        .message.parts.map(({ text }) => text)
+        .join("\n");
+      const staged = z
+        .array(
+          z.object({
+            filename: z.string(),
+            providerMetadata: z.object({
+              toolplane: z.object({ runtimePath: z.string() }),
+            }),
+          }),
+        )
+        .parse((messages[0].parts as unknown[]).slice(1));
+      expect(prompt).toContain(
+        "[Attached file: data.csv at /workspace/conversations/",
+      );
+      for (const { filename, providerMetadata } of staged) {
+        expect(prompt).toContain(
+          `[Attached file: ${filename} at ${providerMetadata.toolplane.runtimePath}]`,
+        );
+      }
+      const replay = await send();
+      expect(replay.body).toMatchObject({
+        conversationId,
+        message: "Reports ready",
+        files,
+      });
+      expect(executor).toHaveBeenCalledTimes(1);
+      expect(await history()).toEqual(messages);
+    } finally {
+      executor.mockRestore();
+    }
+  }, 30_000); // Multiple real Docker-backed transfers, not a text-only turn.
 
   it("uses a stable hash when ingress has no platform message ID", async () => {
     const rawBody = {

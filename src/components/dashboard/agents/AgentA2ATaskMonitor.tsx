@@ -7,7 +7,8 @@ import { ConversationExecution } from "../work/ConversationExecution";
 import { MessageScroller } from "@/components/agents/message-scroller";
 import { useLiveTaskOutput } from "../work/useLiveTaskOutput";
 import { LiveOutputStatus, LiveOutputView } from "../work/LiveOutputView";
-import { A2AArtifactParts, type A2AWirePart } from "./A2AArtifactParts";
+import type { A2AWirePart } from "@/lib/conversation/a2a-parts";
+import { A2AArtifactParts } from "./A2AArtifactParts";
 
 import type { ConsoleTaskTree } from "@/lib/a2a/console-tasks";
 import { apiRequest } from "@/lib/client/api";
@@ -287,6 +288,17 @@ export function AgentA2ATaskMonitor({
     },
     to: { kind: "agent", id: node.agentId, name: node.name },
   }));
+  const participants = (id: string) => {
+    const node = tree?.nodes.find((item) => item.id === id);
+    if (!node) return undefined;
+    const parent = node.parentTaskId
+      ? tree?.nodes.find((item) => item.id === node.parentTaskId)
+      : undefined;
+    return {
+      user: parent?.name,
+      agent: node.name,
+    };
+  };
   return (
     <section className="space-y-3" aria-label={t("taskTree")}>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -498,11 +510,13 @@ export function AgentA2ATaskMonitor({
                 description: null,
                 parts: (artifact.parts ?? []) as JsonValue[],
               }))}
-              renderParts={(parts, name) => (
+              participants={participants}
+              renderParts={(parts, name, id) => (
                 <A2AArtifactParts
-                  taskId={selected.id}
+                  taskId={id}
                   name={name}
                   parts={parts as A2AWirePart[]}
+                  producer={participants(id)?.agent}
                 />
               )}
             />

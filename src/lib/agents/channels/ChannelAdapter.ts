@@ -68,6 +68,9 @@ export type ChannelLogEvent = { level: keyof ChannelLogger; message: string };
 
 // Same adapter lifecycle as Cherry; persistence and Agent execution stay in ToolPlane.
 export abstract class ChannelAdapter extends EventEmitter {
+  get supportsFileDelivery(): boolean {
+    return false;
+  }
   readonly channelId: string;
   readonly agentId: string;
   readonly channelType: keyof ChannelConfigs;

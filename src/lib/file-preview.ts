@@ -1,6 +1,7 @@
 export type FilePreviewKind =
   | "text"
   | "markdown"
+  | "table"
   | "image"
   | "pdf"
   | "unsupported";
@@ -22,7 +23,6 @@ const textExtensions: Record<string, true> = {
   conf: true,
   cpp: true,
   css: true,
-  csv: true,
   diff: true,
   env: true,
   go: true,
@@ -53,16 +53,58 @@ const textExtensions: Record<string, true> = {
   zsh: true,
 };
 
+const fileMimeTypes: Record<string, string> = {
+  ...imageTypes,
+  pdf: "application/pdf",
+  csv: "text/csv",
+  tsv: "text/tab-separated-values",
+  md: "text/markdown",
+  txt: "text/plain",
+  json: "application/json",
+  html: "text/html",
+  xml: "application/xml",
+  yaml: "application/yaml",
+  yml: "application/yaml",
+  zip: "application/zip",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  xls: "application/vnd.ms-excel",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+};
+
+function normalizedMime(mimeType: string): string {
+  return mimeType.split(";")[0].trim().toLowerCase();
+}
+
+function fileExtension(name: string): string {
+  const filename = name.split(/[\\/]/).pop() ?? "";
+  return filename.includes(".")
+    ? filename.slice(filename.lastIndexOf(".") + 1).toLowerCase()
+    : "";
+}
+
+export function tableDelimiter(name: string, mimeType = ""): "," | "\t" {
+  const mime = normalizedMime(mimeType);
+  const extension = fileExtension(name);
+  return extension === "tsv" || mime === "text/tab-separated-values"
+    ? "\t"
+    : ",";
+}
+
+export function mimeTypeForFilename(name: string): string {
+  const extension = fileExtension(name);
+  return Object.hasOwn(fileMimeTypes, extension)
+    ? fileMimeTypes[extension]
+    : "application/octet-stream";
+}
+
 /** HTML/MDX are data, never executable documents. Unknown binary formats stay downloads. */
 export function previewType(
   name: string,
   mimeType = "",
 ): { kind: FilePreviewKind; mimeType?: string } {
-  const mime = mimeType.split(";")[0].trim().toLowerCase();
-  const filename = name.split(/[\\/]/).pop() ?? "";
-  const extension = filename.includes(".")
-    ? filename.slice(filename.lastIndexOf(".") + 1).toLowerCase()
-    : "";
+  const mime = normalizedMime(mimeType);
+  const extension = fileExtension(name);
   if (Object.values(imageTypes).includes(mime))
     return { kind: "image", mimeType: mime };
   if (mime === "application/pdf") return { kind: "pdf", mimeType: mime };
@@ -71,6 +113,13 @@ export function previewType(
     return { kind: "image", mimeType: imageTypes[extension] };
   if (extension === "md" || extension === "mdx" || mime === "text/markdown")
     return { kind: "markdown" };
+  if (
+    extension === "csv" ||
+    extension === "tsv" ||
+    mime === "text/csv" ||
+    mime === "text/tab-separated-values"
+  )
+    return { kind: "table" };
   if (
     mime.startsWith("text/") ||
     [

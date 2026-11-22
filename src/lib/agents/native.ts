@@ -1,4 +1,5 @@
 import "server-only";
+import { attachedFileText } from "@/lib/attachments/attached-file-text";
 import {
   validateToolCall,
   type AssistantMessageEvent,
@@ -67,7 +68,7 @@ function runtimeFileText(part: UiMessageLike["parts"][number]): string | null {
   if (!runtimePath) return null;
   const filename =
     (typeof part.filename === "string" ? part.filename.trim() : "") || "file";
-  return `[Attached file: ${filename.replace(/\s+/g, " ").slice(0, 240)} at ${runtimePath.replace(/\s+/g, " ").slice(0, 1_000)}]`;
+  return attachedFileText(filename, runtimePath);
 }
 
 function messageText(parts: UiMessageLike["parts"]): string {

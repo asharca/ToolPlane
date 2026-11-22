@@ -675,6 +675,9 @@ export function ConversationContentBlocks({
                 name={block.filename ?? t("attachment")}
                 url={block.url}
                 mimeType={block.mediaType}
+                producer={block.producer}
+                size={block.size}
+                display="inline"
               />
             );
           case "process":

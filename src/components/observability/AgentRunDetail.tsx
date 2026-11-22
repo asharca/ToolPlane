@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useTranslations } from "next-intl";
+import { A2AArtifactParts } from "@/components/dashboard/agents/A2AArtifactParts";
 import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
+import type { A2AWirePart } from "@/lib/conversation/a2a-parts";
 import type { AgentRunDetail as AgentRunDetailView } from "@/lib/observability/views/types";
 import { A2ATaskConversation } from "./A2ATaskDetail";
 import { A2ATaskTable } from "./A2ATaskTable";
@@ -40,6 +42,21 @@ export function AgentRunDetail({
     a2aDetailBase: `${base}/a2a`,
     returnTo: `${base}/runs/${encodeURIComponent(summary.taskId)}`,
   };
+  const participantsByTask = new Map<
+    string,
+    { user?: string; agent?: string }
+  >();
+  participantsByTask.set(summary.taskId, {
+    user: summary.actor.name,
+    agent: summary.agent?.name,
+  });
+  for (const delegation of detail.delegations) {
+    participantsByTask.set(delegation.taskId, {
+      user: delegation.from.name,
+      agent: delegation.to.name,
+    });
+  }
+  const participants = (taskId: string) => participantsByTask.get(taskId);
   return (
     <div className="min-w-0 space-y-6">
       <header id={`task-${summary.taskId}`} className="space-y-3">
@@ -104,6 +121,15 @@ export function AgentRunDetail({
       <A2ATaskConversation
         messages={detail.messages}
         artifacts={detail.artifacts}
+        participants={participants}
+        renderParts={(parts, name, taskId) => (
+          <A2AArtifactParts
+            taskId={taskId}
+            name={name}
+            parts={parts as A2AWirePart[]}
+            producer={participants(taskId)?.agent}
+          />
+        )}
       />
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">{t("tools")}</h2>

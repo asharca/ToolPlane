@@ -3,6 +3,7 @@
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -16,12 +17,21 @@ import {
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
 import { Button } from "@/components/motion/button";
+import { Table, type TableColumn } from "@/components/motion/table";
 import {
   AIArtifact,
   type AIArtifactLabels,
 } from "@/components/agents/ai-artifacts";
 import type { AgentCodeLanguage } from "@/components/agents/agent-code";
-import { previewType, type FilePreviewKind } from "@/lib/file-preview";
+import {
+  parseDelimitedPreview,
+  type DelimitedPreview,
+} from "@/lib/csv-preview";
+import {
+  previewType,
+  tableDelimiter,
+  type FilePreviewKind,
+} from "@/lib/file-preview";
 import { AssistantMarkdown } from "./ConversationMessage";
 
 export type FilePreviewDialogProps = {
@@ -35,6 +45,18 @@ export type FilePreviewDialogProps = {
   actions?: ReactNode;
   error?: string;
 };
+const TABLE_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
+const TABLE_PREVIEW_MAX_ROWS = 1000;
+const TABLE_PREVIEW_MAX_COLUMNS = 50;
+
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename.split(/[\\/]/).pop() || "file";
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 const languages: Record<string, AgentCodeLanguage> = {
   ts: "typescript",
@@ -159,6 +181,7 @@ type PreviewState = {
   kind: FilePreviewKind;
   blob?: Blob;
   text?: string;
+  table?: DelimitedPreview;
   url?: string;
 };
 function PreviewContent({
@@ -202,9 +225,37 @@ function PreviewContent({
       if (controller.signal.aborted) return;
       type = previewType(name, mimeType || blob.type);
       let text: string | undefined;
+      let table: DelimitedPreview | undefined;
       if (type.kind === "text" || type.kind === "markdown") {
         text = await blob.text();
         if (text.includes("\0")) type = { kind: "unsupported" };
+      } else if (type.kind === "table") {
+        const sliced = blob.size > TABLE_PREVIEW_MAX_BYTES;
+        const raw = await blob.slice(0, TABLE_PREVIEW_MAX_BYTES).text();
+        if (raw.includes("\0")) {
+          type = { kind: "unsupported" };
+        } else {
+          const parsed = parseDelimitedPreview(
+            raw,
+            tableDelimiter(name, mimeType || blob.type),
+            {
+              maxRows: TABLE_PREVIEW_MAX_ROWS,
+              maxColumns: TABLE_PREVIEW_MAX_COLUMNS,
+            },
+          );
+          if (sliced) {
+            if (!parsed.truncatedRows && parsed.rows.length > 0) {
+              parsed.rows.pop();
+            }
+            parsed.truncatedRows = true;
+          }
+          if (parsed.rows.length === 0) {
+            type = { kind: "text" };
+            text = raw;
+          } else {
+            table = parsed;
+          }
+        }
       } else if (
         type.kind === "pdf" &&
         blob.size &&
@@ -218,7 +269,7 @@ function PreviewContent({
           new Blob([blob], { type: type.mimeType }),
         );
       }
-      setFile({ blob, text, url: objectUrl, kind: type.kind });
+      setFile({ blob, text, table, url: objectUrl, kind: type.kind });
     })().catch(() => {
       if (!controller.signal.aborted) setLoadError(unavailable);
     });
@@ -238,12 +289,7 @@ function PreviewContent({
           requestRef.current?.signal ?? new AbortController().signal;
         const blob = file?.blob ?? (await load(signal));
         if (signal.aborted) return;
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = name.split(/[\\/]/).pop() || "file";
-        anchor.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        saveBlob(blob, name);
       }
     } catch {
       setOperationError(unavailable);
@@ -465,9 +511,67 @@ function PreviewContent({
               {t("pdfFallback")}
             </p>
           )
+        ) : file.kind === "table" && file.table ? (
+          <TablePreview preview={file.table} />
         ) : null}
       </div>
     </>
+  );
+}
+
+type TablePreviewRow = {
+  index: number;
+  cells: string[];
+};
+
+function TablePreview({ preview }: { preview: DelimitedPreview }) {
+  const t = useTranslations("filePreview");
+  const { columns, rows } = useMemo(() => {
+    const [headerRow = [], ...bodyRows] = preview.rows;
+    const columnCount = preview.rows.reduce(
+      (max, row) => Math.max(max, row.length),
+      0,
+    );
+    const cols: TableColumn<TablePreviewRow>[] = Array.from(
+      { length: columnCount },
+      (_, i) => {
+        const label = headerRow[i]?.trim();
+        return {
+          key: `c${i}`,
+          header: label || t("column", { index: i + 1 }),
+          width: "160px",
+          cell: (row) => row.cells[i] ?? "",
+        };
+      },
+    );
+    const data: TablePreviewRow[] = bodyRows.map((cells, index) => ({
+      index,
+      cells,
+    }));
+    return { columns: cols, rows: data };
+  }, [preview.rows, t]);
+
+  return (
+    <div className="flex flex-col gap-3 p-4">
+      {preview.truncatedRows || preview.truncatedColumns ? (
+        <p role="status" className="text-xs text-muted-foreground">
+          {t("tableTruncated", {
+            rows: preview.rows.length,
+            columns: columns.length,
+          })}
+        </p>
+      ) : null}
+      <div className="overflow-x-auto">
+        <Table
+          data={rows}
+          columns={columns}
+          getRowId={(row) => String(row.index)}
+          rowHeight={36}
+          height={480}
+          emptyState={t("empty")}
+        />
+      </div>
+    </div>
   );
 }
 

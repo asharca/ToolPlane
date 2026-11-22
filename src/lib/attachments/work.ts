@@ -5,12 +5,13 @@ import { db } from "@/lib/db";
 import { sandboxVolumeName } from "@/lib/sandboxes/runtime";
 import { posix } from "node:path";
 import { agentSessionWorkingDirectory } from "@/lib/agents/session-paths";
+import { findAgentConversationSandbox } from "@/lib/agents/conversation-sandbox";
 import {
   copyWorkspaceAttachmentToDockerVolume,
   safeAttachmentFilename,
 } from "./storage";
 
-const MAX_ATTACHMENTS_PER_MESSAGE = 5;
+export const MAX_ATTACHMENTS_PER_MESSAGE = 5;
 
 export class WorkAttachmentError extends Error {
   constructor(
@@ -51,9 +52,12 @@ function destinationPath(
   id: string,
   name: string,
 ): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(id))
+    throw new WorkAttachmentError(409, "Invalid attachment destination.");
+  const filename = safeAttachmentFilename(name);
   const prefix =
     workingDirectory === "." ? "" : `${workingDirectory.replace(/\/+$/, "")}/`;
-  return `${prefix}.toolplane/attachments/${id}/${safeAttachmentFilename(name)}`;
+  return `${prefix}.toolplane/attachments/${id}/${filename === "." || filename === ".." ? "attachment" : filename}`;
 }
 
 export async function prepareWorkAttachments(input: {
@@ -83,6 +87,7 @@ export async function prepareWorkAttachments(input: {
         workspaceId: input.workspaceId,
         uploadedById: input.userId,
         status: "ready",
+        origin: "upload",
         chatThreadId: null,
         OR: [
           { conversationId: null },
@@ -179,6 +184,57 @@ export async function prepareWorkAttachments(input: {
   return prepared;
 }
 
+export async function stageConversationAttachments(input: {
+  workspaceId: string;
+  agentId: string;
+  userId: string;
+  conversationId: string;
+  attachmentIds: string[];
+}): Promise<PreparedWorkAttachment[]> {
+  const ids = attachmentIds(input.attachmentIds);
+  if (!ids.length) return [];
+  const mapping = await findAgentConversationSandbox({
+    workspaceId: input.workspaceId,
+    agentId: input.agentId,
+    conversationId: input.conversationId,
+  });
+  if (mapping)
+    return prepareWorkAttachments({
+      ...input,
+      sandboxId: mapping.sandboxId,
+      workingDirectory: ".",
+      attachmentIds: ids,
+    });
+  const records = await db.workspaceAttachment.findMany({
+    where: {
+      id: { in: ids },
+      workspaceId: input.workspaceId,
+      uploadedById: input.userId,
+      conversationId: input.conversationId,
+      status: "ready",
+      origin: "upload",
+      chatThreadId: null,
+    },
+    select: { id: true, name: true, mimeType: true },
+  });
+  const byId = new Map(records.map((record) => [record.id, record]));
+  return ids.map((id) => {
+    const record = byId.get(id);
+    if (!record)
+      throw new WorkAttachmentError(
+        409,
+        "One or more attachments are unavailable or already in use.",
+      );
+    return {
+      ...record,
+      runtimePath: agentSessionWorkingDirectory(
+        input,
+        destinationPath(".", id, record.name),
+      ),
+    };
+  });
+}
+
 /** Called only while a new session workspace is being initialized. */
 export async function materializeConversationAttachments(input: {
   workspaceId: string;
@@ -200,6 +256,7 @@ export async function materializeConversationAttachments(input: {
       conversationId: input.conversationId,
       workspaceId: input.workspaceId,
       status: "ready",
+      origin: "upload",
       chatThreadId: null,
     },
     select: { id: true, name: true, storagePath: true },
@@ -240,7 +297,7 @@ export async function materializeConversationAttachments(input: {
   for (const record of records) {
     const original = destinations.get(`/api/v1/attachments/${record.id}`);
     if (!original) continue;
-    const suffix = `/.toolplane/attachments/${record.id}/${safeAttachmentFilename(record.name)}`;
+    const suffix = `/${destinationPath(".", record.id, record.name)}`;
     if (!original.endsWith(suffix))
       throw new WorkAttachmentError(409, "Invalid attachment destination.");
     const destination = agentSessionWorkingDirectory(
@@ -275,6 +332,7 @@ export async function claimWorkAttachments(
         workspaceId: input.workspaceId,
         uploadedById: input.userId,
         status: "ready",
+        origin: "upload",
         chatThreadId: null,
         OR: [
           { conversationId: null },

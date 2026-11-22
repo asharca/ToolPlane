@@ -241,12 +241,29 @@ export function projectContent(
     if (part.type === "file" || part.type === "image") {
       const url = part.type === "image" ? part.image : part.url;
       if (typeof url !== "string") return;
+      const metadata = part.providerMetadata as
+        | {
+            toolplane?: {
+              filename?: unknown;
+              size?: unknown;
+              producer?: { name?: unknown };
+            };
+          }
+        | undefined;
+      const toolplane = metadata?.toolplane;
+      const filename = part.filename ?? toolplane?.filename;
+      const producer = toolplane?.producer?.name;
+      const size = toolplane?.size;
       blocks.push({
         kind: "file",
         id,
         partIndex,
         url,
-        filename: typeof part.filename === "string" ? part.filename : undefined,
+        filename: typeof filename === "string" ? filename : undefined,
+        ...(typeof producer === "string" && { producer }),
+        ...(typeof size === "number" &&
+          Number.isSafeInteger(size) &&
+          size >= 0 && { size }),
         mediaType:
           typeof part.mediaType === "string"
             ? part.mediaType

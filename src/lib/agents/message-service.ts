@@ -2,7 +2,28 @@ import "server-only";
 import type { WorkspaceScope } from "@/lib/workspace/scope";
 import { channelToolApprovalReply } from "./execution/tool-approvals";
 import { createHash, randomUUID } from "node:crypto";
-import type { UIMessage } from "ai";
+import { maxAgentAttachmentBytes } from "./attachment-limits";
+import { MAX_MESSAGE_ATTACHMENTS } from "@/lib/attachments/messages";
+import { attachedFileText } from "@/lib/attachments/attached-file-text";
+import {
+  stageConversationAttachments,
+  workMessageParts,
+  WorkAttachmentError,
+} from "@/lib/attachments/work";
+import {
+  storeWorkspaceAttachment,
+  AttachmentWorkspaceUnavailableError,
+} from "@/lib/attachments/store";
+import { AttachmentTooLargeError } from "@/lib/attachments/storage";
+import {
+  stageAttachmentDeletion,
+  removeAttachmentPendingCleanup,
+} from "@/lib/attachments/uploads";
+import {
+  lockStorageWorkspace,
+  StorageQuotaExceededError,
+} from "@/lib/storage/user-quota";
+import { logSystemEvent } from "@/lib/observability/system";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { Prisma } from "@prisma/client";
@@ -25,7 +46,6 @@ import {
 } from "./channel-inbound-queue";
 import {
   runAgentEntry,
-  latestEntryText,
   agentEntryResult,
   agentEntryRuntimeParts,
 } from "./execution/entries";
@@ -68,6 +88,12 @@ import { createTranslator } from "next-intl";
 import zhMessages from "../../../messages/zh.json";
 import { notifyTaskOutput } from "./execution/live-output";
 import { recordedTaskOutput } from "./execution/live-output-read";
+import { configuredAppOrigin } from "@/lib/http/origin";
+import {
+  captureReplyArtifacts,
+  listReplyArtifacts,
+  replyArtifactParts,
+} from "./execution/reply-artifacts";
 
 export const CHANNEL_EXECUTION_FAILURE_MESSAGE =
   "本次执行未能完成，未自动重试。请在工作区查看会话执行状态，检查模型或工具连接后再发送新消息。";
@@ -92,11 +118,38 @@ function runtimeFailureMessage(failure: RuntimeFailure) {
     : `${CHANNEL_EXECUTION_FAILURE_MESSAGE}（${token}）`;
 }
 
+export type ChannelInboundFile = {
+  filename: string;
+  mediaType: string;
+  data: string;
+  size: number;
+};
+
+const channelReplyFileSchema = z.object({
+  attachmentId: z.string(),
+  filename: z.string(),
+  mediaType: z.string(),
+  size: z.number().int().nonnegative(),
+});
+export type ChannelReplyFile = z.infer<typeof channelReplyFileSchema>;
+type ReplyFiles = {
+  files: ChannelReplyFile[];
+  fallbackFilenames?: string[];
+  detailUrl?: string;
+};
+
+function detailLink(path: string) {
+  const origin = configuredAppOrigin();
+  return origin && /^\/app\/[^/?#\\]+\/work\?/.test(path)
+    ? { detailUrl: origin + path }
+    : {};
+}
+
 export type AgentMessageResult =
   | { status: number; body: { error: string } }
   | {
       status: 200;
-      body: {
+      body: ReplyFiles & {
         agentId: string;
         conversationId: string;
         delivery: "message" | "silent";
@@ -123,6 +176,9 @@ const ChannelCommandResultSchema: z.ZodType<AgentMessageResult> = z.union([
       delivery: z.enum(["message", "silent"]),
       message: z.string(),
       rawMessage: z.string(),
+      files: z.array(channelReplyFileSchema).default([]),
+      fallbackFilenames: z.array(z.string()).optional(),
+      detailUrl: z.string().optional(),
       failed: z.literal(true).optional(),
       sessionKey: z.string(),
       platform: z.string(),
@@ -190,7 +246,7 @@ export async function runAgentChannelMessage(params: {
   sandboxId?: string | null;
   rawBody: unknown;
   defaults?: Partial<AgentMessageBody>;
-  attachmentParts?: UIMessage["parts"];
+  inboundFiles?: ChannelInboundFile[];
   signal?: AbortSignal;
   onUiRequired?: (message: string) => Promise<void>;
   /** Latest reply segments while the Agent works; must not block. */
@@ -247,6 +303,7 @@ export async function runAgentChannelMessage(params: {
         conversationId: "",
         delivery: "message",
         message: decision.reply,
+        files: [],
         rawMessage: decision.reply,
         sessionKey: "",
         source: event.source,
@@ -256,6 +313,13 @@ export async function runAgentChannelMessage(params: {
       },
     };
   }
+  if ((params.inboundFiles?.length ?? 0) > MAX_MESSAGE_ATTACHMENTS)
+    return {
+      status: 400,
+      body: {
+        error: `At most ${MAX_MESSAGE_ATTACHMENTS} attachments are allowed.`,
+      },
+    };
   const approvalReply = await channelToolApprovalReply({
     connectionId: channel.id,
     workspaceId: params.workspaceId,
@@ -272,6 +336,7 @@ export async function runAgentChannelMessage(params: {
         conversationId: "",
         delivery: "message",
         message: approvalReply,
+        files: [],
         rawMessage: approvalReply,
         sessionKey: "",
         source: event.source,
@@ -365,20 +430,29 @@ export async function runAgentChannelMessage(params: {
   )
     return { status: 404, body: { error: "Conversation not found" } };
   if (!params.inboundPersisted) {
+    // A callback with server-supplied bytes must remain a file message if the
+    // queue drains after this observer is gone. Never take bytes from rawBody.
+    const files = params.inboundFiles;
+    const attachments = body.attachments.length
+      ? body.attachments
+      : (files ?? []).map((file): AgentMessageBody["attachments"][number] => ({
+          type: "file",
+          name: file.filename,
+          mimeType: file.mediaType,
+          size: file.size,
+        }));
     const normalizedBody = {
       message: body.message,
       conversationId: body.conversationId,
       messageType: body.messageType,
       source: event.source,
-      attachments: body.attachments.map(
-        ({ type, url, name, mimeType, size }) => ({
-          type,
-          url,
-          name,
-          mimeType,
-          size,
-        }),
-      ),
+      attachments: attachments.map(({ type, url, name, mimeType, size }) => ({
+        type,
+        url,
+        name,
+        mimeType,
+        size,
+      })),
       metadata: {
         roleIds: Array.isArray(body.metadata?.roleIds)
           ? body.metadata.roleIds.filter(
@@ -389,7 +463,9 @@ export async function runAgentChannelMessage(params: {
     };
     const dedupeKey = channelInboundDedupeKey(
       event.source.messageId,
-      normalizedBody,
+      files?.length
+        ? { ...normalizedBody, inboundFiles: files }
+        : normalizedBody,
       channel.platform === "telegram" ? event.source.chatId : undefined,
     );
     normalizedBody.source.messageId ??= dedupeKey;
@@ -402,6 +478,7 @@ export async function runAgentChannelMessage(params: {
       payload: JSON.parse(
         JSON.stringify({
           body: normalizedBody,
+          ...(files?.length ? { inboundFiles: files } : {}),
           dedupeKey,
           hostedIngress: Boolean(params.hostedIngress),
           legacySessionKey: params.legacySessionKey,
@@ -425,7 +502,6 @@ export async function runAgentChannelMessage(params: {
     const observer = {
       signal: params.signal,
       onUiRequired: params.onUiRequired,
-      attachmentParts: params.attachmentParts,
     };
     if (!callbackObservers.has(observerKey))
       callbackObservers.set(observerKey, observer);
@@ -481,6 +557,7 @@ export async function runAgentChannelMessage(params: {
         conversationId: selectedId,
         delivery: "message",
         message: text,
+        files: [],
         rawMessage: text,
         sessionKey: selectedKey,
         source: event.source,
@@ -524,7 +601,7 @@ export async function runAgentChannelMessage(params: {
     } else if (
       body.message.length > 2000 ||
       body.attachments.length ||
-      params.attachmentParts?.length
+      params.inboundFiles?.length
     ) {
       message = "Commands accept at most 2,000 characters and no attachments.";
     } else if (name === "help") {
@@ -806,7 +883,7 @@ export async function runAgentChannelMessage(params: {
     actorId: channel.a2aActorId,
     onUiRequired: params.onUiRequired,
     onReplySegments: params.onReplySegments,
-    attachmentParts: params.attachmentParts,
+    inboundFiles: params.inboundFiles,
     signal: params.signal,
     channelSessionKey: sessionKey,
   });
@@ -822,7 +899,7 @@ async function runLoadedAgentMessage(params: {
   rawBody: unknown;
   defaults?: Partial<AgentMessageBody>;
   connectionId?: string;
-  attachmentParts?: UIMessage["parts"];
+  inboundFiles?: ChannelInboundFile[];
   signal?: AbortSignal;
   channelSessionKey?: string;
 }): Promise<AgentMessageResult> {
@@ -844,7 +921,10 @@ async function runLoadedAgentMessage(params: {
       status: 403,
       body: { error: "An authenticated native execution actor is required." },
     };
-  if (body.attachments.length || params.attachmentParts?.length)
+  if (
+    (body.attachments.length && !params.inboundFiles?.length) ||
+    (params.inboundFiles?.length && !params.connectionId)
+  )
     return {
       status: 415,
       body: { error: "Native message ingress accepts text only." },
@@ -879,6 +959,7 @@ async function runLoadedAgentMessage(params: {
     conversationId: string,
     text: string,
     failed = false,
+    artifacts: ReplyFiles = { files: [] },
   ): AgentMessageResult => {
     const silent = !failed && isSilentAgentReply(text);
     return {
@@ -889,6 +970,7 @@ async function runLoadedAgentMessage(params: {
         delivery: silent ? "silent" : "message",
         message: silent ? "" : text,
         rawMessage: text,
+        ...artifacts,
         ...(failed ? { failed: true as const } : {}),
         sessionKey: event.sessionKey,
         source: event.source,
@@ -997,7 +1079,10 @@ async function runLoadedAgentMessage(params: {
       ? await db.message.findUnique({ where: { id: userMessageId } })
       : null;
     const text = command ? body.message : event.promptText;
-    if (previousUser && latestEntryText(previousUser) !== text.trim())
+    if (
+      previousUser &&
+      projectedUserText(previousUser.parts, false) !== text.trim()
+    )
       return {
         status: 400,
         body: {
@@ -1012,7 +1097,57 @@ async function runLoadedAgentMessage(params: {
       const parts = previousReply.parts as Array<{
         type?: string;
         text?: string;
+        url?: string;
+        filename?: string;
+        data?: { taskId?: string };
       }>;
+      const ids: string[] = [];
+      const fallbackFilenames: string[] = [];
+      for (const part of parts) {
+        if (part.type !== "file" || typeof part.url !== "string") continue;
+        const id = /^\/api\/v1\/attachments\/([A-Za-z0-9_-]{1,200})$/.exec(
+          part.url,
+        )?.[1];
+        if (id) ids.push(id);
+        else if (
+          /^\/api\/v1\/a2a\/files\/[A-Za-z0-9_-]{1,200}\/download\?task=[A-Za-z0-9_-]{1,200}$/.test(
+            part.url,
+          ) &&
+          typeof part.filename === "string"
+        )
+          fallbackFilenames.push(part.filename);
+      }
+      const rows = ids.length
+        ? await db.workspaceAttachment.findMany({
+            where: {
+              id: { in: ids },
+              workspaceId: agent.workspaceId,
+              conversationId: conversation.id,
+              origin: "artifact",
+              status: "ready",
+              uploaderOnly: false,
+            },
+            select: { id: true, name: true, mimeType: true, size: true },
+          })
+        : [];
+      const taskId = parts.find((part) => part.type === "data-agent-task")?.data
+        ?.taskId;
+      const task =
+        typeof taskId === "string"
+          ? await db.a2ATask.findFirst({
+              where: {
+                id: taskId,
+                context: { agentId: agent.id, workspaceId: agent.workspaceId },
+                grant: {
+                  path: ["entryPolicy", "sourceId"],
+                  equals: conversation.id,
+                },
+              },
+              select: {
+                context: { select: { workspace: { select: { slug: true } } } },
+              },
+            })
+          : null;
       return response(
         conversation.id,
         parts
@@ -1021,29 +1156,42 @@ async function runLoadedAgentMessage(params: {
           )
           .map((part) => part.text)
           .join("\n"),
+        false,
+        {
+          files: ids.flatMap((id) => {
+            const row = rows.find((file) => file.id === id);
+            return row
+              ? [
+                  {
+                    attachmentId: id,
+                    filename: row.name,
+                    mediaType: row.mimeType,
+                    size: row.size,
+                  },
+                ]
+              : [];
+          }),
+          ...(fallbackFilenames.length ? { fallbackFilenames } : {}),
+          ...(task
+            ? detailLink(
+                `/app/${encodeURIComponent(task.context.workspace.slug)}/work?${new URLSearchParams({ agent: agent.id, c: conversation.id })}`,
+              )
+            : {}),
+        },
       );
     }
-    const userParts = [
-      {
-        type: "text" as const,
-        text,
-      },
-    ];
-    const userMessage: UIMessage = {
-      id: userMessageId,
-      role: "user",
-      parts: userParts,
-    };
-    const savedUser = await db.message.upsert({
-      where: { id: userMessage.id },
-      update: {},
-      create: {
-        id: userMessage.id,
+    const savedUser =
+      previousUser ??
+      (await saveInboundUserMessage({
+        workspaceId: agent.workspaceId,
+        agentId: agent.id,
         conversationId: conversation.id,
-        role: "user",
-        parts: userParts,
-      },
-    });
+        actorId: params.actorId,
+        messageId: userMessageId,
+        text,
+        files: params.inboundFiles ?? [],
+        signal: params.signal,
+      }));
     persistedConversationId = conversation.id;
     const result = await runAgentEntry({
       kind: params.connectionId
@@ -1057,8 +1205,8 @@ async function runLoadedAgentMessage(params: {
       workspaceId: agent.workspaceId,
       agentId: agent.id,
       actorId: params.actorId,
-      messageId: event.source.messageId ?? userMessage.id,
-      text: latestEntryText(userMessage),
+      messageId: event.source.messageId ?? savedUser.id,
+      text: projectedUserText(savedUser.parts, true),
       signal: params.signal,
       onAccepted: (task) => {
         persistedTaskId = task.id;
@@ -1081,6 +1229,18 @@ async function runLoadedAgentMessage(params: {
         taskId: result.task.id,
       },
     );
+    const captured = await captureReplyArtifacts({
+      workspaceId: agent.workspaceId,
+      conversationId: conversation.id,
+      uploaderId: params.actorId,
+      privateEntry: !params.connectionId,
+      entryTaskId: result.task.id,
+      artifacts: await listReplyArtifacts(result.task.id),
+      signal: params.signal,
+    });
+    const fallbackFilenames = captured
+      .filter((file) => !file.attachmentId)
+      .map((file) => file.filename);
     const runtimeParts = agentEntryRuntimeParts(result.task);
     params.signal?.throwIfAborted();
     const previous = await db.message.findFirst({
@@ -1096,7 +1256,11 @@ async function runLoadedAgentMessage(params: {
         createdAt: new Date(
           Math.max(Date.now(), (previous?.createdAt.getTime() ?? 0) + 1),
         ),
-        parts: [{ type: "text", text: replyText }, ...runtimeParts],
+        parts: [
+          { type: "text", text: replyText },
+          ...replyArtifactParts(captured),
+          ...runtimeParts,
+        ],
       },
     });
     notifyTaskOutput(result.task.id);
@@ -1105,6 +1269,15 @@ async function runLoadedAgentMessage(params: {
       params.connectionId
         ? agentEntryResult(result.task, result.path, true)
         : replyText,
+      false,
+      {
+        files: captured.flatMap(
+          ({ attachmentId, filename, mediaType, size }) =>
+            attachmentId ? [{ attachmentId, filename, mediaType, size }] : [],
+        ),
+        ...(fallbackFilenames.length ? { fallbackFilenames } : {}),
+        ...detailLink(result.path),
+      },
     );
   } catch (error) {
     const failure =
@@ -1170,12 +1343,160 @@ async function runLoadedAgentMessage(params: {
       if (persistedTaskId) notifyTaskOutput(persistedTaskId);
       return response(persistedConversationId, failureMessage, true);
     }
+    if (
+      error instanceof AttachmentTooLargeError ||
+      error instanceof StorageQuotaExceededError
+    )
+      return { status: 413, body: { error: "Channel attachment rejected." } };
+    if (error instanceof AttachmentWorkspaceUnavailableError)
+      return { status: 404, body: { error: "Workspace not found." } };
+    if (error instanceof WorkAttachmentError)
+      return { status: error.status, body: { error: error.message } };
     if (error instanceof AgentRevisionError)
       return { status: 409, body: { error: error.code } };
     throw error;
   } finally {
     releaseConversation?.();
   }
+}
+
+const stagedFilePart = z.object({
+  filename: z.string(),
+  providerMetadata: z.object({
+    toolplane: z.object({ runtimePath: z.string() }),
+  }),
+});
+
+function projectedUserText(
+  parts: Prisma.JsonValue,
+  includeFiles: boolean,
+): string {
+  if (!Array.isArray(parts)) throw new Error("Invalid persisted user message.");
+  return parts
+    .flatMap((part) => {
+      if (!part || typeof part !== "object" || Array.isArray(part)) return [];
+      if (part.type === "text" && typeof part.text === "string")
+        return [part.text];
+      if (includeFiles && part.type === "file") {
+        const file = stagedFilePart.parse(part);
+        return [
+          attachedFileText(
+            file.filename,
+            file.providerMetadata.toolplane.runtimePath,
+          ),
+        ];
+      }
+      return [];
+    })
+    .join("\n")
+    .trim();
+}
+
+async function saveInboundUserMessage(input: {
+  workspaceId: string;
+  agentId: string;
+  conversationId: string;
+  actorId: string;
+  messageId: string;
+  text: string;
+  files: ChannelInboundFile[];
+  signal?: AbortSignal;
+}) {
+  const { workspaceId, conversationId, actorId, files, signal } = input;
+  const ids: string[] = [];
+  try {
+    if (files.length) {
+      const maxBytes = await maxAgentAttachmentBytes();
+      for (const file of files) {
+        signal?.throwIfAborted();
+        if (
+          file.size > maxBytes ||
+          Buffer.byteLength(file.data, "base64") > maxBytes
+        )
+          throw new AttachmentTooLargeError(maxBytes);
+        const bytes = Buffer.from(file.data, "base64");
+        if (!bytes.length || bytes.length !== file.size)
+          throw new WorkAttachmentError(
+            400,
+            "Invalid channel attachment size.",
+          );
+        const attachment = await storeWorkspaceAttachment({
+          workspaceId,
+          conversationId,
+          uploaderId: actorId,
+          accessUserId: actorId,
+          filename: file.filename,
+          mimeType: file.mediaType,
+          announcedSize: bytes.length,
+          maxBytes,
+          signal,
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(bytes);
+              controller.close();
+            },
+          }),
+        });
+        ids.push(attachment.id);
+      }
+    }
+    const prepared = ids.length
+      ? await stageConversationAttachments({
+          workspaceId,
+          agentId: input.agentId,
+          userId: actorId,
+          conversationId,
+          attachmentIds: ids,
+        })
+      : [];
+    return await db.message.create({
+      data: {
+        id: input.messageId,
+        conversationId,
+        role: "user",
+        parts: workMessageParts(input.text, prepared),
+      },
+    });
+  } catch (error) {
+    if (ids.length) await discardChannelFiles(workspaceId, actorId, ids);
+    throw error;
+  }
+}
+
+// Fence the entire failed batch first so a physical deletion failure leaves
+// the remaining objects eligible for the normal upload sweeper.
+async function discardChannelFiles(
+  workspaceId: string,
+  actorId: string,
+  ids: string[],
+) {
+  const pending = await db.$transaction(async (tx) => {
+    await lockStorageWorkspace(tx, workspaceId);
+    const staged = [];
+    for (const id of ids) {
+      const file = await stageAttachmentDeletion(
+        tx,
+        { id: workspaceId },
+        id,
+        actorId,
+      );
+      if (typeof file !== "string") staged.push(file);
+    }
+    return staged;
+  });
+  await Promise.all(
+    pending.map((file) =>
+      removeAttachmentPendingCleanup(file).catch((error) => {
+        logSystemEvent("attachments.storage.cleanup_failed", {
+          error,
+          level: "warn",
+          workspaceId,
+          actorId,
+          attributes: { attachmentId: file.id },
+        });
+      }),
+    ),
+  );
 }
 
 const pendingConfirmations = new Map<
@@ -1216,7 +1537,6 @@ const callbackObservers = new Map<
   {
     signal?: AbortSignal;
     onUiRequired?: (message: string) => Promise<void>;
-    attachmentParts?: UIMessage["parts"];
   }
 >();
 
@@ -1228,6 +1548,7 @@ export async function runPersistedChannelCallback(
 ): Promise<AgentMessageResult> {
   const saved = payload as {
     body: unknown;
+    inboundFiles?: ChannelInboundFile[];
     dedupeKey?: string;
     hostedIngress?: boolean;
     legacySessionKey?: string;
@@ -1266,6 +1587,6 @@ export async function runPersistedChannelCallback(
         ? AbortSignal.any([signal, observerSignal])
         : (observerSignal ?? signal),
     onUiRequired: observer?.onUiRequired,
-    attachmentParts: observer?.attachmentParts,
+    inboundFiles: saved.inboundFiles,
   });
 }

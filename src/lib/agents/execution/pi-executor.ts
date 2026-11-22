@@ -25,6 +25,8 @@ import { recordTaskToolActivity } from "@/lib/agents/evolution/tool-activity";
 import { settleQueuedChannelMessage } from "@/lib/agents/channel-message-queue";
 import { isSilentAgentReply } from "@/lib/agents/messaging";
 import type { ContextMaintenance } from "@/lib/agents/context-maintenance";
+import { recordEvent } from "@/lib/observability/events";
+import { publishTurnOutputs } from "./outputs";
 import {
   startTaskOutput,
   taskOutput,
@@ -219,6 +221,17 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
       });
     throw error;
   }
+  await publishTurnOutputs(row, signal).catch((error) =>
+    recordEvent({
+      domain: "agent",
+      eventName: "agent.outputs.publish_failed",
+      level: "warn",
+      workspaceId: grant.workspaceId,
+      agentId: options.agentId,
+      taskId: row.id,
+      error,
+    }),
+  );
   const artifact = textArtifact(text);
   artifact.metadata = {
     toolplanePiSdk: {

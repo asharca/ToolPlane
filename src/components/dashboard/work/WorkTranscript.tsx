@@ -5,8 +5,6 @@ import { useTranslations } from "next-intl";
 import {
   Bot,
   Clock3,
-  FileText,
-  FileX,
   GitBranch,
   Minimize2,
   Pencil,
@@ -14,10 +12,13 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/motion/button";
 import { notify } from "@/components/dashboard/Toaster";
-import { isDeletedAttachment } from "@/components/dashboard/attachment-deleted";
 import { AgentMessageFeedback } from "@/components/dashboard/agents/AgentMessageFeedback";
 import { AgentPromptProvenance } from "@/components/dashboard/agents/AgentPromptProvenance";
-import { ConversationComposer } from "@/components/dashboard/ConversationComposer";
+import {
+  allowedFileUrl,
+  ConversationComposer,
+  ConversationFilePreview,
+} from "@/components/dashboard/ConversationComposer";
 import { ConversationContentBlocks } from "@/components/dashboard/ConversationContentBlocks";
 import { CopyButton } from "@/components/dashboard/CopyButton";
 import {
@@ -53,7 +54,11 @@ import {
   messageCompaction,
 } from "@/lib/agents/conversation-context";
 import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
-import { displayMessagingUserText } from "@/lib/agents/messaging";
+import {
+  displayMessagingUserText,
+  parseMessagingPromptSource,
+} from "@/lib/agents/messaging";
+import { getMessagingPlatform } from "@/lib/agents/platforms";
 import { COMMAND_RESULT_PART } from "@/lib/agents/runtime-commands";
 import type { StreamRuleTrigger } from "@/lib/agents/stream-rules";
 import {
@@ -270,69 +275,10 @@ function CompactionNote({ message }: { message: WorkMessage }) {
   );
 }
 
-/** A deleted attachment keeps its message slot but no longer downloads. */
-function WorkAttachmentLink({
-  url,
-  name,
-  mediaType,
-}: {
-  url: string;
-  name: string;
-  mediaType?: string;
-}) {
-  const t = useTranslations("filePreview");
-  const [deleted, setDeleted] = useState(false);
-  const image = mediaType?.startsWith("image/");
-  if (deleted)
-    return (
-      <span className="inline-flex min-w-0 max-w-56 flex-nowrap items-center gap-1.5 rounded-lg border border-dashed border-border px-2 py-1.5 text-xs text-muted-foreground">
-        <FileX aria-hidden="true" className="size-3.5 shrink-0" />
-        <span className="min-w-0 truncate line-through">{name}</span>
-        <span className="shrink-0">{t("deleted")}</span>
-      </span>
-    );
-  return (
-    <a
-      href={url}
-      download={name}
-      onClick={async (event) => {
-        if (!url.startsWith("/api/v1/attachments/")) return;
-        event.preventDefault();
-        if (await isDeletedAttachment(url)) {
-          setDeleted(true);
-          notify(t("deletedNotice"), { severity: "warning" });
-          return;
-        }
-        const download = document.createElement("a");
-        download.href = url;
-        download.download = name;
-        download.click();
-      }}
-      className={`inline-flex min-w-0 max-w-56 items-center gap-1.5 rounded-lg bg-muted/70 px-2 py-1.5 text-xs text-foreground hover:bg-muted ${image ? "flex-wrap" : "flex-nowrap"}`}
-    >
-      {image ? (
-        // biome-ignore lint/performance/noImgElement: Authorized attachment URLs and base64 data must render directly without the Next image optimizer or layout sizing changes.
-        <img
-          src={url}
-          alt={name}
-          className="max-h-48 w-full object-contain"
-          onError={() => {
-            void isDeletedAttachment(url).then(
-              (gone) => gone && setDeleted(true),
-            );
-          }}
-        />
-      ) : (
-        <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-      )}
-      <span className="min-w-0 truncate">{name}</span>
-    </a>
-  );
-}
-
 export function WorkTranscript({
   workspaceSlug,
   agentName,
+  submitterName,
   agentId,
   conversationId,
   modelName: fallbackModelName,
@@ -355,6 +301,7 @@ export function WorkTranscript({
 }: {
   workspaceSlug: string;
   agentName: string;
+  submitterName?: string;
   agentId?: string;
   conversationId?: string;
   modelName?: string | null;
@@ -562,31 +509,20 @@ export function WorkTranscript({
           const processFailed = message.parts.some(
             (part) => part.type === "work-runtime" && part.status === "failed",
           );
-          // A reply's own files are content blocks; these are the user's uploads.
-          const fileParts = message.parts.filter(
-            (part): part is WorkPart & { url: string } =>
-              message.role === "user" &&
-              part.type === "file" &&
-              typeof part.url === "string" &&
-              (part.url.startsWith("/api/v1/attachments/") ||
-                /^data:[\w.+-]+\/[\w.+-]+;base64,/.test(part.url)),
-          );
-          const attachmentLinks = fileParts.length ? (
-            <div className="flex max-w-full flex-wrap gap-1.5">
-              {fileParts.map((part, index) => (
-                <WorkAttachmentLink
-                  // biome-ignore lint/suspicious/noArrayIndexKey: Streamed attachment parts are append-only; retain their positional identity, including duplicate URLs.
-                  key={`${part.url}-${index}`}
-                  url={part.url}
-                  name={part.filename ?? agentsT("attachment")}
-                  mediaType={part.mediaType}
-                />
-              ))}
-            </div>
-          ) : null;
+          const source =
+            message.role === "user"
+              ? parseMessagingPromptSource(
+                  message.parts.find((part) => part.type === "text")?.text ??
+                    "",
+                )
+              : null;
+          const submitter = source
+            ? [source.userName, getMessagingPlatform(source.platform)?.label]
+                .filter(Boolean)
+                .join(" · ")
+            : submitterName;
           const messageBody = (
             <>
-              {attachmentLinks}
               {message.role === "user" ? (
                 <AgentPromptProvenance parts={message.parts} />
               ) : null}
@@ -621,9 +557,30 @@ export function WorkTranscript({
                   ) : null,
                 )}
               {message.role === "user" ? (
-                text ? (
-                  <span className="whitespace-pre-wrap">{text}</span>
-                ) : null
+                message.parts.map((part, index) => {
+                  const key = `${message.id}:part:${index}`;
+                  if (
+                    part.type === "text" &&
+                    !part.reference &&
+                    typeof part.text === "string"
+                  )
+                    return (
+                      <span key={key} className="whitespace-pre-wrap">
+                        {displayMessagingUserText(part.text)}
+                      </span>
+                    );
+                  if (part.type === "file" && allowedFileUrl(part.url))
+                    return (
+                      <ConversationFilePreview
+                        key={key}
+                        display="inline"
+                        url={part.url}
+                        name={part.filename ?? agentsT("attachment")}
+                        mimeType={part.mediaType}
+                      />
+                    );
+                  return null;
+                })
               ) : (
                 <>
                   <div data-ui="work-process" className="w-full">
@@ -779,6 +736,14 @@ export function WorkTranscript({
               aria-busy={isStreamingMessage || undefined}
             >
               {showIdentity ? null : replyMetadata}
+              {message.role === "user" && submitter ? (
+                <div
+                  data-ui="work-message-submitter"
+                  className="mb-1 text-xs text-muted-foreground"
+                >
+                  {submitter}
+                </div>
+              ) : null}
               {message.role === "user" ? (
                 <MessageBubble
                   variant="soft"

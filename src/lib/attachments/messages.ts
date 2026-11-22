@@ -100,6 +100,7 @@ export async function claimWorkspaceAttachments(
         workspaceId: input.workspaceId,
         uploadedById: input.uploadedById,
         status: "ready",
+        origin: "upload",
         OR: [
           { chatThreadId: null, conversationId: null },
           scopeQuery(input.scope),
@@ -110,7 +111,7 @@ export async function claimWorkspaceAttachments(
     if (claimed.count) continue;
 
     const attachment = await tx.workspaceAttachment.findUnique({
-      where: { id, status: "ready" },
+      where: { id, status: "ready", origin: "upload" },
       select: {
         workspaceId: true,
         uploadedById: true,

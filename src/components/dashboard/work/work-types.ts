@@ -137,6 +137,7 @@ export type WorkPanel = "files" | "terminal" | "screen";
 
 export type WorkItem = {
   id: string;
+  a2aActor?: { name: string | null } | null;
   agentId: string;
   title: string | null;
   titlePending?: boolean;

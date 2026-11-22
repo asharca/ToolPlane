@@ -81,6 +81,8 @@ export type ContentBlock =
       url: string;
       filename?: string;
       mediaType: string;
+      producer?: string;
+      size?: number;
     };
 
 type ProcessStatus = Extract<ContentBlock, { kind: "process" }>["status"];

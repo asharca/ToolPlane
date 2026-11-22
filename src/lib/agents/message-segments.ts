@@ -106,7 +106,8 @@ export function expandAssistantMessages(
         { type: "text" as const, text: segment.text, state: "done" as const },
         ...(index === segments.length - 1
           ? message.parts.filter(
-              (part) => part.type === CONTEXT_MAINTENANCE_PART,
+              (part) =>
+                part.type === CONTEXT_MAINTENANCE_PART || part.type === "file",
             )
           : []),
       ],

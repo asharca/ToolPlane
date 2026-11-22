@@ -874,6 +874,9 @@ export function WorkspaceWork({
                         <>
                           <WorkTranscript
                             workspaceSlug={slug}
+                            submitterName={
+                              selected?.a2aActor?.name ?? undefined
+                            }
                             treeActionsEnabled={Boolean(
                               selected &&
                                 !sessionReadOnly &&

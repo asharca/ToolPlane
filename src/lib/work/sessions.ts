@@ -68,6 +68,7 @@ export type WorkSessionTransitionResult =
   | { ok: false; reason: "invalid_transition"; status: WorkSessionStatus };
 
 const workSessionClientInclude = {
+  a2aActor: { select: { name: true } },
   agent: {
     select: {
       id: true,

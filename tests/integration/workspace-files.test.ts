@@ -1,14 +1,21 @@
 // @vitest-environment node
 import { randomUUID } from "node:crypto";
 import { Part, TaskState } from "@a2a-js/sdk";
+import type { Prisma } from "@prisma/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as downloadAttachment } from "@/app/api/v1/attachments/[attachmentId]/route";
 import { DELETE, GET } from "@/app/api/v1/workspaces/[slug]/files/route";
 import { cleanupTaskFiles, hydrateTaskParts } from "@/lib/a2a/files";
+import {
+  captureReplyArtifacts,
+  listReplyArtifacts,
+} from "@/lib/agents/execution/reply-artifacts";
 import { hydrateWorkspaceAttachmentMessages } from "@/lib/attachments/messages";
 import {
   attachmentObjectPath,
   deleteWorkspaceAttachmentFile,
+  removeWorkspaceAttachmentVolume,
+  writeWorkspaceAttachment,
 } from "@/lib/attachments/storage";
 import { cleanupAttachmentUploads } from "@/lib/attachments/uploads";
 import { materializeConversationAttachments } from "@/lib/attachments/work";
@@ -117,6 +124,69 @@ async function taskFile(state: TaskState = TaskState.TASK_STATE_COMPLETED) {
     },
   });
   return { ...file, taskId: task.id };
+}
+
+async function artifactSource(filename: string, text: string) {
+  const id = randomUUID();
+  const body = new Blob([text]);
+  const stored = await writeWorkspaceAttachment({
+    workspaceId,
+    objectId: id,
+    filename,
+    body: body.stream(),
+    maxBytes: body.size,
+  });
+  return {
+    id,
+    workspaceId,
+    sourceKey: `artifact:${id}`,
+    filename,
+    mimeType: "text/plain",
+    status: "ready",
+    expiresAt: expiresAt(),
+    ...stored,
+  };
+}
+
+function completedArtifactTask(
+  id: string,
+  taskContextId: string,
+  files: (Prisma.A2ATaskFileCreateWithoutTaskInput & { id: string })[],
+  parentId?: string,
+) {
+  return db.a2ATask.create({
+    data: {
+      id,
+      contextId: taskContextId,
+      parentTaskId: parentId,
+      rootTaskId: parentId,
+      depth: parentId ? 1 : 0,
+      state: TaskState.TASK_STATE_COMPLETED,
+      phase: "done",
+      // The entry sorts first by timestamp alone; descendants must still win ties by hash.
+      statusAt: new Date(createdAt.getTime() + (parentId ? 1 : 0)),
+      request: {},
+      grant: {},
+      deadlineAt: expiresAt(),
+      snapshot: {
+        id,
+        contextId: taskContextId,
+        status: { state: "TASK_STATE_COMPLETED" },
+        artifacts: [
+          {
+            artifactId: randomUUID(),
+            parts: files.map((file) => ({
+              filename: file.filename,
+              mediaType: file.mimeType,
+              data: { toolplaneFileId: file.id },
+              metadata: { toolplaneFileId: file.id },
+            })),
+          },
+        ],
+      },
+      files: { create: files },
+    },
+  });
 }
 
 beforeEach(async () => {
@@ -230,6 +300,123 @@ describe("workspace file management", () => {
       (await (await list(ownerToken, "?kind=attachment")).json()).files,
     ).toMatchObject([{ id: note.id }]);
   });
+
+  it("captures reply artifacts with task-tree read boundaries", async ({
+    onTestFinished,
+  }) => {
+    onTestFinished(() => removeWorkspaceAttachmentVolume(workspaceId));
+    const outsider = await db.user.create({
+      data: { email: `${randomUUID()}@test.invalid`, passwordHash: "x" },
+    });
+    onTestFinished(async () => {
+      await db.user.delete({ where: { id: outsider.id } });
+    });
+    const outsiderToken = (
+      await createApiToken(outsider.id, "outside workspace")
+    ).token;
+    const conversation = await db.conversation.create({ data: { agentId } });
+    const childAgent = await db.agent.create({
+      data: {
+        workspaceId,
+        slug: "child",
+        name: "Child agent",
+        runtimeKind: "pi-sdk",
+      },
+    });
+    const childContext = await db.a2AContext.create({
+      data: {
+        workspaceId,
+        agentId: childAgent.id,
+        targetKind: "local",
+        targetBinding: `local:${childAgent.id}`,
+        ownerKey: ownerId,
+        expiresAt: expiresAt(),
+      },
+    });
+    const ownText = "Private entry notes";
+    const childText = "Delegated result";
+    const own = await artifactSource("private.txt", ownText);
+    const relayed = await artifactSource("relayed.txt", childText);
+    const child = await artifactSource("child.txt", childText);
+    const entry = await completedArtifactTask(randomUUID(), contextId, [
+      own,
+      relayed,
+    ]);
+    const delegated = await completedArtifactTask(
+      randomUUID(),
+      childContext.id,
+      [child],
+      entry.id,
+    );
+
+    const artifacts = await listReplyArtifacts(entry.id);
+    expect(artifacts).toMatchObject([
+      {
+        taskId: delegated.id,
+        fileId: child.id,
+        producer: { agentId: childAgent.id, name: childAgent.name },
+      },
+      {
+        taskId: entry.id,
+        fileId: own.id,
+        producer: { agentId, name: "File agent" },
+      },
+    ]);
+    const before = (await getUserQuotaSummary(ownerId)).usedBytes;
+    const captureInput = {
+      workspaceId,
+      conversationId: conversation.id,
+      uploaderId: ownerId,
+      privateEntry: true,
+      entryTaskId: entry.id,
+      artifacts,
+    };
+    const captured = await captureReplyArtifacts(captureInput);
+    expect(captured).toMatchObject([{ fileId: child.id }, { fileId: own.id }]);
+    const [shared, privateFile] = captured;
+    for (const file of captured) {
+      expect(file.attachmentId).toEqual(expect.any(String));
+      expect(file.url).toBe(`/api/v1/attachments/${file.attachmentId}`);
+    }
+    const charged = before + own.size + child.size;
+    expect((await getUserQuotaSummary(ownerId)).usedBytes).toBe(charged);
+    expect(await captureReplyArtifacts(captureInput)).toEqual(captured);
+    expect((await getUserQuotaSummary(ownerId)).usedBytes).toBe(charged);
+
+    const download = (token: string, file: typeof shared) =>
+      downloadAttachment(
+        new Request(new URL(file.url, "http://localhost"), {
+          headers: { authorization: `Bearer ${token}` },
+        }),
+        { params: Promise.resolve({ attachmentId: file.attachmentId ?? "" }) },
+      );
+    const ownerRead = await download(ownerToken, privateFile);
+    expect(ownerRead.status).toBe(200);
+    expect(await ownerRead.text()).toBe(ownText);
+    expect((await download(memberToken, privateFile)).status).toBe(403);
+    expect((await download(outsiderToken, privateFile)).status).toBe(404);
+    const memberRead = await download(memberToken, shared);
+    expect(memberRead.status).toBe(200);
+    expect(await memberRead.text()).toBe(childText);
+    expect((await download(outsiderToken, shared)).status).toBe(404);
+
+    const response = await list(memberToken, "?kind=attachment");
+    expect(response.status).toBe(200);
+    const { files } = await response.json();
+    expect(files).toHaveLength(2);
+    expect(files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: privateFile.attachmentId,
+          downloadUrl: null,
+        }),
+        expect.objectContaining({
+          id: shared.attachmentId,
+          downloadUrl: shared.url,
+        }),
+      ]),
+    );
+  }, 120_000);
 
   it.each(["size", "createdAt"])(
     "paginates stably across equal %s values",

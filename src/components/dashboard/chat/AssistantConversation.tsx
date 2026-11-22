@@ -1097,6 +1097,7 @@ export function AssistantConversation({
                     name={part.filename ?? composerT("attachment")}
                     url={part.url}
                     mimeType={part.mediaType}
+                    display="inline"
                   />
                 ) : null,
               )}

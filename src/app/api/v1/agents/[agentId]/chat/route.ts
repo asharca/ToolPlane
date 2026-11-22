@@ -11,6 +11,11 @@ import {
   agentEntryResult,
   agentEntryRuntimeParts,
 } from "@/lib/agents/execution/entries";
+import {
+  captureReplyArtifacts,
+  listReplyArtifacts,
+  replyArtifactParts,
+} from "@/lib/agents/execution/reply-artifacts";
 import { parseAgentChatBody } from "@/lib/agents/chat-body";
 import { normalizeReasoningEffort } from "@/lib/agents/constants";
 import { waitForConversationOperation } from "@/lib/agents/conversation-operations";
@@ -249,6 +254,19 @@ export const POST = withRequestLogging(
               responseFailed = true;
               responseError = error;
             }
+            const fileParts = responseFailed
+              ? []
+              : replyArtifactParts(
+                  await captureReplyArtifacts({
+                    workspaceId: liveAgent.workspaceId,
+                    conversationId: conversation.id,
+                    uploaderId: user.id,
+                    privateEntry: true,
+                    entryTaskId: task.id,
+                    artifacts: await listReplyArtifacts(task.id),
+                    signal: req.signal,
+                  }),
+                );
             const runtimeParts = agentEntryRuntimeParts(result.task);
             // A failed turn keeps the text it produced, not just the error.
             const partialText = responseFailed
@@ -268,6 +286,7 @@ export const POST = withRequestLogging(
                   ? [{ type: "text", text: partialText, state: "done" }]
                   : []
                 : [{ type: "text", text: responseText, state: "done" }]),
+              ...fileParts,
             ];
             if (parts.length)
               await db.message.create({
@@ -288,6 +307,8 @@ export const POST = withRequestLogging(
             for (const part of childParts) writer.write(part);
             if (responseFailed) throw responseError;
             uiStream.onTextDelta(responseText);
+            for (const { url, mediaType, providerMetadata } of fileParts)
+              writer.write({ type: "file", url, mediaType, providerMetadata });
             for (const part of runtimeParts) writer.write(part);
           } finally {
             uiStream.finish();

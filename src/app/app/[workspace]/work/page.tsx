@@ -73,6 +73,7 @@ function serializeWorkSession(session: WorkSummary | WorkDetail) {
   return {
     id: session.id,
     agentId: session.agentId,
+    a2aActor: detail?.a2aActor,
     title: session.title,
     task: session.task,
     acceptanceCriteria: session.acceptanceCriteria,

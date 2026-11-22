@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(async () => ({ count: 1 })),
   admit: vi.fn(),
   persist: vi.fn(),
+  attachments: vi.fn(),
+  readAttachment: vi.fn(),
   payload: null as unknown,
   handler: null as ((payload: unknown) => Promise<unknown>) | null,
   pending: new Set<Promise<unknown>>(),
@@ -21,6 +23,7 @@ vi.mock("@/lib/runtime/ownership-state", () => ({
 }));
 vi.mock("@/lib/db", () => ({
   db: {
+    workspaceAttachment: { findMany: mocks.attachments },
     agentChannelConnection: {
       findFirst: mocks.connection,
       updateMany: mocks.update,
@@ -32,6 +35,10 @@ vi.mock("@/lib/db", () => ({
       }),
     },
   },
+}));
+vi.mock(import("@/lib/attachments/storage"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  readWorkspaceAttachment: mocks.readAttachment,
 }));
 vi.mock("@/lib/agents/channel-connections", () => ({
   decryptChannelCredentials: () => ({}),
@@ -97,6 +104,8 @@ import {
 import { CHANNEL_EXECUTION_FAILURE_MESSAGE } from "@/lib/agents/message-service";
 
 class TestAdapter extends EventEmitter {
+  supportsFileDelivery = false;
+  sendFile = vi.fn(async () => {});
   connect = vi.fn(async () => {});
   disconnect = vi.fn(async () => {});
   sendTypingIndicator = vi.fn(async () => {});
@@ -151,7 +160,7 @@ beforeEach(async () => {
   });
   mocks.run.mockResolvedValue({
     status: 200,
-    body: { delivery: "message", message: "Actual reply" },
+    body: { delivery: "message", message: "Actual reply", files: [] },
   });
   expect(await startAgentChannelRunner("workspace", "channel")).toEqual({});
 });
@@ -242,7 +251,7 @@ describe("channel upstream execution delivery", () => {
       await input.onUiRequired(notice);
       return {
         status: 200,
-        body: { delivery: "message", message: "Actual reply" },
+        body: { delivery: "message", message: "Actual reply", files: [] },
       };
     });
     incoming();
@@ -264,7 +273,7 @@ describe("channel upstream execution delivery", () => {
       expect(input.signal.aborted).toBe(false);
       return {
         status: 200,
-        body: { delivery: "message", message: "Actual reply" },
+        body: { delivery: "message", message: "Actual reply", files: [] },
       };
     });
     incoming();
@@ -316,13 +325,167 @@ describe("channel upstream execution delivery", () => {
     expect(mocks.log).not.toHaveBeenCalled();
   });
 
+  describe("reply files", () => {
+    const bytes = Uint8Array.of(0, 128, 255);
+    const file = {
+      attachmentId: "artifact-1",
+      filename: "report.pdf",
+      mediaType: "application/pdf",
+      size: bytes.length,
+    };
+    const detailUrl =
+      "https://toolplane.example/app/workspace/work?c=conversation";
+    const body = {
+      conversationId: "conversation",
+      delivery: "silent",
+      message: "",
+      files: [file],
+      detailUrl,
+    };
+    const storagePath =
+      "objects/00000000-0000-4000-8000-000000000001-report.pdf";
+    beforeEach(() => {
+      mocks.attachments.mockResolvedValue([
+        {
+          id: file.attachmentId,
+          storagePath,
+          size: file.size,
+          name: file.filename,
+          mimeType: file.mediaType,
+        },
+      ]);
+      mocks.readAttachment.mockImplementation(() => new Response(bytes).body);
+    });
+
+    it("delivers a silent file-only reply as native bytes without a text receipt", async () => {
+      adapter.supportsFileDelivery = true;
+      mocks.run.mockResolvedValueOnce({ status: 200, body });
+      incoming();
+      await drain();
+      expect(mocks.attachments).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            workspaceId: "workspace",
+            status: "ready",
+            origin: "artifact",
+            id: { in: [file.attachmentId] },
+          }),
+        }),
+      );
+      expect(mocks.readAttachment).toHaveBeenCalledWith(
+        "workspace",
+        storagePath,
+        expect.any(Number),
+      );
+      expect(adapter.sendFile.mock.calls).toEqual([
+        [
+          "chat",
+          {
+            data: "AID/",
+            media_type: file.mediaType,
+            filename: file.filename,
+            size: file.size,
+          },
+        ],
+      ]);
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("sends one linked summary after the reply for a non-native transport", async () => {
+      mocks.run.mockResolvedValueOnce({
+        status: 200,
+        body: {
+          ...body,
+          delivery: "message",
+          message: "Done",
+          fallbackFilenames: ["chart.png"],
+        },
+      });
+      incoming();
+      await drain();
+      const calls = adapter.sendMessage.mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[0]?.slice(0, 2)).toEqual(["chat", "Done"]);
+      expect(calls[1]?.slice(0, 2)).toEqual([
+        "chat",
+        `已生成 2 个文件：report.pdf、chart.png\n在 ToolPlane 中查看（需登录）：${detailUrl}`,
+      ]);
+      expect(adapter.sendFile).not.toHaveBeenCalled();
+      expect(mocks.readAttachment).not.toHaveBeenCalled();
+    });
+
+    it("summarizes a fallback-only silent reply even without a persistent attachment or link", async () => {
+      adapter.supportsFileDelivery = true;
+      mocks.run.mockResolvedValueOnce({
+        status: 200,
+        body: {
+          ...body,
+          files: [],
+          detailUrl: undefined,
+          fallbackFilenames: ["chart.png"],
+        },
+      });
+      incoming();
+      await drain();
+      expect(adapter.sendMessage.mock.calls.map(([, text]) => text)).toEqual([
+        "已生成 1 个文件：chart.png",
+      ]);
+      expect(adapter.sendFile).not.toHaveBeenCalled();
+    });
+
+    it("delivers the file after successfully finalizing a streamed reply", async () => {
+      adapter.supportsFileDelivery = true;
+      mocks.run.mockImplementationOnce(async (input) => {
+        input.onReplySegments(["Preparing the report for delivery now."]);
+        await setImmediate();
+        return {
+          status: 200,
+          body: { ...body, delivery: "message", message: "Done" },
+        };
+      });
+      incoming();
+      await drain();
+      expect(adapter.onStreamComplete).toHaveBeenCalledWith(
+        "chat",
+        "Done",
+        expect.anything(),
+      );
+      expect(adapter.sendFile).toHaveBeenCalledTimes(1);
+      expect(adapter.onStreamComplete.mock.invocationCallOrder[0]).toBeLessThan(
+        adapter.sendFile.mock.invocationCallOrder[0],
+      );
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not deliver or summarize artifacts attached to a failed response", async () => {
+      adapter.supportsFileDelivery = true;
+      mocks.run.mockResolvedValueOnce({
+        status: 200,
+        body: {
+          ...body,
+          delivery: "message",
+          message: "Execution failed",
+          failed: true,
+          fallbackFilenames: ["chart.png"],
+        },
+      });
+      incoming();
+      await drain();
+      expect(adapter.sendMessage.mock.calls.map(([, text]) => text)).toEqual([
+        "Execution failed",
+      ]);
+      expect(adapter.sendFile).not.toHaveBeenCalled();
+      expect(mocks.readAttachment).not.toHaveBeenCalled();
+    });
+  });
+
   describe("live progress", () => {
     const progress = "Cloning the repository and reading the README now.";
     const runWithProgress = (body: Record<string, unknown>, text = progress) =>
       mocks.run.mockImplementationOnce(async (input) => {
         input.onReplySegments?.([text]);
         await setImmediate();
-        return { status: 200, body };
+        return { status: 200, body: { files: [], ...body } };
       });
 
     it("edits progress into one message and finalizes it with the reply", async () => {
@@ -352,7 +515,11 @@ describe("channel upstream execution delivery", () => {
         await setImmediate();
         return {
           status: 200,
-          body: { delivery: "message", message: `${before}\n\n${after}` },
+          body: {
+            delivery: "message",
+            message: `${before}\n\n${after}`,
+            files: [],
+          },
         };
       });
       incoming();

@@ -44,6 +44,12 @@ import {
   agentEntryResult,
   agentEntryRuntimeParts,
 } from "@/lib/agents/execution/entries";
+import {
+  captureReplyArtifacts,
+  listReplyArtifacts,
+  replyArtifactParts,
+  type CapturedArtifact,
+} from "@/lib/agents/execution/reply-artifacts";
 import type { ContextUsageSnapshot } from "@/lib/context-usage";
 import {
   BUDGET_WARNING_PART,
@@ -199,6 +205,7 @@ async function appendAssistantResult(
   contextUsage?: ContextUsageSnapshot,
   timing?: WorkTurnTiming,
   metadata: Prisma.InputJsonValue[] = [],
+  files: readonly Prisma.InputJsonValue[] = [],
 ) {
   const parts: Prisma.InputJsonValue[] = [
     ...metadata,
@@ -206,6 +213,7 @@ async function appendAssistantResult(
     ...(text
       ? [{ type: "text", text, state: "done" } as Prisma.InputJsonValue]
       : []),
+    ...files,
     ...(contextUsage
       ? [
           {
@@ -722,6 +730,7 @@ async function executeWork(workSessionId: string) {
       parts: message.parts as RuntimeMessage["parts"],
     }));
     let response: string;
+    let replyFiles: CapturedArtifact[];
     {
       const last = runtimeMessages.at(-1);
       const commandText =
@@ -822,6 +831,15 @@ async function executeWork(workSessionId: string) {
         const runtimeCode = taskRuntimeFailure(result.task)?.code;
         if (workFailures.is(runtimeCode)) failureCode = runtimeCode;
         response = agentEntryResult(result.task, result.path);
+        replyFiles = await captureReplyArtifacts({
+          workspaceId: work.workspaceId,
+          conversationId: work.conversationId,
+          uploaderId: work.a2aActorId,
+          privateEntry: true,
+          entryTaskId: result.task.id,
+          artifacts: await listReplyArtifacts(result.task.id),
+          signal: controller.signal,
+        });
         failureCode = "WORK_EXECUTION_FAILED";
         // Durable metadata also covers a task that completed before this observer attached.
         for (const part of agentEntryRuntimeParts(result.task)) {
@@ -862,6 +880,7 @@ async function executeWork(workSessionId: string) {
       contextUsage,
       turnTiming(),
       [...runtimeMetadata(), ...(await hookMetadata())],
+      replyArtifactParts(replyFiles),
     );
     tracePersisted = true;
     if (!executedCommand && !pendingTitles.has(work.id)) {

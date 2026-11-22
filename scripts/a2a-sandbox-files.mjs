@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { open, mkdir, rename, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, opendir, rename, unlink } from "node:fs/promises";
 import { basename, relative, resolve, sep } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { pipeline } from "node:stream/promises";
@@ -23,6 +23,9 @@ function exceeds(maxBytes) {
   );
 }
 
+const directoryFlags =
+  constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+
 // Pin each directory inode, never resolve a model-controlled symlink. Linux's
 // /proc/self/fd permits openat-style traversal without a native addon.
 async function parentDirectory(root, path, create = false) {
@@ -43,21 +46,18 @@ async function parentDirectory(root, path, create = false) {
     );
   const handles = [];
   try {
-    let directory = await open(
-      root,
-      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-    );
+    // A session root can itself be nested under writable workspace directories.
+    // Pin its ancestors too; O_NOFOLLOW alone protects only the final component.
+    const rootParts = resolve(root).split(sep).filter(Boolean);
+    let directory = await open(sep, directoryFlags);
     handles.push(directory);
-    for (const part of parts.slice(0, -1)) {
+    for (const [i, part] of [...rootParts, ...parts.slice(0, -1)].entries()) {
       const next = `/proc/self/fd/${directory.fd}/${part}`;
-      if (create)
+      if (create && i >= rootParts.length)
         await mkdir(next, { mode: 0o700 }).catch((error) => {
           if (error.code !== "EEXIST") throw error;
         });
-      directory = await open(
-        next,
-        constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-      );
+      directory = await open(next, directoryFlags);
       handles.push(directory);
     }
     return {
@@ -169,6 +169,94 @@ export async function writeWorkspaceFile(
   }
 }
 
+function skipMissing(error) {
+  if (!["ENOENT", "ENOTDIR", "ELOOP"].includes(error.code)) throw error;
+}
+
+function compareFiles(a, b) {
+  return (
+    a.mtimeMs - b.mtimeMs || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+  );
+}
+
+export async function listWorkspaceFiles(
+  root,
+  path,
+  destination,
+  { maxEntries, newerThanMs },
+) {
+  if (
+    !Number.isSafeInteger(maxEntries) ||
+    maxEntries < 0 ||
+    !Number.isFinite(newerThanMs)
+  )
+    throw new Error("Invalid sandbox file listing limits.");
+
+  const files = [];
+  let truncated = false;
+  async function walk(directoryPath, prefix, depth) {
+    const directory = await open(directoryPath, directoryFlags).catch(
+      skipMissing,
+    );
+    if (!directory) return;
+    try {
+      const pinned = `/proc/self/fd/${directory.fd}`;
+      // Stream names, not whole directories. Buffer names avoid looking up a
+      // different inode when a non-UTF-8 filename would decode lossily.
+      const entries = await opendir(pinned, { encoding: "buffer" });
+      for await (const entry of entries) {
+        const name = entry.name.toString("utf8");
+        if (
+          name.startsWith(".") ||
+          /[\\/\p{Cc}]/u.test(name) ||
+          (!prefix && /^[a-z]:/i.test(name)) ||
+          (name.includes("\uFFFD") && !Buffer.from(name).equals(entry.name))
+        )
+          continue;
+        const child = `${pinned}/${name}`;
+        const info = await lstat(child).catch(skipMissing);
+        if (!info) continue;
+        const path = prefix + name;
+        if (info.isDirectory() && depth < 4) {
+          await walk(child, `${path}/`, depth + 1);
+        } else if (
+          info.isFile() &&
+          info.nlink === 1 &&
+          Number.isSafeInteger(info.size) &&
+          info.size > 0 &&
+          info.mtimeMs >= newerThanMs &&
+          // The host trims the end of the session path on subsequent reads.
+          name.trimEnd() === name
+        ) {
+          // Keep only the earliest maxEntries, even if better candidates are
+          // encountered at the very end of the walk.
+          const file = { path, size: info.size, mtimeMs: info.mtimeMs };
+          let index = files.length;
+          while (index > 0 && compareFiles(file, files[index - 1]) < 0) index--;
+          if (files.length === maxEntries) {
+            truncated = true;
+            if (index === files.length) continue;
+            files.pop();
+          }
+          files.splice(index, 0, file);
+        }
+      }
+    } finally {
+      await directory.close();
+    }
+  }
+
+  const parent = await parentDirectory(root, path).catch(skipMissing);
+  if (parent) {
+    try {
+      await walk(parent.path, "", 1);
+    } finally {
+      await parent.close();
+    }
+  }
+  await pipeline([JSON.stringify({ files, truncated })], destination);
+}
+
 /** Exit status 27 (EFBIG) marks a size limit; other failures exit 1. */
 export function reportFailure(error) {
   process.stderr.write(`${error?.message ?? error}\n`);
@@ -179,15 +267,20 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  const [action, path, maxBytes, hash] = process.argv.slice(2);
+  const [action, path, limit, extra] = process.argv.slice(2);
   try {
-    const options = { maxBytes: Number(maxBytes) };
+    const options = { maxBytes: Number(limit) };
     if (action === "read")
       await readWorkspaceFile("/workspace", path, process.stdout, options);
     else if (action === "write")
       await writeWorkspaceFile("/workspace", path, process.stdin, {
         ...options,
-        expectedHash: hash,
+        expectedHash: extra,
+      });
+    else if (action === "list")
+      await listWorkspaceFiles("/workspace", path, process.stdout, {
+        maxEntries: Number(limit),
+        newerThanMs: Number(extra),
       });
     else throw new Error("Invalid file operation.");
   } catch (error) {

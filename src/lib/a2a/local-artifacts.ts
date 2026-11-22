@@ -1,5 +1,6 @@
 import "server-only";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
+import { mimeTypeForFilename } from "@/lib/file-preview";
 import {
   DEFAULT_TRANSPORT_POLICY,
   type TransportPolicy,
@@ -154,7 +155,7 @@ export async function publishLocalArtifact(
           `artifact:${input.artifactId}:${index}`,
           part.path,
           part.filename,
-          part.mediaType,
+          part.mediaType ?? mimeTypeForFilename(part.filename ?? part.path),
         );
       }
     }
