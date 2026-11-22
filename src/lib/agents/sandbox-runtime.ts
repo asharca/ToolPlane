@@ -469,7 +469,8 @@ export function waitForSandboxRuntimeInstall<T>(
 }
 
 export function piProviderProtocol(format: string): string {
-  if (format === "anthropic") return "anthropic-messages";
+  if (format === "anthropic" || /^pi:[a-z0-9-]+$/.test(format))
+    return "anthropic-messages";
   if (format === "openai-responses") return "openai-responses";
   if (format === "openai") return "openai-completions";
   throw new Error(`Pi does not support provider format: ${format}.`);

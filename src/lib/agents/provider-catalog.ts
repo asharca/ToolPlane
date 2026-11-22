@@ -3,10 +3,26 @@ import "server-only";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { PiModelReference } from "./model-catalog";
 
+export type ProviderAuthMode = "oauth" | "api_key";
+
+export type ProviderOAuthMethodOption = {
+  id: string;
+  labelKey:
+    | "oauthMethodBrowser"
+    | "oauthMethodCopyCode"
+    | "oauthMethodDeviceCode";
+};
+
 export type ProviderPreset = {
   format: string;
   name: string;
   baseUrl: string;
+  authModes?: ProviderAuthMode[];
+  oauthName?: string;
+  oauthLoginLabel?: string;
+  isSubscription?: boolean;
+  oauthMethods?: ProviderOAuthMethodOption[];
+  supportsEnterpriseDomain?: boolean;
 };
 
 export const CUSTOM_PROVIDER_PRESETS: ProviderPreset[] = [
@@ -19,12 +35,59 @@ export const CUSTOM_PROVIDER_PRESETS: ProviderPreset[] = [
   { format: "anthropic", name: "Anthropic-compatible", baseUrl: "" },
 ];
 
+function oauthMethodsForProvider(
+  providerId: string,
+): ProviderOAuthMethodOption[] | undefined {
+  if (providerId === "anthropic") {
+    return [
+      { id: "browser", labelKey: "oauthMethodBrowser" },
+      { id: "copy_code", labelKey: "oauthMethodCopyCode" },
+    ];
+  }
+  if (providerId === "openai-codex") {
+    return [
+      { id: "browser", labelKey: "oauthMethodBrowser" },
+      { id: "device_code", labelKey: "oauthMethodDeviceCode" },
+    ];
+  }
+  if (providerId === "radius") {
+    return [
+      { id: "browser", labelKey: "oauthMethodBrowser" },
+      { id: "device-code", labelKey: "oauthMethodDeviceCode" },
+    ];
+  }
+  return undefined;
+}
+
 export function piProviderPresets(): ProviderPreset[] {
-  return builtinProviders().map((provider) => ({
-    format: `pi:${provider.id}`,
-    name: provider.name,
-    baseUrl: provider.baseUrl ?? "",
-  }));
+  return builtinProviders().map((provider) => {
+    const authModes: ProviderAuthMode[] = [];
+    if (provider.auth?.oauth) authModes.push("oauth");
+    if (provider.auth?.apiKey?.login) authModes.push("api_key");
+    if (!authModes.length) authModes.push("api_key");
+    const defaultBaseUrl =
+      provider.baseUrl ?? provider.getModels()[0]?.baseUrl ?? "";
+    const oauthMethods = oauthMethodsForProvider(provider.id);
+    return {
+      format: `pi:${provider.id}`,
+      name: provider.name,
+      baseUrl: defaultBaseUrl,
+      authModes,
+      ...(provider.auth?.oauth?.name
+        ? { oauthName: provider.auth.oauth.name }
+        : {}),
+      ...(provider.auth?.oauth?.loginLabel
+        ? { oauthLoginLabel: provider.auth.oauth.loginLabel }
+        : {}),
+      ...(provider.auth?.oauth?.isSubscription !== undefined
+        ? { isSubscription: provider.auth.oauth.isSubscription }
+        : {}),
+      ...(oauthMethods ? { oauthMethods } : {}),
+      ...(provider.id === "github-copilot"
+        ? { supportsEnterpriseDomain: true }
+        : {}),
+    };
+  });
 }
 
 export function piProviderId(format: string): string | null {

@@ -2,12 +2,12 @@ import "server-only";
 
 import { revalidatePath } from "next/cache";
 import { providerModelIds } from "@/lib/agents/model";
+import { parseProviderCredential } from "@/lib/agents/provider-credentials";
 import { setProviderModels } from "@/lib/agents/provider-mutations";
 import {
   fetchProviderModels,
   type ProviderModelFetchConfig,
 } from "@/lib/agents/models-fetch";
-
 export function revalidateProviderViews(slug: string) {
   for (const path of [
     "agents",
@@ -38,11 +38,19 @@ export async function refreshProviderModels(
   provider: ProviderModelFetchConfig & { name: string },
 ): Promise<string | null> {
   const builtinModels = providerModelIds(provider);
-  if (builtinModels) {
+  if (builtinModels && (builtinModels.length > 0 || !provider.baseUrl.trim())) {
     await setProviderModels(workspaceId, providerId, builtinModels);
     return null;
   }
-  const result = await fetchProviderModels(provider);
+  const credential = parseProviderCredential(provider.apiKey);
+  const resolvedKey =
+    credential?.type === "oauth"
+      ? credential.access
+      : (credential?.key ?? provider.apiKey);
+  const result = await fetchProviderModels({
+    ...provider,
+    apiKey: resolvedKey,
+  });
   if (!result.ok) return modelFetchError(result);
   await setProviderModels(workspaceId, providerId, result.models);
   return null;

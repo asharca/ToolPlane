@@ -201,13 +201,18 @@ export function ProviderDetail({
         <div className="flex min-w-0 flex-1 basis-64 items-center gap-3">
           <ProviderMonogram name={provider.name} large />
           <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h2 className="truncate text-base font-semibold text-foreground">
                 {provider.name}
               </h2>
               <span className="shrink-0 rounded-lg bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
                 {providerFormatLabel(provider.format, piProviderPresets)}
               </span>
+              {provider.authType === "oauth" ? (
+                <span className="shrink-0 rounded-lg bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">
+                  {t("oauthConnectedBadge")}
+                </span>
+              ) : null}
             </div>
             <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
               {endpoint}
@@ -234,6 +239,7 @@ export function ProviderDetail({
             slug={slug}
             provider={provider}
             piProviderPresets={piProviderPresets}
+            onUpdated={onRefresh}
           />
           <form action={deleteProviderAction}>
             <input type="hidden" name="workspace" value={slug} />
