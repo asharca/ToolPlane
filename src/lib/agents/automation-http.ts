@@ -1,8 +1,12 @@
 import "server-only";
-import { workspaceAccessWhere } from "@/lib/workspace/scope";
+import {
+  resolveWorkspaceScope,
+  workspaceAccessWhere,
+  workspaceScopeWhere,
+} from "@/lib/workspace/scope";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { encryptSecretText } from "@/lib/security/secrets";
+import { configSchema, permitsHost } from "@/lib/account-connections/config";
 import {
   isSourceKind,
   parseSourceConfig,
@@ -32,6 +36,12 @@ const deliveryConnectionSelect = {
   name: true,
   platform: true,
 } as const;
+const triggerIncludes = {
+  deliveryConnection: { select: deliveryConnectionSelect },
+  connection: {
+    select: { id: true, name: true, status: true, accountLabel: true },
+  },
+} as const;
 
 const deliverySchema = z
   .object({
@@ -46,7 +56,8 @@ async function deliveryData(
   workspaceId: string,
   agentId: string,
 ) {
-  if (value === undefined) return {};
+  if (value === undefined)
+    return { deliveryConnectionId: undefined, deliveryChatId: undefined };
   const parsed = deliverySchema.safeParse(value);
   if (!parsed.success) return null;
   if (parsed.data === null)
@@ -66,7 +77,7 @@ const createSchema = z
   .object({
     kind: z.enum(["schedule", "webhook", ...sourceKinds]),
     sourceConfig: z.unknown().optional(),
-    credential: z.unknown().optional(),
+    connectionId: z.unknown().optional(),
     name: z.string().trim().min(1).max(120),
     prompt: z.string().trim().min(1).max(20_000),
     cron: z.string().max(200).optional(),
@@ -80,28 +91,41 @@ const patchSchema = createSchema
   .partial()
   .extend({ rotateSecret: z.literal(true).optional() })
   .strict();
-// Never spread request source fields into the model: credentials are write-only,
-// and config is projected through a separate strict schema for each provider.
-function sourceData(
+async function sourceData(
+  workspaceId: string,
   kind: string,
   raw: unknown,
-  credential: unknown,
-  create: boolean,
+  connectionId: unknown,
 ) {
   if (!isSourceKind(kind))
-    return raw === undefined && credential === undefined ? {} : null;
-  const sourceConfig =
-    raw === undefined ? undefined : parseSourceConfig(kind, raw);
-  if ((create || raw !== undefined) && !sourceConfig) return null;
-  if (credential === undefined)
-    return create && kind !== "youtube" ? null : { sourceConfig };
+    return raw === undefined && connectionId === undefined
+      ? { sourceConfig: undefined, connectionId: undefined }
+      : jsonError("INVALID_TRIGGER_SOURCE", 400);
   if (
-    kind === "youtube" ||
-    typeof credential !== "string" ||
-    !/^[!-~]{1,4096}$/.test(credential)
+    connectionId != null &&
+    (typeof connectionId !== "string" ||
+      !connectionId ||
+      connectionId.length > 200)
   )
-    return null;
-  return { sourceConfig, sourceCredential: encryptSecretText(credential) };
+    return jsonError("INVALID_TRIGGER_SOURCE", 400);
+  const id = typeof connectionId === "string" ? connectionId : null;
+  const sourceConfig = parseSourceConfig(kind, raw);
+  if (!sourceConfig) return jsonError("INVALID_TRIGGER_SOURCE", 400);
+  if (id) {
+    const connection = await db.accountConnection.findFirst({
+      where: { id, workspaceId },
+      select: { config: true },
+    });
+    if (!connection) return jsonError("INVALID_TRIGGER_SOURCE", 400);
+    if (
+      !permitsHost(
+        configSchema.parse(connection.config),
+        new URL(sourceConfig.url),
+      )
+    )
+      return jsonError("TRIGGER_SOURCE_HOST_NOT_ALLOWED", 400);
+  }
+  return { sourceConfig, connectionId: id };
 }
 const budgetSchema = z
   .object({
@@ -139,17 +163,14 @@ export async function handleAgentAutomation(
       ...ORDINARY_AGENT_FILTER,
       workspace: workspaceAccessWhere(user.id),
     },
-    include: {
-      workspace: { include: { members: { where: { userId: user.id } } } },
-    },
   });
   if (!agent) return jsonError("Not found", 404);
-  if (
-    req.method !== "GET" &&
-    agent.workspace.ownerId !== user.id &&
-    !agent.workspace.members.some((m) => m.role === "admin")
-  )
-    return jsonError("Forbidden", 403);
+  const scope = await resolveWorkspaceScope(
+    { id: agent.workspaceId },
+    user.id,
+    req.method === "GET" ? "read" : "manage",
+  );
+  if (!scope) return jsonError("Forbidden", 403);
   if (action === "usage") {
     const range = usageRange(req);
     if (!range) return jsonError("INVALID_DAYS", 400);
@@ -267,16 +288,20 @@ export async function handleAgentAutomation(
   }
   if (action === "triggers" && req.method === "GET") {
     const triggers = await db.agentTrigger.findMany({
-      where: { agentId, workspaceId: agent.workspaceId },
+      where: { agentId, workspace: workspaceScopeWhere(scope) },
       orderBy: { createdAt: "asc" },
-      include: { deliveryConnection: { select: deliveryConnectionSelect } },
+      include: triggerIncludes,
     });
     return Response.json({ triggers: triggers.map(triggerDto) });
   }
   const trigger = triggerId
     ? await db.agentTrigger.findFirst({
-        where: { id: triggerId, agentId, workspaceId: agent.workspaceId },
-        include: { deliveryConnection: { select: deliveryConnectionSelect } },
+        where: {
+          id: triggerId,
+          agentId,
+          workspace: workspaceScopeWhere(scope),
+        },
+        include: triggerIncludes,
       })
     : null;
   if (triggerId && !trigger) return jsonError("Not found", 404);
@@ -288,7 +313,9 @@ export async function handleAgentAutomation(
     }
   }
   if (req.method === "DELETE" && trigger) {
-    await db.agentTrigger.delete({ where: { id: trigger.id } });
+    await db.agentTrigger.delete({
+      where: { id: trigger.id, workspace: workspaceScopeWhere(scope) },
+    });
     return new Response(null, { status: 204 });
   }
   if (req.method === "POST") {
@@ -298,9 +325,14 @@ export async function handleAgentAutomation(
         "INVALID_TRIGGER",
         body.reason === "too_large" ? 413 : 400,
       );
-    const { delivery, sourceConfig, credential, ...value } = body.value;
-    const source = sourceData(value.kind, sourceConfig, credential, true);
-    if (!source) return jsonError("INVALID_TRIGGER_SOURCE", 400);
+    const { delivery, sourceConfig, connectionId, ...value } = body.value;
+    const source = await sourceData(
+      agent.workspaceId,
+      value.kind,
+      sourceConfig,
+      connectionId,
+    );
+    if (source instanceof Response) return source;
     const target = await deliveryData(delivery, agent.workspaceId, agentId);
     if (!target) return jsonError("INVALID_TRIGGER_DELIVERY", 400);
     let nextRunAt: Date | null = null;
@@ -321,7 +353,8 @@ export async function handleAgentAutomation(
       data: {
         ...value,
         ...target,
-        ...source,
+        sourceConfig: source.sourceConfig,
+        connectionId: source.connectionId ?? null,
         cron: value.kind !== "webhook" ? value.cron : null,
         timezone: value.kind !== "webhook" ? (value.timezone ?? "UTC") : null,
         nextRunAt: value.enabled === false ? null : nextRunAt,
@@ -330,7 +363,7 @@ export async function handleAgentAutomation(
         actorId: user.id,
         secretHash: secret?.secretHash,
       },
-      include: { deliveryConnection: { select: deliveryConnectionSelect } },
+      include: triggerIncludes,
     });
     return Response.json(
       {
@@ -347,12 +380,21 @@ export async function handleAgentAutomation(
         "INVALID_TRIGGER",
         body.reason === "too_large" ? 413 : 400,
       );
-    const { rotateSecret, delivery, sourceConfig, credential, ...value } =
+    const { rotateSecret, delivery, sourceConfig, connectionId, ...value } =
       body.value;
-    const source = sourceData(trigger.kind, sourceConfig, credential, false);
-    if (!source) return jsonError("INVALID_TRIGGER_SOURCE", 400);
+    const source = await sourceData(
+      agent.workspaceId,
+      trigger.kind,
+      sourceConfig === undefined && isSourceKind(trigger.kind)
+        ? trigger.sourceConfig
+        : sourceConfig,
+      connectionId === undefined && isSourceKind(trigger.kind)
+        ? trigger.connectionId
+        : connectionId,
+    );
+    if (source instanceof Response) return source;
     const resetSource =
-      credential !== undefined ||
+      (connectionId !== undefined && connectionId !== trigger.connectionId) ||
       (isSourceKind(trigger.kind) &&
         sourceConfig !== undefined &&
         JSON.stringify(parseSourceConfig(trigger.kind, sourceConfig)) !==
@@ -387,8 +429,13 @@ export async function handleAgentAutomation(
       return jsonError("INVALID_TRIGGER", 400);
     }
     const secret = rotateSecret ? newTriggerSecret() : null;
-    const updated = await db.agentTrigger.update({
-      where: { id: trigger.id, agentId, workspaceId: agent.workspaceId },
+    const [updated] = await db.agentTrigger.updateManyAndReturn({
+      where: {
+        id: trigger.id,
+        agentId,
+        workspace: workspaceScopeWhere(scope),
+        updatedAt: trigger.updatedAt,
+      },
       data: {
         ...value,
         ...target,
@@ -406,8 +453,9 @@ export async function handleAgentAutomation(
         nextRunAt,
         ...(secret ? { secretHash: secret.secretHash } : {}),
       },
-      include: { deliveryConnection: { select: deliveryConnectionSelect } },
+      include: triggerIncludes,
     });
+    if (!updated) return jsonError("INVALID_TRIGGER", 409);
     return Response.json({
       trigger: triggerDto(updated),
       ...(secret ? { secret: secret.secret } : {}),

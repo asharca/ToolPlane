@@ -66,6 +66,12 @@ export function nextTriggerRun(
 }
 export function triggerDto(
   trigger: AgentTrigger & {
+    connection: {
+      id: string;
+      name: string;
+      status: string;
+      accountLabel: string | null;
+    } | null;
     deliveryConnection: Pick<
       AgentChannelConnection,
       "id" | "name" | "platform"
@@ -83,7 +89,7 @@ export function triggerDto(
     source: isSourceKind(trigger.kind)
       ? {
           config: parseSourceConfig(trigger.kind, trigger.sourceConfig) ?? {},
-          hasCredential: trigger.sourceCredential !== null,
+          connection: trigger.connection,
           lastSyncAt: trigger.lastSyncAt?.toISOString() ?? null,
           lastSyncStatus: trigger.lastSyncStatus,
           lastSyncError: trigger.lastSyncError,

@@ -216,6 +216,15 @@
 - **证据**：[消息加载入口](src/i18n/request.ts)、[长驻工作区布局](src/app/app/[workspace]/layout.tsx)、[系统更新面板](src/components/dashboard/SystemUpdateButton.tsx)；2026-11-01 用户报告及本次真实中英文浏览器 console 检查。
 - **确认日期**：2026-11-01（用户报告）。
 
+### TP-L063：整体改写 locale JSON 会静默删掉别人刚加的键
+
+**规则**：合并或改写 `messages/*.json` 时只增改本次需要的键，不用旧副本整体覆盖；代码里静态可知的翻译键必须在中英文目录中都存在。
+
+- **错误与原因**：2026-11-22 `c7399539`（供应商 OAuth）提交时，两份目录用的是 `c7dd933c` 之前的内容，删掉了触发器订阅的 32 个键；中英文界面都直接显示 `console.agentAutomation.githubReason.ci_activity` 等原始路径，`tsc`、Biome 与测试都不检查键是否存在。同一检查还发现 v0.33.0（`439f7610`）删掉的 `console.agents.uploadingAttachments` 仍被两个输入栏引用。
+- **下次怎么验证**：`pnpm check` 中的 `scripts/check-invariants.mjs` 解析 `useTranslations`／`getTranslations` 绑定的命名空间，检查字面量键（含条件表达式两支）和模板字面量的分组前缀在 en、zh 中都存在；用 `c7399539` 的目录运行会报出上述全部缺失。翻译函数作为参数传递或键完全动态时不在检查范围，仍需实际页面验收。
+- **约束层（检查）**：[`check-invariants.mjs`](scripts/check-invariants.mjs)。
+- **确认日期**：2026-11-22（用户报告）。
+
 ### TP-L014：运行时工具必须穿过真实协议协商与会话审批验收
 
 **规则**：生成的 MCP 客户端用官方 SDK 的真实 StreamableHTTP 服务验证发现及调用；会话审批复用现有 origin 策略，并在当前实际服务地址完成浏览器决策，不能只看 mock 返回或待审批卡片。
