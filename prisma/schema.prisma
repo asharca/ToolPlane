@@ -821,6 +821,15 @@ model AgentTrigger {
   timezone String?
   prompt String
   secretHash String?
+  sourceConfig Json?
+  sourceCredential Json?
+  lastSyncAt DateTime?
+  lastSyncStatus String?
+  lastSyncError String?
+  syncRetryAt DateTime?
+  syncCursor String?
+  syncFailures Int @default(0)
+  items AgentTriggerItem[]
   actorId String
   actor User @relation(fields: [actorId], references: [id], onDelete: Cascade)
   nextRunAt DateTime?
@@ -839,6 +848,16 @@ model AgentTrigger {
   updatedAt DateTime @updatedAt
   @@index([agentId, createdAt])
   @@index([enabled, nextRunAt])
+}
+
+model AgentTriggerItem {
+  id String @id @default(cuid())
+  triggerId String
+  trigger AgentTrigger @relation(fields: [triggerId], references: [id], onDelete: Cascade)
+  externalId String
+  revision String
+  createdAt DateTime @default(now())
+  @@unique([triggerId, externalId, revision])
 }
 
 // Private encrypted values; revisions contain only credential IDs and names.
