@@ -1,5 +1,10 @@
 {
   "filePreview": {
+    "producedBy": "由 {name} 生成",
+    "forbidden": "你没有权限查看此文件",
+    "expired": "文件已过期或不可用",
+    "tableTruncated": "仅预览前 {rows} 行、{columns} 列",
+    "column": "列 {index}",
     "open": "预览 {name}",
     "download": "下载",
     "unavailable": "无法预览此文件。",
@@ -1852,8 +1857,6 @@
         "phase_recovering": "正在恢复",
         "phase_paused": "等待补充信息或授权",
         "phase_done": "已结束",
-        "downloadArtifact": "下载文件",
-        "artifactDownloadFailed": "文件暂不可用，请刷新任务并检查访问权限或保留期是否已失效。",
         "filesReceiving": "正在接收任务文件…",
         "fileDeliveryFailed": "文件接收失败。重试只重新领取文件，不会重复已完成的工具调用。",
         "retryFiles": "重试接收文件",
@@ -1864,7 +1867,6 @@
         "phase_file-staging-failed": "沙箱文件准备失败",
         "phase_file-stage-ready": "重试沙箱文件准备",
         "phase_remote-file-receiving": "正在接收远程文件",
-        "artifactDownloadWarning": "{bytes} 字节。智能体交付的文件是不可信数据，请确认任务来源后再下载；平台不会自动预览或执行。",
         "remote": {
           "title": "远程智能体",
           "refresh": "刷新远程连接",
@@ -3034,6 +3036,7 @@
       },
       "agentUsage": "智能体用量",
       "viewer": {
+        "producedBy": "由 {name} 生成",
         "runs": "智能体运行",
         "run": "智能体运行",
         "originRun": "来源运行",

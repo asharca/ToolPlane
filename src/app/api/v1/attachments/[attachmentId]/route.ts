@@ -26,6 +26,7 @@ async function authorizedAttachment(req: Request, attachmentId: string) {
       id: true,
       workspaceId: true,
       uploadedById: true,
+      uploaderOnly: true,
       chatThreadId: true,
       conversationId: true,
       name: true,
@@ -34,14 +35,6 @@ async function authorizedAttachment(req: Request, attachmentId: string) {
       storagePath: true,
     },
   });
-  if (
-    attachment &&
-    !attachment.chatThreadId &&
-    !attachment.conversationId &&
-    attachment.uploadedById !== user.id
-  ) {
-    return { user, attachment: null };
-  }
   return { user, attachment };
 }
 
@@ -66,6 +59,15 @@ export const GET = withRequestLogging(
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
     if (!attachment)
       return Response.json({ error: "Attachment not found" }, { status: 404 });
+    if (attachment.uploadedById !== user.id) {
+      if (attachment.uploaderOnly)
+        return Response.json({ error: "Forbidden" }, { status: 403 });
+      if (!attachment.chatThreadId && !attachment.conversationId)
+        return Response.json(
+          { error: "Attachment not found" },
+          { status: 404 },
+        );
+    }
     if (!Number.isSafeInteger(attachment.size) || attachment.size <= 0) {
       return Response.json(
         { error: "Attachment metadata is invalid" },
@@ -74,11 +76,14 @@ export const GET = withRequestLogging(
     }
 
     try {
-      const body = readWorkspaceAttachment(
-        attachment.workspaceId,
-        attachment.storagePath,
-        attachment.size,
-      );
+      const body =
+        req.method === "HEAD"
+          ? null
+          : readWorkspaceAttachment(
+              attachment.workspaceId,
+              attachment.storagePath,
+              attachment.size,
+            );
       return new Response(body, {
         headers: {
           "cache-control": "private, no-store",

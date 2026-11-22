@@ -68,6 +68,7 @@ type FileRow = WorkspaceFileRef & {
   createdAt: Date;
   expiresAt: Date | null;
   uploadedById: string | null;
+  uploaderOnly: boolean;
   uploaderName: string | null;
   conversationId: string | null;
   conversationTitle: string | null;
@@ -145,7 +146,8 @@ function projectFile(
   // is not a capability and cannot bypass their independent read policies.
   const downloadUrl =
     row.kind === "attachment"
-      ? source.type !== "draft" || row.uploadedById === actorUserId
+      ? row.uploadedById === actorUserId ||
+        (!row.uploaderOnly && source.type !== "draft")
         ? `/api/v1/attachments/${encodeURIComponent(row.id)}`
         : null
       : row.taskId && row.rootAgentId && row.expiresAt && row.expiresAt > now
@@ -193,12 +195,12 @@ export function listWorkspaceFiles(scope: WorkspaceScope, page: FilePage) {
         WITH files AS (
           SELECT a.id, 'attachment'::text AS kind, a.name, a."mimeType", a.size,
                  a."createdAt", NULL::timestamp AS "expiresAt", a."uploadedById",
-                 a."conversationId", a."chatThreadId", NULL::text AS "taskId"
+                 a."conversationId", a."chatThreadId", NULL::text AS "taskId", a."uploaderOnly"
           FROM "WorkspaceAttachment" a
           WHERE a."workspaceId" = ${id} AND a.status = 'ready' AND ${page.kind !== "a2a"}
           UNION ALL
           SELECT a.id, 'a2a'::text, a.filename, a."mimeType", a.size,
-                 a."createdAt", a."expiresAt", NULL, NULL, NULL, a."taskId"
+                 a."createdAt", a."expiresAt", NULL, NULL, NULL, a."taskId", false
           FROM "A2ATaskFile" a
           WHERE a."workspaceId" = ${id} AND a.status = 'ready' AND ${page.kind !== "attachment"}
             AND a."storagePath" IS NOT NULL AND a.size IS NOT NULL

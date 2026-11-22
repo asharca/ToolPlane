@@ -2,7 +2,9 @@
 
 import type { ReactNode } from "react";
 import { useTranslations } from "next-intl";
+import { A2AArtifactParts } from "@/components/dashboard/agents/A2AArtifactParts";
 import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
+import type { A2AWirePart } from "@/lib/conversation/a2a-parts";
 import type {
   A2ATaskDetail as A2ATaskDetailView,
   A2ATaskNode,
@@ -100,63 +102,95 @@ export function A2ATaskConversation({
   messages,
   artifacts,
   renderParts,
+  participants,
 }: {
   messages: A2AMessageView[];
   artifacts: A2AArtifactView[];
-  renderParts?: (parts: JsonValue[], name: string) => ReactNode;
+  renderParts?: (parts: JsonValue[], name: string, taskId: string) => ReactNode;
+  participants?: (
+    taskId: string,
+  ) => { user?: string; agent?: string } | undefined;
 }) {
   const t = useTranslations("console.observability.viewer");
-  const parts = (items: JsonValue[], name: string) =>
-    renderParts ? renderParts(items, name) : <ContentBlocks blocks={items} />;
+  const parts = (items: JsonValue[], name: string, taskId: string) =>
+    renderParts ? (
+      renderParts(items, name, taskId)
+    ) : (
+      <ContentBlocks blocks={items} />
+    );
   return (
     <>
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">{t("messages")}</h2>
         {!messages.length && <EmptyState message={t("noMessages")} />}
         <div className="space-y-4">
-          {messages.map((message) => (
-            <article
-              key={`${message.taskId}:${message.id}`}
-              className={`max-w-[95%] space-y-2 rounded-xl border border-border p-4 ${message.role === "user" ? "ml-auto bg-primary/5" : "mr-auto bg-muted/20"}`}
-            >
-              <header className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span>
-                  {t.has(`roles.${message.role}`)
-                    ? t(`roles.${message.role}`)
-                    : message.role}
-                </span>
-                {message.time && <RelativeTime value={message.time} />}
-                <a
-                  href={`#task-${message.taskId}`}
-                  className="font-mono hover:underline"
-                >
-                  {message.taskId.slice(0, 12)}
-                </a>
-              </header>
-              {parts(message.parts, message.id)}
-            </article>
-          ))}
+          {messages.map((message) => {
+            const party = participants?.(message.taskId);
+            const roleLabel =
+              message.role === "user"
+                ? party?.user
+                : message.role === "agent"
+                  ? party?.agent
+                  : undefined;
+            return (
+              <article
+                key={`${message.taskId}:${message.id}`}
+                className={`max-w-[95%] space-y-2 rounded-xl border border-border p-4 ${message.role === "user" ? "ml-auto bg-primary/5" : "mr-auto bg-muted/20"}`}
+              >
+                <header className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>
+                    {roleLabel ||
+                      (t.has(`roles.${message.role}`)
+                        ? t(`roles.${message.role}`)
+                        : message.role)}
+                  </span>
+                  {message.time && <RelativeTime value={message.time} />}
+                  <a
+                    href={`#task-${message.taskId}`}
+                    className="font-mono hover:underline"
+                  >
+                    {message.taskId.slice(0, 12)}
+                  </a>
+                </header>
+                {parts(message.parts, message.id, message.taskId)}
+              </article>
+            );
+          })}
         </div>
       </section>
       {artifacts.length > 0 && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold">{t("artifacts")}</h2>
-          {artifacts.map((artifact) => (
-            <article
-              key={`${artifact.taskId}:${artifact.id}`}
-              className="space-y-3 rounded-lg border border-border p-4"
-            >
-              <h3 className="text-sm font-medium">
-                {artifact.name ?? artifact.id}
-              </h3>
-              {artifact.description && (
-                <p className="text-sm text-muted-foreground">
-                  {artifact.description}
-                </p>
-              )}
-              {parts(artifact.parts, artifact.name ?? artifact.id)}
-            </article>
-          ))}
+          {artifacts.map((artifact) => {
+            const producer = participants?.(artifact.taskId)?.agent;
+            return (
+              <article
+                key={`${artifact.taskId}:${artifact.id}`}
+                className="space-y-3 rounded-lg border border-border p-4"
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h3 className="text-sm font-medium">
+                    {artifact.name ?? artifact.id}
+                  </h3>
+                  {producer && (
+                    <span className="text-xs text-muted-foreground">
+                      {t("producedBy", { name: producer })}
+                    </span>
+                  )}
+                </div>
+                {artifact.description && (
+                  <p className="text-sm text-muted-foreground">
+                    {artifact.description}
+                  </p>
+                )}
+                {parts(
+                  artifact.parts,
+                  artifact.name ?? artifact.id,
+                  artifact.taskId,
+                )}
+              </article>
+            );
+          })}
         </section>
       )}
     </>
@@ -167,6 +201,23 @@ export function A2ATaskDetail({ detail }: { detail: A2ATaskDetailView }) {
   const t = useTranslations("console.observability.viewer");
   const describeRuntimeError = useRuntimeErrorText();
   const { summary } = detail;
+  const participantsByTask = new Map<
+    string,
+    { user?: string; agent?: string }
+  >();
+  for (const node of detail.tree) {
+    participantsByTask.set(node.taskId, {
+      user: node.from.name,
+      agent: node.to.name,
+    });
+  }
+  if (!participantsByTask.has(summary.taskId)) {
+    participantsByTask.set(summary.taskId, {
+      user: summary.from.name,
+      agent: summary.to.name,
+    });
+  }
+  const participants = (taskId: string) => participantsByTask.get(taskId);
   return (
     <div className="min-w-0 space-y-6">
       <header className="space-y-3">
@@ -205,6 +256,15 @@ export function A2ATaskDetail({ detail }: { detail: A2ATaskDetailView }) {
       <A2ATaskConversation
         messages={detail.messages}
         artifacts={detail.artifacts}
+        participants={participants}
+        renderParts={(parts, name, taskId) => (
+          <A2AArtifactParts
+            taskId={taskId}
+            name={name}
+            parts={parts as A2AWirePart[]}
+            producer={participants(taskId)?.agent}
+          />
+        )}
       />
       <Timeline entries={detail.timeline} />
       <details className="space-y-3 rounded-lg border border-border p-4">

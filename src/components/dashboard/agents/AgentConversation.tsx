@@ -929,6 +929,7 @@ export function AgentConversation({
                               name={part.filename ?? t("attachment")}
                               url={part.url}
                               mimeType={part.mediaType}
+                              display="inline"
                             />
                           );
                         return null;
@@ -1188,6 +1189,7 @@ export function AgentConversation({
                     <ConversationFilePreview
                       key={attachment.id}
                       file={attachment.file}
+                      display="inline"
                       name={attachment.file.name}
                       mimeType={attachment.file.type}
                       removeLabel={t("removeAttachment", {

@@ -5,7 +5,8 @@ import {
   assertRuntimeOwner,
   runtimeCanOperate,
 } from "@/lib/runtime/ownership-state";
-import type { UIMessage } from "ai";
+import { MAX_ATTACHMENTS_PER_MESSAGE } from "@/lib/attachments/work";
+import { deliverChannelReplyFiles } from "./channel-file-delivery";
 import { db } from "@/lib/db";
 import { logSystemEvent } from "@/lib/observability/system";
 import { defineFailures } from "@/lib/errors/registry";
@@ -29,6 +30,7 @@ import { getChannelSandbox } from "./channel-sandboxes";
 import { createChannelAdapter } from "./channels/create-adapter";
 import {
   runAgentChannelMessage,
+  type ChannelInboundFile,
   CHANNEL_EXECUTION_FAILURE_MESSAGE,
 } from "./message-service";
 import type {
@@ -218,7 +220,7 @@ async function start(
   const secrets = platform.credentials
     .filter((field) => field.secret)
     .map((field) => credentials[field.name]);
-  const log = (level: "info" | "error", message: string) =>
+  const log = (level: "info" | "warn" | "error", message: string) =>
     appendAgentChannelLog(connectionId, level, message, secrets);
   const missing = missingStartCredentialNames(platform, credentials);
   if (missing.length) {
@@ -419,16 +421,45 @@ async function start(
       await adapter
         .sendTypingIndicator(event.chatId, replyOptions)
         .catch(() => {});
-      const images = (event.images ?? []).slice(0, 20);
-      const files = (event.files ?? []).slice(0, 20 - images.length);
-      const attachmentParts: UIMessage["parts"] = [...images, ...files].map(
-        (file) => ({
-          type: "file",
-          mediaType: file.media_type,
-          url: `data:${file.media_type};base64,${file.data}`,
-          ...("filename" in file ? { filename: String(file.filename) } : {}),
-        }),
+      const images = (event.images ?? []).slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
+      const files = (event.files ?? []).slice(
+        0,
+        MAX_ATTACHMENTS_PER_MESSAGE - images.length,
       );
+      const inboundFiles: ChannelInboundFile[] = [
+        ...images.map(({ media_type: mediaType, data }, index) => {
+          const extension =
+            (
+              {
+                "image/jpeg": "jpg",
+                "image/png": "png",
+                "image/gif": "gif",
+                "image/webp": "webp",
+              } as Record<string, string>
+            )[mediaType] ?? "bin";
+          return {
+            filename: `image-${index + 1}.${extension}`,
+            mediaType,
+            data,
+            size: Buffer.byteLength(data, "base64"),
+          };
+        }),
+        ...files.map(({ filename, media_type: mediaType, data }) => ({
+          filename,
+          mediaType,
+          data,
+          size: Buffer.byteLength(data, "base64"),
+        })),
+      ];
+      if (
+        (event.images?.length ?? 0) + (event.files?.length ?? 0) >
+        MAX_ATTACHMENTS_PER_MESSAGE
+      )
+        await adapter.sendMessage(
+          event.chatId,
+          "仅处理了前 5 个附件。",
+          replyOptions,
+        );
       // Progress is edited into one message per chat; concurrent sessions in the
       // same chat and commands keep the single final reply.
       const stream =
@@ -440,7 +471,7 @@ async function start(
         connectionId,
         agentId: active.agentId,
         sandboxId: active.sandboxId,
-        attachmentParts,
+        inboundFiles,
         signal: controller.signal,
         inboundPersisted: true,
         inboundDedupeKey: dedupeKey,
@@ -466,18 +497,12 @@ async function start(
             chatType: event.chatType,
             threadId: event.threadId,
           },
-          attachments: [
-            ...images.map((image) => ({
-              type: "image",
-              mimeType: image.media_type,
-            })),
-            ...files.map((file) => ({
-              type: "file",
-              mimeType: file.media_type,
-              name: file.filename.slice(0, 240),
-              size: file.size,
-            })),
-          ],
+          attachments: inboundFiles.map((file, index) => ({
+            type: index < images.length ? "image" : "file",
+            mimeType: file.mediaType,
+            name: file.filename.slice(0, 240),
+            size: file.size,
+          })),
         },
       })
         .catch(() => {
@@ -494,6 +519,14 @@ async function start(
         if (!current() || controller.signal.aborted)
           throw new Error("Channel delivery interrupted.");
         if (!result || "error" in result.body) {
+          if (result?.status === 413) {
+            await adapter.sendMessage(
+              event.chatId,
+              "附件超出大小限制或存储空间不足，未处理这条消息。",
+              replyOptions,
+            );
+            return;
+          }
           if (result?.status === 403) {
             await adapter.sendPendingReply(
               event.chatId,
@@ -540,16 +573,30 @@ async function start(
           confirmation: result.body.confirmation,
         };
         // A silent final reply leaves the already visible progress unchanged.
-        if (
+        const handled =
           progress.open &&
           (await adapter.onStreamComplete(
             event.chatId,
             reply || progress.open,
             finalOptions,
-          ))
-        )
-          return;
-        if (reply) await adapter.sendMessage(event.chatId, reply, finalOptions);
+          ));
+        if (!handled && reply)
+          await adapter.sendMessage(event.chatId, reply, finalOptions);
+        if (
+          !result.body.failed &&
+          (result.body.files?.length || result.body.fallbackFilenames?.length)
+        ) {
+          await deliverChannelReplyFiles({
+            adapter,
+            chatId: event.chatId,
+            workspaceId,
+            files: result.body.files,
+            fallbackFilenames: result.body.fallbackFilenames,
+            detailUrl: result.body.detailUrl,
+            options: finalOptions,
+            log,
+          });
+        }
       } finally {
         stream?.release();
       }

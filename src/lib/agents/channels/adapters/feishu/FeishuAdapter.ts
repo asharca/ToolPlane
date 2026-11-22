@@ -168,6 +168,9 @@ class FeishuStreamSession {
 }
 
 export class FeishuAdapter extends ChannelAdapter {
+  override get supportsFileDelivery(): boolean {
+    return true;
+  }
   private channel: Lark.LarkChannel | null = null;
   private appId: string;
   private appSecret: string;

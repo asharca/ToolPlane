@@ -49,6 +49,7 @@ import {
 } from "@/lib/agents/conversation-context";
 import { parseRuntimeCommand } from "@/lib/agents/runtime-commands";
 import type { SandboxRuntimeMessage } from "@/lib/agents/sandbox-runtime";
+import { outputsInstruction } from "./outputs";
 
 import {
   completeTaskFileStaging,
@@ -393,6 +394,7 @@ export async function localTaskOptions(
         : undefined,
       `This Agent shares a sandbox across conversations. Your session workspace is ${mapped.workspaceRoot}. Historical /workspace/... file references belong beneath this session workspace; do not resolve them against the shared installation root. Other conversations have separate working directories.`,
       LOCAL_FILE_INSTRUCTIONS,
+      outputsInstruction(mapped.workspaceRoot),
       communicationEnabled ? instructions : undefined,
     ]
       .filter(Boolean)

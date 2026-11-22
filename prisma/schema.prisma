@@ -1045,6 +1045,11 @@ enum WorkspaceAttachmentStatus {
   ready
 }
 
+enum WorkspaceAttachmentOrigin {
+  upload
+  artifact
+}
+
 model WorkspaceAttachment {
   id             String        @id @default(cuid())
   workspaceId    String
@@ -1061,6 +1066,9 @@ model WorkspaceAttachment {
   storagePath    String
   extractedText  String?
   status         WorkspaceAttachmentStatus @default(ready)
+  origin         WorkspaceAttachmentOrigin @default(upload)
+  uploaderOnly   Boolean       @default(false)
+  sourceTaskFileId String?     @unique
   uploadStartedAt DateTime?
   createdAt      DateTime      @default(now())
 

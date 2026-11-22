@@ -110,13 +110,21 @@ export function sandboxFilePath(path: string): string {
   return absolute;
 }
 
+type SandboxListOptions = { maxEntries: number; newerThanMs: number };
+type SandboxFileList = {
+  files: { path: string; size: number; mtimeMs: number }[];
+  truncated: boolean;
+};
+type FileOperation =
+  | { action: "read"; maxBytes: number }
+  | { action: "write"; maxBytes: number; expectedHash?: string }
+  | ({ action: "list" } & SandboxListOptions);
+
 async function fileProcess(
   row: A2ATask,
-  action: "read" | "write",
+  operation: FileOperation,
   path: string,
-  maxBytes: number,
   signal?: AbortSignal,
-  hash?: string,
 ) {
   const mapping = await localTaskSandbox(row, false, signal);
   const owner = runtimeAbortSignal();
@@ -130,10 +138,14 @@ async function fileProcess(
     "utf8",
   );
   const root = JSON.stringify(mapping.workspaceRoot);
-  const command =
-    action === "read"
-      ? `\nawait readWorkspaceFile(${root}, process.argv[1], process.stdout, { maxBytes: ${maxBytes} }).catch(reportFailure);`
-      : `\nawait writeWorkspaceFile(${root}, process.argv[1], process.stdin, { maxBytes: ${maxBytes}, expectedHash: process.argv[2] }).catch(reportFailure);`;
+  const { action, ...options } = operation;
+  const helper = {
+    read: "readWorkspaceFile",
+    write: "writeWorkspaceFile",
+    list: "listWorkspaceFiles",
+  }[action];
+  const stream = action === "write" ? "stdin" : "stdout";
+  const command = `\nawait ${helper}(${root}, process.argv[1], process.${stream}, ${JSON.stringify(options)}).catch(reportFailure);`;
   const child = spawn(
     "docker",
     [
@@ -149,13 +161,13 @@ async function fileProcess(
           ? path
           : agentSessionWorkingDirectory(mapping, path),
       ),
-      ...(hash ? [hash] : []),
     ],
     { stdio: ["pipe", "pipe", "pipe"], signal: combined },
   );
   let detail = "";
   child.stderr.on("data", (chunk: Buffer) => {
-    if (detail.length < 2048) detail += chunk.toString();
+    if (detail.length < 2048)
+      detail += chunk.toString("utf8", 0, 2048 - detail.length);
   });
   const { promise: done, resolve, reject } = Promise.withResolvers<void>();
   child.once("error", reject);
@@ -163,14 +175,117 @@ async function fileProcess(
     code === 0
       ? resolve()
       : reject(
-          code === 27 && action === "read"
-            ? taskFileLimitError("FILE_TOO_LARGE", maxBytes)
+          code === 27 && operation.action === "read"
+            ? taskFileLimitError("FILE_TOO_LARGE", operation.maxBytes)
             : new Error(detail.trim() || "Sandbox file transfer failed."),
         ),
   );
   // A producer can fail before a consumer attaches; retain the original rejection.
   void done.catch(() => undefined);
   return { child, done };
+}
+
+function validListedPath(path: unknown): path is string {
+  if (
+    typeof path !== "string" ||
+    !path ||
+    path.length > 1024 ||
+    /[\\\p{Cc}\p{Cs}]/u.test(path) ||
+    /^[a-z]:/i.test(path) ||
+    path !== path.trimEnd()
+  )
+    return false;
+  const parts = path.split("/");
+  return (
+    parts.length <= 4 &&
+    parts.every(
+      (part) =>
+        !!part && !part.startsWith(".") && Buffer.byteLength(part) <= 255,
+    )
+  );
+}
+
+// Treat sandbox stdout as untrusted. Never normalize a reported path into a
+// different lookup, or forward unchecked fields to artifact publication.
+function parseSandboxFileList(
+  text: string,
+  { maxEntries, newerThanMs }: SandboxListOptions,
+): SandboxFileList {
+  const result = JSON.parse(text);
+  if (
+    !Array.isArray(result?.files) ||
+    typeof result.truncated !== "boolean" ||
+    result.files.length > maxEntries ||
+    (result.truncated && result.files.length !== maxEntries)
+  )
+    throw new Error("Invalid sandbox file listing.");
+
+  const files: SandboxFileList["files"] = [];
+  const paths = new Set<string>();
+  for (const entry of result.files) {
+    const { path, size, mtimeMs } = entry ?? {};
+    const previous = files.at(-1);
+    if (
+      !validListedPath(path) ||
+      paths.has(path) ||
+      !Number.isSafeInteger(size) ||
+      size <= 0 ||
+      !Number.isFinite(mtimeMs) ||
+      mtimeMs < newerThanMs ||
+      (previous &&
+        (previous.mtimeMs > mtimeMs ||
+          (previous.mtimeMs === mtimeMs && previous.path >= path)))
+    )
+      throw new Error("Invalid sandbox file listing entry.");
+    paths.add(path);
+    files.push({ path, size, mtimeMs });
+  }
+  return { files, truncated: result.truncated };
+}
+
+export async function listSandboxFiles(
+  row: A2ATask,
+  path: string,
+  { maxEntries, newerThanMs }: SandboxListOptions,
+  signal?: AbortSignal,
+): Promise<SandboxFileList> {
+  if (
+    !Number.isSafeInteger(maxEntries) ||
+    maxEntries < 0 ||
+    !Number.isFinite(newerThanMs)
+  )
+    throw new Error("Invalid sandbox file listing limits.");
+  return trackRuntimeOperation(async () => {
+    const options = { maxEntries, newerThanMs };
+    const transfer = await fileProcess(
+      row,
+      { action: "list", ...options },
+      path,
+      signal,
+    );
+    transfer.child.stdin.end();
+    // Each path has at most four 255-byte names, doubled at worst by JSON
+    // quote escaping. Allow the separators, numeric metadata and envelope.
+    const maxBytes = 64 + maxEntries * (2 * 1024 + 128);
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    try {
+      for await (const chunk of transfer.child.stdout) {
+        bytes += chunk.length;
+        if (bytes > maxBytes)
+          throw new Error("Sandbox file listing exceeds its size limit.");
+        chunks.push(chunk as Buffer);
+      }
+      await transfer.done;
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(
+        Buffer.concat(chunks, bytes),
+      );
+      return parseSandboxFileList(text, options);
+    } finally {
+      if (transfer.child.exitCode === null) transfer.child.kill("SIGKILL");
+      await transfer.done.catch(() => undefined);
+    }
+  });
 }
 
 /** Input task has already passed grant/lease validation; paths never address the host. */
@@ -185,9 +300,8 @@ export async function storeSandboxTaskFile(
   return trackRuntimeOperation(async () => {
     const transfer = await fileProcess(
       row,
-      "read",
+      { action: "read", maxBytes: attachmentHardLimit() },
       path,
-      attachmentHardLimit(),
       signal,
     );
     transfer.child.stdin.end();
@@ -269,11 +383,9 @@ export async function stageLocalTaskFiles(
       // later lower administrator limit never strands an accepted file.
       const transfer = await fileProcess(
         row,
-        "write",
+        { action: "write", maxBytes: file.size, expectedHash: file.sha256 },
         path,
-        file.size,
         signal,
-        file.sha256,
       );
       transfer.child.stdout.resume();
       try {

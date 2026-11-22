@@ -5,7 +5,6 @@ const fetchBoundaries = {
   "ConversationComposer.tsx": 1, // Blob preview.
   "ConversationToolOutput.tsx": 1, // Blob download.
   "WorkspaceFilesManager.tsx": 1, // Blob preview.
-  "agents/A2AArtifactParts.tsx": 1, // Artifact binary preview.
   "agents/AgentConversation.tsx": 1, // Streaming chat transport.
   "chat/AssistantConversation.tsx": 3, // Stream, reconnect, attachment upload.
   "knowledge/WorkspaceKnowledge.tsx": 1, // Multipart import.

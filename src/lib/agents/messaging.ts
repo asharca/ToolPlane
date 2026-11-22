@@ -7,7 +7,14 @@ export function isSilentAgentReply(text: string): boolean {
 }
 
 export function displayMessagingUserText(text: string) {
-  return text.replace(/^\[Messaging source:[^\]]+\]\n\n/, "").trim() || text;
+  return (
+    text
+      .replace(
+        /^\[Messaging source:[^\]]+\]\n\n(?:Attachments:\n(?:- [^\n]*(?:\n|$))+\n?)?/,
+        "",
+      )
+      .trim() || text
+  );
 }
 
 function cleanSegment(value: string | undefined, fallback: string): string {

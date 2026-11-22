@@ -49,7 +49,7 @@ function protocolForHost(headers: HeaderReader, host: string): string {
   return isLocalHostname(hostnameFromHost(host)) ? "http" : "https";
 }
 
-function configuredOrigin(): string | null {
+export function configuredAppOrigin(): string | null {
   return normalizedHttpOrigin(runtimeEnv("NEXT_PUBLIC_APP_URL"));
 }
 
@@ -61,7 +61,7 @@ function requestOriginFromHeaders(headers: HeaderReader): string | null {
 }
 
 function resolveOrigin(requestOrigin: string | null): string {
-  const configured = configuredOrigin();
+  const configured = configuredAppOrigin();
 
   // In production, absolute URLs embedded into install scripts should not be
   // influenced by Host / X-Forwarded-Host. Keep a small dev escape hatch so a

@@ -4,7 +4,7 @@ import { redactText } from "@/lib/observability/redaction";
 
 export type AgentChannelLogEntry = {
   timestamp: number;
-  level: "info" | "error";
+  level: "info" | "warn" | "error";
   message: string;
 };
 
@@ -51,7 +51,10 @@ export async function getPersistedAgentChannelLogs(
   });
   return rows.reverse().map((row) => ({
     timestamp: row.occurredAt.getTime(),
-    level: row.level === "error" ? ("error" as const) : ("info" as const),
+    level:
+      row.level === "error" || row.level === "warn"
+        ? row.level
+        : ("info" as const),
     message: row.message,
   }));
 }

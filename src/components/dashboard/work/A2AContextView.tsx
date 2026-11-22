@@ -11,10 +11,8 @@ import {
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/motion/button/base";
 import { MessageScroller } from "@/components/agents/message-scroller";
-import {
-  A2AArtifactParts,
-  type A2AWirePart,
-} from "@/components/dashboard/agents/A2AArtifactParts";
+import { A2AArtifactParts } from "@/components/dashboard/agents/A2AArtifactParts";
+import type { A2AWirePart } from "@/lib/conversation/a2a-parts";
 import {
   A2ATaskConversation,
   A2ATaskTree,
@@ -504,6 +502,18 @@ function A2AContextTask({
     to: { kind: "agent", id: node.agentId, name: node.name },
   }));
 
+  const participants = (id: string) => {
+    const node = tree?.nodes.find((item) => item.id === id);
+    if (!node) return undefined;
+    const parent = node.parentTaskId
+      ? tree?.nodes.find((item) => item.id === node.parentTaskId)
+      : undefined;
+    return {
+      user: parent?.name,
+      agent: node.name,
+    };
+  };
+
   return (
     <section
       className="min-w-0 space-y-4"
@@ -604,11 +614,13 @@ function A2AContextTask({
             description: null,
             parts: (artifact.parts ?? []) as JsonValue[],
           }))}
-          renderParts={(parts, name) => (
+          participants={participants}
+          renderParts={(parts, name, id) => (
             <A2AArtifactParts
-              taskId={selected.id}
+              taskId={id}
               name={name}
               parts={parts as A2AWirePart[]}
+              producer={participants(id)?.agent}
             />
           )}
         />

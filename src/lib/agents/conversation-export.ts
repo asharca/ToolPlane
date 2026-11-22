@@ -198,7 +198,7 @@ function blockMarkdown(block: ContentBlock): string[] {
       return [block.text];
     case "file":
       return [
-        `Attachment: ${block.filename ?? "attachment"} (${block.mediaType})`,
+        `Attachment: ${block.filename ?? "attachment"} (${block.mediaType})${block.producer ? ` — ${block.producer}` : ""}`,
       ];
     case "stream-rule":
       return [

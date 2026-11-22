@@ -47,6 +47,9 @@ function telegramContext(ctx: Context) {
 }
 
 export class TelegramAdapter extends ChannelAdapter {
+  override get supportsFileDelivery(): boolean {
+    return true;
+  }
   private bot: Bot | null = null;
   private readonly botToken: string;
   private readonly allowedChatIds: string[];
@@ -417,10 +420,13 @@ export class TelegramAdapter extends ChannelAdapter {
       throw new Error("Bot is not connected");
     }
     const buffer = Buffer.from(file.data, "base64");
-    await this.bot.api.sendDocument(
-      chatId,
-      new InputFile(buffer, file.filename),
-    );
+    const upload = new InputFile(buffer, file.filename);
+    if (
+      /^image\/(?:jpeg|png|webp)$/.test(file.media_type) &&
+      buffer.length <= 10 * 1024 ** 2
+    )
+      await this.bot.api.sendPhoto(chatId, upload);
+    else await this.bot.api.sendDocument(chatId, upload);
     this.log.info("Sent file", {
       chatId,
       filename: file.filename,
