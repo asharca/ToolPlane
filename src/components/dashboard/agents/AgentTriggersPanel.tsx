@@ -21,6 +21,7 @@ type TriggerWebhook = {
   url: string;
   auth: WebhookAuth;
   ignoredSenders: string[];
+  replyEnabled: boolean;
 };
 
 type TriggerDTO = {
@@ -65,6 +66,9 @@ type Draft = {
   delivery: TriggerDTO["delivery"];
   webhookAuth: WebhookAuth;
   webhookIgnoredSenders: string;
+  webhookReplyEnabled: boolean;
+  webhookReplyToken: string;
+  webhookRemoveReplyToken: boolean;
 };
 
 type DeliveryConnection = {
@@ -101,6 +105,9 @@ function draftFromTrigger(trigger: TriggerDTO): Draft {
     delivery: trigger.delivery,
     webhookAuth: trigger.webhook?.auth ?? "bearer",
     webhookIgnoredSenders: trigger.webhook?.ignoredSenders.join(", ") ?? "",
+    webhookReplyEnabled: trigger.webhook?.replyEnabled ?? false,
+    webhookReplyToken: "",
+    webhookRemoveReplyToken: false,
   };
 }
 
@@ -257,6 +264,9 @@ export function AgentTriggersPanel({
                 delivery: null,
                 webhookAuth: "bearer",
                 webhookIgnoredSenders: "",
+                webhookReplyEnabled: false,
+                webhookReplyToken: "",
+                webhookRemoveReplyToken: false,
                 timezone:
                   Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
               });
@@ -283,6 +293,7 @@ export function AgentTriggersPanel({
           onSubmit={(event) => {
             event.preventDefault();
             void operation(async () => {
+              const trimmedReplyToken = draft.webhookReplyToken.trim();
               const payload = {
                 ...(!draft.id ? { kind: draft.kind } : {}),
                 name: draft.name,
@@ -305,6 +316,11 @@ export function AgentTriggersPanel({
                               ignoredSenders: parseIgnoredSenders(
                                 draft.webhookIgnoredSenders,
                               ),
+                              ...(draft.webhookRemoveReplyToken
+                                ? { replyToken: null }
+                                : trimmedReplyToken
+                                  ? { replyToken: trimmedReplyToken }
+                                  : {}),
                             }
                           : { auth: "bearer" as const },
                     }
@@ -391,21 +407,71 @@ export function AgentTriggersPanel({
                 />
               </DialogField>
               {draft.webhookAuth === "github" ? (
-                <DialogField
-                  label={t("webhookIgnoredSenders")}
-                  htmlFor="trigger-webhook-ignored-senders"
-                  description={t("webhookIgnoredSendersHint")}
-                >
-                  <Input
-                    id="trigger-webhook-ignored-senders"
-                    placeholder="octocat, my-agent"
-                    value={draft.webhookIgnoredSenders}
-                    disabled={locked}
-                    onChange={(webhookIgnoredSenders) =>
-                      setDraft({ ...draft, webhookIgnoredSenders })
-                    }
-                  />
-                </DialogField>
+                <>
+                  <DialogField
+                    label={t("webhookIgnoredSenders")}
+                    htmlFor="trigger-webhook-ignored-senders"
+                    description={t("webhookIgnoredSendersHint")}
+                  >
+                    <Input
+                      id="trigger-webhook-ignored-senders"
+                      placeholder="octocat, my-agent"
+                      value={draft.webhookIgnoredSenders}
+                      disabled={locked}
+                      onChange={(webhookIgnoredSenders) =>
+                        setDraft({ ...draft, webhookIgnoredSenders })
+                      }
+                    />
+                  </DialogField>
+                  <DialogField
+                    label={t("webhookReplyToken")}
+                    htmlFor="trigger-webhook-reply-token"
+                    description={t("webhookReplyTokenHint")}
+                  >
+                    <div className="space-y-2">
+                      <Input
+                        id="trigger-webhook-reply-token"
+                        type="password"
+                        autoComplete="new-password"
+                        maxLength={500}
+                        placeholder={
+                          draft.webhookReplyEnabled
+                            ? t("webhookReplyTokenSavedPlaceholder")
+                            : t("webhookReplyTokenPlaceholder")
+                        }
+                        value={draft.webhookReplyToken}
+                        disabled={locked || draft.webhookRemoveReplyToken}
+                        onChange={(webhookReplyToken) =>
+                          setDraft({
+                            ...draft,
+                            webhookReplyToken,
+                            webhookRemoveReplyToken: false,
+                          })
+                        }
+                      />
+                      {draft.webhookReplyEnabled ? (
+                        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5 rounded border-border accent-primary"
+                            checked={draft.webhookRemoveReplyToken}
+                            disabled={locked}
+                            onChange={(event) =>
+                              setDraft({
+                                ...draft,
+                                webhookRemoveReplyToken: event.target.checked,
+                                webhookReplyToken: event.target.checked
+                                  ? ""
+                                  : draft.webhookReplyToken,
+                              })
+                            }
+                          />
+                          <span>{t("webhookReplyTokenRemove")}</span>
+                        </label>
+                      ) : null}
+                    </div>
+                  </DialogField>
+                </>
               ) : null}
             </div>
           ) : null}
@@ -571,6 +637,10 @@ export function AgentTriggersPanel({
                 {t(trigger.kind)}
                 {trigger.webhook
                   ? ` · ${t(`webhookAuthMode.${trigger.webhook.auth}`)}`
+                  : ""}
+                {trigger.webhook?.auth === "github" &&
+                trigger.webhook.replyEnabled
+                  ? ` · ${t("webhookRepliesOnGithub")}`
                   : ""}
                 {trigger.cron ? ` · ${trigger.cron} · ${trigger.timezone}` : ""}
               </p>

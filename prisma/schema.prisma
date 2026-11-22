@@ -825,6 +825,8 @@ model AgentTrigger {
   webhookAuth String @default("bearer")
   webhookSecret Json?
   webhookIgnoredSenders String[] @default([])
+  // Encrypted GitHub token used only server-side to comment each settled event's result.
+  webhookReplyToken Json?
   events AgentTriggerEvent[]
   threads AgentTriggerThread[]
   actorId String
@@ -860,12 +862,18 @@ model AgentTriggerEvent {
   conversationId String?
   taskId String?
   error String?
+  // pending -> sending -> sent | failed; skipped when there is nothing to post.
+  replyStatus String?
+  replyText String?
+  replyError String?
+  replyAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@unique([triggerId, dedupeKey])
   @@index([triggerId, threadKey, status, createdAt])
   @@index([status, updatedAt])
   @@index([triggerId, createdAt])
+  @@index([replyStatus, replyAt])
 }
 
 // An external thread (e.g. owner/repo#12) continues one conversation until it is deleted.

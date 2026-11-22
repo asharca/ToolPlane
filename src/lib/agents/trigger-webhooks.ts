@@ -134,3 +134,53 @@ export function githubPromptPayload(event: string, payload: unknown) {
       : undefined,
   };
 }
+
+const COMMENT_LIMIT = 60_000;
+const THREAD_KEY = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$/;
+
+export type GithubReplyResult =
+  | { status: "sent" }
+  | { status: "retry" }
+  | { status: "failed"; code: string };
+
+/** Posts one issue/PR comment with the trigger's own token; never throws raw errors. */
+export async function postGithubComment(
+  token: string,
+  threadKey: string,
+  body: string,
+): Promise<GithubReplyResult> {
+  const match = THREAD_KEY.exec(threadKey);
+  if (!match) return { status: "failed", code: "GITHUB_REPLY_TARGET_INVALID" };
+  const text =
+    body.length > COMMENT_LIMIT ? `${body.slice(0, COMMENT_LIMIT)}…` : body;
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://api.github.com/repos/${match[1]}/issues/${match[2]}/comments`,
+      {
+        method: "POST",
+        headers: {
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "user-agent": "ToolPlane",
+          "x-github-api-version": "2022-11-28",
+        },
+        body: JSON.stringify({ body: text }),
+        redirect: "error",
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+  } catch {
+    return { status: "retry" };
+  }
+  await response.body?.cancel().catch(() => {});
+  if (response.ok) return { status: "sent" };
+  if (response.status === 401 || response.status === 403)
+    return { status: "failed", code: "GITHUB_REPLY_UNAUTHORIZED" };
+  if (response.status === 404 || response.status === 410)
+    return { status: "failed", code: "GITHUB_REPLY_NOT_FOUND" };
+  if (response.status === 429 || response.status >= 500)
+    return { status: "retry" };
+  return { status: "failed", code: "GITHUB_REPLY_FAILED" };
+}

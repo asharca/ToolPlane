@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { createHmac, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { TaskState } from "@a2a-js/sdk";
+import { Artifact, TaskState } from "@a2a-js/sdk";
 import { db } from "@/lib/db";
 import { createApiToken } from "@/lib/auth/tokens";
 import { claimTask, finishTask } from "@/lib/a2a/store";
@@ -157,10 +157,21 @@ const issue = (number: number, login = "reporter", type = "User") => ({
   },
 });
 
-async function settle(taskId: string, state: TaskState) {
+async function settle(taskId: string, state: TaskState, reply?: string) {
   const claimed = await claimTask(taskId);
   if (!claimed?.leaseToken) throw new Error("Missing task lease");
-  await finishTask(claimed.id, claimed.leaseToken, state, "fixture");
+  await finishTask(
+    claimed.id,
+    claimed.leaseToken,
+    state,
+    "fixture",
+    reply === undefined
+      ? undefined
+      : Artifact.fromJSON({
+          artifactId: randomUUID(),
+          parts: [{ text: reply }],
+        }),
+  );
   await settleAgentTriggerTask(
     await db.a2ATask.findUniqueOrThrow({ where: { id: taskId } }),
   );
@@ -362,5 +373,127 @@ describe.sequential("signed trigger webhooks", () => {
     expect(body.secret).toMatch(/^tpt_/);
     expect(body.secret).not.toBe(secret);
     expect((await send({})).error).toBe("Unauthorized");
+  });
+
+  it("comments each settled result on the GitHub thread with the server-held token", async () => {
+    const replyToken = `ghp_${randomUUID()}`;
+    const { trigger, secret } = await createTrigger({
+      auth: "github",
+      ignoredSenders: ["tool-bot"],
+      replyToken,
+    });
+    expect(trigger.webhook).toMatchObject({ replyEnabled: true });
+    expect(JSON.stringify(trigger)).not.toContain(replyToken);
+    const posted: { url: string; auth: string | null; body: string }[] = [];
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        posted.push({
+          url: String(input),
+          auth: new Headers(init?.headers).get("authorization"),
+          body: JSON.parse(String(init?.body)).body,
+        });
+        return new Response("{}", { status: 201 });
+      });
+    try {
+      const accepted = async (delivery: string) => {
+        await github(trigger.id, secret, "issues", delivery, issue(21));
+        const event = await db.agentTriggerEvent.findUniqueOrThrow({
+          where: {
+            triggerId_dedupeKey: {
+              triggerId: trigger.id,
+              dedupeKey: `github:${delivery}`,
+            },
+          },
+        });
+        if (!event.taskId) throw new Error("Missing task");
+        return event;
+      };
+      const first = await accepted("r1");
+      await settle(
+        first.taskId as string,
+        TaskState.TASK_STATE_COMPLETED,
+        "Fixed in #22.",
+      );
+      await vi.waitFor(async () =>
+        expect(
+          await db.agentTriggerEvent.findUniqueOrThrow({
+            where: { id: first.id },
+          }),
+        ).toMatchObject({ replyStatus: "sent", replyText: null }),
+      );
+      expect(posted).toEqual([
+        {
+          url: "https://api.github.com/repos/acme/app/issues/21/comments",
+          auth: `Bearer ${replyToken}`,
+          body: "Fixed in #22.",
+        },
+      ]);
+
+      // A silent reply and a failed run: the first posts nothing, the second a fixed code.
+      const silent = await accepted("r2");
+      await settle(
+        silent.taskId as string,
+        TaskState.TASK_STATE_COMPLETED,
+        "[silent]",
+      );
+      const failed = await accepted("r3");
+      await settle(failed.taskId as string, TaskState.TASK_STATE_FAILED);
+      await vi.waitFor(async () =>
+        expect(
+          await db.agentTriggerEvent.findUniqueOrThrow({
+            where: { id: failed.id },
+          }),
+        ).toMatchObject({ replyStatus: "sent" }),
+      );
+      expect(
+        await db.agentTriggerEvent.findUniqueOrThrow({
+          where: { id: silent.id },
+        }),
+      ).toMatchObject({ replyStatus: "skipped" });
+      expect(posted.map((call) => call.body)).toEqual([
+        "Fixed in #22.",
+        'ToolPlane trigger "Webhook" failed (TRIGGER_EXECUTION_FAILED).',
+      ]);
+
+      // Rejected credentials end as a fixed reason, never the response text.
+      fetchSpy.mockResolvedValueOnce(
+        new Response("Bad credentials", { status: 401 }),
+      );
+      const denied = await accepted("r4");
+      await settle(
+        denied.taskId as string,
+        TaskState.TASK_STATE_COMPLETED,
+        "Done.",
+      );
+      await vi.waitFor(async () =>
+        expect(
+          await db.agentTriggerEvent.findUniqueOrThrow({
+            where: { id: denied.id },
+          }),
+        ).toMatchObject({
+          replyStatus: "failed",
+          replyError: "GITHUB_REPLY_UNAUTHORIZED",
+          replyText: null,
+        }),
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+
+    const cleared = await handleAgentAutomation(
+      new Request("http://localhost/api", {
+        method: "PATCH",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ webhook: { auth: "github", replyToken: null } }),
+      }),
+      agentId,
+      "trigger",
+      trigger.id,
+    );
+    expect((await cleared.json()).trigger.webhook.replyEnabled).toBe(false);
   });
 });
