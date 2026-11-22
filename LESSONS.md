@@ -542,7 +542,8 @@
 
 - **证据（2026-11-11，用户反馈）**：A2A 任务已保存 `toolplaneLiveOutput`，但会话只为最新且未结束任务打开实时流；已完成及较早任务没有加载这份过程记录，MCP 等工具调用在重开后不可见。任务详情现通过已有 `readTaskOutput` 恢复所选任务过程，页面复用原工具卡片，不为历史任务新增长期连接。
 - **下次怎么验证**：真实发布工具活动并完成根／子任务，使用另一成员读取详情，推进时钟使内存回放过期后仍断言调用名、参数、结果存在；同时保留私有根与跨工作区拒绝断言。依据：[读取链路](src/lib/a2a/console-tasks.ts)、[展示](src/components/dashboard/work/A2AContextView.tsx)、[集成回归](tests/integration/a2a-local.test.ts)。
-- **确认日期**：2026-11-11。
+- **提交者回放（[#294](https://github.com/asharca/ToolPlane/issues/294)）**：会话详情查询已包含 `a2aActor.name`，但 Work 首屏序列化遗漏该字段，刷新后没有提交者。`serializeWorkSession` 现在把详情中的 actor 传给同一份 `WorkTranscript`；验证时直接打开已完成会话，并检查刷新后的提交者，而不只看详情 API。
+- **确认日期**：2026-11-11、2026-11-22。
 
 ### TP-L048：容器内环境变量要按实际进程核对，不能只看传参
 
