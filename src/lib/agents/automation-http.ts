@@ -2,6 +2,13 @@ import "server-only";
 import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { encryptSecretText } from "@/lib/security/secrets";
+import {
+  isSourceKind,
+  parseSourceConfig,
+  sourceKinds,
+  SourceFailure,
+} from "./trigger-sources";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { ORDINARY_AGENT_FILTER } from "./queries";
 import { parseJson } from "./public-api/body";
@@ -57,7 +64,9 @@ async function deliveryData(
 
 const createSchema = z
   .object({
-    kind: z.enum(["schedule", "webhook"]),
+    kind: z.enum(["schedule", "webhook", ...sourceKinds]),
+    sourceConfig: z.unknown().optional(),
+    credential: z.unknown().optional(),
     name: z.string().trim().min(1).max(120),
     prompt: z.string().trim().min(1).max(20_000),
     cron: z.string().max(200).optional(),
@@ -71,6 +80,29 @@ const patchSchema = createSchema
   .partial()
   .extend({ rotateSecret: z.literal(true).optional() })
   .strict();
+// Never spread request source fields into the model: credentials are write-only,
+// and config is projected through a separate strict schema for each provider.
+function sourceData(
+  kind: string,
+  raw: unknown,
+  credential: unknown,
+  create: boolean,
+) {
+  if (!isSourceKind(kind))
+    return raw === undefined && credential === undefined ? {} : null;
+  const sourceConfig =
+    raw === undefined ? undefined : parseSourceConfig(kind, raw);
+  if ((create || raw !== undefined) && !sourceConfig) return null;
+  if (credential === undefined)
+    return create && kind !== "youtube" ? null : { sourceConfig };
+  if (
+    kind === "youtube" ||
+    typeof credential !== "string" ||
+    !/^[!-~]{1,4096}$/.test(credential)
+  )
+    return null;
+  return { sourceConfig, sourceCredential: encryptSecretText(credential) };
+}
 const budgetSchema = z
   .object({
     monthlyUsd: z.number().finite().min(0).max(1_000_000_000).nullable(),
@@ -79,6 +111,11 @@ const budgetSchema = z
 const jsonError = (error: string, status: number) =>
   Response.json({ error }, { status });
 function apiFailure(error: unknown) {
+  if (error instanceof SourceFailure)
+    return jsonError(
+      error.code,
+      error.code === "SUBSCRIPTION_RATE_LIMITED" ? 429 : 502,
+    );
   if (error instanceof AgentApiError)
     return jsonError(error.code, error.status);
   if (
@@ -261,13 +298,21 @@ export async function handleAgentAutomation(
         "INVALID_TRIGGER",
         body.reason === "too_large" ? 413 : 400,
       );
-    const { delivery, ...value } = body.value;
+    const { delivery, sourceConfig, credential, ...value } = body.value;
+    const source = sourceData(value.kind, sourceConfig, credential, true);
+    if (!source) return jsonError("INVALID_TRIGGER_SOURCE", 400);
     const target = await deliveryData(delivery, agent.workspaceId, agentId);
     if (!target) return jsonError("INVALID_TRIGGER_DELIVERY", 400);
     let nextRunAt: Date | null = null;
     try {
-      if (value.kind === "schedule")
+      if (value.kind !== "webhook") {
+        if (
+          isSourceKind(value.kind) &&
+          (!value.cron?.trim() || !value.timezone?.trim())
+        )
+          return jsonError("INVALID_TRIGGER", 400);
         nextRunAt = nextTriggerRun(value.cron ?? "", value.timezone ?? "UTC");
+      }
     } catch {
       return jsonError("INVALID_TRIGGER", 400);
     }
@@ -276,8 +321,9 @@ export async function handleAgentAutomation(
       data: {
         ...value,
         ...target,
-        cron: value.kind === "schedule" ? value.cron : null,
-        timezone: value.kind === "schedule" ? (value.timezone ?? "UTC") : null,
+        ...source,
+        cron: value.kind !== "webhook" ? value.cron : null,
+        timezone: value.kind !== "webhook" ? (value.timezone ?? "UTC") : null,
         nextRunAt: value.enabled === false ? null : nextRunAt,
         workspaceId: agent.workspaceId,
         agentId,
@@ -301,7 +347,18 @@ export async function handleAgentAutomation(
         "INVALID_TRIGGER",
         body.reason === "too_large" ? 413 : 400,
       );
-    const { rotateSecret, delivery, ...value } = body.value;
+    const { rotateSecret, delivery, sourceConfig, credential, ...value } =
+      body.value;
+    const source = sourceData(trigger.kind, sourceConfig, credential, false);
+    if (!source) return jsonError("INVALID_TRIGGER_SOURCE", 400);
+    const resetSource =
+      credential !== undefined ||
+      (isSourceKind(trigger.kind) &&
+        sourceConfig !== undefined &&
+        JSON.stringify(parseSourceConfig(trigger.kind, sourceConfig)) !==
+          JSON.stringify(
+            parseSourceConfig(trigger.kind, trigger.sourceConfig),
+          ));
     const target = await deliveryData(delivery, agent.workspaceId, agentId);
     if (!target) return jsonError("INVALID_TRIGGER_DELIVERY", 400);
     if (trigger.kind !== "webhook" && rotateSecret)
@@ -313,7 +370,13 @@ export async function handleAgentAutomation(
       return jsonError("INVALID_TRIGGER", 400);
     let nextRunAt = trigger.nextRunAt;
     try {
-      if (trigger.kind === "schedule") {
+      if (trigger.kind === "schedule" || isSourceKind(trigger.kind)) {
+        if (
+          isSourceKind(trigger.kind) &&
+          (!(value.cron ?? trigger.cron)?.trim() ||
+            !(value.timezone ?? trigger.timezone)?.trim())
+        )
+          return jsonError("INVALID_TRIGGER", 400);
         const next = nextTriggerRun(
           value.cron ?? trigger.cron ?? "",
           value.timezone ?? trigger.timezone ?? "UTC",
@@ -325,10 +388,21 @@ export async function handleAgentAutomation(
     }
     const secret = rotateSecret ? newTriggerSecret() : null;
     const updated = await db.agentTrigger.update({
-      where: { id: trigger.id },
+      where: { id: trigger.id, agentId, workspaceId: agent.workspaceId },
       data: {
         ...value,
         ...target,
+        ...source,
+        ...(resetSource
+          ? {
+              syncCursor: null,
+              lastSyncAt: null,
+              lastSyncStatus: null,
+              lastSyncError: null,
+              syncRetryAt: null,
+              syncFailures: 0,
+            }
+          : {}),
         nextRunAt,
         ...(secret ? { secretHash: secret.secretHash } : {}),
       },

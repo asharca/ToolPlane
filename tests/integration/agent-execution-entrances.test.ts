@@ -40,6 +40,7 @@ import {
   verifyAgentRuntimeToken,
 } from "@/lib/agents/runtime-access";
 import { mapTaskSandbox } from "./task-sandbox-fixture";
+import * as worker from "@/lib/agents/execution/worker";
 
 // Entrance authorization exercises real revisions without Docker SDK preparation.
 vi.mock("@/lib/agents/pi-runtime", () => ({
@@ -556,6 +557,162 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
       ).rejects.toThrow("AGENT_BUDGET_EXCEEDED");
     },
   );
+
+  it("silently seeds GitHub threads and admits each later revision once without exposing its credential", async () => {
+    const { agent } = await fixture();
+    const token = (await createApiToken(userId, "Subscription management"))
+      .token;
+    const credential = `fixture-${randomUUID()}`;
+    const api = (
+      method: string,
+      action: "triggers" | "trigger" | "run",
+      id?: string,
+      body?: unknown,
+    ) =>
+      handleAgentAutomation(
+        new Request("http://localhost/api", {
+          method,
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+        }),
+        agent.id,
+        action,
+        id,
+      );
+    const config = {
+      kind: "github",
+      cron: "*/5 * * * *",
+      timezone: "UTC",
+      name: "Reviews",
+      prompt: "Check {{payload}}",
+      sourceConfig: { repositories: ["owner/project"] },
+    };
+    for (const bad of [
+      config,
+      { ...config, credential, sourceConfig: { url: "https://invalid.test" } },
+    ]) {
+      const invalid = await api("POST", "triggers", undefined, bad);
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toEqual({ error: "INVALID_TRIGGER_SOURCE" });
+    }
+    const created = await api("POST", "triggers", undefined, {
+      ...config,
+      credential,
+    });
+    expect(created.status).toBe(201);
+    const dto = (await created.json()).trigger;
+    expect(dto.source).toEqual({
+      config: {
+        repositories: ["owner/project"],
+        reasons: ["review_requested", "mention"],
+      },
+      hasCredential: true,
+      lastSyncAt: null,
+      lastSyncStatus: null,
+      lastSyncError: null,
+      syncRetryAt: null,
+    });
+    expect(JSON.stringify(dto)).not.toContain(credential);
+    const stored = await db.agentTrigger.findUniqueOrThrow({
+      where: { id: dto.id },
+    });
+    expect(stored.sourceCredential).toMatchObject({ alg: "aes-256-gcm" });
+    expect(JSON.stringify(stored)).not.toContain(credential);
+    const renamed = await api("PATCH", "trigger", dto.id, { name: "Renamed" });
+    expect(renamed.status).toBe(200);
+
+    const thread = {
+      id: "42",
+      reason: "review_requested",
+      updated_at: "2026-11-01T10:00:00Z",
+      repository: { full_name: "owner/project", private: true },
+      subject: {
+        title: "Review PR",
+        type: "PullRequest",
+        url: "https://api.github.com/repos/owner/project/pulls/7",
+      },
+    };
+    const rest = vi.fn(async (url: URL, init: RequestInit) => {
+      expect(url.origin + url.pathname).toBe(
+        "https://api.github.com/notifications",
+      );
+      expect(new Headers(init.headers).get("authorization")).toBe(
+        `Bearer ${credential}`,
+      );
+      expect(init.redirect).toBe("error");
+      return Response.json([
+        thread,
+        thread,
+        { ...thread, id: "88", reason: "comment" },
+      ]);
+    });
+    const wake = vi
+      .spyOn(worker, "wakeAgentWorker")
+      .mockImplementation(() => {});
+    vi.stubGlobal("fetch", rest);
+    try {
+      const poll = async () => {
+        const res = await api("POST", "run", dto.id);
+        expect(res.status).toBe(202);
+        return (await res.json()).conversationId;
+      };
+      expect(await poll()).toBeNull();
+      expect(await poll()).toBeNull();
+      expect(
+        await db.agentTriggerItem.count({ where: { triggerId: dto.id } }),
+      ).toBe(1);
+      expect(
+        await db.conversation.count({ where: { triggerId: dto.id } }),
+      ).toBe(0);
+      for (const revision of ["2026-11-02T10:00:00Z", "2026-11-03T10:00:00Z"]) {
+        thread.updated_at = revision;
+        const conversationId = await poll();
+        expect(typeof conversationId).toBe("string");
+        const message = await db.message.findFirstOrThrow({
+          where: { conversationId, role: "user" },
+        });
+        const parts = JSON.stringify(message.parts);
+        expect(parts).toContain("https://github.com/owner/project/pull/7");
+        expect(parts).toContain(revision);
+        expect(parts).toContain("untrusted");
+        expect(parts).not.toContain(credential);
+        expect(parts).not.toContain("aes-256-gcm");
+        expect(await poll()).toBeNull();
+      }
+      expect(
+        await db.conversation.count({ where: { triggerId: dto.id } }),
+      ).toBe(2);
+      const reset = Math.ceil(Date.now() / 1000) + 120;
+      rest.mockResolvedValueOnce(
+        new Response(credential, {
+          status: 429,
+          headers: { "x-ratelimit-reset": String(reset) },
+        }),
+      );
+      const limited = await api("POST", "run", dto.id);
+      expect(limited.status).toBe(429);
+      expect(await limited.json()).toEqual({
+        error: "SUBSCRIPTION_RATE_LIMITED",
+      });
+      const list = await (await api("GET", "triggers")).json();
+      expect(list.triggers[0].source).toMatchObject({
+        lastSyncStatus: "rate_limited",
+        lastSyncError: "SUBSCRIPTION_RATE_LIMITED",
+        syncRetryAt: new Date(reset * 1000).toISOString(),
+      });
+      expect(JSON.stringify(list)).not.toContain(credential);
+      expect(JSON.stringify(list)).not.toContain("aes-256-gcm");
+      const calls = rest.mock.calls.length;
+      expect(await poll()).toBeNull();
+      expect(rest).toHaveBeenCalledTimes(calls);
+    } finally {
+      vi.unstubAllGlobals();
+      wake.mockRestore();
+    }
+  });
 
   it("denies foreign workspace reads and rejects webhook user, toolkit and wrong secrets", async () => {
     const { agent, conversation } = await fixture();

@@ -16,7 +16,7 @@ import { apiRequest } from "@/lib/client/api";
 
 type TriggerDTO = {
   id: string;
-  kind: "schedule" | "webhook";
+  kind: "schedule" | "webhook" | SourceKind;
   name: string;
   enabled: boolean;
   cron: string | null;
@@ -44,6 +44,14 @@ type TriggerDTO = {
     | null;
   lastDeliveryError: string | null;
   lastDeliveryAt: string | null;
+  source: {
+    config: Record<string, unknown>;
+    hasCredential: boolean;
+    lastSyncAt: string | null;
+    lastSyncStatus: "succeeded" | "failed" | "rate_limited" | null;
+    lastSyncError: string | null;
+    syncRetryAt: string | null;
+  } | null;
 };
 type Draft = {
   id?: string;
@@ -53,7 +61,54 @@ type Draft = {
   cron: string;
   timezone: string;
   delivery: TriggerDTO["delivery"];
+  reasons: string[];
+  repositories: string;
+  userId: string;
+  channelId: string;
+  credential: string;
+  hasCredential: boolean;
 };
+type SourceKind = "github" | "x" | "youtube";
+const SOURCE_KINDS: readonly string[] = ["github", "x", "youtube"];
+const isSource = (kind: string): kind is SourceKind =>
+  SOURCE_KINDS.includes(kind);
+const GITHUB_REASONS = [
+  "review_requested",
+  "mention",
+  "team_mention",
+  "assign",
+  "author",
+  "comment",
+  "state_change",
+  "ci_activity",
+] as const;
+const strings = (value: unknown) =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+function draftSource(config: Record<string, unknown> | undefined) {
+  return {
+    reasons: config?.reasons
+      ? strings(config.reasons)
+      : ["review_requested", "mention"],
+    repositories: strings(config?.repositories).join("\n"),
+    userId: typeof config?.userId === "string" ? config.userId : "",
+    channelId: typeof config?.channelId === "string" ? config.channelId : "",
+    credential: "",
+  };
+}
+function sourceConfig(draft: Draft) {
+  if (draft.kind === "github")
+    return {
+      reasons: draft.reasons,
+      repositories: draft.repositories
+        .split(/\s+/)
+        .map((line) => line.trim())
+        .filter(Boolean),
+    };
+  if (draft.kind === "x") return { userId: draft.userId.trim() };
+  return { channelId: draft.channelId.trim() };
+}
 type DeliveryConnection = {
   id: string;
   name: string;
@@ -153,7 +208,9 @@ export function AgentTriggersPanel({
             ? t("invalidTrigger")
             : result.message === "INVALID_TRIGGER_DELIVERY"
               ? t("invalidTriggerDelivery")
-              : t("operationFailed")),
+              : result.message === "INVALID_TRIGGER_SOURCE"
+                ? t("invalidTriggerSource")
+                : t("operationFailed")),
       );
     return result.data ?? {};
   }
@@ -210,6 +267,8 @@ export function AgentTriggersPanel({
                 prompt: "",
                 cron: "",
                 delivery: null,
+                ...draftSource(undefined),
+                hasCredential: false,
                 timezone:
                   Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
               });
@@ -249,8 +308,16 @@ export function AgentTriggersPanel({
                         chatId: draft.delivery.chatId.trim(),
                       }
                     : null,
-                  ...(draft.kind === "schedule"
+                  ...(draft.kind === "schedule" || isSource(draft.kind)
                     ? { cron: draft.cron, timezone: draft.timezone }
+                    : {}),
+                  ...(isSource(draft.kind)
+                    ? {
+                        sourceConfig: sourceConfig(draft),
+                        ...(draft.credential.trim()
+                          ? { credential: draft.credential.trim() }
+                          : {}),
+                      }
                     : {}),
                 },
               );
@@ -263,12 +330,29 @@ export function AgentTriggersPanel({
             <FormSelect
               label={t("kind")}
               value={draft.kind}
-              onValueChange={(kind) =>
-                setDraft({ ...draft, kind: kind as Draft["kind"] })
-              }
+              onValueChange={(value) => {
+                const kind = value as Draft["kind"];
+                setDraft({
+                  ...draft,
+                  kind,
+                  prompt:
+                    isSource(kind) && !draft.prompt.trim()
+                      ? t("sourcePromptTemplate", {
+                          placeholder: "{{payload}}",
+                        })
+                      : draft.prompt,
+                  cron:
+                    isSource(kind) && !draft.cron.trim()
+                      ? "*/15 * * * *"
+                      : draft.cron,
+                });
+              }}
               options={[
                 { value: "schedule", label: t("schedule") },
                 { value: "webhook", label: t("webhook") },
+                { value: "github", label: t("github") },
+                { value: "x", label: t("x") },
+                { value: "youtube", label: t("youtube") },
               ]}
             />
           ) : null}
@@ -281,7 +365,98 @@ export function AgentTriggersPanel({
               onChange={(name) => setDraft({ ...draft, name })}
             />
           </DialogField>
-          {draft.kind === "schedule" ? (
+          {draft.kind === "github" ? (
+            <>
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium">
+                  {t("githubReasons")}
+                </legend>
+                <div className="flex flex-wrap gap-x-4 gap-y-2">
+                  {GITHUB_REASONS.map((reason) => (
+                    <label
+                      key={reason}
+                      className="flex items-center gap-2 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        disabled={locked}
+                        checked={draft.reasons.includes(reason)}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            reasons: event.target.checked
+                              ? [...draft.reasons, reason]
+                              : draft.reasons.filter((item) => item !== reason),
+                          })
+                        }
+                      />
+                      {t(`githubReason.${reason}`)}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <DialogField
+                label={t("githubRepositories")}
+                htmlFor="trigger-repositories"
+                description={t("githubRepositoriesHint")}
+              >
+                <textarea
+                  id="trigger-repositories"
+                  rows={2}
+                  placeholder="owner/repo"
+                  value={draft.repositories}
+                  disabled={locked}
+                  onChange={(event) =>
+                    setDraft({ ...draft, repositories: event.target.value })
+                  }
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </DialogField>
+            </>
+          ) : null}
+          {draft.kind === "x" ? (
+            <DialogField label={t("xUserId")} htmlFor="trigger-x-user">
+              <Input
+                id="trigger-x-user"
+                required
+                value={draft.userId}
+                disabled={locked}
+                onChange={(userId) => setDraft({ ...draft, userId })}
+              />
+            </DialogField>
+          ) : null}
+          {draft.kind === "youtube" ? (
+            <DialogField label={t("youtubeChannelId")} htmlFor="trigger-yt">
+              <Input
+                id="trigger-yt"
+                required
+                placeholder="UC…"
+                value={draft.channelId}
+                disabled={locked}
+                onChange={(channelId) => setDraft({ ...draft, channelId })}
+              />
+            </DialogField>
+          ) : null}
+          {draft.kind === "github" || draft.kind === "x" ? (
+            <DialogField
+              label={t(draft.kind === "github" ? "githubToken" : "xToken")}
+              htmlFor="trigger-credential"
+              description={
+                draft.hasCredential ? t("credentialKeep") : undefined
+              }
+            >
+              <Input
+                id="trigger-credential"
+                type="password"
+                autoComplete="off"
+                required={!draft.hasCredential}
+                value={draft.credential}
+                disabled={locked}
+                onChange={(credential) => setDraft({ ...draft, credential })}
+              />
+            </DialogField>
+          ) : null}
+          {draft.kind === "schedule" || isSource(draft.kind) ? (
             <div className="grid gap-4 sm:grid-cols-2">
               <DialogField label={t("cron")} htmlFor="trigger-cron">
                 <Input
@@ -501,6 +676,34 @@ export function AgentTriggersPanel({
               {runtimeError(trigger.lastError)?.text ?? trigger.lastError}
             </p>
           ) : null}
+          {trigger.source ? (
+            <p
+              role="status"
+              className={
+                trigger.source.lastSyncStatus &&
+                trigger.source.lastSyncStatus !== "succeeded"
+                  ? "break-words text-xs text-destructive"
+                  : "text-xs text-muted-foreground"
+              }
+            >
+              {trigger.source.lastSyncAt
+                ? t("lastSync", { date: date(trigger.source.lastSyncAt) })
+                : t("neverSynced")}
+              {trigger.source.lastSyncStatus
+                ? ` · ${t(`syncStatus.${trigger.source.lastSyncStatus}`)}`
+                : ""}
+              {trigger.source.lastSyncError
+                ? ` · ${
+                    t.has(`syncError.${trigger.source.lastSyncError}`)
+                      ? t(`syncError.${trigger.source.lastSyncError}`)
+                      : trigger.source.lastSyncError
+                  }`
+                : ""}
+              {trigger.source.syncRetryAt
+                ? ` · ${t("syncRetry", { date: date(trigger.source.syncRetryAt) })}`
+                : ""}
+            </p>
+          ) : null}
           {trigger.delivery || trigger.lastDeliveryStatus ? (
             <div className="space-y-1 text-xs text-muted-foreground">
               {trigger.delivery ? (
@@ -572,6 +775,8 @@ export function AgentTriggersPanel({
                   cron: trigger.cron ?? "",
                   timezone: trigger.timezone ?? "UTC",
                   delivery: trigger.delivery,
+                  ...draftSource(trigger.source?.config),
+                  hasCredential: trigger.source?.hasCredential ?? false,
                 })
               }
             >
