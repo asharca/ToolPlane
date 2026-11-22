@@ -2,6 +2,8 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
+import * as transport from "@/lib/account-connections/pinned-get";
+import { encryptSecretRecord } from "@/lib/security/secrets";
 import { createConversation } from "@/lib/agents/conversation-mutations";
 import { getAgentForRun, getConversation } from "@/lib/agents/queries";
 import { resolveAgentRequestSession } from "@/lib/agents/request-session";
@@ -558,7 +560,7 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
     },
   );
 
-  it("silently seeds GitHub threads and admits each later revision once without exposing its credential", async () => {
+  it("seeds HTTP items and admits new matching IDs and revisions once without exposing credentials", async () => {
     const { agent } = await fixture();
     const token = (await createApiToken(userId, "Subscription management"))
       .token;
@@ -582,45 +584,52 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
         action,
         id,
       );
+    const connection = await db.accountConnection.create({
+      data: {
+        workspaceId,
+        name: "HTTP fixture",
+        preset: "custom",
+        authType: "bearer",
+        config: { allowedHosts: ["example.org"] },
+        status: "active",
+        encryptedSecret: encryptSecretRecord({ value: credential }),
+      },
+    });
     const config = {
-      kind: "github",
+      kind: "http",
+      connectionId: connection.id,
       cron: "*/5 * * * *",
       timezone: "UTC",
       name: "Reviews",
       prompt: "Check {{payload}}",
-      sourceConfig: { repositories: ["owner/project"] },
+      sourceConfig: {
+        url: "https://example.org/notifications",
+        itemsPath: "",
+        idPath: "id",
+        revisionPath: "updated_at",
+        filters: [
+          { path: "reason", values: ["REVIEW_REQUESTED"] },
+          { path: "repository.full_name", values: ["owner/project"] },
+        ],
+      },
     };
-    for (const bad of [
-      config,
-      { ...config, credential, sourceConfig: { url: "https://invalid.test" } },
-    ]) {
-      const invalid = await api("POST", "triggers", undefined, bad);
-      expect(invalid.status).toBe(400);
-      expect(await invalid.json()).toEqual({ error: "INVALID_TRIGGER_SOURCE" });
-    }
-    const created = await api("POST", "triggers", undefined, {
-      ...config,
-      credential,
-    });
+    const created = await api("POST", "triggers", undefined, config);
     expect(created.status).toBe(201);
     const dto = (await created.json()).trigger;
     expect(dto.source).toEqual({
-      config: {
-        repositories: ["owner/project"],
-        reasons: ["review_requested", "mention"],
+      config: config.sourceConfig,
+      connection: {
+        id: connection.id,
+        name: connection.name,
+        status: "active",
+        accountLabel: null,
       },
-      hasCredential: true,
       lastSyncAt: null,
       lastSyncStatus: null,
       lastSyncError: null,
       syncRetryAt: null,
     });
     expect(JSON.stringify(dto)).not.toContain(credential);
-    const stored = await db.agentTrigger.findUniqueOrThrow({
-      where: { id: dto.id },
-    });
-    expect(stored.sourceCredential).toMatchObject({ alg: "aes-256-gcm" });
-    expect(JSON.stringify(stored)).not.toContain(credential);
     const renamed = await api("PATCH", "trigger", dto.id, { name: "Renamed" });
     expect(renamed.status).toBe(200);
 
@@ -635,24 +644,25 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
         url: "https://api.github.com/repos/owner/project/pulls/7",
       },
     };
-    const rest = vi.fn(async (url: URL, init: RequestInit) => {
-      expect(url.origin + url.pathname).toBe(
-        "https://api.github.com/notifications",
-      );
-      expect(new Headers(init.headers).get("authorization")).toBe(
-        `Bearer ${credential}`,
-      );
-      expect(init.redirect).toBe("error");
-      return Response.json([
-        thread,
-        thread,
-        { ...thread, id: "88", reason: "comment" },
-      ]);
-    });
+    const rest = vi
+      .spyOn(transport, "pinnedGet")
+      .mockImplementation(async (url, headers) => {
+        expect(url.href).toBe(config.sourceConfig.url);
+        expect(headers.authorization).toBe(`Bearer ${credential}`);
+        expect(headers["user-agent"]).toBe("ToolPlane");
+        return {
+          status: 200,
+          headers: new Headers(),
+          text: JSON.stringify([
+            thread,
+            thread,
+            { ...thread, id: "88", reason: "comment" },
+          ]),
+        };
+      });
     const wake = vi
       .spyOn(worker, "wakeAgentWorker")
       .mockImplementation(() => {});
-    vi.stubGlobal("fetch", rest);
     try {
       const poll = async () => {
         const res = await api("POST", "run", dto.id);
@@ -668,6 +678,7 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
         await db.conversation.count({ where: { triggerId: dto.id } }),
       ).toBe(0);
       for (const revision of ["2026-11-02T10:00:00Z", "2026-11-03T10:00:00Z"]) {
+        thread.id = "43";
         thread.updated_at = revision;
         const conversationId = await poll();
         expect(typeof conversationId).toBe("string");
@@ -675,7 +686,7 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
           where: { conversationId, role: "user" },
         });
         const parts = JSON.stringify(message.parts);
-        expect(parts).toContain("https://github.com/owner/project/pull/7");
+        expect(parts).toContain(thread.subject.url);
         expect(parts).toContain(revision);
         expect(parts).toContain("untrusted");
         expect(parts).not.toContain(credential);
@@ -686,12 +697,11 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
         await db.conversation.count({ where: { triggerId: dto.id } }),
       ).toBe(2);
       const reset = Math.ceil(Date.now() / 1000) + 120;
-      rest.mockResolvedValueOnce(
-        new Response(credential, {
-          status: 429,
-          headers: { "x-ratelimit-reset": String(reset) },
-        }),
-      );
+      rest.mockResolvedValueOnce({
+        status: 429,
+        headers: new Headers({ "x-ratelimit-reset": String(reset) }),
+        text: "",
+      });
       const limited = await api("POST", "run", dto.id);
       expect(limited.status).toBe(429);
       expect(await limited.json()).toEqual({
@@ -709,7 +719,7 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
       expect(await poll()).toBeNull();
       expect(rest).toHaveBeenCalledTimes(calls);
     } finally {
-      vi.unstubAllGlobals();
+      rest.mockRestore();
       wake.mockRestore();
     }
   });

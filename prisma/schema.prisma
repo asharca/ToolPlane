@@ -200,6 +200,7 @@ model DailySnapshot {
 }
 
 model Workspace {
+  accountConnections AccountConnection[]
   mcpOAuthCredentials McpOAuthCredential[]
   agentMemories AgentMemory[]
   agentEnvironmentCredentials AgentEnvironmentCredential[]
@@ -808,6 +809,41 @@ model AgentUsage {
   @@index([workspaceId, createdAt])
 }
 
+model AccountConnection {
+  id String @id @default(cuid())
+  workspaceId String
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name String
+  preset String
+  authType String
+  config Json
+  encryptedSecret Json?
+  expiresAt DateTime?
+  refreshLeaseUntil DateTime?
+  status String @default("pending")
+  accountLabel String?
+  lastError String?
+  createdById String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  triggers AgentTrigger[]
+  oauthPending AccountConnectionOAuthPending[]
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model AccountConnectionOAuthPending {
+  stateHash String @id
+  connectionId String
+  connection AccountConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  userId String
+  encryptedVerifier Json
+  redirectUri String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([expiresAt])
+}
+
 model AgentTrigger {
   id String @id @default(cuid())
   workspaceId String
@@ -822,7 +858,8 @@ model AgentTrigger {
   prompt String
   secretHash String?
   sourceConfig Json?
-  sourceCredential Json?
+  connectionId String?
+  connection AccountConnection? @relation(fields: [connectionId], references: [id], onDelete: Restrict)
   lastSyncAt DateTime?
   lastSyncStatus String?
   lastSyncError String?
@@ -847,6 +884,7 @@ model AgentTrigger {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([agentId, createdAt])
+  @@index([connectionId])
   @@index([enabled, nextRunAt])
 }
 
