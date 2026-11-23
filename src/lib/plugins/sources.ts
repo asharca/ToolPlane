@@ -143,7 +143,7 @@ export async function listPluginSources(scope: WorkspaceScope) {
     db.workspace.findFirst({
       where: {
         id: workspaceId,
-        ...workspaceAccessWhere(userId, "manage"),
+        ...workspaceAccessWhere(userId, "plugins"),
       },
       select: { id: true },
     }),
@@ -197,7 +197,7 @@ export async function listPluginSources(scope: WorkspaceScope) {
 }
 
 export async function createPluginSource(
-  scope: WorkspaceScope<"manage">,
+  scope: WorkspaceScope<"plugins">,
   input: PluginSourceInput,
 ) {
   const { id: workspaceId, actorUserId: userId } = scope;
@@ -328,7 +328,7 @@ export async function syncPluginSource(
       throw new GithubRegistryError("not_authorized");
   } else if (
     !(await db.workspace.findFirst({
-      where: { id: workspaceId, ...workspaceAccessWhere(userId, "manage") },
+      where: { id: workspaceId, ...workspaceAccessWhere(userId, "plugins") },
       select: { id: true },
     }))
   ) {
@@ -341,7 +341,7 @@ export async function syncPluginSource(
       ? { official: true, workspaceId: null }
       : {
           workspaceId,
-          workspace: workspaceAccessWhere(userId, "manage"),
+          workspace: workspaceAccessWhere(userId, "plugins"),
           official: false,
         },
     { dedupeActive: true },
@@ -349,7 +349,7 @@ export async function syncPluginSource(
 }
 
 export async function updatePluginSource(
-  scope: WorkspaceScope<"manage">,
+  scope: WorkspaceScope<"plugins">,
   sourceId: string,
   input: { name?: string; token?: string },
 ) {
@@ -410,7 +410,7 @@ export async function updatePluginSource(
 }
 
 export async function deletePluginSource(
-  scope: WorkspaceScope<"manage">,
+  scope: WorkspaceScope<"plugins">,
   sourceId: string,
 ) {
   await disableSources(

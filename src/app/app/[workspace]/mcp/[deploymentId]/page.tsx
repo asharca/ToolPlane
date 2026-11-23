@@ -239,7 +239,7 @@ export default async function DeploymentInspectorPage({
   const missingRequiredVariables = envRows.filter(
     (row) => row.required && !row.configured,
   );
-  const canManage = ws.role === "owner" || ws.role === "admin";
+  const canManage = ws.permissions.includes("resources");
   const status = effectiveStatus(deploymentId, dep.status);
   const running = status === "running";
   const transitioning = Boolean(TRANSITIONING_STATUSES[status]);

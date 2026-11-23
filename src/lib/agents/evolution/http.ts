@@ -1,5 +1,8 @@
 import "server-only";
-import { workspaceAccessWhere } from "@/lib/workspace/scope";
+import {
+  membershipPermissionWhere,
+  workspaceAccessWhere,
+} from "@/lib/workspace/scope";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { resolveRequestUser } from "@/lib/auth/request-user";
@@ -69,15 +72,18 @@ async function authorize(req: Request, agentId: string, feedback = false) {
       workspace: workspaceAccessWhere(user.id),
     },
     include: {
-      workspace: { include: { members: { where: { userId: user.id } } } },
+      workspace: {
+        include: {
+          members: {
+            where: { userId: user.id, ...membershipPermissionWhere("agents") },
+          },
+        },
+      },
     },
   });
   if (!agent) throw new EvolutionError("NOT_FOUND");
   const canReview =
-    agent.workspace.ownerId === user.id ||
-    agent.workspace.members.some(
-      (m) => m.role === "admin" || m.role === "owner",
-    );
+    agent.workspace.ownerId === user.id || agent.workspace.members.length > 0;
   if (!feedback && !canReview) throw new EvolutionError("FORBIDDEN");
   return {
     slug: agent.workspace.slug,

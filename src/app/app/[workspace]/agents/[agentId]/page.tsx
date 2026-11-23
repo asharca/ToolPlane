@@ -204,18 +204,7 @@ export default async function AgentDetailPage({
           skills,
           publishedRevision,
           canManageCredentials: ws.ownerId === user.id,
-          canApprovePluginSync:
-            ws.ownerId === user.id ||
-            Boolean(
-              await db.membership.findFirst({
-                where: {
-                  workspaceId: ws.id,
-                  userId: user.id,
-                  role: { in: ["owner", "admin"] },
-                },
-                select: { userId: true },
-              }),
-            ),
+          canApprovePluginSync: ws.permissions.includes("plugins"),
           piPackages: buildAgentPluginOptions(installs.items, agent),
           pluginCatalog: buildAgentPluginCatalog(
             catalog.items,

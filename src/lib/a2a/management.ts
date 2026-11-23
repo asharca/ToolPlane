@@ -22,7 +22,7 @@ const reply = (body: unknown, status = 200) =>
       "x-content-type-options": "nosniff",
     },
   });
-/** Explicit owner/admin opt-in. Service credentials never authorize their own publication. */
+/** Explicit agent management opt-in. Service credentials never authorize their own publication. */
 export async function manageA2AService(
   req: Request,
   slug: string,
@@ -38,22 +38,8 @@ export async function manageA2AService(
     const workspace = await resolveWorkspaceScope({ slug }, user.id);
     if (workspace?.status !== "active")
       return reply({ error: "Workspace not found." }, 404);
-    const isAdmin =
-      workspace.ownerId === user.id ||
-      Boolean(
-        await db.membership.count({
-          where: {
-            workspaceId: workspace.id,
-            userId: user.id,
-            role: "admin",
-          },
-        }),
-      );
-    if (!isAdmin)
-      return reply(
-        { error: "Workspace owner or administrator required." },
-        403,
-      );
+    if (!workspace.permissions.includes("agents"))
+      return reply({ error: "Agent management permission required." }, 403);
     if (
       req.headers.get("content-type")?.split(";")[0].toLowerCase() !==
       "application/json"

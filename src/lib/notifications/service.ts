@@ -108,7 +108,7 @@ export async function publishNotification(
       const candidate = await tx.workspace.findFirst({
         where: {
           slug: scope.slug,
-          ...workspaceAccessWhere(actorId, "manage"),
+          ...workspaceAccessWhere(actorId, "notifications"),
         },
         select: { id: true, name: true, status: true },
       });

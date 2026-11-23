@@ -267,7 +267,7 @@ it("persists only version-specific local notes and serves unmatched files as imm
   });
   const first = await (async () =>
     createPrivatePlugin(
-      await testWorkspaceScope(workspaceId, userId, "manage"),
+      await testWorkspaceScope(workspaceId, userId, "plugins"),
       input("1.0.0", "## 1.0.0\nFirst notes"),
     ))();
   const original = await db.marketRelease.findUniqueOrThrow({
@@ -277,7 +277,7 @@ it("persists only version-specific local notes and serves unmatched files as imm
   const unmatchedText = "## Unreleased\nFuture plans\n\n## 1.0.0\nFirst notes";
   const unmatched = await (async () =>
     appendPrivatePluginVersion(
-      await testWorkspaceScope(workspaceId, userId, "manage"),
+      await testWorkspaceScope(workspaceId, userId, "plugins"),
       first.installId,
       input("1.0.1", unmatchedText),
     ))();
@@ -290,7 +290,7 @@ it("persists only version-specific local notes and serves unmatched files as imm
   ).toBeNull();
   const latest = await (async () =>
     appendPrivatePluginVersion(
-      await testWorkspaceScope(workspaceId, userId, "manage"),
+      await testWorkspaceScope(workspaceId, userId, "plugins"),
       first.installId,
       input("1.0.2", "## 1.0.2\nLatest notes\n\n## 1.0.0\nRewritten history"),
     ))();
@@ -326,7 +326,7 @@ it("persists only version-specific local notes and serves unmatched files as imm
   await expect(
     (async () =>
       createPrivatePlugin(
-        await testWorkspaceScope(workspaceId, userId, "manage"),
+        await testWorkspaceScope(workspaceId, userId, "plugins"),
         input("2.0.0", `## Unreleased\nsk-${"x".repeat(40)}`),
       ))(),
   ).rejects.toMatchObject({ code: "PLUGIN_CONTAINS_SECRET" });

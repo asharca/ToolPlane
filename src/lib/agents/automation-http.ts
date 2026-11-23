@@ -160,7 +160,7 @@ export async function handleAgentAutomation(
   const scope = await resolveWorkspaceScope(
     { id: agent.workspaceId },
     user.id,
-    req.method === "GET" ? "read" : "manage",
+    req.method === "GET" ? "read" : "agents",
   );
   if (!scope) return jsonError("Forbidden", 403);
   if (action === "usage") {

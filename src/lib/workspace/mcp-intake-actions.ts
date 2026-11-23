@@ -53,7 +53,7 @@ export async function analyzeMcpSourceAction(input: {
   if (!ctx) return { ok: false, error: "notAuthorized" };
   try {
     const entries = await analyze(input.source);
-    if (arbitrary(entries) && ctx.ws.role === "member")
+    if (arbitrary(entries) && !ctx.ws.permissions.includes("resources"))
       return { ok: false, error: "arbitraryCommandNotAllowed" };
     await probeRemoteDrafts(entries);
     return { ok: true, drafts: entries.map((entry) => entry.draft) };
@@ -99,7 +99,7 @@ export async function createMcpFromIntakeAction(input: {
     if (arbitrary(entries)) {
       const manage = await actionScope({
         slug: input.workspace,
-        capability: "manage",
+        capability: "resources",
       });
       if (!manage) return { ok: false, error: "arbitraryCommandNotAllowed" };
       await probeRemoteDrafts(entries);

@@ -2,9 +2,16 @@ import "server-only";
 import type { Prisma, Workspace } from "@prisma/client";
 import { db } from "@/lib/db";
 import { enrichLogContext } from "@/lib/observability/context";
+import {
+  effectiveWorkspacePermissions,
+  MANAGER_ROLES,
+  workspaceRoleOf,
+  type WorkspacePermission,
+  type WorkspaceRole,
+} from "./permissions";
 
-export type WorkspaceCapability = "read" | "manage";
-type WorkspaceRole = "owner" | "admin" | "member";
+/** "read" is membership; every other capability is one management permission. */
+export type WorkspaceCapability = "read" | WorkspacePermission;
 type WorkspaceTarget =
   | { id: string; slug?: never }
   | { slug: string; id?: never };
@@ -23,7 +30,30 @@ export type WorkspaceScope<
     readonly actorUserId: string;
     readonly role: WorkspaceRole;
     readonly capability: C;
+    /** Effective management permissions of the actor when the scope resolved. */
+    readonly permissions: readonly WorkspacePermission[];
   };
+
+/**
+ * Membership predicate for one management permission: manager roles unless
+ * individually revoked, other roles only when individually granted.
+ */
+export function membershipPermissionWhere(
+  permission: WorkspacePermission,
+): Prisma.MembershipWhereInput {
+  return {
+    OR: [
+      {
+        role: { in: [...MANAGER_ROLES] },
+        NOT: { revokedPermissions: { has: permission } },
+      },
+      {
+        role: { notIn: [...MANAGER_ROLES] },
+        grantedPermissions: { has: permission },
+      },
+    ],
+  };
+}
 
 export function workspaceAccessWhere(
   actorUserId: string,
@@ -39,9 +69,9 @@ export function workspaceAccessWhere(
           some: {
             userId: actorUserId,
             user: { status: "active" },
-            ...(capability === "manage"
-              ? { role: { in: ["owner", "admin"] } }
-              : {}),
+            ...(capability === "read"
+              ? {}
+              : membershipPermissionWhere(capability)),
           },
         },
       },
@@ -81,23 +111,36 @@ export async function resolveWorkspaceScope(
   const row = await client.workspace.findFirst({
     where: { ...identity, ...workspaceAccessWhere(actorUserId, capability) },
     include: {
-      members: { where: { userId: actorUserId }, select: { role: true } },
+      members: {
+        where: { userId: actorUserId },
+        select: {
+          role: true,
+          grantedPermissions: true,
+          revokedPermissions: true,
+        },
+      },
     },
   });
   if (!row) return null;
   const { members, ...workspace } = row;
-  const membershipRole = members[0]?.role;
-  const role =
-    workspace.ownerId === actorUserId || membershipRole === "owner"
-      ? "owner"
-      : membershipRole === "admin"
-        ? "admin"
-        : "member";
+  const membership = members[0];
+  const role = workspaceRoleOf(
+    workspace.ownerId,
+    actorUserId,
+    membership?.role,
+  );
   enrichLogContext({ workspaceId: workspace.id, actorId: actorUserId });
   return Object.freeze({
     ...workspace,
     actorUserId,
     role,
     capability,
+    permissions: Object.freeze(
+      effectiveWorkspacePermissions(
+        role,
+        membership?.grantedPermissions ?? [],
+        membership?.revokedPermissions ?? [],
+      ),
+    ),
   }) as WorkspaceScope;
 }

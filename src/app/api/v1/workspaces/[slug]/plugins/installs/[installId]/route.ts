@@ -23,7 +23,7 @@ export const PATCH = withRequestLogging(
   async (req: Request, { params }: Context) => {
     try {
       const { slug, installId } = await params;
-      const { workspace } = await pluginRequestContext(req, slug, "manage");
+      const { workspace } = await pluginRequestContext(req, slug, "plugins");
       const body = await pluginJson(req, updateBody);
       return Response.json(
         await updatePlugin(
@@ -43,7 +43,7 @@ export const DELETE = withRequestLogging(
   async (req: Request, { params }: Context) => {
     try {
       const { slug, installId } = await params;
-      const { workspace } = await pluginRequestContext(req, slug, "manage");
+      const { workspace } = await pluginRequestContext(req, slug, "plugins");
       return Response.json(await removePlugin(workspace, installId));
     } catch (error) {
       return pluginApiError(error);

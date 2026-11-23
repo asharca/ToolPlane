@@ -250,7 +250,7 @@ export function buildPrivatePluginManifest(input: PrivatePluginInput) {
 /** A private resource uses the same immutable plugin releases and installations. */
 export async function intakePrivatePlugin(
   tx: Prisma.TransactionClient,
-  scope: WorkspaceScope<"manage">,
+  scope: WorkspaceScope<"plugins">,
   value: unknown,
   preserveExisting = false,
 ) {
@@ -386,7 +386,7 @@ async function persistPrivatePluginManifest(
 }
 
 export async function createPrivatePlugin(
-  scope: WorkspaceScope<"manage">,
+  scope: WorkspaceScope<"plugins">,
   value: unknown,
 ) {
   const { id: workspaceId } = scope;
@@ -400,7 +400,7 @@ export async function createPrivatePlugin(
 }
 
 export async function appendPrivatePluginVersion(
-  scope: WorkspaceScope<"manage">,
+  scope: WorkspaceScope<"plugins">,
   installId: string,
   value: unknown,
 ) {

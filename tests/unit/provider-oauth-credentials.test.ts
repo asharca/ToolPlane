@@ -204,7 +204,7 @@ describe("provider credentials and OAuth support", () => {
     const scope = await resolveWorkspaceScope(
       { id: "ws-1" },
       "user-1",
-      "manage",
+      "resources",
     );
     if (!scope) throw new Error("Expected workspace scope");
 

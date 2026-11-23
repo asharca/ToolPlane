@@ -117,5 +117,5 @@ export type McpConfigSaveResult =
  *   updateMcpDependenciesAction({ workspace, deploymentId }): Promise<McpConfigSaveResult>
  *   setMcpRuntimeTargetAction({ workspace, deploymentId, target, sandboxId? }): Promise<McpConfigSaveResult>
  *   setMcpSamplingAction({ workspace, deploymentId, enabled }): Promise<{ ok: true } | McpConfigFailure>
- * All mutations require "manage" capability; reads require "read".
+ * All mutations require "resources" capability; reads require "read".
  */

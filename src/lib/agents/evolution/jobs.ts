@@ -118,7 +118,7 @@ async function actorAuthorized(scope: Scope) {
     await db.workspace.findFirst({
       where: {
         id: scope.workspaceId,
-        ...workspaceAccessWhere(scope.actorId, "manage"),
+        ...workspaceAccessWhere(scope.actorId, "agents"),
       },
     }),
   );

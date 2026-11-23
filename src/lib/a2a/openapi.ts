@@ -428,7 +428,7 @@ export const a2aOpenApi = {
         operationId: "configureLocalA2A",
         summary: "Configure inbound, outbound and collaboration authorization",
         description:
-          "Requires workspace owner or administrator. Publishes directional settings and policy as a new immutable Agent revision using revision compare-and-swap. Inbound authorization controls account-token and channel admission and delegated target access; outbound authorization and selected policy authorize delegation. Ordinary chat, control and Work entry do not require collaboration opt-in. The retired enabled alias is rejected.",
+          "Requires agent management permission. Publishes directional settings and policy as a new immutable Agent revision using revision compare-and-swap. Inbound authorization controls account-token and channel admission and delegated target access; outbound authorization and selected policy authorize delegation. Ordinary chat, control and Work entry do not require collaboration opt-in. The retired enabled alias is rejected.",
         security: localSecurity,
         requestBody: {
           required: true,

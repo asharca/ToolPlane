@@ -77,8 +77,7 @@ export const a2aFailures = defineFailures({
   FILE_RETRY_GET_TASK_ONLY: "A2A-Retry-Files: true is only valid with GetTask.",
   REQUIRED_PERMISSION_MISSING: "Required A2A permission is missing.",
   AGENT_UNAVAILABLE: "Agent unavailable.",
-  WORKSPACE_OWNER_OR_ADMIN_REQUIRED:
-    "Workspace owner or administrator required.",
+  WORKSPACE_OWNER_OR_ADMIN_REQUIRED: "Agent management permission required.",
   RETIRED_AGENT_READ_ONLY: "Retired Agent execution is read-only.",
   RETAINED_ENDPOINT_UNAVAILABLE: "Retained endpoint unavailable.",
   KEY_UNAVAILABLE: "A2A key unavailable.",

@@ -21,7 +21,7 @@ export const POST = withRequestLogging(
   ) => {
     try {
       const { slug, installId } = await params;
-      const { workspace } = await pluginRequestContext(req, slug, "manage");
+      const { workspace } = await pluginRequestContext(req, slug, "plugins");
       const { agentId, targetReleaseId } = await pluginJson(req, bodySchema);
       return Response.json(
         await approveAgentPluginSync(

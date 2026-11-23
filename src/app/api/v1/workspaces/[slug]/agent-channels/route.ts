@@ -115,13 +115,7 @@ async function authorize(req: Request, slug: string, manage = false) {
   const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (!workspace)
     return Response.json({ error: "Workspace not found" }, { status: 404 });
-  if (
-    manage &&
-    workspace.ownerId !== user.id &&
-    !(await db.membership.count({
-      where: { workspaceId: workspace.id, userId: user.id, role: "admin" },
-    }))
-  )
+  if (manage && !workspace.permissions.includes("agents"))
     return Response.json({ error: "Forbidden" }, { status: 403 });
   return { ...workspace, actorId: user.id };
 }

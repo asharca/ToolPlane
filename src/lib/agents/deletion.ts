@@ -1,6 +1,9 @@
 import "server-only";
 
-import { workspaceAccessWhere } from "@/lib/workspace/scope";
+import {
+  membershipPermissionWhere,
+  workspaceAccessWhere,
+} from "@/lib/workspace/scope";
 import { db } from "@/lib/db";
 import { deleteAgent, getAgentDeleteTargets } from "@/lib/agents/mutations";
 import { cleanupAgentEndpointRuntimesForSource } from "@/lib/agents/public-api/maintenance";
@@ -25,9 +28,12 @@ export async function deleteManagedAgent(input: {
       select: {
         ownerId: true,
         members: {
-          where: { userId: input.actorId },
+          where: {
+            userId: input.actorId,
+            ...membershipPermissionWhere("agents"),
+          },
           take: 1,
-          select: { role: true },
+          select: { userId: true },
         },
       },
     }),
@@ -52,7 +58,7 @@ export async function deleteManagedAgent(input: {
   if (
     agent.publicEndpoints.length > 0 &&
     workspace.ownerId !== input.actorId &&
-    workspace.members[0]?.role !== "admin"
+    workspace.members.length === 0
   )
     return false;
   if (

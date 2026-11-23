@@ -104,7 +104,11 @@ describe("workspace lifecycle and authorization", () => {
       capability: "read",
     });
     expect(
-      await resolveWorkspaceScope({ slug: workspace.slug }, member, "manage"),
+      await resolveWorkspaceScope(
+        { slug: workspace.slug },
+        member,
+        "resources",
+      ),
     ).toBeNull();
     expect(
       await resolveWorkspaceScope({ slug: workspace.slug }, outsider),
@@ -116,16 +120,43 @@ describe("workspace lifecycle and authorization", () => {
     const manageScope = await resolveWorkspaceScope(
       { id: workspace.id },
       member,
-      "manage",
+      "resources",
     );
-    expect(manageScope).toMatchObject({ role: "admin", capability: "manage" });
+    expect(manageScope).toMatchObject({
+      role: "admin",
+      capability: "resources",
+    });
     if (!manageScope) throw new Error("Admin scope was not resolved");
+    await db.membership.updateMany({
+      where: { workspaceId: workspace.id, userId: member },
+      data: { revokedPermissions: ["resources"] },
+    });
+    expect(
+      await db.workspace.findFirst({ where: workspaceScopeWhere(manageScope) }),
+    ).toBeNull();
+    expect(
+      await resolveWorkspaceScope({ id: workspace.id }, member, "agents"),
+    ).not.toBeNull();
+    await db.membership.updateMany({
+      where: { workspaceId: workspace.id, userId: member },
+      data: {
+        role: "member",
+        revokedPermissions: [],
+        grantedPermissions: ["resources"],
+      },
+    });
+    expect(
+      await resolveWorkspaceScope({ id: workspace.id }, member, "resources"),
+    ).not.toBeNull();
+    expect(
+      await resolveWorkspaceScope({ id: workspace.id }, member, "agents"),
+    ).toBeNull();
     await removeWorkspaceMember(owner, workspace.slug, member);
     expect(
       await db.workspace.findFirst({ where: workspaceScopeWhere(manageScope) }),
     ).toBeNull();
     expect(
-      await resolveWorkspaceScope({ slug: workspace.slug }, owner, "manage"),
+      await resolveWorkspaceScope({ slug: workspace.slug }, owner, "resources"),
     ).toMatchObject({ role: "owner" });
   });
 

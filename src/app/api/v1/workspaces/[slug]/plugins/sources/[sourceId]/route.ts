@@ -20,7 +20,7 @@ export const PATCH = withRequestLogging(
   async (req: Request, { params }: Context) => {
     try {
       const { slug, sourceId } = await params;
-      const { workspace } = await pluginRequestContext(req, slug, "manage");
+      const { workspace } = await pluginRequestContext(req, slug, "plugins");
       return Response.json(
         await updatePluginSource(
           workspace,
@@ -38,7 +38,7 @@ export const DELETE = withRequestLogging(
   async (req: Request, { params }: Context) => {
     try {
       const { slug, sourceId } = await params;
-      const { workspace } = await pluginRequestContext(req, slug, "manage");
+      const { workspace } = await pluginRequestContext(req, slug, "plugins");
       await deletePluginSource(workspace, sourceId);
       return Response.json({ id: sourceId });
     } catch (error) {

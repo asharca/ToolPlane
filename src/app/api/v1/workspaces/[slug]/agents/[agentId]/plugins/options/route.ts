@@ -33,7 +33,7 @@ export const GET = withRequestLogging(
       return NextResponse.json({ error: "agent not found" }, { status: 404 });
 
     try {
-      if (workspace.role === "member")
+      if (!workspace.permissions.includes("plugins"))
         throw new PluginError(
           "not_authorized",
           "Workspace access denied.",

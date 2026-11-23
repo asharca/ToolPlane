@@ -252,6 +252,9 @@ model Membership {
   userId      String
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   role        String    @default("member")
+  // Per-member adjustments to the role defaults (see src/lib/workspace/permissions.ts).
+  grantedPermissions String[] @default([])
+  revokedPermissions String[] @default([])
   createdAt   DateTime  @default(now())
 
   @@unique([workspaceId, userId])

@@ -57,7 +57,7 @@ const EMPTY_DRAFT: NotificationDraft = {
   emails: [],
 };
 
-/** Workspace owners and admins publish from the workspace inbox. */
+/** Publishing from the workspace inbox requires the notifications permission. */
 export function PublishWorkspaceNotification({
   workspaceSlug,
   members,

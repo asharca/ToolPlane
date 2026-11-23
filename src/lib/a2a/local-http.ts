@@ -182,12 +182,7 @@ export async function handleLocalA2A(
         return reply(card);
       }
       const { user, workspace } = await account(req, slug);
-      if (
-        workspace.ownerId !== user.id &&
-        !(await db.membership.count({
-          where: { workspaceId: workspace.id, userId: user.id, role: "admin" },
-        }))
-      )
+      if (!workspace.permissions.includes("agents"))
         throw new A2AHttpError(403, "WORKSPACE_OWNER_OR_ADMIN_REQUIRED");
       if (
         req.headers.get("content-type")?.split(";")[0].toLowerCase() !==
@@ -213,7 +208,7 @@ export async function handleLocalA2A(
           where: {
             id: workspace.id,
             owner: { status: "active" },
-            ...workspaceAccessWhere(user.id, "manage"),
+            ...workspaceAccessWhere(user.id, "agents"),
           },
         });
         if (

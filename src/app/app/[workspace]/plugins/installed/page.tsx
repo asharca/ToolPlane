@@ -8,7 +8,6 @@ import {
 } from "@/components/dashboard/plugins/InstalledPluginsTable";
 import { getCurrentUser } from "@/lib/auth/current-user";
 
-import { db } from "@/lib/db";
 import { listPlugins, pluginReleaseLabel } from "@/lib/plugins/catalog";
 import { releaseContents } from "@/lib/plugins/release-contents";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
@@ -44,19 +43,8 @@ export default async function InstalledPluginsPage({
     ? query.filter[0]
     : query.filter;
   const filter = filters.find((item) => item === requested) ?? ("all" as const);
-  const [{ items }, membership] = await Promise.all([
-    listPlugins(workspace, { installedOnly: true }),
-    db.membership.findUnique({
-      where: {
-        workspaceId_userId: { workspaceId: workspace.id, userId: user.id },
-      },
-      select: { role: true },
-    }),
-  ]);
-  const canManage =
-    workspace.ownerId === user.id ||
-    membership?.role === "admin" ||
-    membership?.role === "owner";
+  const { items } = await listPlugins(workspace, { installedOnly: true });
+  const canManage = workspace.permissions.includes("plugins");
   const timeZone = resolveUserTimeZone(user);
   return (
     <DashboardPage>

@@ -32,7 +32,7 @@ export const POST = withRequestLogging(
   async (req: Request, { params }: Context) => {
     try {
       const { slug } = await params;
-      const { workspace } = await pluginRequestContext(req, slug, "manage");
+      const { workspace } = await pluginRequestContext(req, slug, "plugins");
       return Response.json(
         await createPluginSource(workspace, await pluginJson(req, sourceBody)),
         { status: 201 },

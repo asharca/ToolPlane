@@ -42,7 +42,7 @@ async function canManage(tx: Tx, ctx: ConsoleActor) {
       where: {
         id: ctx.workspaceId,
         owner: { status: "active" },
-        ...workspaceAccessWhere(ctx.actorId, "manage"),
+        ...workspaceAccessWhere(ctx.actorId, "agents"),
       },
     })) &&
       (await tx.user.count({ where: { id: ctx.actorId, status: "active" } })),

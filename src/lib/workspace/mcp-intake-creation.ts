@@ -66,7 +66,7 @@ async function prepareDeployment(
   if (
     entry.draft.kind === "stdio" &&
     !isPackagedStdioCommand(JSON.parse(entry.draft.config).command) &&
-    ctx.ws.capability !== "manage"
+    !ctx.ws.permissions.includes("resources")
   )
     throw new IntakeError("arbitraryCommandNotAllowed");
   const { status, name, source, ref, installCfg } = applyCreateItem(

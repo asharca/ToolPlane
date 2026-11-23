@@ -1,4 +1,5 @@
 import "server-only";
+import { membershipPermissionWhere } from "@/lib/workspace/scope";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { SignJWT, jwtVerify, errors as joseErrors } from "jose";
@@ -101,7 +102,10 @@ async function currentTarget(
           { ownerId: scope.userId },
           {
             members: {
-              some: { userId: scope.userId, role: { in: ["owner", "admin"] } },
+              some: {
+                userId: scope.userId,
+                ...membershipPermissionWhere("agents"),
+              },
             },
           },
           ...(user.role === "admin" ? [{}] : []),
