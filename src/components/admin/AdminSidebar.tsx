@@ -3,6 +3,7 @@
 import {
   ArrowLeft,
   Bell,
+  Flag,
   Gauge,
   Building2,
   LayoutDashboard,
@@ -27,7 +28,8 @@ type AdminPageLabelKey =
   | "adminNavUsers"
   | "adminNavWorkspaces"
   | "adminNavCatalog"
-  | "adminNavNotifications";
+  | "adminNavNotifications"
+  | "adminNavFeedback";
 
 type AdminSectionLabelKey =
   | "adminNavOperations"
@@ -79,6 +81,11 @@ const NAV_SECTIONS: NavSection[] = [
         labelKey: "adminNavNotifications",
         href: "/admin/notifications",
         icon: Bell,
+      },
+      {
+        labelKey: "adminNavFeedback",
+        href: "/admin/feedback",
+        icon: Flag,
       },
       { labelKey: "adminNavSettings", href: "/admin/settings", icon: Settings },
     ],
