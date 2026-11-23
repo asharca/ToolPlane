@@ -93,8 +93,18 @@ function ImageCard({
   selected: boolean;
   onSelect: (image: string) => void;
 }) {
+  const t = useTranslations("console.sandboxes");
+  const badge = t.has(`imageOptions.${option.id}.badge`)
+    ? t(`imageOptions.${option.id}.badge`)
+    : option.badge;
+  const summary = t.has(`imageOptions.${option.id}.summary`)
+    ? t(`imageOptions.${option.id}.summary`)
+    : option.summary;
+  const bestFor = t.has(`imageOptions.${option.id}.bestFor`)
+    ? t(`imageOptions.${option.id}.bestFor`)
+    : option.bestFor;
   return (
-    <div className="relative flex items-start gap-3 rounded-lg border border-border p-3">
+    <div className="relative flex flex-col gap-2 rounded-lg border border-border p-3">
       <button
         type="button"
         tabIndex={-1}
@@ -103,41 +113,45 @@ function ImageCard({
         onClick={() => onSelect(option.image)}
         className="absolute inset-0 rounded-lg"
       />
-      <RadioGroupItem
-        value={option.image}
-        label={option.name}
-        className="relative z-10"
-      />
-      <span
-        className={cx(
-          "pointer-events-none relative mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border",
-          selected
-            ? "border-primary/30 bg-background text-primary"
-            : "border-border bg-muted text-muted-foreground",
-        )}
-      >
-        {selected ? (
-          <Check className="size-3.5" />
-        ) : (
-          <Server className="size-3.5" />
-        )}
-      </span>
-      <span className="pointer-events-none relative min-w-0 flex-1">
-        <span className="flex flex-wrap items-center gap-2">
+      <div className="pointer-events-none relative flex items-center justify-between gap-2">
+        <div className="pointer-events-auto relative z-10 min-w-0 flex-1">
+          <RadioGroupItem
+            value={option.image}
+            label={option.name}
+            className="min-w-0"
+          />
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
           <AnimatedBadge status="neutral" size="sm">
-            {option.badge}
+            {badge}
           </AnimatedBadge>
+          <span
+            className={cx(
+              "flex size-6 shrink-0 items-center justify-center rounded-md border",
+              selected
+                ? "border-primary/30 bg-background text-primary"
+                : "border-border bg-muted text-muted-foreground",
+            )}
+          >
+            {selected ? (
+              <Check className="size-3.5" />
+            ) : (
+              <Server className="size-3.5" />
+            )}
+          </span>
+        </div>
+      </div>
+      <div className="pointer-events-none relative min-w-0 space-y-1 pl-6">
+        <span className="block text-xs leading-5 text-muted-foreground">
+          {summary}
         </span>
-        <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-          {option.summary}
-        </span>
-        <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground/80">
+        <span className="block truncate font-mono text-[11px] text-muted-foreground/80">
           {option.image}
         </span>
-        <span className="mt-2 block text-[11px] font-medium text-foreground">
-          {option.bestFor}
+        <span className="block text-[11px] font-medium text-foreground">
+          {bestFor}
         </span>
-      </span>
+      </div>
     </div>
   );
 }
@@ -327,7 +341,7 @@ function SandboxCreateFields({
         <input type="hidden" name="kind" value={mode} />
         <input type="hidden" name="imageChoice" value={selectedImage} />
 
-        <div className="grid grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-[19rem_minmax(0,1fr)]">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-5 pb-4 xl:grid-cols-[19rem_minmax(0,1fr)]">
           <div className="space-y-4">
             <div className="space-y-4 rounded-xl border border-border bg-muted/20 px-4 py-4">
               <DialogField

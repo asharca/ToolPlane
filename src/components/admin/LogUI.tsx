@@ -32,7 +32,9 @@ export function LogTimestamp({
       title={iso}
       className="block whitespace-nowrap font-mono text-xs tabular-nums"
     >
-      <span className="block text-foreground">{iso.slice(11, 23)}</span>
+      <span className="block text-foreground">
+        {compact ? `${iso.slice(11, 23)} UTC` : iso.slice(11, 23)}
+      </span>
       {!compact ? (
         <span className="mt-1 block text-muted-foreground">
           {iso.slice(0, 10)}

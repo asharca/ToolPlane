@@ -18,6 +18,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { FilePathTree } from "@/components/dashboard/FilePathTree";
 
 import { useTranslations } from "next-intl";
+import Link from "next/link";
 import { useRef, useState } from "react";
 import {
   Cpu,
@@ -34,10 +35,23 @@ import {
 import {
   ModelPicker,
   ModelPickerTrigger,
+  resolveModelPrimaryType,
   type ModelProviderOption,
 } from "@/components/dashboard/models/ModelPicker";
 import { FormSelect } from "@/components/ui/FormSelect";
 import { ModelProviderNotice } from "@/components/dashboard/ModelProviderNotice";
+
+function firstEmbeddingSelection(
+  providers: ModelProviderOption[],
+): { providerId: string; model: string } | null {
+  for (const provider of providers) {
+    const match = provider.models.find(
+      (item) => resolveModelPrimaryType(provider, item) === "embedding",
+    );
+    if (match) return { providerId: provider.id, model: match };
+  }
+  return null;
+}
 
 type KnowledgeBase = {
   id: string;
@@ -97,11 +111,12 @@ export function WorkspaceKnowledge({
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(
     null,
   );
+  const initialEmbedding = firstEmbeddingSelection(providers);
   const [name, setName] = useState("");
-  const [providerId, setProviderId] = useState(providers[0]?.id ?? "");
-  const [model, setModel] = useState(
-    providers[0]?.models[0] ?? "text-embedding-3-small",
+  const [providerId, setProviderId] = useState(
+    initialEmbedding?.providerId ?? "",
   );
+  const [model, setModel] = useState(initialEmbedding?.model ?? "");
   const [chunkSize, setChunkSize] = useState(1200);
   const [chunkOverlap, setChunkOverlap] = useState(200);
   const [topK, setTopK] = useState(6);
@@ -133,6 +148,8 @@ export function WorkspaceKnowledge({
     ) ?? selected?.documents[0];
   const selectedProvider =
     providers.find((provider) => provider.id === providerId) ?? null;
+  const hasEmbeddingModels = Boolean(firstEmbeddingSelection(providers));
+  const providersHref = `/app/${encodeURIComponent(slug)}/providers?returnTo=${encodeURIComponent(`/app/${encodeURIComponent(slug)}/knowledge`)}`;
 
   function selectBase(base: KnowledgeBase) {
     setSelectedId(base.id);
@@ -151,10 +168,11 @@ export function WorkspaceKnowledge({
   }
 
   function beginCreate() {
+    const defaultEmbedding = firstEmbeddingSelection(providers);
     setCreatingBase(true);
     setName("");
-    setProviderId(providers[0]?.id ?? "");
-    setModel(providers[0]?.models[0] ?? "text-embedding-3-small");
+    setProviderId(defaultEmbedding?.providerId ?? "");
+    setModel(defaultEmbedding?.model ?? "");
     setChunkSize(1200);
     setChunkOverlap(200);
     setTopK(6);
@@ -469,7 +487,12 @@ export function WorkspaceKnowledge({
         {creatingBase ? (
           <div className="mx-auto w-full max-w-3xl px-5 py-7 sm:px-8 sm:py-10">
             <div className="pb-5">
-              <h2 className="text-lg font-semibold">{t("newBase")}</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-lg font-semibold">{t("newBase")}</h2>
+                <AnimatedBadge status="warning">
+                  {t("inDevelopment")}
+                </AnimatedBadge>
+              </div>
               <p className="mt-1 text-sm text-muted-foreground">
                 {t("newBaseDescription")}
               </p>
@@ -495,26 +518,37 @@ export function WorkspaceKnowledge({
                   <ModelPicker
                     className="mt-1.5 flex w-full"
                     providers={providers}
+                    allowedTypes={["embedding"]}
+                    emptyMessage={t("noEmbeddingModels")}
                     value={providerId && model ? { providerId, model } : null}
                     onSelect={(selection) => {
                       setProviderId(selection.providerId);
                       setModel(selection.model);
                     }}
                     onConfigure={() => {
-                      window.location.assign(
-                        `/app/${encodeURIComponent(slug)}/providers`,
-                      );
+                      window.location.assign(providersHref);
                     }}
                     trigger={
                       <ModelPickerTrigger
-                        aria-label={`${t("embeddingModel")}: ${model || t("embeddingModel")}`}
-                        label={model || t("embeddingModel")}
+                        aria-label={`${t("embeddingModel")}: ${model || t("selectEmbeddingModel")}`}
+                        label={model || t("selectEmbeddingModel")}
                         placeholder={!model}
                         icon={<Cpu className="size-4" />}
                         note={selectedProvider?.name}
                       />
                     }
                   />
+                  {!hasEmbeddingModels ? (
+                    <p className="mt-2 text-xs font-normal text-muted-foreground">
+                      {t("noEmbeddingModelsHint")}{" "}
+                      <Link
+                        href={providersHref}
+                        className="font-medium text-foreground underline underline-offset-4"
+                      >
+                        {t("configureProviders")}
+                      </Link>
+                    </p>
+                  ) : null}
                 </div>
                 <div>
                   <Input
@@ -569,17 +603,16 @@ export function WorkspaceKnowledge({
             ) : null}
             {providers.length ? (
               <div className="flex justify-end gap-2 pt-4">
-                <Button
-                  type="button"
-                  onClick={() =>
-                    selected ? setCreatingBase(false) : undefined
-                  }
-                  disabled={!selected}
-                  variant={"secondary"}
-                  size={"sm"}
-                >
-                  {t("cancel")}
-                </Button>
+                {selected ? (
+                  <Button
+                    type="button"
+                    onClick={() => setCreatingBase(false)}
+                    variant={"secondary"}
+                    size={"sm"}
+                  >
+                    {t("cancel")}
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
                   onClick={createBase}
@@ -881,27 +914,37 @@ export function WorkspaceKnowledge({
                     <ModelPicker
                       className="mt-1.5 flex w-full"
                       providers={providers}
+                      allowedTypes={["embedding"]}
+                      emptyMessage={t("noEmbeddingModels")}
                       value={providerId && model ? { providerId, model } : null}
                       onSelect={(selection) => {
                         setProviderId(selection.providerId);
                         setModel(selection.model);
                       }}
                       onConfigure={() => {
-                        const returnTo = `/app/${encodeURIComponent(slug)}/knowledge`;
-                        window.location.assign(
-                          `/app/${encodeURIComponent(slug)}/providers?returnTo=${encodeURIComponent(returnTo)}`,
-                        );
+                        window.location.assign(providersHref);
                       }}
                       trigger={
                         <ModelPickerTrigger
-                          aria-label={`${t("embeddingModel")}: ${model || t("embeddingModel")}`}
-                          label={model || t("embeddingModel")}
+                          aria-label={`${t("embeddingModel")}: ${model || t("selectEmbeddingModel")}`}
+                          label={model || t("selectEmbeddingModel")}
                           placeholder={!model}
                           icon={<Cpu className="size-4" />}
                           note={selectedProvider?.name}
                         />
                       }
                     />
+                    {!hasEmbeddingModels ? (
+                      <p className="mt-2 text-xs font-normal text-muted-foreground">
+                        {t("noEmbeddingModelsHint")}{" "}
+                        <Link
+                          href={providersHref}
+                          className="font-medium text-foreground underline underline-offset-4"
+                        >
+                          {t("configureProviders")}
+                        </Link>
+                      </p>
+                    ) : null}
                   </div>
                   <div>
                     <Input

@@ -55,9 +55,11 @@ export async function PersonalSettingsContent({
                 <span className="text-sm font-medium">
                   {workspacesT("appearance")}
                 </span>
-                <ThemeToggle />
+                <ThemeToggle showLabel />
               </div>
-              <TimeZoneSettings timeZoneOverride={user.timeZoneOverride} />
+              <div className="border-t border-border pt-5">
+                <TimeZoneSettings timeZoneOverride={user.timeZoneOverride} />
+              </div>
             </div>
           </DashboardPanel>
         </DialogBody>

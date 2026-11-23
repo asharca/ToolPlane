@@ -1214,9 +1214,15 @@ export function WorkspaceAssistantChat({
                       <Bot className="size-4 shrink-0" />
                       <span
                         className="max-w-36 truncate text-sm font-medium text-foreground sm:max-w-56"
-                        title={activeThread?.title || activeAssistant.name}
+                        title={
+                          activeThread
+                            ? activeThread.title || t("newChat")
+                            : activeAssistant.name
+                        }
                       >
-                        {activeThread?.title || activeAssistant.name}
+                        {activeThread
+                          ? activeThread.title || t("newChat")
+                          : activeAssistant.name}
                       </span>
                       {activeThread ? (
                         <span
@@ -1325,11 +1331,11 @@ export function WorkspaceAssistantChat({
                   {activeAssistant?.mcpToolChanges ? (
                     <McpToolsUpdatedNote {...activeAssistant.mcpToolChanges} />
                   ) : null}
-                  {activeAssistant?.description || !activeAssistant ? (
-                    <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
-                      {activeAssistant?.description || t("emptyDescription")}
-                    </p>
-                  ) : null}
+                  <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
+                    {activeAssistant
+                      ? activeAssistant.description || t("noThreadDescription")
+                      : t("emptyDescription")}
+                  </p>
                   <Button
                     type="button"
                     onClick={() =>

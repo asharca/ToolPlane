@@ -530,8 +530,8 @@ export function McpDeploymentsBrowser({
       className="flex min-h-0 flex-1 flex-col gap-4"
       aria-label={t("allMcps")}
     >
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5">
+      <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex min-w-0 w-full flex-col gap-2.5 sm:w-auto sm:flex-1 sm:flex-row sm:flex-wrap sm:items-center">
           <div className="w-full sm:w-64 lg:w-72">
             <Input
               value={query}
@@ -576,7 +576,7 @@ export function McpDeploymentsBrowser({
                     setPage(1);
                   }}
                   className={cn(
-                    "inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    "inline-flex min-h-8 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     active
                       ? "border-border bg-card text-foreground shadow-xs"
                       : "border-transparent bg-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",

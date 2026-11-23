@@ -25,10 +25,12 @@ export function SkillMarkdownViewer({
   const t = useTranslations("console.skills");
   const [mode, setMode] = useState<"rendered" | "source">("rendered");
   // Textareas normalize CRLF from multipart saves to LF; compare the same draft representation.
-  const [content, setContent] = useState(() =>
-    (editable?.content ?? markdown).replace(/\r\n?/g, "\n"),
+  const initialContent = (editable?.content ?? markdown).replace(
+    /\r\n?/g,
+    "\n",
   );
-  const [savedContent, setSavedContent] = useState<string | null>(null);
+  const [content, setContent] = useState(initialContent);
+  const [savedContent, setSavedContent] = useState(initialContent);
   const [state, formAction, isPending] = useActionState(
     async (
       previous: { error?: string; saved?: boolean },
@@ -40,6 +42,7 @@ export function SkillMarkdownViewer({
     },
     {},
   );
+  const isDirty = content !== savedContent;
   const draft = editable ? content : markdown;
   const renderedMarkdown =
     draft.replace(/^---\r?\n[\s\S]*?\r?\n---\s*/, "").trim() || draft;
@@ -94,15 +97,9 @@ export function SkillMarkdownViewer({
           ) : null}
         </div>
       </div>
-      {editable ? (
+      {editable && (isPending || isDirty || state.saved) ? (
         <p role="status" className="px-5 pt-3 text-xs text-muted-foreground">
-          {t(
-            isPending
-              ? "saving"
-              : state.saved && savedContent === content
-                ? "saved"
-                : "unsaved",
-          )}
+          {t(isPending ? "saving" : isDirty ? "unsaved" : "saved")}
         </p>
       ) : null}
       {state.error ? (

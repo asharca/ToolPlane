@@ -12,7 +12,9 @@ import { FormCheckbox } from "@/components/ui/FormCheckbox";
 import { getLocale, getTranslations } from "next-intl/server";
 import type { ReactNode } from "react";
 import { redirect, notFound } from "next/navigation";
+import Link from "next/link";
 import {
+  ArrowLeft,
   CheckCircle2,
   ExternalLink,
   FileArchive,
@@ -272,6 +274,15 @@ export default async function SkillInspectorPage({
 
   return (
     <div className="min-w-0 p-4 sm:p-6 w-full max-w-none space-y-5">
+      <div>
+        <Link
+          href={`/app/${encodeURIComponent(slug)}/skills`}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-3.5" />
+          {t("title")}
+        </Link>
+      </div>
       <section className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="border-b border-border px-5 py-4 sm:px-6">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">

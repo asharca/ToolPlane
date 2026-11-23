@@ -43,6 +43,7 @@ import {
 } from "@/components/dashboard/DashboardUI";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
+import { Tooltip } from "@/components/motion/tooltip";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 
 export const dynamic = "force-dynamic";
@@ -224,26 +225,8 @@ export default async function SandboxesPage({
               }
             />
           ) : (
-            <SandboxBatchTable
-              key={scope}
-              workspace={slug}
-              batchEnabled={scope === "external"}
-              minWidth="68rem"
-              headers={[
-                { label: t(scope === "external" ? "sandbox" : "ownerAgent") },
-                { label: t("mode") },
-                { label: t("status") },
-                { label: t("backingStore") },
-                {
-                  label: t(
-                    scope === "external" ? "agentsColumn" : "usageColumn",
-                  ),
-                },
-                { label: t("snapshots") },
-                { label: t("created") },
-                { label: t("actions"), align: "right" },
-              ]}
-              rows={sandboxRows.map((row) => {
+            (() => {
+              const items = sandboxRows.map((row) => {
                 const s = row.sandbox;
                 const status = effectiveStatus(
                   s.deploymentId,
@@ -263,248 +246,403 @@ export default async function SandboxesPage({
                   (s.kind === "ssh" && !s.sshServer) ||
                   (s.kind === "connector" && !connector);
                 const agent = s.ownerAgent;
-                return {
-                  id: s.id,
-                  name: s.name,
-                  batchEligible:
-                    !managed &&
-                    !disabledLegacy &&
-                    !lifecycleBlocked &&
-                    status !== "provisioning",
-                  cells: [
-                    <div key="name" className="min-w-0">
-                      <Link
-                        href={`/app/${slug}/sandboxes/${s.id}`}
-                        className="block px-4 py-3 transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <span className="flex size-8 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                            {s.kind === "connector" ? (
-                              <Laptop className="size-4" />
-                            ) : (
-                              <Terminal className="size-4" />
-                            )}
-                          </span>
-                          <div>
-                            <div className="font-medium text-foreground">
-                              {scope === "external"
-                                ? s.name
-                                : (agent?.name ?? t("ownerAgentUnavailable"))}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {scope === "external" ? s.slug : s.name}
-                            </div>
-                          </div>
-                        </div>
-                      </Link>
-                    </div>,
-                    <div key="mode" className="min-w-0">
-                      <AnimatedBadge
-                        status="neutral"
-                        size="sm"
-                        icon={
-                          s.kind === "connector" ? (
-                            <Laptop className="size-3.5" />
-                          ) : (
-                            <Cpu className="size-3.5" />
-                          )
-                        }
-                      >
-                        {modeLabel(s.kind, t)}
-                      </AnimatedBadge>
-                    </div>,
-                    <div key="status" className="min-w-0">
-                      {managed && status === "stopped" ? (
-                        <AnimatedBadge status="neutral" size="sm">
-                          {t("runtimeStandby")}
-                        </AnimatedBadge>
-                      ) : (
-                        <StatusBadge status={status} />
-                      )}
-                    </div>,
-                    <div key="storage" className="min-w-0 max-w-72">
-                      <div
-                        className="max-w-72 truncate"
-                        title={s.image ?? backingStore(s, t)}
-                      >
-                        {backingStore(s, t).replace(
-                          /(@sha256:[a-f0-9]{12})[a-f0-9]+/gi,
-                          "$1…",
-                        )}
-                      </div>
-                      <div
-                        className={`mt-0.5 text-[11px] text-muted-foreground/70 ${s.kind === "connector" ? "font-mono normal-case" : "uppercase tracking-wide"}`}
-                      >
-                        {s.kind === "connector"
-                          ? connectorMeta(connector, t)
-                          : t("networkValue", { network: s.network })}
-                      </div>
-                      {s.kind === "connector" && connector ? (
-                        <div className="mt-1">
-                          <SandboxConnectorStatus
-                            workspace={slug}
-                            sandboxId={s.id}
-                          />
-                        </div>
-                      ) : null}
-                    </div>,
-                    <div key="agent" className="min-w-0">
-                      {scope !== "external" ? (
-                        <div className="space-y-1 text-xs text-muted-foreground">
-                          <div>
-                            {t("conversationCount", {
-                              count: s._count.conversations,
-                            })}
-                          </div>
-                          <div>
-                            {t("contextCount", { count: s._count.a2aContexts })}
-                          </div>
-                        </div>
-                      ) : s.externalAgentLinks.length > 0 ? (
-                        <ul className="space-y-1">
-                          {s.externalAgentLinks.map((link) => (
-                            <li key={link.agent.id}>
-                              <ButtonLink
-                                href={`/app/${slug}/agents/${link.agent.id}?settings=sandboxes`}
-                                variant="ghost"
-                                size="sm"
-                              >
-                                <Bot className="size-3.5" />
-                                {link.agent.name}
-                                <span className="text-xs text-muted-foreground">
-                                  {isExternalSandboxAccess(link.access)
-                                    ? t(`access.${link.access}`)
-                                    : link.access}
-                                </span>
-                              </ButtonLink>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </div>,
-                    <div key="snapshots" className="min-w-0">
-                      {s._count.snapshots}
-                    </div>,
-                    <div key="created" className="min-w-0">
-                      {formatDate(s.createdAt, timeZone, locale)}
-                    </div>,
-                    <div key="actions" className="min-w-0">
-                      <div className="flex items-center justify-end gap-3">
-                        {managed ||
-                        disabledLegacy ||
-                        lifecycleBlocked ? null : running ? (
-                          <>
-                            <form action={stopSandboxAction}>
-                              <input
-                                type="hidden"
-                                name="workspace"
-                                value={slug}
-                              />
-                              <input
-                                type="hidden"
-                                name="sandboxId"
-                                value={s.id}
-                              />
-                              <SubmitButton
-                                flash={false}
-                                pendingLabel={t("stopping")}
-                                variant="ghost"
-                                size="sm"
-                              >
-                                {t("stop")}
-                              </SubmitButton>
-                            </form>
-                            <form action={restartSandboxAction}>
-                              <input
-                                type="hidden"
-                                name="workspace"
-                                value={slug}
-                              />
-                              <input
-                                type="hidden"
-                                name="sandboxId"
-                                value={s.id}
-                              />
-                              <SubmitButton
-                                flash={false}
-                                pendingLabel={t("restarting")}
-                                variant="ghost"
-                                size="sm"
-                              >
-                                {t("restart")}
-                              </SubmitButton>
-                            </form>
-                          </>
-                        ) : (
-                          <form action={startSandboxAction}>
-                            <input
-                              type="hidden"
-                              name="workspace"
-                              value={slug}
-                            />
-                            <input
-                              type="hidden"
-                              name="sandboxId"
-                              value={s.id}
-                            />
+                const hideInternalSubtitle =
+                  scope !== "external" &&
+                  /^Agent\s+c[a-z0-9]{20,}$/i.test(s.name);
+                const title =
+                  scope === "external"
+                    ? s.name
+                    : (agent?.name ?? t("ownerAgentUnavailable"));
+                const subtitle =
+                  scope === "external"
+                    ? s.slug
+                    : hideInternalSubtitle
+                      ? null
+                      : s.name;
+                const storeSummary = backingStore(s, t).replace(
+                  /(@sha256:[a-f0-9]{12})[a-f0-9]+/gi,
+                  "$1…",
+                );
+                const actionsContent = (
+                  <div
+                    key={s.id}
+                    className="flex flex-wrap items-center justify-end gap-1.5"
+                  >
+                    {managed ||
+                    disabledLegacy ||
+                    lifecycleBlocked ? null : running ? (
+                      <>
+                        <form action={stopSandboxAction}>
+                          <input type="hidden" name="workspace" value={slug} />
+                          <input type="hidden" name="sandboxId" value={s.id} />
+                          <SubmitButton
+                            flash={false}
+                            pendingLabel={t("stopping")}
+                            variant="secondary"
+                            size="sm"
+                          >
+                            {t("stop")}
+                          </SubmitButton>
+                        </form>
+                        <form action={restartSandboxAction}>
+                          <input type="hidden" name="workspace" value={slug} />
+                          <input type="hidden" name="sandboxId" value={s.id} />
+                          <SubmitButton
+                            flash={false}
+                            pendingLabel={t("restarting")}
+                            variant="ghost"
+                            size="sm"
+                          >
+                            {t("restart")}
+                          </SubmitButton>
+                        </form>
+                      </>
+                    ) : (
+                      <form action={startSandboxAction}>
+                        <input type="hidden" name="workspace" value={slug} />
+                        <input type="hidden" name="sandboxId" value={s.id} />
+                        {s.kind === "connector" ? (
+                          <Tooltip content={t("openSandboxToGenerateCommand")}>
                             <SubmitButton
                               flash={false}
                               pendingLabel={t("starting")}
-                              variant="ghost"
+                              variant="secondary"
                               size="sm"
                             >
                               {t("start")}
                             </SubmitButton>
-                          </form>
-                        )}
-                        {agent ? (
-                          <ButtonLink
-                            href={`/app/${slug}/agents/${agent.id}`}
-                            variant="ghost"
-                            size="sm"
-                          >
-                            {t("openAgent")}
-                          </ButtonLink>
-                        ) : managed ? (
-                          <ButtonLink
-                            href={`/app/${slug}/sandboxes/${s.id}`}
-                            variant="ghost"
-                            size="sm"
-                          >
-                            {t("inspect")}
-                          </ButtonLink>
+                          </Tooltip>
                         ) : (
-                          <form action={deleteSandboxAction}>
-                            <input
-                              type="hidden"
-                              name="workspace"
-                              value={slug}
-                            />
-                            <input
-                              type="hidden"
-                              name="sandboxId"
-                              value={s.id}
-                            />
-                            <ConfirmSubmitButton
-                              triggerLabel={t("delete")}
-                              confirmLabel={common("confirm")}
-                              cancelLabel={common("cancel")}
-                              prompt={t("deleteSandboxShortPrompt", {
-                                name: s.name,
-                              })}
-                              pendingLabel={t("deletingSandbox")}
-                              promptClassName="max-w-36 text-right text-xs text-muted-foreground"
-                            />
-                          </form>
+                          <SubmitButton
+                            flash={false}
+                            pendingLabel={t("starting")}
+                            variant="secondary"
+                            size="sm"
+                          >
+                            {t("start")}
+                          </SubmitButton>
                         )}
-                      </div>
-                    </div>,
-                  ],
+                      </form>
+                    )}
+                    {agent ? (
+                      <ButtonLink
+                        href={`/app/${slug}/agents/${agent.id}`}
+                        variant="secondary"
+                        size="sm"
+                      >
+                        {t("openAgent")}
+                      </ButtonLink>
+                    ) : managed ? (
+                      <ButtonLink
+                        href={`/app/${slug}/sandboxes/${s.id}`}
+                        variant="secondary"
+                        size="sm"
+                      >
+                        {t("inspect")}
+                      </ButtonLink>
+                    ) : (
+                      <form action={deleteSandboxAction}>
+                        <input type="hidden" name="workspace" value={slug} />
+                        <input type="hidden" name="sandboxId" value={s.id} />
+                        <ConfirmSubmitButton
+                          triggerLabel={t("delete")}
+                          confirmLabel={common("confirm")}
+                          cancelLabel={common("cancel")}
+                          prompt={t("deleteSandboxShortPrompt", {
+                            name: s.name,
+                          })}
+                          pendingLabel={t("deletingSandbox")}
+                          promptClassName="max-w-36 text-right text-xs text-muted-foreground"
+                        />
+                      </form>
+                    )}
+                  </div>
+                );
+                return {
+                  s,
+                  status,
+                  managed,
+                  connector,
+                  disabledLegacy,
+                  lifecycleBlocked,
+                  agent,
+                  title,
+                  subtitle,
+                  storeSummary,
+                  actionsContent,
                 };
-              })}
-            />
+              });
+
+              return (
+                <>
+                  <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card md:hidden">
+                    {items.map((item) => {
+                      const { s, status, managed, connector } = item;
+                      return (
+                        <li key={s.id} className="space-y-3 p-3.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <Link
+                              href={`/app/${slug}/sandboxes/${s.id}`}
+                              className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                                {s.kind === "connector" ? (
+                                  <Laptop className="size-4" />
+                                ) : (
+                                  <Terminal className="size-4" />
+                                )}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate font-medium text-foreground">
+                                  {item.title}
+                                </span>
+                                {item.subtitle ? (
+                                  <span className="block truncate text-xs text-muted-foreground">
+                                    {item.subtitle}
+                                  </span>
+                                ) : null}
+                              </span>
+                            </Link>
+                            {managed && status === "stopped" ? (
+                              <AnimatedBadge status="neutral" size="sm">
+                                {t("runtimeStandby")}
+                              </AnimatedBadge>
+                            ) : (
+                              <StatusBadge status={status} />
+                            )}
+                          </div>
+                          <div className="space-y-1 text-xs text-muted-foreground">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <AnimatedBadge
+                                status="neutral"
+                                size="sm"
+                                icon={
+                                  s.kind === "connector" ? (
+                                    <Laptop className="size-3.5" />
+                                  ) : (
+                                    <Cpu className="size-3.5" />
+                                  )
+                                }
+                              >
+                                {modeLabel(s.kind, t)}
+                              </AnimatedBadge>
+                              <span>
+                                {formatDate(s.createdAt, timeZone, locale)}
+                              </span>
+                            </div>
+                            <p
+                              className="truncate"
+                              title={s.image ?? backingStore(s, t)}
+                            >
+                              {item.storeSummary}
+                            </p>
+                            {s.kind === "connector" && connector ? (
+                              <SandboxConnectorStatus
+                                workspace={slug}
+                                sandboxId={s.id}
+                              />
+                            ) : null}
+                          </div>
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                            {scope !== "external" ? (
+                              <span className="text-xs text-muted-foreground">
+                                {t("conversationCount", {
+                                  count: s._count.conversations,
+                                })}{" "}
+                                ·{" "}
+                                {t("contextCount", {
+                                  count: s._count.a2aContexts,
+                                })}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                {t("snapshots")}: {s._count.snapshots}
+                              </span>
+                            )}
+                            {item.actionsContent}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+
+                  <div className="hidden md:block">
+                    <SandboxBatchTable
+                      key={scope}
+                      workspace={slug}
+                      batchEnabled={scope === "external"}
+                      minWidth="58rem"
+                      headers={[
+                        {
+                          label: t(
+                            scope === "external" ? "sandbox" : "ownerAgent",
+                          ),
+                        },
+                        { label: t("mode"), width: "5.5rem" },
+                        { label: t("status"), width: "7.5rem" },
+                        { label: t("backingStore"), width: "11.5rem" },
+                        {
+                          label: t(
+                            scope === "external"
+                              ? "agentsColumn"
+                              : "usageColumn",
+                          ),
+                          width: "7rem",
+                        },
+                        { label: t("snapshots"), width: "3.75rem" },
+                        { label: t("created"), width: "7rem" },
+                        {
+                          label: t("actions"),
+                          align: "right",
+                          width: scope === "external" ? "11.5rem" : "7rem",
+                        },
+                      ]}
+                      rows={items.map((item) => {
+                        const {
+                          s,
+                          status,
+                          managed,
+                          connector,
+                          disabledLegacy,
+                          lifecycleBlocked,
+                        } = item;
+                        return {
+                          id: s.id,
+                          name: s.name,
+                          batchEligible:
+                            !managed &&
+                            !disabledLegacy &&
+                            !lifecycleBlocked &&
+                            status !== "provisioning",
+                          cells: [
+                            <div key="name" className="min-w-0">
+                              <Link
+                                href={`/app/${slug}/sandboxes/${s.id}`}
+                                className="block w-full min-w-0 overflow-hidden rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+                              >
+                                <div className="flex min-w-0 items-center gap-2.5">
+                                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                                    {s.kind === "connector" ? (
+                                      <Laptop className="size-4" />
+                                    ) : (
+                                      <Terminal className="size-4" />
+                                    )}
+                                  </span>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate font-medium text-foreground">
+                                      {item.title}
+                                    </div>
+                                    {item.subtitle ? (
+                                      <div className="truncate text-xs text-muted-foreground">
+                                        {item.subtitle}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </Link>
+                            </div>,
+                            <div key="mode" className="min-w-0">
+                              <AnimatedBadge
+                                status="neutral"
+                                size="sm"
+                                icon={
+                                  s.kind === "connector" ? (
+                                    <Laptop className="size-3.5" />
+                                  ) : (
+                                    <Cpu className="size-3.5" />
+                                  )
+                                }
+                              >
+                                {modeLabel(s.kind, t)}
+                              </AnimatedBadge>
+                            </div>,
+                            <div key="status" className="min-w-0">
+                              {managed && status === "stopped" ? (
+                                <AnimatedBadge status="neutral" size="sm">
+                                  {t("runtimeStandby")}
+                                </AnimatedBadge>
+                              ) : (
+                                <StatusBadge status={status} />
+                              )}
+                            </div>,
+                            <div key="storage" className="min-w-0 max-w-full">
+                              <div
+                                className="truncate"
+                                title={s.image ?? backingStore(s, t)}
+                              >
+                                {item.storeSummary}
+                              </div>
+                              <div
+                                className={`mt-0.5 truncate text-[11px] text-muted-foreground/70 ${s.kind === "connector" ? "font-mono normal-case" : "uppercase tracking-wide"}`}
+                              >
+                                {s.kind === "connector"
+                                  ? connectorMeta(connector, t)
+                                  : t("networkValue", { network: s.network })}
+                              </div>
+                              {s.kind === "connector" && connector ? (
+                                <div className="mt-1">
+                                  <SandboxConnectorStatus
+                                    workspace={slug}
+                                    sandboxId={s.id}
+                                  />
+                                </div>
+                              ) : null}
+                            </div>,
+                            <div key="agent" className="min-w-0">
+                              {scope !== "external" ? (
+                                <div className="space-y-1 text-xs text-muted-foreground">
+                                  <div>
+                                    {t("conversationCount", {
+                                      count: s._count.conversations,
+                                    })}
+                                  </div>
+                                  <div>
+                                    {t("contextCount", {
+                                      count: s._count.a2aContexts,
+                                    })}
+                                  </div>
+                                </div>
+                              ) : s.externalAgentLinks.length > 0 ? (
+                                <ul className="space-y-1">
+                                  {s.externalAgentLinks.map((link) => (
+                                    <li key={link.agent.id}>
+                                      <ButtonLink
+                                        href={`/app/${slug}/agents/${link.agent.id}?settings=sandboxes`}
+                                        variant="ghost"
+                                        size="sm"
+                                      >
+                                        <Bot className="size-3.5" />
+                                        {link.agent.name}
+                                        <span className="text-xs text-muted-foreground">
+                                          {isExternalSandboxAccess(link.access)
+                                            ? t(`access.${link.access}`)
+                                            : link.access}
+                                        </span>
+                                      </ButtonLink>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </div>,
+                            <div key="snapshots" className="min-w-0">
+                              {s._count.snapshots}
+                            </div>,
+                            <div key="created" className="min-w-0 truncate">
+                              {formatDate(s.createdAt, timeZone, locale)}
+                            </div>,
+                            <div key="actions" className="min-w-0">
+                              {item.actionsContent}
+                            </div>,
+                          ],
+                        };
+                      })}
+                    />
+                  </div>
+                </>
+              );
+            })()
           )}
         </section>
       </DashboardPage>

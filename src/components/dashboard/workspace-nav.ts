@@ -8,6 +8,7 @@ import {
   MessageSquare,
   Plug,
   ScrollText,
+  Settings,
   Store,
   Users,
   type LucideIcon,
@@ -25,6 +26,12 @@ type WorkspaceNavGroup = {
   labelKey: string;
   items: WorkspaceNavItem[];
 };
+
+export const FEEDBACK_NAV_ITEM = {
+  labelKey: "feedback",
+  segment: "feedback",
+  icon: Flag,
+} as const;
 
 export const WORKSPACE_NAV_GROUPS: WorkspaceNavGroup[] = [
   {
@@ -58,7 +65,7 @@ export const WORKSPACE_NAV_GROUPS: WorkspaceNavGroup[] = [
       { labelKey: "sandboxes", segment: "sandboxes", icon: Boxes },
       { labelKey: "observability", segment: "observability", icon: ScrollText },
       { labelKey: "members", segment: "members", icon: Users },
-      { labelKey: "feedback", segment: "feedback", icon: Flag },
+      { labelKey: "settings", segment: "settings", icon: Settings },
     ],
   },
 ];

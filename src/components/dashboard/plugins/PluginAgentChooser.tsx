@@ -125,6 +125,13 @@ export function PluginAgentChooser({
       agentId: target,
     });
   }
+  if (!compatible) {
+    return (
+      <p role="status" className="text-sm leading-6 text-muted-foreground">
+        {t("incompatible")}
+      </p>
+    );
+  }
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
@@ -138,7 +145,9 @@ export function PluginAgentChooser({
           id={id}
           label={t("chooseAgent")}
           value={candidate?.id ?? ""}
-          disabled={!canManage || status === "waiting"}
+          disabled={
+            !canManage || !available || !compatible || status === "waiting"
+          }
           options={[
             { value: "", label: t("chooseAgent") },
             ...agents.map((agent) => ({ value: agent.id, label: agent.name })),

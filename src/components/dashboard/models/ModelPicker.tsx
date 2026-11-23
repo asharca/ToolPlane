@@ -57,9 +57,26 @@ export type ModelProviderOption = {
 
 export type ModelSelection = { providerId: string; model: string };
 
+export function resolveModelPrimaryType(
+  provider: Pick<ModelProviderOption, "models" | "modelRecords">,
+  modelId: string,
+): ModelPrimaryType {
+  const record = provider.modelRecords?.find(
+    (item) => item.modelId === modelId,
+  );
+  if (
+    record &&
+    MODEL_PRIMARY_TYPES.includes(record.primaryType as ModelPrimaryType)
+  ) {
+    return record.primaryType as ModelPrimaryType;
+  }
+  return inferModelPrimaryType(modelId);
+}
+
 type ModelRow = ModelSelection & {
   id: string;
   provider: string;
+  primaryType: ModelPrimaryType;
   tags: string[];
   description: string;
   inputPrice: string | null;
@@ -211,6 +228,8 @@ export function ModelPicker({
   error,
   closeOnSelect = true,
   onConfigure,
+  allowedTypes,
+  emptyMessage,
   size = "md",
   className,
 }: {
@@ -225,6 +244,8 @@ export function ModelPicker({
   error?: string | null;
   closeOnSelect?: boolean;
   onConfigure?: () => void;
+  allowedTypes?: readonly ModelPrimaryType[];
+  emptyMessage?: string;
   size?: "sm" | "md" | "lg";
   /** Outer layout only, e.g. `flex w-full` so a field trigger fills its row. */
   className?: string;
@@ -271,11 +292,7 @@ export function ModelPicker({
       const items = models
         .map((model): ModelRow => {
           const record = records.get(model);
-          const primaryType =
-            record &&
-            MODEL_PRIMARY_TYPES.includes(record.primaryType as ModelPrimaryType)
-              ? (record.primaryType as ModelPrimaryType)
-              : inferModelPrimaryType(model);
+          const primaryType = resolveModelPrimaryType(provider, model);
           const tags = [
             typeLabels[primaryType],
             ...(record?.capabilities?.includes("reasoning")
@@ -312,12 +329,19 @@ export function ModelPicker({
             providerId: provider.id,
             model,
             provider: provider.name,
+            primaryType,
             tags,
             inputPrice,
             outputPrice,
             description: `${tags.join(", ")}${inputPrice !== null ? `; ${t("catalogInputPrice")} ${inputPrice} $/M` : ""}${outputPrice !== null ? `; ${t("catalogOutputPrice")} ${outputPrice} $/M` : ""}`,
           };
         })
+        .filter(
+          (model) =>
+            !allowedTypes?.length ||
+            allowedTypes.includes(model.primaryType) ||
+            (value?.providerId === provider.id && value.model === model.model),
+        )
         .filter((model) =>
           [model.model, provider.name, provider.id, ...model.tags]
             .join(" ")
@@ -328,7 +352,7 @@ export function ModelPicker({
         ? [{ id: provider.id, label: provider.name, items }]
         : [];
     });
-  }, [providers, value, query, t]);
+  }, [providers, value, query, allowedTypes, t]);
   const rows = useMemo(() => groups.flatMap((group) => group.items), [groups]);
   const { activeIndex, moveTo, moveActive } = useRowCursor(rows, query);
   const active = rows[activeIndex];
@@ -670,11 +694,11 @@ export function ModelPicker({
                 ))
               ) : (
                 <p className="px-3 py-10 text-center text-sm text-muted-foreground">
-                  {t(
-                    providers.length
-                      ? "noMatchingModels"
-                      : "noConfiguredModelProviders",
-                  )}
+                  {!providers.length
+                    ? t("noConfiguredModelProviders")
+                    : !query.trim() && emptyMessage
+                      ? emptyMessage
+                      : t("noMatchingModels")}
                 </p>
               )}
             </div>

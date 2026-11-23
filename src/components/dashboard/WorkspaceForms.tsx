@@ -42,12 +42,14 @@ export function WorkspaceActionForm({
   danger = false,
   cancelable = false,
   disabled = false,
+  submitDisabled = false,
 }: {
   action: Action;
   children: ReactNode;
   label: string;
   danger?: boolean;
   disabled?: boolean;
+  submitDisabled?: boolean;
   /** Settings-dialog forms put Cancel and submit in a section footer. */
   cancelable?: boolean;
 }) {
@@ -56,7 +58,7 @@ export function WorkspaceActionForm({
   const submit = (
     <Button
       type="submit"
-      disabled={disabled || pending}
+      disabled={disabled || submitDisabled || pending}
       variant={danger ? "secondary" : "primary"}
       size="md"
     >
@@ -162,6 +164,7 @@ export function RenameWorkspaceForm({
       action={renameWorkspaceAction}
       label={t("save")}
       cancelable
+      submitDisabled={value.trim() === name.trim() || !value.trim()}
     >
       <input type="hidden" name="workspace" value={slug} />
       <DialogField

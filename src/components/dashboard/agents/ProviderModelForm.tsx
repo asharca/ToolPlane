@@ -837,7 +837,6 @@ export function DeleteModelForm({
         pendingLabel={t("removingModel")}
         triggerVariant="ghost"
         triggerSize="icon"
-        triggerTooltip={false}
         promptClassName="max-w-52 text-xs text-muted-foreground"
       />
       {state.error ? (

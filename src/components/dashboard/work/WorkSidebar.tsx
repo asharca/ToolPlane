@@ -783,6 +783,25 @@ export function WorkSidebar({
     );
   }
 
+  function sessionStatusLabel(status: string): string {
+    switch (status) {
+      case "running":
+        return t("statusRunning");
+      case "waiting_user":
+        return t("statusWaitingUser");
+      case "setup_required":
+        return t("statusWaiting");
+      case "error":
+      case "failed":
+      case "copy_failed":
+      case "restore_failed":
+      case "restore_cleanup_required":
+        return t("statusFailed");
+      default:
+        return status;
+    }
+  }
+
   function agentStatusTooltip(status: ReturnType<typeof agentSidebarStatus>) {
     return (
       <div className="max-w-64 space-y-1 text-left">
@@ -1305,19 +1324,25 @@ export function WorkSidebar({
                     }
                     if (kind === "session") {
                       const item = items.find((session) => session.id === id);
-                      const tone = sidebarIssueTone(item?.status ?? "");
+                      const status = item?.status ?? "";
+                      const tone = sidebarIssueTone(status);
                       return tone ? (
-                        <Circle
-                          data-sidebar-dot=""
-                          className={cx(
-                            "size-2 fill-current",
-                            tone === "error"
-                              ? "text-destructive"
-                              : tone === "warning"
-                                ? "text-warning"
-                                : "text-primary",
-                          )}
-                        />
+                        <Tooltip
+                          content={sessionStatusLabel(status)}
+                          side="right"
+                        >
+                          <Circle
+                            data-sidebar-dot=""
+                            className={cx(
+                              "size-2 fill-current",
+                              tone === "error"
+                                ? "text-destructive"
+                                : tone === "warning"
+                                  ? "text-warning"
+                                  : "text-primary",
+                            )}
+                          />
+                        </Tooltip>
                       ) : (
                         false
                       );

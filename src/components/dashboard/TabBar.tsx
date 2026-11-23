@@ -2,10 +2,17 @@
 
 import { Tabs, TabsList } from "@/components/motion/tabs";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
 
-export type Tab = { key: string; label: string; count?: number; href?: string };
+export type Tab = {
+  key: string;
+  label: string;
+  count?: number;
+  badge?: ReactNode;
+  href?: string;
+};
 
 export function TabBar({
   tabs,
@@ -46,7 +53,11 @@ export function TabBar({
                 )}
               >
                 {tab.label}
-                {typeof tab.count === "number" ? (
+                {tab.badge ? (
+                  <span className="ml-1.5 inline-flex items-center">
+                    {tab.badge}
+                  </span>
+                ) : typeof tab.count === "number" ? (
                   <span className="ml-1.5 text-muted-foreground">
                     {tab.count}
                   </span>

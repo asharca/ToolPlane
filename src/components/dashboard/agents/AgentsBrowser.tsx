@@ -664,7 +664,7 @@ export function AgentsBrowser({
                 aria-busy={createPending || undefined}
                 disabled={!createReady || createPending}
                 variant="primary"
-                className="rounded-full px-3 sm:px-5"
+                className="px-3 sm:px-5"
               >
                 <Plus className="size-[18px] shrink-0" />
                 {t("createAndEnable")}
@@ -688,7 +688,7 @@ export function AgentsBrowser({
                   if (next) setCreateStep(next.id);
                 }}
                 variant={"primary"}
-                className="rounded-full px-3 sm:px-5"
+                className="px-3 sm:px-5"
               >
                 {t("next")}
                 <ChevronRight className="size-4 shrink-0" />

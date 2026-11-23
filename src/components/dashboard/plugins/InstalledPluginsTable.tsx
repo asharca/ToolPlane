@@ -7,6 +7,7 @@ import { useTranslations } from "next-intl";
 import {
   ArrowUpCircle,
   CircleSlash,
+  GitBranch,
   MoreHorizontal,
   Puzzle,
   Search,
@@ -178,6 +179,10 @@ export function InstalledPluginsTable({
       updateCount={updatable.length}
       actions={
         <>
+          <ButtonLink href={`${base}/sources`} variant="secondary" size="sm">
+            <GitBranch className="size-4" />
+            {t("sources")}
+          </ButtonLink>
           {canManage && updatable.length > 0 ? (
             <form
               action={async () => {
@@ -368,6 +373,7 @@ export function InstalledPluginsTable({
           <DashboardTable
             ariaLabel={t("installed.title")}
             minWidth="52rem"
+            adjustableColumns={false}
             selectable={canManage}
             selectedRowIds={canManage ? selection : undefined}
             onSelectionChange={

@@ -909,7 +909,7 @@ export function AddProviderDialog({
       trigger={
         iconTrigger ? (
           <Button
-            variant="ghost"
+            variant="secondary"
             size="icon"
             type="button"
             aria-label={t("addModelProvider")}

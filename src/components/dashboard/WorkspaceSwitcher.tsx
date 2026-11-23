@@ -60,7 +60,7 @@ export function WorkspaceSwitcher({
         <MorphPopoverTrigger>
           <button
             type="button"
-            aria-label="切换工作区"
+            aria-label={t("switchWorkspace")}
             className="group flex h-10 w-full min-w-0 items-center gap-2 overflow-hidden rounded-xl px-2 text-left text-sm text-foreground outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-foreground/20"
           >
             <span className="grid size-6 shrink-0 place-items-center rounded-md border border-border/60 bg-background text-[10px] font-semibold text-foreground">
