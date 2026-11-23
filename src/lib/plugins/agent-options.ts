@@ -29,7 +29,10 @@ export function buildAgentPluginOptions(
     const compatible = snapshot?.runtime.kind === agent.runtimeKind;
     if (!compatible && !enabled) return [];
     const available =
-      install.status === "ready" && plugin.status === "published" && compatible;
+      install.status === "ready" &&
+      plugin.status === "published" &&
+      compatible &&
+      plugin.envStatus.complete;
     const from = readCapabilities(enabled?.release.releaseSummary);
     const to = readCapabilities(enabled?.targetRelease?.releaseSummary);
     const previousMcp = new Map(
@@ -44,6 +47,7 @@ export function buildAgentPluginOptions(
         skillCount: snapshot?.resources.skills.length ?? 0,
         extensionCount: snapshot?.resources.extensions.length ?? 0,
         mcpRequirementCount: snapshot?.toolplane?.mcp.length ?? 0,
+        envStatus: plugin.envStatus,
         capabilities: snapshot
           ? {
               runtimeKind: snapshot.runtime.kind,
@@ -117,6 +121,7 @@ export function buildAgentPluginCatalog(
         requirements: (snapshot.toolplane?.mcp ?? []).map(
           ({ key, name, tools }) => ({ key, name, tools }),
         ),
+        envStatus: plugin.envStatus,
       },
     ];
   });

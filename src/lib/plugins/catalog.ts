@@ -4,17 +4,14 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import { readPluginChangelog } from "./changelog";
+import { evaluatePluginEnvStatus } from "./env-schema";
+import {
+  isOfficialRegistrySource,
+  resolveListingInstallEnvStatus,
+} from "./env-store";
+import { PluginError } from "./errors";
 
-export class PluginError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly status = 400,
-  ) {
-    super(message);
-    this.name = "PluginError";
-  }
-}
+export { PluginError };
 
 /** Source semver captured at index time; the integer release version is internal. */
 export function pluginReleaseLabel(release: {
@@ -57,6 +54,7 @@ const sourceSelect = {
       repository: true,
       branch: true,
       official: true,
+      workspaceId: true,
     },
   },
 } as const;
@@ -96,6 +94,9 @@ export async function listPlugins(
     orderBy: [{ name: "asc" }, { id: "asc" }],
     include: {
       githubRegistryResource: { select: sourceSelect },
+      officialEnvPreset: {
+        select: { configuredKeys: true, updatedAt: true },
+      },
       releases: {
         where: { reviewStatus: "approved" },
         orderBy: { version: "desc" },
@@ -105,6 +106,9 @@ export async function listPlugins(
         where: { targetWorkspaceId: workspaceId, status: "ready" },
         include: {
           currentRelease: true,
+          envConfig: {
+            select: { mode: true, configuredKeys: true, updatedAt: true },
+          },
           _count: {
             select: { agentPiPackages: { where: { agent: { workspaceId } } } },
           },
@@ -112,16 +116,34 @@ export async function listPlugins(
       },
     },
   });
-  const items = listings.map(({ releases, installs, ...listing }) => ({
-    ...listing,
-    latestRelease: releases[0] ?? null,
-    install: installs[0] ?? null,
-    updateAvailable:
-      listing.status === "published" &&
-      !!installs[0] &&
-      !!releases[0] &&
-      installs[0].currentReleaseId !== releases[0].id,
-  }));
+  const items = listings.map(({ releases, installs, ...listing }) => {
+    const latestRelease = releases[0] ?? null;
+    const install = installs[0] ?? null;
+    const activeRelease = install?.currentRelease ?? latestRelease;
+    const envStatus = activeRelease
+      ? resolveListingInstallEnvStatus({
+          manifest: activeRelease.manifest,
+          checksum: activeRelease.checksum,
+          isOfficial: isOfficialRegistrySource(
+            listing.githubRegistryResource?.registry,
+          ),
+          presetConfiguredKeys: listing.officialEnvPreset?.configuredKeys,
+          installedMode: install?.envConfig?.mode ?? null,
+          customConfiguredKeys: install?.envConfig?.configuredKeys,
+        })
+      : evaluatePluginEnvStatus({ isOfficial: false });
+    return {
+      ...listing,
+      latestRelease,
+      install,
+      envStatus,
+      updateAvailable:
+        listing.status === "published" &&
+        !!install &&
+        !!latestRelease &&
+        install.currentReleaseId !== latestRelease.id,
+    };
+  });
   const installed = await db.marketInstall.findMany({
     where: {
       targetWorkspaceId: workspaceId,
@@ -202,7 +224,11 @@ export async function listPluginCards(
           : 0,
         available:
           listing.status === "published" &&
-          release?.reviewStatus === "approved",
+          release?.reviewStatus === "approved" &&
+          (!listing.install || listing.envStatus.complete),
+        envComplete: listing.envStatus.complete,
+        requiresEnv: listing.envStatus.requiresEnv,
+        presetComplete: listing.envStatus.presetComplete,
         revoked: release?.reviewStatus === "revoked",
       },
     };
@@ -232,6 +258,9 @@ export async function getPlugin(scope: WorkspaceScope, listingId: string) {
     },
     include: {
       githubRegistryResource: { select: sourceSelect },
+      officialEnvPreset: {
+        select: { configuredKeys: true, updatedAt: true },
+      },
       releases: {
         where: { reviewStatus: "approved" },
         orderBy: { version: "desc" },
@@ -240,6 +269,9 @@ export async function getPlugin(scope: WorkspaceScope, listingId: string) {
         where: { targetWorkspaceId: workspaceId, status: "ready" },
         include: {
           currentRelease: true,
+          envConfig: {
+            select: { mode: true, configuredKeys: true, updatedAt: true },
+          },
           agentPiPackages: {
             where: { agent: { workspaceId } },
             select: {
@@ -264,15 +296,32 @@ export async function getPlugin(scope: WorkspaceScope, listingId: string) {
       release.releaseNotes,
     ),
   }));
+  const install = installs[0] ?? null;
+  const latestRelease = releases[0] ?? null;
+  const activeRelease = install?.currentRelease ?? latestRelease;
+  const isOfficial = isOfficialRegistrySource(
+    listing.githubRegistryResource?.registry,
+  );
+  const envStatus = activeRelease
+    ? resolveListingInstallEnvStatus({
+        manifest: activeRelease.manifest,
+        checksum: activeRelease.checksum,
+        isOfficial,
+        presetConfiguredKeys: listing.officialEnvPreset?.configuredKeys,
+        installedMode: install?.envConfig?.mode ?? null,
+        customConfiguredKeys: install?.envConfig?.configuredKeys,
+      })
+    : null;
   return {
     ...listing,
     releases,
-    latestRelease: releases[0] ?? null,
-    install: installs[0] ?? null,
+    latestRelease,
+    install,
+    envStatus,
     updateAvailable:
       plugin.status === "published" &&
-      !!installs[0] &&
+      !!install &&
       !!plugin.releases[0] &&
-      installs[0].currentReleaseId !== plugin.releases[0].id,
+      install.currentReleaseId !== plugin.releases[0].id,
   };
 }

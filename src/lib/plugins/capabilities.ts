@@ -68,6 +68,10 @@ export function computePluginCapabilities(
           commands: snapshot.resources.commands ?? [],
           config: snapshot.toolplane?.config ?? {},
           enabledFeatures: snapshot.toolplane?.enabledFeatures ?? null,
+          ...(snapshot.toolplane?.env ? { env: snapshot.toolplane.env } : {}),
+          ...(snapshot.toolplane?.httpProxies
+            ? { httpProxies: snapshot.toolplane.httpProxies }
+            : {}),
           ...(snapshot.toolplane?.nativeRoleModels
             ? { nativeRoleModels: snapshot.toolplane.nativeRoleModels }
             : {}),

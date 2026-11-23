@@ -801,7 +801,14 @@
         "resource_artifact_missing": "The plugin release content could not be built. Sync again; if it still fails, bump the plugin version and retry.",
         "github_request_failed": "GitHub is temporarily unreachable. Try again later; if it keeps failing, check the deployment's network access.",
         "not_found": "The plugin or release is no longer available. Refresh the page.",
-        "webhook_not_configured": "The deployer has not configured a webhook secret."
+        "webhook_not_configured": "The deployer has not configured a webhook secret.",
+        "env_config_incomplete": "Enter all required plugin environment variables before continuing.",
+        "preset_incomplete": "The platform preset is incomplete. Switch to custom configuration or contact an administrator.",
+        "preset_unsupported": "This plugin does not support platform preset credentials.",
+        "env_url_invalid": "Enter a valid HTTP or HTTPS URL without credentials or query parameters.",
+        "env_value_invalid": "Invalid plugin environment variable value.",
+        "env_key_unknown": "Submitted environment variable is not declared by this plugin.",
+        "not_official_plugin": "Platform presets are only supported for official plugins."
       },
       "sourceStatuses": {
         "pending": "Pending",
@@ -867,7 +874,31 @@
       "batchMessage": {
         "up_to_date": "Already up to date",
         "unavailable": "Withdrawn or removed from its source",
+        "env_config_incomplete": "Environment configuration is incomplete.",
+        "preset_incomplete": "Platform preset is incomplete. Configure custom values instead.",
         "request_failed": "The request failed. Please try again."
+      },
+      "env": {
+        "title": "Environment configuration",
+        "sourceLabel": "Credential source",
+        "platformPreset": "Platform preset",
+        "custom": "Custom",
+        "readyPreset": "Using platform preset (credentials hidden from workspace)",
+        "readyCustom": "Using workspace custom configuration",
+        "incomplete": "Environment configuration incomplete",
+        "missingKeys": "Missing required variables: {keys}",
+        "switchToCustom": "Switch to custom configuration",
+        "switchToPreset": "Use platform preset",
+        "configureAction": "Configure environment",
+        "save": "Save environment configuration",
+        "saved": "Environment configuration saved",
+        "configured": "Configured",
+        "secretPlaceholder": "Configured — leave blank to keep existing secret",
+        "clearKey": "Clear value",
+        "required": "Required",
+        "optional": "Optional",
+        "noPresetHint": "Platform preset is unavailable or incomplete. Configure custom values below.",
+        "contentsTitle": "Declared environment variables"
       }
     },
     "agents": {
@@ -1985,7 +2016,9 @@
         "configure": "Configure and add",
         "noMatches": "No matching plugins",
         "nothing": "No plugins to add",
-        "cancel": "Cancel"
+        "cancel": "Cancel",
+        "envIncomplete": "Env incomplete",
+        "configureEnv": "Configure env"
       }
     },
     "conversationOperations": {
@@ -2043,6 +2076,8 @@
         "MCP_UNREACHABLE": "it could not be reached or returned an error"
       },
       "PI_PACKAGE_UNAVAILABLE": "An enabled Pi package is unavailable or no longer approved. Review the Agent's package bindings before continuing.",
+      "PI_PACKAGE_ENV_INCOMPLETE": "A bound plugin’s environment configuration is incomplete. Open the plugin settings, fill in all required variables, then start a new session or Work.",
+      "PI_PACKAGE_ENV_CONFLICT": "A bound plugin declares an environment variable that conflicts with Agent credentials or another plugin.",
       "PI_PACKAGE_CHECKSUM_MISMATCH": "The package snapshot was modified. Execution was blocked; ask an administrator to restore the reviewed snapshot.",
       "PI_EXTENSION_LOAD_FAILED": "A selected Pi extension failed to load. Check its headless SDK compatibility before starting a new conversation.",
       "PI_EXTENSION_RESOURCE_DENIED": "The extension requested a resource outside this Agent's permitted directories. Execution was blocked.",
@@ -4971,6 +5006,20 @@
     "pluginWithdraw": "Withdraw listing",
     "pluginRevoke": "Revoke release",
     "pluginEmpty": "No plugins indexed.",
+    "pluginPresetTitle": "Platform preset environment",
+    "pluginPresetReady": "Preset ready",
+    "pluginPresetIncomplete": "Preset incomplete",
+    "pluginPresetMissing": "Missing required keys: {keys}",
+    "pluginPresetSave": "Save preset",
+    "pluginPresetClear": "Clear preset",
+    "pluginPresetSaved": "Platform preset saved.",
+    "pluginPresetCleared": "Platform preset cleared.",
+    "pluginPresetConfigured": "Configured",
+    "pluginPresetSecretPlaceholder": "Leave blank to keep existing secret",
+    "pluginPresetClearKey": "Clear existing value",
+    "pluginPresetRequired": "Required",
+    "pluginPresetOptional": "Optional",
+    "pluginPresetError": "Failed to update platform preset.",
     "logsTab_runs": "Agent runs",
     "logsTab_a2a": "A2A",
     "logsTab_mcp": "MCP calls",

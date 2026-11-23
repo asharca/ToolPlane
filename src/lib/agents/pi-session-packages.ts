@@ -9,6 +9,7 @@ import {
   assertPiSessionMcpAccess,
 } from "./pi-package-mcp";
 import { requireAgentRevision } from "./revisions";
+import { assertAgentPluginEnvReady } from "@/lib/plugins/env-store";
 
 export async function resolvePiSessionPackages(
   input: {
@@ -247,6 +248,18 @@ export async function resolvePiSessionPackages(
         };
       }),
     });
+    await assertAgentPluginEnvReady(
+      tx,
+      input.workspaceId,
+      packages.map((pkg) => {
+        const snap = snapshot.packages.find(
+          (entry) => entry.marketInstallId === pkg.marketInstallId,
+        );
+        if (!snap) throw new Error("PI_PACKAGE_UNAVAILABLE");
+        return { marketInstallId: pkg.marketInstallId, release: snap.release };
+      }),
+      revision.config.environment.credentialReferences.map((ref) => ref.name),
+    );
     // A grant whose pinned tools no longer overlap the live binding and the
     // deployment allowlist exposes nothing; session MCP would reject its
     // discovery with MCP_TOOL_FORBIDDEN and abort the whole Pi session.

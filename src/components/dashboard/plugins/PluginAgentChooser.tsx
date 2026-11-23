@@ -22,6 +22,7 @@ export function PluginAgentChooser({
   installed,
   compatible,
   available,
+  missingEnvKeys = [],
   returnAgent,
   pluginChannel,
   version,
@@ -35,6 +36,7 @@ export function PluginAgentChooser({
   installed: boolean;
   compatible: boolean;
   available: boolean;
+  missingEnvKeys?: string[];
   returnAgent: string;
   pluginChannel: string;
   version: string;
@@ -42,6 +44,7 @@ export function PluginAgentChooser({
   children?: ReactNode;
 }) {
   const t = useTranslations("console.plugins.flow");
+  const envT = useTranslations("console.plugins.env");
   const id = useId();
   const router = useRouter();
   const pathname = usePathname();
@@ -154,6 +157,17 @@ export function PluginAgentChooser({
       {reason ? (
         <p role="status" className="text-sm text-muted-foreground">
           {t(reason)}
+        </p>
+      ) : null}
+      {installed && missingEnvKeys.length ? (
+        <p className="font-mono text-xs text-destructive">
+          {envT("missingKeys", { keys: missingEnvKeys.join(", ") })}{" "}
+          <a
+            href="#plugin-install"
+            className="font-sans text-primary hover:underline"
+          >
+            {envT("configureAction")}
+          </a>
         </p>
       ) : null}
       {candidate?.selected ? (

@@ -7,7 +7,10 @@ import {
   DashboardPage,
   DashboardPanel,
 } from "@/components/dashboard/DashboardUI";
-import { PluginInstallForm } from "@/components/dashboard/plugins/PluginForms";
+import {
+  PluginEnvConfigPanel,
+  PluginInstallForm,
+} from "@/components/dashboard/plugins/PluginForms";
 import { PluginAgentChooser } from "@/components/dashboard/plugins/PluginAgentChooser";
 import { getCurrentUser } from "@/lib/auth/current-user";
 
@@ -18,6 +21,15 @@ import {
   PluginError,
   pluginReleaseLabel,
 } from "@/lib/plugins/catalog";
+import {
+  evaluatePluginEnvStatus,
+  isEnvRequired,
+  isEnvSecret,
+} from "@/lib/plugins/env-schema";
+import {
+  isOfficialRegistrySource,
+  readWorkspacePluginCustomNonSecretValues,
+} from "@/lib/plugins/env-store";
 import { previewPluginResource } from "@/lib/plugins/resource-preview";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
@@ -97,7 +109,8 @@ export default async function PluginDetailPage({
     },
   );
   const canManage = workspace.permissions.includes("plugins");
-  const [deployments, agents] = await Promise.all([
+  const install = plugin.install;
+  const [deployments, agents, customEnvRow] = await Promise.all([
     listPluginBindingDeployments(workspace.id),
     canManage
       ? db.agent.findMany({
@@ -115,6 +128,12 @@ export default async function PluginDetailPage({
           },
         })
       : [],
+    canManage && install && plugin.envStatus?.requiresEnv
+      ? db.marketInstallEnvConfig.findUnique({
+          where: { installId: install.id },
+          select: { encryptedValues: true },
+        })
+      : null,
   ]);
   const releases = plugin.releases.map((release) => ({
     ...release,
@@ -131,7 +150,16 @@ export default async function PluginDetailPage({
   const selected =
     releases.find((release) => release.id === query.version) ?? latest;
   const viewingOlder = Boolean(selected && latest && selected.id !== latest.id);
-  const install = plugin.install;
+  const customNonSecretValues =
+    canManage && install && plugin.envStatus?.requiresEnv
+      ? readWorkspacePluginCustomNonSecretValues({
+          workspaceId: workspace.id,
+          installId: install.id,
+          listingId: plugin.id,
+          requirements: plugin.envStatus.requirements,
+          envConfig: customEnvRow,
+        })
+      : undefined;
   // Adding to an Agent uses the workspace's installed version, not a historical preview.
   const targetRelease = install
     ? releases.find((release) => release.id === install.currentReleaseId)
@@ -214,9 +242,13 @@ export default async function PluginDetailPage({
       })
     : [];
   const requirements = selected?.snapshot.toolplane?.mcp ?? [];
+  const envRequirements = selected?.snapshot.toolplane?.env ?? [];
+  const isOfficialSource = isOfficialRegistrySource(source);
+  const presetConfiguredKeys = plugin.officialEnvPreset?.configuredKeys ?? [];
   const contentCount =
     resources.reduce((total, group) => total + group.paths.length, 0) +
-    requirements.length;
+    requirements.length +
+    envRequirements.length;
   const dateFormat = new Intl.DateTimeFormat(locale, { dateStyle: "medium" });
   return (
     <DashboardPage>
@@ -344,12 +376,58 @@ export default async function PluginDetailPage({
                 id: release.id,
                 version: release.label,
                 requirements: release.snapshot.toolplane?.mcp ?? [],
+                envStatus: evaluatePluginEnvStatus({
+                  requirements: release.snapshot.toolplane?.env,
+                  httpProxies: release.snapshot.toolplane?.httpProxies,
+                  isOfficial: isOfficialSource,
+                  presetConfiguredKeys,
+                  installedMode: install?.envConfig?.mode ?? null,
+                  customConfiguredKeys: install?.envConfig?.configuredKeys,
+                }),
               }))}
               defaults={defaults}
               deployments={deployments}
               canManage={canManage}
               status={plugin.status}
+              envStatus={plugin.envStatus}
+              customNonSecretValues={customNonSecretValues}
             />
+            {install && plugin.envStatus?.requiresEnv ? (
+              canManage ? (
+                <PluginEnvConfigPanel
+                  key={`${install.id}:${install.envConfig?.updatedAt?.toISOString() ?? "none"}`}
+                  workspace={slug}
+                  installId={install.id}
+                  envStatus={plugin.envStatus}
+                  customNonSecretValues={customNonSecretValues}
+                />
+              ) : (
+                <div className="space-y-2 border-t border-border pt-4 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium">{t("env.sourceLabel")}</span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 ${plugin.envStatus.complete ? "bg-muted text-foreground" : "bg-destructive/10 text-destructive"}`}
+                    >
+                      {plugin.envStatus.complete
+                        ? t(
+                            plugin.envStatus.mode === "platform_preset"
+                              ? "env.platformPreset"
+                              : "env.custom",
+                          )
+                        : t("env.incomplete")}
+                    </span>
+                  </div>
+                  {!plugin.envStatus.complete &&
+                  plugin.envStatus.missingRequiredKeys.length ? (
+                    <p className="font-mono text-destructive">
+                      {t("env.missingKeys", {
+                        keys: plugin.envStatus.missingRequiredKeys.join(", "),
+                      })}
+                    </p>
+                  ) : null}
+                </div>
+              )
+            ) : null}
             {canManage &&
             install &&
             plugin.status === "published" &&
@@ -377,7 +455,14 @@ export default async function PluginDetailPage({
                 installed={Boolean(install)}
                 compatible={targetRelease?.snapshot.runtime.kind === "pi-sdk"}
                 available={
-                  plugin.status === "published" && Boolean(targetRelease)
+                  plugin.status === "published" &&
+                  Boolean(targetRelease) &&
+                  (plugin.envStatus?.complete ?? true)
+                }
+                missingEnvKeys={
+                  install && plugin.envStatus && !plugin.envStatus.complete
+                    ? plugin.envStatus.missingRequiredKeys
+                    : []
                 }
                 returnAgent={returnAgent}
                 pluginChannel={pluginChannel}
@@ -630,6 +715,44 @@ export default async function PluginDetailPage({
                         {t("noMcpRequirements")}
                       </p>
                     )}
+                  </section>
+                  <section className="min-w-0">
+                    <h3 className="mb-2 text-sm font-medium">
+                      {t("env.contentsTitle")}{" "}
+                      {envRequirements.length ? (
+                        <span className="text-muted-foreground">
+                          {envRequirements.length}
+                        </span>
+                      ) : null}
+                    </h3>
+                    {envRequirements.length ? (
+                      <ul className="divide-y divide-border rounded-lg border border-border">
+                        {envRequirements.map((item) => (
+                          <li key={item.name} className="space-y-1 px-3 py-2">
+                            <p className="flex flex-wrap items-center gap-2 text-sm">
+                              <span className="font-mono">{item.name}</span>
+                              <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                                {t(
+                                  isEnvRequired(item)
+                                    ? "env.required"
+                                    : "env.optional",
+                                )}
+                              </span>
+                              {isEnvSecret(item) ? (
+                                <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                                  secret
+                                </span>
+                              ) : null}
+                            </p>
+                            {item.description ? (
+                              <p className="text-xs text-muted-foreground">
+                                {item.description}
+                              </p>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </section>
                   <p className="text-xs leading-5 text-muted-foreground">
                     {t("preview.declared")}

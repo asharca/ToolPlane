@@ -286,6 +286,15 @@ let runtime,
   toolSignature,
   toolMap = new Map(),
   customTools = [];
+const appliedPluginEnvKeys = new Set();
+const PLUGIN_ENV_NAME_REGEX = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+const PLUGIN_RESERVED_ENV_REGEX =
+  /^(?:TOOLPLANE_|TP_|NODE_|LD_|DYLD_|npm_|NPM_|BUN_|AUTH_SECRET$|DATABASE_URL$|DIRECT_URL$|PI_CODING_AGENT_DIR$|PI_PACKAGE_DIR$|HOME$|PATH$|SHELL$|ENV$|BASH_ENV$|PYTHONPATH$|HTTP_PROXY$|HTTPS_PROXY$|ALL_PROXY$|NO_PROXY$|http_proxy$|https_proxy$|all_proxy$|no_proxy$|SSL_CERT_FILE$|NODE_EXTRA_CA_CERTS$|CURL_CA_BUNDLE$|REQUESTS_CA_BUNDLE$)/;
+function isSafePluginEnvName(name) {
+  return (
+    PLUGIN_ENV_NAME_REGEX.test(name) && !PLUGIN_RESERVED_ENV_REGEX.test(name)
+  );
+}
 const childRuns = new Set();
 const childSlots = new Set();
 async function acquireChildSlot(signal) {
@@ -1077,9 +1086,16 @@ function toolPatch(event) {
     typeof details?.patch !== "string"
   )
     return {};
-  const patch = context?.runtimeToken
-    ? details.patch.split(context.runtimeToken).join("[REDACTED]")
-    : details.patch;
+  let patch = details.patch;
+  const secretsToRedact = [
+    context?.runtimeToken,
+    ...(Array.isArray(context?.redactTokens) ? context.redactTokens : []),
+  ];
+  for (const secret of secretsToRedact) {
+    if (typeof secret === "string" && secret) {
+      patch = patch.split(secret).join("[REDACTED]");
+    }
+  }
   const bytes = Buffer.from(patch);
   const truncated = bytes.length > 65_536;
   return {
@@ -1643,6 +1659,27 @@ async function refreshContext(next) {
   }
   context = next;
   process.env.TOOLPLANE_RUNTIME_TOKEN = next.runtimeToken;
+  for (const key of appliedPluginEnvKeys) delete process.env[key];
+  appliedPluginEnvKeys.clear();
+  if (Array.isArray(next.unsetPluginEnvKeys)) {
+    for (const key of next.unsetPluginEnvKeys) {
+      if (typeof key === "string" && isSafePluginEnvName(key)) {
+        delete process.env[key];
+      }
+    }
+  }
+  if (
+    next.pluginEnv &&
+    typeof next.pluginEnv === "object" &&
+    !Array.isArray(next.pluginEnv)
+  ) {
+    for (const [key, value] of Object.entries(next.pluginEnv)) {
+      if (isSafePluginEnvName(key) && typeof value === "string") {
+        process.env[key] = value;
+        appliedPluginEnvKeys.add(key);
+      }
+    }
+  }
   const definitions = await createPiMcpTools(next.mcpConfig);
   const signature = canonicalJson(
     definitions

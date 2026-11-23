@@ -55,6 +55,10 @@ const runtimeFailures = defineFailures({
   PI_OUTPUT_TRUNCATED: "The model stopped at its output limit.",
   PI_PACKAGE_CHECKSUM_MISMATCH:
     "The package snapshot was modified. Execution was blocked; ask an administrator to restore the reviewed snapshot.",
+  PI_PACKAGE_ENV_CONFLICT:
+    "A Pi package declares an environment variable that conflicts with another plugin or Agent credential. Review the Agent's plugins and credentials before continuing.",
+  PI_PACKAGE_ENV_INCOMPLETE:
+    "An enabled Pi package has incomplete environment configuration. Configure its platform preset or custom environment variables before continuing.",
   PI_PACKAGE_MCP_BINDING_REQUIRED:
     "This Pi package requires explicit MCP bindings in the current workspace. Open the package's installed-resource settings, choose permitted deployments and tools, then start a new Agent conversation or Work.",
   PI_PACKAGE_UNAVAILABLE:

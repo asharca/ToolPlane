@@ -81,6 +81,7 @@ export default async function InstalledPluginsPage({
               mcp: contents.mcp,
               omp: contents.omp,
               agents: install._count.agentPiPackages,
+              envStatus: plugin.envStatus,
               addedAt: formatInTimeZone(
                 install.createdAt,
                 timeZone,

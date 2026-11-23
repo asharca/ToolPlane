@@ -261,11 +261,25 @@ export default async function PluginsPage({
                 )}
                 {!plugin.card.available ? (
                   <p className="text-xs text-destructive">
-                    {t(
-                      plugin.card.revoked
-                        ? "catalog.revoked"
-                        : "catalog.unavailable",
-                    )}
+                    {plugin.card.revoked
+                      ? t("catalog.revoked")
+                      : plugin.install && !plugin.envStatus.complete
+                        ? t("env.missingKeys", {
+                            keys: plugin.envStatus.missingRequiredKeys.join(
+                              ", ",
+                            ),
+                          })
+                        : t("catalog.unavailable")}
+                  </p>
+                ) : !plugin.install &&
+                  plugin.envStatus.requiresEnv &&
+                  !plugin.envStatus.presetComplete ? (
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    {t("env.missingKeys", {
+                      keys: plugin.envStatus.presetMissingRequiredKeys.join(
+                        ", ",
+                      ),
+                    })}
                   </p>
                 ) : null}
                 {plugin.card.resources.length ||
@@ -306,7 +320,9 @@ export default async function PluginsPage({
                   </span>
                   {canManage && published && plugin.latestRelease ? (
                     !plugin.install ? (
-                      plugin.card.mcpCount ? (
+                      plugin.card.mcpCount ||
+                      (plugin.envStatus.requiresEnv &&
+                        !plugin.envStatus.presetComplete) ? (
                         <ButtonLink
                           href={`${href}${context ? `?${context}` : ""}#plugin-install`}
                           variant="secondary"

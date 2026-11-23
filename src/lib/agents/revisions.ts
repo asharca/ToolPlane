@@ -31,6 +31,7 @@ import type {
 import { resolveAgentPiPackages } from "./resolve";
 import { isSupportedPiVersion, PI_SDK_VERSION } from "./pi-version";
 import { assertAgentEnvironmentCredentialReferences } from "./environment-credentials";
+import { assertAgentPluginEnvReady } from "@/lib/plugins/env-store";
 import { preflightPiSdkCapabilities } from "./sandbox-runtime";
 import { nativePiMcpToolName } from "./sandbox-runtime/mcp-extension";
 import { MCP_RESULT_TO_FILE_TOOL } from "./native-tools";
@@ -634,6 +635,23 @@ async function validateRevisionAuthorization(
     agentId,
     config.environment.credentialReferences,
   );
+  try {
+    await assertAgentPluginEnvReady(
+      tx,
+      workspaceId,
+      packages,
+      config.environment.credentialReferences.map((ref) => ref.name),
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === "PI_PACKAGE_ENV_INCOMPLETE" ||
+        error.message === "PI_PACKAGE_ENV_CONFLICT")
+    ) {
+      throw new AgentRevisionError(error.message);
+    }
+    throw error;
+  }
   return {
     ...agent,
     piPackages: packages,
