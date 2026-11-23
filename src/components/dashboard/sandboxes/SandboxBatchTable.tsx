@@ -85,7 +85,14 @@ export function SandboxBatchTable({
     }
   }
   if (!batchEnabled) {
-    return <DashboardTable {...tableProps} rows={rows} selectable={false} />;
+    return (
+      <DashboardTable
+        {...tableProps}
+        adjustableColumns={false}
+        rows={rows}
+        selectable={false}
+      />
+    );
   }
 
   return (
@@ -120,6 +127,8 @@ export function SandboxBatchTable({
         <legend className="sr-only">{t("sandboxes")}</legend>
         <DashboardTable
           {...tableProps}
+          adjustableColumns={false}
+          selectionPlacement="above"
           rows={rows}
           selectedRowIds={visibleSelection}
           onSelectionChange={(ids) => {

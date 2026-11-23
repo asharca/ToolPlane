@@ -25,7 +25,6 @@ import {
 import {
   ArrowUp,
   Bot,
-  Brain,
   Database,
   Globe,
   GitBranch,
@@ -97,12 +96,19 @@ import {
 } from "@/components/dashboard/RevisionUpgradeNotice";
 import type { RevisionMcpToolChange } from "@/lib/revisions/upgrade-diff";
 
+const CHAT_RUN_FAILURE_BY_TEXT: Record<string, string> = {
+  "Chat execution interrupted; remote effect outcome unknown. Do not replay.":
+    "CHAT_RUN_OUTCOME_UNKNOWN",
+  "Chat turn cancelled.": "CHAT_RUN_CANCELLED",
+  "Chat turn timed out.": "CHAT_RUN_TIMED_OUT",
+  "Chat turn failed.": "CHAT_RUN_FAILED",
+};
+
 const TOOLBAR_KEY = "toolplane.chat.composer.toolbar";
 const TOOLBAR_EVENT = "toolplane:chat-composer-toolbar";
 const DEFAULT_TOOLBAR_IDS = [
   "mcp-prompts",
   "resources",
-  "reasoning",
   "web-search",
   "attachments",
 ];
@@ -796,9 +802,6 @@ export function AssistantConversation({
   const toolbarOptions: ToolbarOption[] = [
     { id: "mcp-prompts", label: composerT("mcpPrompts"), icon: ScrollText },
     { id: "resources", label: composerT("mcpResources"), icon: Database },
-    ...(reasoningAvailable
-      ? [{ id: "reasoning", label: composerT("reasoningEffort"), icon: Brain }]
-      : []),
     { id: "web-search", label: composerT("enableWebSearch"), icon: Globe },
     ...(attachmentUploadUrl
       ? [
@@ -887,15 +890,6 @@ export function AssistantConversation({
   }
 
   function renderToolbarAction(option: ToolbarOption) {
-    if (option.id === "reasoning")
-      return (
-        <ReasoningEffortControl
-          value={reasoningEffort}
-          inherited={defaultReasoningEffort}
-          disabled={readOnly || running}
-          onChange={setReasoningEffort}
-        />
-      );
     if (option.id === "web-search")
       return (
         <Button
@@ -1226,12 +1220,34 @@ export function AssistantConversation({
         </p>
       )}
       {snapshot?.error && (
-        <p
+        <div
           role="alert"
-          className="mx-auto my-2 w-[calc(100%-2rem)] max-w-3xl rounded-xl border border-destructive/15 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+          className="mx-auto my-2 flex w-[calc(100%-2rem)] max-w-3xl flex-wrap items-center justify-between gap-2 rounded-xl border border-destructive/15 bg-destructive/5 px-4 py-3 text-sm text-destructive"
         >
-          {snapshot.error}
-        </p>
+          <span>
+            {(() => {
+              const code =
+                CHAT_RUN_FAILURE_BY_TEXT[snapshot.error] ?? snapshot.error;
+              return t.has(`runFailures.${code}`)
+                ? t(`runFailures.${code}`)
+                : snapshot.error;
+            })()}
+          </span>
+          {!readOnly &&
+          !running &&
+          snapshot.phase !== "execution_unknown" &&
+          lastReceiptMessageId ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 rounded-lg text-xs"
+              onClick={() => void regenerate(lastReceiptMessageId)}
+            >
+              {composerT("retryResponse")}
+            </Button>
+          ) : null}
+        </div>
       )}
       {snapshot?.phase === "execution_unknown" &&
         !snapshot.confirmations.some(
@@ -1263,11 +1279,11 @@ export function AssistantConversation({
         />
         <div
           className={cn(
-            "grid grid-cols-[minmax(0,1fr)_auto]",
+            "grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto]",
             conversationComposerSurfaceClassName,
           )}
         >
-          <div className="order-3 col-start-1 flex min-w-0 flex-wrap items-center gap-1 px-2.5 pb-2.5 pt-1 text-muted-foreground">
+          <div className="order-3 flex min-w-0 items-center gap-1 overflow-x-auto scrollbar-hide px-2.5 pb-1 pt-1 text-muted-foreground sm:col-start-1 sm:pb-2.5">
             <ComposerToolsButton
               open={menu.open}
               disabled={readOnly || running}
@@ -1280,7 +1296,7 @@ export function AssistantConversation({
               <span
                 key={option.id}
                 data-composer-shortcut={option.id}
-                className="inline-flex min-w-0"
+                className="inline-flex shrink-0"
               >
                 {renderToolbarAction(option)}
               </span>
@@ -1291,7 +1307,7 @@ export function AssistantConversation({
               key={file.url}
               size="sm"
               variant="ghost"
-              className="order-1 col-span-2 mx-4 mt-3 max-w-[calc(100%-2rem)] justify-self-start gap-2 rounded-full bg-muted/50 text-xs"
+              className="order-1 col-span-full mx-4 mt-3 max-w-[calc(100%-2rem)] justify-self-start gap-2 rounded-full bg-muted/50 text-xs"
               aria-label={composerT("removeAttachment", {
                 name: file.filename ?? file.mediaType,
               })}
@@ -1308,7 +1324,7 @@ export function AssistantConversation({
             </Button>
           ))}
           {editMessageId && (
-            <div className="order-1 col-span-2 flex items-center gap-2 px-4 pt-3 text-xs">
+            <div className="order-1 col-span-full flex items-center gap-2 px-4 pt-3 text-xs">
               {common("edit")}
               <Button
                 size="sm"
@@ -1365,15 +1381,23 @@ export function AssistantConversation({
                   event.currentTarget.form?.requestSubmit();
                 }
               }}
-              className="scrollbar-hide order-2 col-span-2 block max-h-[40vh] min-h-12 w-full resize-none overflow-y-auto bg-transparent px-4 pb-2 pt-3.5 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/55 disabled:opacity-60"
+              className="scrollbar-hide order-2 col-span-full block max-h-[40vh] min-h-12 w-full resize-none overflow-y-auto bg-transparent px-4 pb-2 pt-3.5 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/55 disabled:opacity-60"
             />
-            <div className="order-3 col-start-2 flex min-h-9 flex-wrap items-center justify-end gap-1 self-end pb-2.5 pl-1 pr-2.5 pt-1">
+            <div className="order-4 flex min-h-9 flex-wrap items-center justify-end gap-1 self-end px-2.5 pb-2.5 pt-1 sm:order-3 sm:col-start-2 sm:pl-1">
               <ComposerModelSelect
                 providers={providers}
                 defaultSelection={defaultModelSelection}
                 value={modelSelection}
                 onChange={onModelChange}
               />
+              {reasoningAvailable ? (
+                <ReasoningEffortControl
+                  value={reasoningEffort}
+                  inherited={defaultReasoningEffort}
+                  disabled={readOnly || running}
+                  onChange={setReasoningEffort}
+                />
+              ) : null}
               {!running && (
                 <Button
                   type="submit"

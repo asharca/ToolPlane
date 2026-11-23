@@ -39,11 +39,18 @@ export interface WorkspaceSidebarGroup {
   title?: string;
   items: WorkspaceSidebarItem[];
 }
+export interface WorkspaceSidebarLabels {
+  navigation?: string;
+  closeNavigation?: string;
+  expandSidebar?: string;
+  collapseSidebar?: string;
+}
 export interface WorkspaceSidebarProps {
   groups: WorkspaceSidebarGroup[];
   activeId?: string;
   onSelect?: (id: string) => void;
   title?: string;
+  labels?: WorkspaceSidebarLabels;
   footer?: ReactNode;
   className?: string;
 }
@@ -133,7 +140,8 @@ export function WorkspaceSidebar({
   groups,
   activeId,
   onSelect,
-  title = "工作区",
+  title = "Workspace",
+  labels,
   footer,
   className,
 }: WorkspaceSidebarProps) {
@@ -141,6 +149,10 @@ export function WorkspaceSidebar({
   const reduced = useReducedMotion() ?? false;
   const compact = !open && !isMobile;
   const toggleRef = useRef<HTMLButtonElement>(null);
+  const navLabel = labels?.navigation ?? `${title} navigation`;
+  const closeLabel = labels?.closeNavigation ?? "Close navigation";
+  const expandLabel = labels?.expandSidebar ?? "Expand sidebar";
+  const collapseLabel = labels?.collapseSidebar ?? "Collapse sidebar";
   useLayoutEffect(() => {
     if (compact && document.activeElement instanceof HTMLElement) {
       const panel = toggleRef.current?.closest('[data-slot="sidebar"]');
@@ -162,7 +174,7 @@ export function WorkspaceSidebar({
   const transition = reduced ? { duration: 0 } : SPRING_LAYOUT;
   return (
     <AnimatedSidebar
-      ariaLabel={`${title}导航`}
+      ariaLabel={navLabel}
       variant="inset"
       className={cn(!isMobile && "h-full", className)}
       panelClassName="static m-0 h-full rounded-none bg-transparent"
@@ -179,9 +191,9 @@ export function WorkspaceSidebar({
               <span className="min-w-0 flex-1 truncate px-2 text-base font-semibold">
                 {title}
               </span>
-              <Tooltip content="关闭工作区导航">
+              <Tooltip content={closeLabel}>
                 <AnimatedSidebarClose
-                  aria-label="关闭工作区导航"
+                  aria-label={closeLabel}
                   className="size-9 shrink-0"
                 >
                   <X aria-hidden="true" className="size-4" />
@@ -209,13 +221,13 @@ export function WorkspaceSidebar({
                 </motion.span>
               </div>
               <Tooltip
-                content={compact ? "展开工作区侧栏" : "折叠工作区侧栏"}
+                content={compact ? expandLabel : collapseLabel}
                 side="right"
                 wrapperClassName="absolute right-0 z-10"
               >
                 <AnimatedSidebarTrigger
                   ref={toggleRef}
-                  aria-label={compact ? "展开工作区侧栏" : "折叠工作区侧栏"}
+                  aria-label={compact ? expandLabel : collapseLabel}
                   className="grid size-9 place-items-center rounded-lg text-muted-foreground hover:text-foreground focus-visible:ring-inset"
                 >
                   <PanelLeft className="size-[18px]" />
@@ -226,12 +238,12 @@ export function WorkspaceSidebar({
         </motion.div>
       </AnimatedSidebarHeader>
       <AnimatedSidebarContent className="gap-0.5 px-3.5 py-2 [scrollbar-width:none]">
-        {groups.map((group) => (
+        {groups.map((group, groupIndex) => (
           <AnimatedSidebarGroup
             key={group.id}
             role="group"
             aria-label={group.title}
-            className="px-0 py-0"
+            className={cn("px-0 py-0", groupIndex > 0 && "mt-3")}
           >
             <AnimatedSidebarMenu className="gap-0.5">
               {group.items.map((item) => (

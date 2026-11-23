@@ -204,8 +204,8 @@ export function AgentSettings({
       { id: "usage", label: usageT("title") },
       { id: "changelog", label: t("changelogTab") },
       { id: "evolution", label: t("evolutionTab") },
-      { id: "clone", label: t("cloneAgent") },
     ],
+    [{ id: "clone", label: t("cloneAgent") }],
   ];
   const navigationItems = navigationGroups.flatMap((group, groupIndex) =>
     group.map((item, index) => ({

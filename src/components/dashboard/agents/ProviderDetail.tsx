@@ -254,7 +254,6 @@ export function ProviderDetail({
               className="items-center justify-end"
               triggerVariant="ghost"
               triggerSize="icon"
-              triggerTooltip={false}
               promptClassName="max-w-sm text-xs text-muted-foreground"
             />
           </form>
@@ -382,8 +381,10 @@ export function ProviderDetail({
               <span>{t("model")}</span>
               <span className="text-right">{t("modelColumnContext")}</span>
               <span className="text-right">{t("modelColumnMaxOutput")}</span>
-              <span className="text-right">{t("catalogInputPrice")}</span>
-              <span className="text-right">{t("catalogOutputPrice")}</span>
+              <span className="text-right">{t("catalogInputPrice")} ($/M)</span>
+              <span className="text-right">
+                {t("catalogOutputPrice")} ($/M)
+              </span>
               <span />
             </div>
             {modelGroups.map(([group, models]) => {

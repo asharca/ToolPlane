@@ -29,6 +29,7 @@ export function AgentRunTable({
   return (
     <DashboardTable
       minWidth="56rem"
+      adjustableColumns={false}
       headers={[
         ...(showWorkspace ? [{ label: t("workspace") }] : []),
         { label: t("agent") },

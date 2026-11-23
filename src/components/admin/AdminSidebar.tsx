@@ -2,12 +2,12 @@
 
 import {
   ArrowLeft,
-  Bell,
   Flag,
   Gauge,
   Building2,
   LayoutDashboard,
   Library,
+  Megaphone,
   Settings,
   ScrollText,
   Users,
@@ -80,7 +80,7 @@ const NAV_SECTIONS: NavSection[] = [
       {
         labelKey: "adminNavNotifications",
         href: "/admin/notifications",
-        icon: Bell,
+        icon: Megaphone,
       },
       {
         labelKey: "adminNavFeedback",
@@ -111,6 +111,7 @@ export function getAdminPageLabelKey(pathname: string): AdminPageLabelKey {
 export function AdminSidebar() {
   const pathname = usePathname() ?? "/admin";
   const t = useTranslations("admin");
+  const sidebar = useTranslations("console.sidebar");
   const { open, isMobile } = useAnimatedSidebar();
   const activeHref = NAV_SECTIONS.flatMap((section) => section.items).find(
     (item) => isNavItemActive(item, pathname),
@@ -118,6 +119,12 @@ export function AdminSidebar() {
   return (
     <WorkspaceSidebar
       title={t("adminConsoleTitle")}
+      labels={{
+        navigation: sidebar("navigation"),
+        closeNavigation: sidebar("closeMenu"),
+        expandSidebar: sidebar("expandSidebar"),
+        collapseSidebar: sidebar("collapseSidebar"),
+      }}
       groups={NAV_SECTIONS.map((section) => ({
         id: section.labelKey,
         title: t(section.labelKey),

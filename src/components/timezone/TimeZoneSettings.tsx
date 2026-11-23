@@ -102,6 +102,7 @@ export function TimeZoneSettings({
           pendingLabel={t("savingTimezone")}
           savedLabel={t("timezoneSaved")}
           error={state.error}
+          disabled={selected === savedTimeZone}
           variant="primary"
           size="md"
         >

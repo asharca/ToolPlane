@@ -42,7 +42,19 @@ import {
 import { HookActivitySchema } from "../agents/HookActivity";
 import { MessageScroller } from "@/components/agents/message-scroller";
 import { resolveContextUsage } from "@/lib/context-usage";
+import { workFailures, type WorkFailureCode } from "@/lib/work/failures";
 import { ReasoningEffortControl } from "@/components/dashboard/agents/ReasoningEffortControl";
+
+function resolveWorkFailureCode(
+  message: string | null | undefined,
+): WorkFailureCode | null {
+  if (!message) return null;
+  if (workFailures.is(message)) return message;
+  return (
+    workFailures.codes.find((code) => workFailures.text(code) === message) ??
+    null
+  );
+}
 import { SubagentConversationScope } from "../agents/SubagentActivity";
 import {
   activeConversationMessages,
@@ -453,7 +465,9 @@ export function WorkspaceWork({
     parseRuntimeCommand(composer.draft, commandRuntimeKind),
   );
   const errorMessage = composer.error ?? selected?.error;
+  const runtimeError = describeRuntimeError(errorMessage);
   const storageQuotaExceeded = errorMessage === STORAGE_QUOTA_EXCEEDED;
+  const workFailureCode = resolveWorkFailureCode(errorMessage);
   const visibleError =
     errorMessage === "WORK_AGENT_REFERENCE_FORBIDDEN"
       ? composerT("agentReferenceForbidden")
@@ -461,9 +475,27 @@ export function WorkspaceWork({
         ? composerT("referenceFailed")
         : storageQuotaExceeded
           ? tAgents("attachmentStorageQuotaExceeded")
-          : errorMessage;
-  const runtimeError = describeRuntimeError(visibleError);
+          : workFailureCode
+            ? t(`failures.${workFailureCode}`)
+            : errorMessage;
   const configurationError = /no configured model/i.test(visibleError ?? "");
+  const lastUserMessage = (
+    conversation?.messages ??
+    selected?.messages ??
+    []
+  ).findLast((message) => message.role === "user");
+  const retryableMessageId =
+    selected &&
+    selected.status === "failed" &&
+    !sessionReadOnly &&
+    selected.runtimeKind === "pi-sdk" &&
+    !selectedActive &&
+    !busy &&
+    !composerPending &&
+    !conversationAccessRevoked &&
+    lastUserMessage?.piEntryId
+      ? lastUserMessage.id
+      : null;
   const showConfigurationNotice =
     !viewingA2A &&
     (configurationError ||
@@ -956,12 +988,12 @@ export function WorkspaceWork({
                             <h2 className="mt-2 text-2xl font-medium tracking-tight sm:text-3xl">
                               {t("emptyTitle")}
                             </h2>
-                            {agent?.description &&
-                            agent.description.trim() !== agent.name.trim() ? (
-                              <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
-                                {agent.description}
-                              </p>
-                            ) : null}
+                            <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
+                              {agent?.description &&
+                              agent.description.trim() !== agent.name.trim()
+                                ? agent.description
+                                : t("emptyDescription")}
+                            </p>
                             {agent?.mcpToolsUpdated ? (
                               <McpToolsUpdatedNote {...agent.mcpToolsUpdated} />
                             ) : null}
@@ -999,6 +1031,21 @@ export function WorkspaceWork({
                               returnTo={workReturnTo}
                               className="ml-3"
                             />
+                          ) : null}
+                          {retryableMessageId ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="ml-3 rounded-full"
+                              onClick={() =>
+                                void composer.mutateConversationTree({
+                                  kind: "retry",
+                                  messageId: retryableMessageId,
+                                })
+                              }
+                            >
+                              {t("tree.retry")}
+                            </Button>
                           ) : null}
                           <Button
                             variant="outline"

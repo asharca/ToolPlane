@@ -31,6 +31,7 @@ export function McpCallTable({
   return (
     <DashboardTable
       minWidth="48rem"
+      adjustableColumns={false}
       headers={[
         ...(showWorkspace ? [{ label: t("workspace") }] : []),
         { label: t("operation") },

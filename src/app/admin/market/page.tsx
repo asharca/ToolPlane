@@ -21,6 +21,7 @@ import {
   isOfficialRegistrySource,
   readOfficialPluginPresetAdminView,
 } from "@/lib/plugins/env-store";
+import { pluginReleaseLabel } from "@/lib/plugins/catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -83,7 +84,10 @@ export default async function AdminPluginsPage() {
         return (
           <AdminPanel key={listing.id} title={listing.name}>
             <p className="text-sm text-muted-foreground">
-              {listing.namespace}/{listing.slug} · {listing.status}
+              {listing.namespace}/{listing.slug} ·{" "}
+              {t.has(`pluginListingStatuses.${listing.status}`)
+                ? t(`pluginListingStatuses.${listing.status}`)
+                : listing.status}
             </p>
             {listing.status === "published" && (
               <form action={withdrawPluginListing} className="mt-3">
@@ -108,7 +112,10 @@ export default async function AdminPluginsPage() {
                   className="flex items-center justify-between gap-4 py-3"
                 >
                   <span>
-                    {release.version} · {release.reviewStatus}
+                    v{pluginReleaseLabel(release)} ·{" "}
+                    {t.has(`pluginReviewStatuses.${release.reviewStatus}`)
+                      ? t(`pluginReviewStatuses.${release.reviewStatus}`)
+                      : release.reviewStatus}
                   </span>
                   {release.reviewStatus === "approved" && (
                     <form action={revokePluginRelease}>

@@ -124,6 +124,8 @@
     "toggleTheme": "Toggle theme",
     "switchToLightTheme": "Switch to light theme",
     "switchToDarkTheme": "Switch to dark theme",
+    "themeLight": "Light",
+    "themeDark": "Dark",
     "en": "EN",
     "zh": "中"
   },
@@ -604,7 +606,8 @@
       "feedback": "Feedback",
       "sellSkills": "Sell Skills",
       "sourceCode": "Source code",
-      "version": "Version"
+      "version": "Version",
+      "accountMenu": "Account menu"
     },
     "plugins": {
       "catalog": {
@@ -826,6 +829,8 @@
       },
       "noSummary": "No description",
       "ompRetired": "OMP · Retired",
+      "ompRetiredNotice": "This plugin targets the retired OMP runtime and can no longer be installed. Publish a Pi-compatible version to use it with current Agents.",
+      "updatesBadge": "{count, plural, one {# update} other {# updates}}",
       "quickAdd": "Add",
       "addedToast": "Added “{name}”",
       "allEmpty": "No matching plugins.",
@@ -1371,7 +1376,7 @@
       "attachmentStorageQuotaExceeded": "Storage is full. Delete files you no longer need in Files, or ask an administrator to raise your quota.",
       "attachment": "Attachment",
       "removeAttachment": "Remove {name}",
-      "egResearchAssistant": "e.g. Research assistant",
+      "egResearchAssistant": "Code review agent",
       "createAgent": "Create agent",
       "retiredRuntime": "Retired · history only",
       "viewHistory": "View history",
@@ -1798,6 +1803,7 @@
       "reasoningEffortHigh": "High",
       "reasoningEffortXHigh": "Extra high",
       "reasoningEffortMax": "Maximum",
+      "reasoningEffortTrigger": "Thinking · {level}",
       "mcpPrompts": "MCP prompts",
       "mcpRunning": "Running",
       "mcpUnavailable": "Unavailable",
@@ -2421,7 +2427,15 @@
       "updateNow": "Update now",
       "confirmUpdate": "Install {version} and restart ToolPlane?",
       "targetReleaseUnknown": "Release artifact not configured",
-      "checkFailed": "Could not check for updates."
+      "checkFailed": "Could not check for updates.",
+      "reasons": {
+        "disabled": "Online updates are disabled for this instance.",
+        "runtimeUnconfigured": "Runtime directory is not configured.",
+        "runtimeNotWritable": "Runtime directory is not writable.",
+        "artifactMissing": "The latest release does not contain a matching runtime artifact.",
+        "lookupFailed": "Could not look up the latest system release.",
+        "runtimeUncertain": "The runtime recorded an unconfirmed operation and cannot shut down cleanly right now."
+      }
     },
     "mcp": {
       "title": "MCP",
@@ -3584,6 +3598,11 @@
       "title": "Knowledge",
       "newBase": "New knowledge base",
       "newBaseDescription": "Choose the embedding model and retrieval defaults. You can change them later.",
+      "selectEmbeddingModel": "Select an embedding model",
+      "noEmbeddingModels": "No embedding models configured",
+      "noEmbeddingModelsHint": "No embedding models were found in your workspace providers. Add an embedding model in Model Providers first.",
+      "configureProviders": "Go to Model Providers",
+      "inDevelopment": "In development",
       "noBases": "No knowledge bases yet.",
       "documentCount": "{count, plural, =0 {No documents} one {# document} other {# documents}}",
       "documents": "Documents",
@@ -3973,6 +3992,12 @@
         "CHAT_MODEL_NOT_AVAILABLE": "The selected model is not in this provider's available model list.",
         "CHAT_MODEL_CAPABILITY_UNSUPPORTED": "The selected model does not support the text, tool, reasoning, or attachment capabilities needed for this turn."
       },
+      "runFailures": {
+        "CHAT_RUN_OUTCOME_UNKNOWN": "Chat execution was interrupted; remote effect outcome is unknown. Do not replay.",
+        "CHAT_RUN_CANCELLED": "Chat turn cancelled.",
+        "CHAT_RUN_TIMED_OUT": "Chat turn timed out.",
+        "CHAT_RUN_FAILED": "Chat turn failed."
+      },
       "mcpEnabled": "Enable MCP tools",
       "stopNotAccepted": "This run did not accept a stop request. Its saved status has been refreshed; external effects are not rolled back.",
       "assistants": "Assistants",
@@ -4205,7 +4230,7 @@
       "openWorkspace": "Open workspace",
       "workspace": "Workspace",
       "emptyTitle": "What can I work on for you?",
-      "emptyDescription": "Send a message to begin a Work session.",
+      "emptyDescription": "Send a message to start a Work session in an isolated sandbox with tools, files, and skills.",
       "sandboxSubtitle": "Work sandbox",
       "noSandbox": "No sandbox selected",
       "sandboxDialog": "Work sandbox",
@@ -4375,7 +4400,21 @@
       "statusCompleted": "Completed",
       "statusFailed": "Failed",
       "statusArchived": "Archived",
-      "untitledSession": "New work session"
+      "untitledSession": "New work session",
+      "failures": {
+        "WORK_EXECUTION_FAILED": "Work execution failed. Review the transcript, then resume it.",
+        "WORK_INTERRUPTED": "Work was interrupted by a server restart. Review the transcript, then resume it.",
+        "WORK_READ_ONLY": "Historical Work is read-only. Start a new Work session.",
+        "WORK_SANDBOX_UNAVAILABLE": "Work sandbox is unavailable.",
+        "WORK_IDENTITY_UNAVAILABLE": "Work execution identity is unavailable.",
+        "WORK_MESSAGE_UNAVAILABLE": "Work user message is unavailable.",
+        "AGENT_BUDGET_EXCEEDED": "The agent has reached its budget limit.",
+        "MODEL_OVERRIDE_UNAVAILABLE": "The selected model is unavailable.",
+        "PI_SDK_MODEL_FAILED": "The model request failed. Check the provider and try again.",
+        "PI_MCP_TOOLS_UNAVAILABLE": "A required MCP server is unavailable. Check the Agent's MCP settings.",
+        "PI_SDK_PACKAGE_SET_CHANGED": "Enabled packages changed. Start a new Work to use them.",
+        "PI_TASK_TIMEOUT": "The task reached its total time limit. Review the transcript before retrying."
+      }
     },
     "workspaces": {
       "title": "Workspaces",
@@ -4471,6 +4510,7 @@
     },
     "workspaceSwitcher": {
       "workspaces": "Workspaces",
+      "switchWorkspace": "Switch workspace",
       "workspaceName": "Workspace name",
       "create": "Create",
       "createWorkspace": "Create workspace",
@@ -4489,6 +4529,7 @@
       "fullIsolationNoInternetLeaveOffForServersThatCallExternalApis": "— full\n            isolation, no internet. Leave off for servers that call external APIs.",
       "addVariable": "Add variable",
       "demoOnly": "Demo only",
+      "copy": "Copy",
       "copied": "Copied",
       "copyFailed": "Copy failed",
       "close": "Close",
@@ -4875,7 +4916,79 @@
       "sshErrorRateLimited": "Too many SSH requests. Wait a moment and try again.",
       "sshErrorUnavailable": "SSH sandboxes are currently unavailable. Contact an administrator.",
       "sshHostAccessWarning": "I understand that SSH is not container isolation. Commands have the remote account privileges and may access files and networks outside the configured workspace.",
-      "sshOperationFailed": "The SSH request failed. Check your connection and login status, then try again."
+      "sshOperationFailed": "The SSH request failed. Check your connection and login status, then try again.",
+      "imageOptions": {
+        "toolplane-sandbox": {
+          "badge": "Default",
+          "summary": "Node.js, Chromium and frontend tooling on Debian Bookworm.",
+          "bestFor": "Browser automation, Next.js, React, frontend apps"
+        },
+        "toolplane-desktop": {
+          "badge": "Desktop",
+          "summary": "Node 26 with a watchable desktop and Chromium the Agent can operate.",
+          "bestFor": "Browser tasks, sign-ins and steps you take over"
+        },
+        "typescript-node-24": {
+          "badge": "TypeScript",
+          "summary": "TypeScript-ready Node.js development image.",
+          "bestFor": "TypeScript services and full-stack apps"
+        },
+        "python-312": {
+          "badge": "Python",
+          "summary": "Python runtime with common build tooling.",
+          "bestFor": "AI, data, automation, backend work"
+        },
+        "go-1": {
+          "badge": "Go",
+          "summary": "Go toolchain on Debian Bookworm.",
+          "bestFor": "Go services, CLIs, infrastructure tools"
+        },
+        "rust-1": {
+          "badge": "Rust",
+          "summary": "Rust toolchain with Cargo on Debian Bookworm.",
+          "bestFor": "Rust apps, systems tools, WASM builds"
+        },
+        "java-21": {
+          "badge": "Java",
+          "summary": "JDK 21 development environment.",
+          "bestFor": "Java and Spring Boot projects"
+        },
+        "dotnet-8": {
+          "badge": ".NET",
+          "summary": ".NET SDK image for C# development.",
+          "bestFor": ".NET services and C# tooling"
+        },
+        "php-83": {
+          "badge": "PHP",
+          "summary": "PHP development image on Debian Bookworm.",
+          "bestFor": "Laravel, Symfony, WordPress tooling"
+        },
+        "ruby-33": {
+          "badge": "Ruby",
+          "summary": "Ruby development image with common tooling.",
+          "bestFor": "Rails, Ruby services, scripting"
+        },
+        "base-bookworm": {
+          "badge": "Lean",
+          "summary": "Clean Debian Bookworm base with minimal tooling.",
+          "bestFor": "Small custom sandboxes you shape yourself"
+        },
+        "universal-2": {
+          "badge": "All-in-one",
+          "summary": "Large all-in-one image with many language stacks.",
+          "bestFor": "Polyglot projects and broad agent tasks"
+        },
+        "ubuntu-2204": {
+          "badge": "Ubuntu",
+          "summary": "Ubuntu Jammy base for Linux-compatible workflows.",
+          "bestFor": "Ubuntu-targeted projects and packages"
+        },
+        "ubuntu-2404": {
+          "badge": "Ubuntu",
+          "summary": "Ubuntu Noble base with a newer package baseline.",
+          "bestFor": "Modern Ubuntu packages and testing"
+        }
+      }
     },
     "modelProviderNotice": {
       "title": "Add a model provider first",
@@ -5227,8 +5340,20 @@
     "systemOverview": "System overview",
     "adminConsoleTitle": "Admin",
     "adminNavOperations": "Operations",
-    "adminNavNotifications": "Site notices",
+    "adminNavNotifications": "Site notifications",
     "adminNavFeedback": "Feedback",
+    "pluginListingStatuses": {
+      "published": "Published",
+      "withdrawn": "Withdrawn",
+      "draft": "Draft",
+      "suspended": "Suspended"
+    },
+    "pluginReviewStatuses": {
+      "approved": "Approved",
+      "pending": "Pending review",
+      "rejected": "Rejected",
+      "revoked": "Revoked"
+    },
     "adminNavAccess": "Access",
     "adminNavPlatform": "Platform",
     "adminNavOverview": "Overview",

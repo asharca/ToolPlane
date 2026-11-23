@@ -3,9 +3,10 @@
 import { useMemo, useState, type ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { Brain, MoreHorizontal, Search, Trash2 } from "lucide-react";
+import { Brain, MoreHorizontal, Search, Trash2, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Button, ButtonLink } from "@/components/motion/button";
+import { Checkbox } from "@/components/motion/checkbox";
 import { Input } from "@/components/motion/input";
 import {
   Popover,
@@ -41,6 +42,7 @@ export function InstalledSkillsTable({
 }) {
   const t = useTranslations("console.skills");
   const common = useTranslations("common");
+  const selection = useTranslations("console.agents");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -49,6 +51,14 @@ export function InstalledSkillsTable({
     [skills],
   );
   const activeSelectedIds = selectedIds.filter((id) => availableIds.has(id));
+  function toggleMobileSelection(id: string, checked: boolean) {
+    setSelectedIds((current) => {
+      const next = new Set(current.filter((item) => availableIds.has(item)));
+      if (checked) next.add(id);
+      else next.delete(id);
+      return [...next];
+    });
+  }
   const filtered = useMemo(() => {
     const term = query.trim().toLocaleLowerCase();
     return skills.filter((skill) =>
@@ -62,6 +72,83 @@ export function InstalledSkillsTable({
   const visible = filtered.slice(
     (currentPage - 1) * PAGE_SIZE,
     currentPage * PAGE_SIZE,
+  );
+  const renderBulkActions = (ids: string[]) => (
+    <form action={uninstallSkillAction} className="flex items-center gap-2">
+      <input type="hidden" name="workspace" value={slug} />
+      {ids.map((id) => (
+        <input key={id} type="hidden" name="installId" value={id} />
+      ))}
+      <ConfirmSubmitButton
+        triggerLabel={
+          <>
+            <Trash2 className="size-3.5" />
+            {t("uninstall")} ({ids.length})
+          </>
+        }
+        confirmLabel={common("confirm")}
+        cancelLabel={common("cancel")}
+        prompt={`${t("uninstall")} (${ids.length})?`}
+        pendingLabel={`${t("uninstall")}…`}
+        className="items-center"
+        triggerVariant="secondary"
+        triggerSize="sm"
+        confirmVariant="primary"
+        confirmSize="sm"
+        cancelVariant="ghost"
+        cancelSize="sm"
+      />
+    </form>
+  );
+  const renderRowActions = (skill: InstalledSkillListItem) => (
+    <div key="actions" className="flex items-center justify-end gap-1">
+      <ButtonLink
+        href={`/app/${slug}/skills/${skill.id}`}
+        variant="secondary"
+        size="sm"
+      >
+        {t("use")}
+      </ButtonLink>
+      <Popover align="end">
+        <PopoverTrigger>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={`${t("actions")}: ${skill.name}`}
+          >
+            <MoreHorizontal className="size-4" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-64 max-w-[calc(100vw-2rem)] p-2">
+          <form action={uninstallSkillAction}>
+            <input type="hidden" name="workspace" value={slug} />
+            <input type="hidden" name="installId" value={skill.id} />
+            <ConfirmSubmitButton
+              triggerLabel={
+                <>
+                  <Trash2 className="size-3.5" />
+                  {t("uninstall")}
+                </>
+              }
+              triggerAriaLabel={`${t("uninstall")}: ${skill.name}`}
+              confirmLabel={common("confirm")}
+              cancelLabel={common("cancel")}
+              prompt={`${t("uninstall")} ${skill.name}?`}
+              pendingLabel={`${t("uninstall")}…`}
+              promptClassName="break-words text-xs text-muted-foreground"
+              className="flex-wrap"
+              triggerVariant="ghost"
+              triggerSize="sm"
+              confirmVariant="primary"
+              confirmSize="sm"
+              cancelVariant="ghost"
+              cancelSize="sm"
+            />
+          </form>
+        </PopoverContent>
+      </Popover>
+    </div>
   );
 
   return (
@@ -83,133 +170,145 @@ export function InstalledSkillsTable({
         ) : null}
       </div>
       {filtered.length ? (
-        <DashboardTable
-          selectedRowIds={activeSelectedIds}
-          onSelectionChange={setSelectedIds}
-          selectionActions={({ selectedRowIds }) => (
-            <form
-              action={uninstallSkillAction}
-              className="flex items-center gap-2"
-            >
-              <input type="hidden" name="workspace" value={slug} />
-              {selectedRowIds.map((id) => (
-                <input key={id} type="hidden" name="installId" value={id} />
-              ))}
-              <ConfirmSubmitButton
-                triggerLabel={
-                  <>
-                    <Trash2 className="size-3.5" />
-                    {t("uninstall")} ({selectedRowIds.length})
-                  </>
-                }
-                confirmLabel={common("confirm")}
-                cancelLabel={common("cancel")}
-                prompt={`${t("uninstall")} (${selectedRowIds.length})?`}
-                pendingLabel={`${t("uninstall")}…`}
-                className="items-center"
-                triggerVariant="secondary"
-                triggerSize="sm"
-                confirmVariant="primary"
-                confirmSize="sm"
-                cancelVariant="ghost"
-                cancelSize="sm"
-              />
-            </form>
-          )}
-          headers={[
-            { label: t("skillColumn") },
-            { label: t("added") },
-            { label: t("actions"), align: "right" },
-          ]}
-          rows={visible.map((skill) => ({
-            id: skill.id,
-            cells: [
-              <Link
-                key="identity"
-                href={`/app/${slug}/skills/${skill.id}`}
-                aria-label={skill.name}
-                className="flex min-w-0 items-center gap-3 px-4 py-3 hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
-              >
-                {skill.iconUrl ? (
-                  <Image
-                    unoptimized
-                    loading="eager"
-                    decoding="auto"
-                    src={skill.iconUrl}
-                    alt=""
-                    width={32}
-                    height={32}
-                    className="size-8 shrink-0 rounded-lg object-cover"
-                  />
-                ) : (
-                  <Brain className="size-5 shrink-0 text-muted-foreground" />
-                )}
-                <span className="min-w-0">
-                  <span className="block truncate font-medium">
-                    {skill.name}
-                  </span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {skill.description || skill.slug}
-                  </span>
-                </span>
-              </Link>,
-              <span key="date" className="text-xs text-muted-foreground">
-                {skill.createdAt}
-              </span>,
+        <>
+          <div className="space-y-3 md:hidden">
+            {activeSelectedIds.length > 0 ? (
               <div
-                key="actions"
-                className="flex items-center justify-end gap-1"
+                role="toolbar"
+                aria-label={selection("selectedResources", {
+                  count: activeSelectedIds.length,
+                })}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2"
               >
-                <ButtonLink
-                  href={`/app/${slug}/skills/${skill.id}`}
-                  variant="secondary"
-                  size="sm"
-                >
-                  {t("use")}
-                </ButtonLink>
-                <Popover align="end">
-                  <PopoverTrigger>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`${t("actions")}: ${skill.name}`}
-                    >
-                      <MoreHorizontal className="size-4" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-64 max-w-[calc(100vw-2rem)] p-2">
-                    <form action={uninstallSkillAction}>
-                      <input type="hidden" name="workspace" value={slug} />
-                      <input type="hidden" name="installId" value={skill.id} />
-                      <ConfirmSubmitButton
-                        triggerLabel={
-                          <>
-                            <Trash2 className="size-3.5" />
-                            {t("uninstall")}
-                          </>
-                        }
-                        triggerAriaLabel={`${t("uninstall")}: ${skill.name}`}
-                        confirmLabel={common("confirm")}
-                        cancelLabel={common("cancel")}
-                        prompt={`${t("uninstall")} ${skill.name}?`}
-                        pendingLabel={`${t("uninstall")}…`}
-                        promptClassName="break-words text-xs text-muted-foreground"
-                        className="flex-wrap"
-                        triggerVariant="ghost"
-                        triggerSize="sm"
-                        confirmVariant="primary"
-                        confirmSize="sm"
-                        cancelVariant="ghost"
-                        cancelSize="sm"
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-medium tabular-nums">
+                    {selection("selectedResources", {
+                      count: activeSelectedIds.length,
+                    })}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={selection("clearSelection")}
+                    onClick={() => setSelectedIds([])}
+                  >
+                    <X className="size-3.5" />
+                  </Button>
+                </div>
+                {renderBulkActions(activeSelectedIds)}
+              </div>
+            ) : null}
+            <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+              {visible.map((skill) => {
+                const checked = activeSelectedIds.includes(skill.id);
+                return (
+                  <li key={skill.id} className="space-y-3 p-3.5">
+                    <div className="flex items-start gap-2.5">
+                      <div className="pt-1">
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(next) =>
+                            toggleMobileSelection(skill.id, Boolean(next))
+                          }
+                          aria-label={skill.name}
+                        />
+                      </div>
+                      <Link
+                        href={`/app/${slug}/skills/${skill.id}`}
+                        className="flex min-w-0 flex-1 items-start gap-3 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {skill.iconUrl ? (
+                          <Image
+                            unoptimized
+                            loading="eager"
+                            decoding="auto"
+                            src={skill.iconUrl}
+                            alt=""
+                            width={32}
+                            height={32}
+                            className="size-8 shrink-0 rounded-lg object-cover"
+                          />
+                        ) : (
+                          <Brain className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+                        )}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium text-foreground">
+                            {skill.name}
+                          </span>
+                          <span className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                            {skill.description || skill.slug}
+                          </span>
+                        </span>
+                      </Link>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 pl-7">
+                      <span className="text-xs text-muted-foreground">
+                        {skill.createdAt}
+                      </span>
+                      {renderRowActions(skill)}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+          <div className="hidden md:block">
+            <DashboardTable
+              minWidth="36rem"
+              adjustableColumns={false}
+              selectionPlacement="above"
+              selectedRowIds={activeSelectedIds}
+              onSelectionChange={setSelectedIds}
+              selectionActions={({ selectedRowIds }) =>
+                renderBulkActions(selectedRowIds)
+              }
+              headers={[
+                { label: t("skillColumn") },
+                { label: t("added"), width: "8.5rem" },
+                { label: t("actions"), align: "right", width: "8rem" },
+              ]}
+              rows={visible.map((skill) => ({
+                id: skill.id,
+                cells: [
+                  <Link
+                    key="identity"
+                    href={`/app/${slug}/skills/${skill.id}`}
+                    aria-label={skill.name}
+                    className="flex w-full min-w-0 max-w-full items-center gap-3 overflow-hidden rounded-lg px-2 py-2.5 hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                  >
+                    {skill.iconUrl ? (
+                      <Image
+                        unoptimized
+                        loading="eager"
+                        decoding="auto"
+                        src={skill.iconUrl}
+                        alt=""
+                        width={32}
+                        height={32}
+                        className="size-8 shrink-0 rounded-lg object-cover"
                       />
-                    </form>
-                  </PopoverContent>
-                </Popover>
-              </div>,
-            ],
-          }))}
-        />
+                    ) : (
+                      <Brain className="size-5 shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">
+                        {skill.name}
+                      </span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {skill.description || skill.slug}
+                      </span>
+                    </span>
+                  </Link>,
+                  <span key="date" className="text-xs text-muted-foreground">
+                    {skill.createdAt}
+                  </span>,
+                  renderRowActions(skill),
+                ],
+              }))}
+            />
+          </div>
+        </>
       ) : skills.length ? (
         <DashboardEmptyState
           title={t("noMatchingSkills")}

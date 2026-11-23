@@ -66,16 +66,6 @@ export function AuthForm({
           />
 
           <div className="space-y-1.5">
-            {!isSignup ? (
-              <div className="flex justify-end">
-                <Link
-                  href="/app/forgot-password"
-                  className="text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                >
-                  {t("forgotPasswordLink")}
-                </Link>
-              </div>
-            ) : null}
             <Input
               label={t("password")}
               id="password"
@@ -86,6 +76,16 @@ export function AuthForm({
               maxLength={PASSWORD_MAX_LENGTH}
               autoComplete={isSignup ? "new-password" : "current-password"}
             />
+            {!isSignup ? (
+              <div className="flex justify-end">
+                <Link
+                  href="/app/forgot-password"
+                  className="text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                >
+                  {t("forgotPasswordLink")}
+                </Link>
+              </div>
+            ) : null}
             {isSignup ? (
               <p className="text-xs text-muted-foreground">
                 {t("passwordHint", { min: PASSWORD_MIN_LENGTH })}

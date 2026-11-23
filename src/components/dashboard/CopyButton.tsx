@@ -85,7 +85,7 @@ export async function copyText(text: string): Promise<boolean> {
 
 export function CopyButton({
   text,
-  label = "Copy",
+  label,
   className,
   iconOnly = false,
 }: {
@@ -95,6 +95,7 @@ export function CopyButton({
   iconOnly?: boolean;
 }) {
   const t = useTranslations("console.common");
+  const resolvedLabel = label ?? t("copy");
   const [state, setState] = useState<ButtonState>("idle");
   const busy = useRef(false);
   const mounted = useRef(true);
@@ -111,7 +112,7 @@ export function CopyButton({
       ? t("copied")
       : state === "error"
         ? t("copyFailed")
-        : label;
+        : resolvedLabel;
   async function copy() {
     if (busy.current) return;
     busy.current = true;
@@ -133,7 +134,13 @@ export function CopyButton({
       icon={<Copy className="size-4" />}
       aria-label={iconOnly ? statusLabel : undefined}
       title={iconOnly ? statusLabel : undefined}
-      loadingText={iconOnly ? <span className="sr-only">{label}</span> : label}
+      loadingText={
+        iconOnly ? (
+          <span className="sr-only">{resolvedLabel}</span>
+        ) : (
+          resolvedLabel
+        )
+      }
       successText={
         iconOnly ? <span className="sr-only">{t("copied")}</span> : t("copied")
       }
@@ -150,7 +157,7 @@ export function CopyButton({
         role="status"
         aria-live="polite"
       >
-        {label}
+        {resolvedLabel}
       </span>
     </StatefulButton>
   );

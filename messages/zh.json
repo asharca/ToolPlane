@@ -124,6 +124,8 @@
     "toggleTheme": "切换主题",
     "switchToLightTheme": "切换到浅色主题",
     "switchToDarkTheme": "切换到深色主题",
+    "themeLight": "浅色",
+    "themeDark": "深色",
     "en": "EN",
     "zh": "中"
   },
@@ -604,7 +606,8 @@
       "feedback": "反馈",
       "sellSkills": "出售技能",
       "sourceCode": "源码仓库",
-      "version": "版本"
+      "version": "版本",
+      "accountMenu": "账户菜单"
     },
     "plugins": {
       "catalog": {
@@ -826,6 +829,8 @@
       },
       "noSummary": "暂无简介",
       "ompRetired": "OMP · 已退役",
+      "ompRetiredNotice": "该插件针对已退役的 OMP 运行时，无法继续安装。请发布兼容 Pi 运行时的版本后再供当前智能体使用。",
+      "updatesBadge": "可更新 {count}",
       "quickAdd": "添加",
       "addedToast": "已添加「{name}」",
       "allEmpty": "没有匹配的插件。",
@@ -1371,7 +1376,7 @@
       "attachmentStorageQuotaExceeded": "存储空间已满。请在“文件”中删除不再需要的文件，或联系管理员提高配额。",
       "attachment": "附件",
       "removeAttachment": "移除 {name}",
-      "egResearchAssistant": "例如：研究助手",
+      "egResearchAssistant": "例如：代码审查智能体",
       "createAgent": "创建智能体",
       "retiredRuntime": "已停用 · 仅供查看历史",
       "viewHistory": "查看历史",
@@ -1798,6 +1803,7 @@
       "reasoningEffortHigh": "高",
       "reasoningEffortXHigh": "超高",
       "reasoningEffortMax": "极致",
+      "reasoningEffortTrigger": "思考 · {level}",
       "mcpPrompts": "MCP 提示词",
       "mcpRunning": "运行中",
       "mcpUnavailable": "不可用",
@@ -2360,7 +2366,7 @@
       "statusScanned": "已扫描",
       "statusReady": "就绪",
       "statusWaitingCallback": "等待回调",
-      "statusSetupRequired": "需要设置",
+      "statusSetupRequired": "待配置",
       "noCredentialsSavedYet": "尚未保存凭据",
       "stop": "停止",
       "start": "启动",
@@ -2421,7 +2427,15 @@
       "updateNow": "立即更新",
       "confirmUpdate": "安装 {version} 并重启 ToolPlane？",
       "targetReleaseUnknown": "未配置 Release 产物",
-      "checkFailed": "无法检查更新。"
+      "checkFailed": "无法检查更新。",
+      "reasons": {
+        "disabled": "当前实例未启用在线更新。",
+        "runtimeUnconfigured": "未配置运行时目录。",
+        "runtimeNotWritable": "运行时目录不可写。",
+        "artifactMissing": "最新 Release 未包含匹配的运行时产物。",
+        "lookupFailed": "无法查询最新系统 Release。",
+        "runtimeUncertain": "运行时存在未确认的操作记录，当前无法安全停机更新。"
+      }
     },
     "mcp": {
       "title": "MCP",
@@ -3031,7 +3045,7 @@
       "save": "保存",
       "delete": "删除",
       "uninstall": "卸载",
-      "bundledFiles": "打包文件",
+      "bundledFiles": "个附属文件",
       "noDescriptionProvided": "未提供描述。",
       "openGithub": "打开 GitHub",
       "slug": "标识符",
@@ -3584,6 +3598,11 @@
       "title": "知识库",
       "newBase": "新建知识库",
       "newBaseDescription": "选择嵌入模型和默认检索参数，之后仍可修改。",
+      "selectEmbeddingModel": "请选择嵌入模型",
+      "noEmbeddingModels": "未配置嵌入模型",
+      "noEmbeddingModelsHint": "当前工作区的模型提供商中未检测到嵌入（embedding）模型，请先前往「模型提供商」添加或刷新模型。",
+      "configureProviders": "前往模型提供商",
+      "inDevelopment": "开发中",
       "noBases": "暂无知识库。",
       "documentCount": "{count} 个文档",
       "documents": "文档",
@@ -3973,6 +3992,12 @@
         "CHAT_MODEL_NOT_AVAILABLE": "所选模型不在该供应商的可用模型列表中。",
         "CHAT_MODEL_CAPABILITY_UNSUPPORTED": "所选模型不支持本回合所需的文本、工具、推理或附件能力。"
       },
+      "runFailures": {
+        "CHAT_RUN_OUTCOME_UNKNOWN": "对话执行已中断，外部调用结果未知，请勿盲目重试。",
+        "CHAT_RUN_CANCELLED": "本轮对话已停止。",
+        "CHAT_RUN_TIMED_OUT": "本轮对话已超时。",
+        "CHAT_RUN_FAILED": "本轮对话执行失败。"
+      },
       "mcpEnabled": "启用 MCP 工具",
       "stopNotAccepted": "此次运行未接受停止请求。已刷新其保存状态；外部操作产生的影响不会回滚。",
       "assistants": "助手",
@@ -4205,7 +4230,7 @@
       "openWorkspace": "打开工作区",
       "workspace": "工作区",
       "emptyTitle": "今天想做点什么？",
-      "emptyDescription": "发送一条消息以开始工作会话。",
+      "emptyDescription": "发送消息以开启工作会话——智能体可在隔离沙箱中调用工具、读写文件并使用技能。",
       "sandboxSubtitle": "工作沙箱",
       "noSandbox": "未选择沙箱",
       "sandboxDialog": "工作沙箱",
@@ -4375,7 +4400,21 @@
       "statusCompleted": "已完成",
       "statusFailed": "失败",
       "statusArchived": "已归档",
-      "untitledSession": "新工作会话"
+      "untitledSession": "新工作会话",
+      "failures": {
+        "WORK_EXECUTION_FAILED": "工作执行失败，请查看执行记录后再恢复或重试。",
+        "WORK_INTERRUPTED": "工作因服务重启而中断，请查看执行记录后再恢复。",
+        "WORK_READ_ONLY": "历史工作会话仅供只读查看，请新建工作会话。",
+        "WORK_SANDBOX_UNAVAILABLE": "工作沙箱不可用。",
+        "WORK_IDENTITY_UNAVAILABLE": "工作执行身份不可用。",
+        "WORK_MESSAGE_UNAVAILABLE": "工作用户消息不可用。",
+        "AGENT_BUDGET_EXCEEDED": "智能体已达到预算上限。",
+        "MODEL_OVERRIDE_UNAVAILABLE": "所选模型不可用。",
+        "PI_SDK_MODEL_FAILED": "模型请求失败，请检查模型提供商配置后重试。",
+        "PI_MCP_TOOLS_UNAVAILABLE": "所需的 MCP 服务不可用，请检查智能体的 MCP 设置。",
+        "PI_SDK_PACKAGE_SET_CHANGED": "已启用的插件包发生变更，请新建工作会话以使用新版本。",
+        "PI_TASK_TIMEOUT": "任务已达到总时长上限，请查看执行记录后再重试。"
+      }
     },
     "workspaces": {
       "title": "工作区",
@@ -4471,6 +4510,7 @@
     },
     "workspaceSwitcher": {
       "workspaces": "工作区",
+      "switchWorkspace": "切换工作区",
       "workspaceName": "工作区名称",
       "create": "创建",
       "createWorkspace": "创建工作区",
@@ -4489,6 +4529,7 @@
       "fullIsolationNoInternetLeaveOffForServersThatCallExternalApis": "— 完全隔离，无网络。如需调用外部 API，请保持关闭。",
       "addVariable": "添加变量",
       "demoOnly": "仅演示",
+      "copy": "复制",
       "copied": "已复制",
       "copyFailed": "复制失败",
       "close": "关闭",
@@ -4587,7 +4628,7 @@
       "statusCleanupPending": "等待恢复清理",
       "statusUpgrading": "正在升级镜像",
       "statusDeleting": "删除中",
-      "statusSetupRequired": "需要设置",
+      "statusSetupRequired": "待配置",
       "statusStopped": "已停止",
       "inspect": "检查",
       "stop": "停止",
@@ -4875,7 +4916,79 @@
       "sshErrorRateLimited": "SSH 请求过于频繁，请稍后重试。",
       "sshErrorUnavailable": "SSH 沙箱当前不可用，请联系管理员。",
       "sshHostAccessWarning": "我理解 SSH 并非容器隔离。命令拥有远端账号权限，可能访问配置工作目录之外的文件和网络。",
-      "sshOperationFailed": "SSH 请求失败，请检查网络连接和登录状态后重试。"
+      "sshOperationFailed": "SSH 请求失败，请检查网络连接和登录状态后重试。",
+      "imageOptions": {
+        "toolplane-sandbox": {
+          "badge": "默认",
+          "summary": "基于 Debian Bookworm，预装 Node.js、Chromium 与前端开发工具链。",
+          "bestFor": "适用：浏览器自动化、Next.js、React 与前端应用"
+        },
+        "toolplane-desktop": {
+          "badge": "桌面",
+          "summary": "Node 26 搭配可实时查看与接管的桌面及 Chromium 浏览器。",
+          "bestFor": "适用：浏览器任务、人工登录及接管操作"
+        },
+        "typescript-node-24": {
+          "badge": "TypeScript",
+          "summary": "开箱即用的 TypeScript / Node.js 开发镜像。",
+          "bestFor": "适用：TypeScript 服务与全栈应用"
+        },
+        "python-312": {
+          "badge": "Python",
+          "summary": "预装常用构建工具链的 Python 运行时。",
+          "bestFor": "适用：AI、数据处理、自动化脚本与后端服务"
+        },
+        "go-1": {
+          "badge": "Go",
+          "summary": "基于 Debian Bookworm 的 Go 工具链环境。",
+          "bestFor": "适用：Go 服务、命令行工具与基础设施工具"
+        },
+        "rust-1": {
+          "badge": "Rust",
+          "summary": "基于 Debian Bookworm，内置 Rust 工具链与 Cargo。",
+          "bestFor": "适用：Rust 应用、系统工具与 WASM 构建"
+        },
+        "java-21": {
+          "badge": "Java",
+          "summary": "JDK 21 开发环境。",
+          "bestFor": "适用：Java 与 Spring Boot 项目"
+        },
+        "dotnet-8": {
+          "badge": ".NET",
+          "summary": "面向 C# 开发的 .NET SDK 镜像。",
+          "bestFor": "适用：.NET 服务与 C# 工具链"
+        },
+        "php-83": {
+          "badge": "PHP",
+          "summary": "基于 Debian Bookworm 的 PHP 开发镜像。",
+          "bestFor": "适用：Laravel、Symfony 与 WordPress 工具链"
+        },
+        "ruby-33": {
+          "badge": "Ruby",
+          "summary": "预装常用工具链的 Ruby 开发镜像。",
+          "bestFor": "适用：Rails、Ruby 服务与脚本开发"
+        },
+        "base-bookworm": {
+          "badge": "轻量",
+          "summary": "仅含极简工具链的纯净 Debian Bookworm 基础镜像。",
+          "bestFor": "适用：按需自行定制的小型沙箱"
+        },
+        "universal-2": {
+          "badge": "全能",
+          "summary": "集成多语言技术栈的大型全能开发镜像。",
+          "bestFor": "适用：多语言混合项目与通用智能体任务"
+        },
+        "ubuntu-2204": {
+          "badge": "Ubuntu",
+          "summary": "适用 Linux 兼容工作流的 Ubuntu Jammy 基础镜像。",
+          "bestFor": "适用：面向 Ubuntu 的项目与软件包"
+        },
+        "ubuntu-2404": {
+          "badge": "Ubuntu",
+          "summary": "具备更新软件包基线的 Ubuntu Noble 基础镜像。",
+          "bestFor": "适用：现代 Ubuntu 软件包与测试验证"
+        }
+      }
     },
     "modelProviderNotice": {
       "title": "先添加模型提供商",
@@ -5227,8 +5340,20 @@
     "systemOverview": "系统概览",
     "adminConsoleTitle": "管理后台",
     "adminNavOperations": "运维",
-    "adminNavNotifications": "站点通知",
+    "adminNavNotifications": "全站通知",
     "adminNavFeedback": "反馈",
+    "pluginListingStatuses": {
+      "published": "已发布",
+      "withdrawn": "已下架",
+      "draft": "草稿",
+      "suspended": "已暂停"
+    },
+    "pluginReviewStatuses": {
+      "approved": "已批准",
+      "pending": "待审核",
+      "rejected": "已拒绝",
+      "revoked": "已撤销"
+    },
     "adminNavAccess": "用户与工作区",
     "adminNavPlatform": "平台",
     "adminNavOverview": "概览",

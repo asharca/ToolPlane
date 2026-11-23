@@ -3,9 +3,16 @@ import { Button } from "@/components/motion/button";
 import { SafeStreamdown } from "./SafeStreamdown";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Download, ExternalLink, RefreshCw } from "lucide-react";
+import {
+  ArrowUpCircle,
+  Check,
+  Download,
+  ExternalLink,
+  RefreshCw,
+} from "lucide-react";
 import { MarkGithubIcon } from "@primer/octicons-react";
 import { useTranslations } from "next-intl";
+import { systemUpdateFailures } from "@/lib/system/update-failures";
 import {
   MorphPopover,
   MorphPopoverContent,
@@ -74,8 +81,14 @@ type UiState =
   | "restarting"
   | "error";
 
+function normalizeVersion(value: string): string {
+  return value.trim().replace(/^v/i, "");
+}
+
 function versionsMatch(current: string, expected: string | null): boolean {
-  return Boolean(expected && current.trim() === expected.trim());
+  return Boolean(
+    expected && normalizeVersion(current) === normalizeVersion(expected),
+  );
 }
 
 export function systemUpdateVersionDetail(
@@ -345,7 +358,26 @@ export function SystemUpdateButton({
     status?.latestVersion,
   );
   const rawDetail = message || status?.reason || null;
-  const detail = rawDetail === label ? null : rawDetail;
+  const localizedReason =
+    rawDetail === systemUpdateFailures.text("SYSTEM_UPDATE_DISABLED")
+      ? t("reasons.disabled")
+      : rawDetail ===
+          systemUpdateFailures.text("SYSTEM_UPDATE_RUNTIME_UNCONFIGURED")
+        ? t("reasons.runtimeUnconfigured")
+        : rawDetail ===
+            systemUpdateFailures.text("SYSTEM_UPDATE_RUNTIME_UNWRITABLE")
+          ? t("reasons.runtimeNotWritable")
+          : rawDetail ===
+              systemUpdateFailures.text("SYSTEM_UPDATE_ARTIFACT_MISSING")
+            ? t("reasons.artifactMissing")
+            : rawDetail ===
+                systemUpdateFailures.text("SYSTEM_UPDATE_LOOKUP_FAILED")
+              ? t("reasons.lookupFailed")
+              : rawDetail ===
+                  systemUpdateFailures.text("SYSTEM_UPDATE_RUNTIME_UNCERTAIN")
+                ? t("reasons.runtimeUncertain")
+                : rawDetail;
+  const detail = localizedReason === label ? null : localizedReason;
   const showUpdate =
     canInstall && status?.canUpdate === true && status.updateAvailable === true;
   const hasUpdate = status?.updateAvailable === true;
@@ -397,9 +429,8 @@ export function SystemUpdateButton({
               className="size-[18px] shrink-0 animate-spin"
             />
           ) : (
-            <MarkGithubIcon
+            <ArrowUpCircle
               aria-hidden="true"
-              size={18}
               className="size-[18px] shrink-0"
             />
           )}
@@ -419,7 +450,7 @@ export function SystemUpdateButton({
         side="top"
         align="start"
         sideOffset={10}
-        className="flex w-80 max-w-[calc(100vw-2rem)] flex-col border-foreground/15 bg-popover text-popover-foreground"
+        className="flex max-h-[calc(100dvh-2rem)] w-80 max-w-[calc(100vw-2rem)] flex-col overflow-hidden border-foreground/15 bg-popover text-popover-foreground"
       >
         <header className="flex items-start gap-2 px-4 pb-3 pt-3.5">
           <div aria-live="polite" className="min-w-0 flex-1">
@@ -537,7 +568,7 @@ export function SystemUpdateButton({
             ) : null}
           </div>
           {status?.releaseNotes?.trim() ? (
-            <div className="max-h-48 overflow-y-auto overscroll-contain break-words pr-1 text-xs leading-5 [overflow-wrap:anywhere] [&_h1]:mb-1 [&_h1]:mt-0 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:mb-1 [&_h2]:mt-3 [&_h2]:text-xs [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-2 [&_h3]:text-xs [&_h3]:font-medium [&_li]:my-0 [&_li]:py-0.5 [&_p]:my-1 [&_ul]:my-1">
+            <div className="max-h-56 overflow-y-auto overscroll-contain break-words pb-2 pr-1 text-xs leading-5 [overflow-wrap:anywhere] [&_h1]:mb-1 [&_h1]:mt-0 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:mb-1 [&_h2]:mt-3 [&_h2]:text-xs [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-2 [&_h3]:text-xs [&_h3]:font-medium [&_li]:my-0 [&_li]:py-0.5 [&_p]:my-1 [&_ul]:my-1">
               <SafeStreamdown mode="static" parseIncompleteMarkdown={false}>
                 {status.releaseNotes}
               </SafeStreamdown>

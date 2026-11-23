@@ -78,7 +78,7 @@ export function PublishWorkspaceNotification({
       }}
     >
       <CenterMorphModalTrigger>
-        <Button type="button" variant="primary" size="sm">
+        <Button type="button" variant="secondary" size="sm">
           <Megaphone className="size-4" aria-hidden />
           {t("publish")}
         </Button>

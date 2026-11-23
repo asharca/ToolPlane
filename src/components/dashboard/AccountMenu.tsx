@@ -10,6 +10,8 @@ import {
 } from "@/components/motion/popover-morph";
 import { ButtonLink } from "@/components/motion/button/base";
 import { Tooltip } from "@/components/motion/tooltip";
+import { LocaleSwitcher } from "@/components/layout/LocaleSwitcher";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { workspaceInitials } from "@/lib/workspace/navigation";
 import { logoutAction } from "@/lib/auth/actions";
 
@@ -41,7 +43,7 @@ export function AccountMenu({
         <MorphPopoverTrigger>
           <button
             type="button"
-            aria-label="账户菜单"
+            aria-label={sidebar("accountMenu")}
             className="flex h-9 w-full items-center gap-1.5 overflow-hidden rounded-lg px-1.5 text-left outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring"
           >
             <span className="grid size-6 shrink-0 place-items-center rounded-full bg-[#d5ff66] text-[10px] font-semibold text-[#172000]">
@@ -88,6 +90,10 @@ export function AccountMenu({
             {sidebar("adminConsole")}
           </ButtonLink>
         ) : null}
+        <div className="mt-1 flex items-center justify-between gap-2 border-t border-border px-2 py-1.5">
+          <LocaleSwitcher />
+          <ThemeToggle />
+        </div>
         <form
           action={logoutAction}
           className="mt-1 border-t border-border pt-1"

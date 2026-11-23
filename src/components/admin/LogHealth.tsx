@@ -33,6 +33,7 @@ export async function LogHealth({ health }: { health: LogHealthSnapshot }) {
         <DashboardTable
           ariaLabel={t("logsHealthTitle")}
           minWidth="34rem"
+          adjustableColumns={false}
           selectable={false}
           headers={[
             { label: t("logFields.domain") },

@@ -65,7 +65,7 @@ export function ReasoningEffortControl({
           className="h-8 shrink-0 gap-1.5 text-xs"
         >
           <Brain aria-hidden="true" className="size-3.5" />
-          {label}
+          {t("reasoningEffortTrigger", { level: label })}
         </Button>
       </MorphPopoverTrigger>
       <MorphPopoverContent

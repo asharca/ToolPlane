@@ -7,7 +7,11 @@ import { ThemeToggle as BeUIThemeToggle } from "@/components/motion/theme-toggle
 
 const subscribe = () => () => {};
 
-export function ThemeToggle() {
+export function ThemeToggle({
+  showLabel = false,
+}: {
+  showLabel?: boolean;
+} = {}) {
   const t = useTranslations("common");
   const { resolvedTheme, forcedTheme } = useTheme();
   const mounted = useSyncExternalStore(
@@ -23,7 +27,7 @@ export function ThemeToggle() {
       ? t("switchToLightTheme")
       : t("switchToDarkTheme");
 
-  return (
+  const toggle = (
     <BeUIThemeToggle
       aria-label={label}
       aria-pressed={mounted ? isDark : undefined}
@@ -31,4 +35,19 @@ export function ThemeToggle() {
       iconClassName="size-4"
     />
   );
+
+  if (showLabel) {
+    return (
+      <span className="inline-flex items-center gap-2">
+        {mounted ? (
+          <span className="text-xs text-muted-foreground">
+            {isDark ? t("themeDark") : t("themeLight")}
+          </span>
+        ) : null}
+        {toggle}
+      </span>
+    );
+  }
+
+  return toggle;
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { DashboardSidebar } from "./DashboardSidebar";
@@ -54,6 +55,44 @@ export function DashboardChrome({
   );
   const t = useTranslations("console.sidebar");
   const workspaceT = useTranslations("console.workspaces");
+  const pathname = usePathname() ?? "";
+  const workspaceBase = `/app/${slug}/`;
+  const activeSegment = pathname.startsWith(workspaceBase)
+    ? pathname.slice(workspaceBase.length).split("/")[0]
+    : "";
+  const mobilePageTitle = (() => {
+    switch (activeSegment) {
+      case "chat":
+        return t("chat");
+      case "agents":
+      case "work":
+        return t("agents");
+      case "mcp":
+        return t("mcpServers");
+      case "skills":
+        return t("skills");
+      case "plugins":
+        return t("plugins");
+      case "knowledge":
+        return t("knowledge");
+      case "providers":
+        return t("modelProviders");
+      case "sandboxes":
+        return t("sandboxes");
+      case "observability":
+        return t("observability");
+      case "members":
+        return t("members");
+      case "notifications":
+        return t("notifications");
+      case "feedback":
+        return t("feedback");
+      case "settings":
+        return t("settings");
+      default:
+        return null;
+    }
+  })();
 
   useEffect(() => {
     const confirm = () => window.confirm(workspaceT("unsavedChanges"));
@@ -142,6 +181,16 @@ export function DashboardChrome({
               </AnimatedSidebarTrigger>
             </Tooltip>
             <DashboardLogo />
+            {mobilePageTitle ? (
+              <>
+                <span aria-hidden="true" className="text-border">
+                  /
+                </span>
+                <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                  {mobilePageTitle}
+                </span>
+              </>
+            ) : null}
           </>
         }
       >

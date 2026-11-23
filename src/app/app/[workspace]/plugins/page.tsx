@@ -206,6 +206,7 @@ export default async function PluginsPage({
           {items.map((plugin) => {
             const href = `${base}/${encodeURIComponent(plugin.id)}`;
             const published = plugin.status === "published";
+            const isRetiredOmp = plugin.card.runtime?.kind === "omp";
             return (
               <article
                 key={plugin.id}
@@ -318,7 +319,10 @@ export default async function PluginsPage({
                         ? `v${pluginReleaseLabel(plugin.latestRelease)}`
                         : ""}
                   </span>
-                  {canManage && published && plugin.latestRelease ? (
+                  {canManage &&
+                  published &&
+                  plugin.latestRelease &&
+                  (!isRetiredOmp || plugin.install) ? (
                     !plugin.install ? (
                       plugin.card.mcpCount ||
                       (plugin.envStatus.requiresEnv &&

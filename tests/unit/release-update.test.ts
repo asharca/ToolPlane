@@ -116,6 +116,42 @@ describe("release artifact updater", () => {
       else process.env.TOOLPLANE_RUNTIME_ROOT = previousRoot;
     }
   });
+
+  it("treats matching versions with or without a leading v prefix as up to date", async () => {
+    const previousVersion = process.env.TOOLPLANE_VERSION;
+    const previousRoot = process.env.TOOLPLANE_RUNTIME_ROOT;
+    const previousEnabled = process.env.TOOLPLANE_UPDATE_ENABLED;
+    try {
+      process.env.TOOLPLANE_VERSION = "0.44.0";
+      process.env.TOOLPLANE_UPDATE_ENABLED = "true";
+      delete process.env.TOOLPLANE_RUNTIME_ROOT;
+      vi.stubGlobal("fetch", async () =>
+        Response.json({
+          tag_name: "v0.44.0",
+          assets: [
+            {
+              name: "toolplane-runtime-linux-amd64.tar.gz",
+              browser_download_url: "https://example.com/runtime.tar.gz",
+            },
+          ],
+        }),
+      );
+      await expect(getSystemUpdateStatus()).resolves.toMatchObject({
+        currentVersion: "0.44.0",
+        latestVersion: "v0.44.0",
+        updateAvailable: false,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousVersion === undefined) delete process.env.TOOLPLANE_VERSION;
+      else process.env.TOOLPLANE_VERSION = previousVersion;
+      if (previousEnabled === undefined)
+        delete process.env.TOOLPLANE_UPDATE_ENABLED;
+      else process.env.TOOLPLANE_UPDATE_ENABLED = previousEnabled;
+      if (previousRoot === undefined) delete process.env.TOOLPLANE_RUNTIME_ROOT;
+      else process.env.TOOLPLANE_RUNTIME_ROOT = previousRoot;
+    }
+  });
 });
 
 describe("release installation shutdown boundary", () => {

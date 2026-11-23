@@ -116,6 +116,8 @@ export function DashboardTable({
         <Table
           className={cn(
             "rounded-xl",
+            !adjustableColumns &&
+              "[&_table]:w-full [&_colgroup>col:last-child]:w-0 [&_tbody_td:last-child]:w-0 [&_thead_th:last-child]:w-0",
             height === undefined &&
               "[&>div:first-child]:h-auto! [&>div:first-child]:max-h-[640px]",
           )}

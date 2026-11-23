@@ -68,15 +68,21 @@ export function Duration({ ms }: { ms: number | null }) {
 
 export function StatusBadge({ status }: { status: string }) {
   const t = useTranslations("console.observability.viewer");
-  const success = ["success", "completed"].includes(status);
+  const normalized = status
+    .replace(/^TASK_STATE_/, "")
+    .toLowerCase()
+    .replace(/_/g, "-");
+  const success = ["success", "completed"].includes(normalized);
   const error = [
     "error",
     "failed",
     "rejected",
     "canceled",
     "cancelled",
-  ].includes(status);
-  const label = t.has(`states.${status}`) ? t(`states.${status}`) : status;
+  ].includes(normalized);
+  const label = t.has(`states.${normalized}`)
+    ? t(`states.${normalized}`)
+    : status;
   return (
     <span
       className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${error ? "bg-destructive/10 text-destructive" : success ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground"}`}

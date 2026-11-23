@@ -3,14 +3,14 @@
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { Sun, Moon, Code2, Home, Settings } from "lucide-react";
+import { Sun, Moon, Code2, Home } from "lucide-react";
 import {
   CommandPalette,
   type CommandItem,
 } from "@/components/motion/command-palette";
 import { useThemeToggle } from "@/components/motion/theme-toggle";
 import { SITE } from "@/lib/site";
-import { WORKSPACE_NAV_GROUPS } from "./workspace-nav";
+import { FEEDBACK_NAV_ITEM, WORKSPACE_NAV_GROUPS } from "./workspace-nav";
 
 function workspaceSlug(pathname: string): string | null {
   const parts = pathname.split("/");
@@ -95,16 +95,20 @@ export function DashboardCommandPalette({
               : item.segment === "plugins" && pluginUpdateCount > 0
                 ? pluginUpdateCount
                 : undefined,
-            onSelect: go(`${b}/${item.segment}`),
+            onSelect: go(
+              item.segment === "settings"
+                ? `${b}/settings?returnTo=${encodeURIComponent(returnTo)}`
+                : `${b}/${item.segment}`,
+            ),
           });
         }
       }
       list.push({
-        id: "settings",
-        label: t("settings"),
-        group: sidebarT("manage"),
-        icon: Settings,
-        onSelect: go(`${b}/settings?returnTo=${encodeURIComponent(returnTo)}`),
+        id: FEEDBACK_NAV_ITEM.segment,
+        label: sidebarT("feedback"),
+        group: t("groupActions"),
+        icon: FEEDBACK_NAV_ITEM.icon,
+        onSelect: go(`${b}/${FEEDBACK_NAV_ITEM.segment}`),
       });
     }
     list.push(

@@ -249,6 +249,7 @@ export default async function PluginDetailPage({
     resources.reduce((total, group) => total + group.paths.length, 0) +
     requirements.length +
     envRequirements.length;
+  const isRetiredOmp = latest?.snapshot.runtime.kind === "omp";
   const dateFormat = new Intl.DateTimeFormat(locale, { dateStyle: "medium" });
   return (
     <DashboardPage>
@@ -359,39 +360,48 @@ export default async function PluginDetailPage({
             id="plugin-install"
             className="min-w-0 scroll-mt-4 rounded-xl border border-border bg-card p-5"
           >
-            <PluginInstallForm
-              key={install?.currentReleaseId ?? "none"}
-              workspace={slug}
-              listingId={plugin.id}
-              install={
-                install
-                  ? {
-                      id: install.id,
-                      releaseId: install.currentReleaseId,
-                      version: pluginReleaseLabel(install.currentRelease),
-                    }
-                  : undefined
-              }
-              releases={releases.map((release) => ({
-                id: release.id,
-                version: release.label,
-                requirements: release.snapshot.toolplane?.mcp ?? [],
-                envStatus: evaluatePluginEnvStatus({
-                  requirements: release.snapshot.toolplane?.env,
-                  httpProxies: release.snapshot.toolplane?.httpProxies,
-                  isOfficial: isOfficialSource,
-                  presetConfiguredKeys,
-                  installedMode: install?.envConfig?.mode ?? null,
-                  customConfiguredKeys: install?.envConfig?.configuredKeys,
-                }),
-              }))}
-              defaults={defaults}
-              deployments={deployments}
-              canManage={canManage}
-              status={plugin.status}
-              envStatus={plugin.envStatus}
-              customNonSecretValues={customNonSecretValues}
-            />
+            {isRetiredOmp && !install ? (
+              <p
+                role="status"
+                className="text-sm leading-6 text-muted-foreground"
+              >
+                {t("ompRetiredNotice")}
+              </p>
+            ) : (
+              <PluginInstallForm
+                key={install?.currentReleaseId ?? "none"}
+                workspace={slug}
+                listingId={plugin.id}
+                install={
+                  install
+                    ? {
+                        id: install.id,
+                        releaseId: install.currentReleaseId,
+                        version: pluginReleaseLabel(install.currentRelease),
+                      }
+                    : undefined
+                }
+                releases={releases.map((release) => ({
+                  id: release.id,
+                  version: release.label,
+                  requirements: release.snapshot.toolplane?.mcp ?? [],
+                  envStatus: evaluatePluginEnvStatus({
+                    requirements: release.snapshot.toolplane?.env,
+                    httpProxies: release.snapshot.toolplane?.httpProxies,
+                    isOfficial: isOfficialSource,
+                    presetConfiguredKeys,
+                    installedMode: install?.envConfig?.mode ?? null,
+                    customConfiguredKeys: install?.envConfig?.configuredKeys,
+                  }),
+                }))}
+                defaults={defaults}
+                deployments={deployments}
+                canManage={canManage}
+                status={plugin.status}
+                envStatus={plugin.envStatus}
+                customNonSecretValues={customNonSecretValues}
+              />
+            )}
             {install && plugin.envStatus?.requiresEnv ? (
               canManage ? (
                 <PluginEnvConfigPanel

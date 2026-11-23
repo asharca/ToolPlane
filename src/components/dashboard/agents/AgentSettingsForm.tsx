@@ -1358,7 +1358,9 @@ export function AgentSettingsForm(props: Props) {
             type="submit"
             variant={saveNeedsAttention ? "primary" : "secondary"}
             disabled={
-              pending || (page === "execution" && streamRules.rules === null)
+              pending ||
+              (page === "execution" && streamRules.rules === null) ||
+              !saveNeedsAttention
             }
             aria-busy={pending}
             className="min-w-24 gap-2 rounded-xl"

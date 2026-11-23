@@ -298,9 +298,13 @@ function findReleaseAsset(
   return release.assets?.find((asset) => asset.name === name) ?? null;
 }
 
+function normalizeVersion(value: string): string {
+  return value.trim().replace(/^v/i, "");
+}
+
 function sameVersion(current: string, latest: string | null): boolean {
   if (!latest) return false;
-  return current.trim() === latest.trim();
+  return normalizeVersion(current) === normalizeVersion(latest);
 }
 
 export async function getSystemUpdateStatus(): Promise<SystemUpdateStatus> {

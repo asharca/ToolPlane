@@ -30,7 +30,12 @@ export function PluginPageHeader({
               key: "installed",
               label: t("installed.title"),
               href: `${base}/installed`,
-              count: updateCount > 0 ? updateCount : undefined,
+              badge:
+                updateCount > 0 ? (
+                  <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary tabular-nums">
+                    {t("updatesBadge", { count: updateCount })}
+                  </span>
+                ) : undefined,
             },
           ]}
         />
