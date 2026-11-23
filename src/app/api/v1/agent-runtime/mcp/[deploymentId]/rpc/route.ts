@@ -172,9 +172,15 @@ export const POST = withRequestLogging(
         { status: 403 },
       );
     } catch (error) {
+      const errorKey =
+        error instanceof Error
+          ? "code" in error && typeof error.code === "string"
+            ? error.code
+            : error.message
+          : null;
       const reason =
-        error instanceof Error && Object.hasOwn(preEffectDenials, error.message)
-          ? error.message
+        errorKey && Object.hasOwn(preEffectDenials, errorKey)
+          ? errorKey
           : error instanceof PluginError && error.code === "listing_unavailable"
             ? "MCP_LISTING_UNAVAILABLE"
             : null;

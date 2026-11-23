@@ -84,10 +84,20 @@ function npxArgsNeedGit(args: readonly string[]): boolean {
  * Git package references need an image with the Git executable installed.
  * Regular npm/PyPI executions keep the slimmer wrapper images.
  */
+function uvArgIsGitSource(arg: string): boolean {
+  if (isGitSource(arg)) return true;
+  const [flag, assigned] = arg.split(/=([\s\S]*)/, 2);
+  return (
+    assigned !== undefined &&
+    ["--from", "--with"].includes(flag) &&
+    isGitSource(assigned)
+  );
+}
+
 export function commandArgsNeedGit(
   command: string,
   args: readonly string[],
 ): boolean {
   if (command === "npx") return npxArgsNeedGit(args);
-  return (command === "uvx" || command === "uv") && args.some(isGitSource);
+  return (command === "uvx" || command === "uv") && args.some(uvArgIsGitSource);
 }
