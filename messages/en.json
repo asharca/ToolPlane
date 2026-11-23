@@ -5382,7 +5382,8 @@
     "title": "Workspace access",
     "ownedQuota": "Owned {used} / {max}",
     "empty": "Not a member of any workspace.",
-    "ownerAllPermissions": "Owners always hold every permission.",
+    "allPermissions": "All permissions",
+    "ownerAllPermissions": "Owners always hold every permission and cannot be modified or removed here.",
     "roles": {
       "owner": "Owner",
       "admin": "Admin",
@@ -5395,8 +5396,19 @@
     "adjustmentGranted": "Granted",
     "adjustmentRevoked": "Revoked",
     "resetToDefault": "Reset",
+    "resetDefaults": "Reset defaults",
+    "resetDefaultsAriaLabel": "Reset all custom permissions in {workspace} to role defaults",
     "resetAriaLabel": "Reset {permission} to role default",
     "permissionSwitchAriaLabel": "{permission} in {workspace}",
+    "permissionInfoAriaLabel": "About {permission}",
+    "changeRoleTitle": "Change workspace role",
+    "changeRoleConfirm": "Switch role",
+    "changeRoleClearPrompt": "Switching to {role} in {workspace} will clear {count} custom permission adjustment(s). Continue?",
+    "cancel": "Cancel",
+    "suspendedCannotAdd": "Suspended users cannot be added to new workspaces.",
+    "filterPlaceholder": "Filter workspaces…",
+    "filterAll": "All",
+    "noFilteredWorkspaces": "No matching workspaces.",
     "permissions": {
       "resources": {
         "label": "Resources",
@@ -5426,6 +5438,7 @@
     "added": "Added to workspace.",
     "roleUpdated": "Workspace role updated.",
     "permissionUpdated": "Permission updated.",
+    "permissionsReset": "Restored role default permissions.",
     "removed": "Removed from workspace.",
     "errors": {
       "failed": "The change could not be saved. Try again.",

@@ -1,7 +1,13 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useActionState, useEffect, useId, useState } from "react";
+import {
+  type ReactElement,
+  useActionState,
+  useEffect,
+  useId,
+  useState,
+} from "react";
 import { AlertTriangle, Check, ShieldCheck } from "lucide-react";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import {
@@ -30,6 +36,8 @@ export function ConfirmDialog({
   confirmWord,
   pendingLabel,
   tone = "default",
+  trigger,
+  showStatusMessage = true,
 }: {
   label: string;
   ariaLabel?: string;
@@ -39,6 +47,8 @@ export function ConfirmDialog({
   confirmWord?: string;
   pendingLabel?: string;
   tone?: "default" | "danger";
+  trigger?: ReactElement;
+  showStatusMessage?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [state, formAction, isPending] = useActionState<
@@ -69,15 +79,17 @@ export function ConfirmDialog({
         }}
       >
         <CenterMorphModalTrigger>
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={isPending}
-            aria-label={ariaLabel}
-          >
-            <TriggerIcon className="size-4" aria-hidden="true" />
-            {label}
-          </Button>
+          {trigger ?? (
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={isPending}
+              aria-label={ariaLabel}
+            >
+              <TriggerIcon className="size-4" aria-hidden="true" />
+              {label}
+            </Button>
+          )}
         </CenterMorphModalTrigger>
         <CenterMorphModalContent
           ariaLabel={label}
@@ -142,7 +154,7 @@ export function ConfirmDialog({
           </form>
         </CenterMorphModalContent>
       </CenterMorphModal>
-      {state.ok && !open ? (
+      {showStatusMessage && state.ok && !open ? (
         <p className="mt-2 text-xs text-muted-foreground" role="status">
           {t("saved")}
         </p>

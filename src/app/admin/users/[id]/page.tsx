@@ -185,6 +185,7 @@ export default async function AdminUserDetailPage({
 
       <UserWorkspaceAccess
         userId={u.id}
+        userSuspended={u.status === "suspended"}
         entries={workspaceAccessEntries}
         ownedWorkspaces={quota.ownedWorkspaces}
         maxOwnedWorkspaces={quota.maxOwnedWorkspaces}

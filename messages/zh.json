@@ -5382,7 +5382,8 @@
     "title": "工作区权限",
     "ownedQuota": "拥有 {used} / {max}",
     "empty": "暂未加入任何工作区。",
-    "ownerAllPermissions": "工作区所有者始终拥有全部权限。",
+    "allPermissions": "全部权限",
+    "ownerAllPermissions": "工作区所有者始终拥有全部权限，无法在后台调整或移除。",
     "roles": {
       "owner": "所有者",
       "admin": "管理员",
@@ -5395,8 +5396,19 @@
     "adjustmentGranted": "已授予",
     "adjustmentRevoked": "已撤销",
     "resetToDefault": "恢复默认",
+    "resetDefaults": "恢复默认",
+    "resetDefaultsAriaLabel": "将 {workspace} 中的所有个人权限恢复为角色默认",
     "resetAriaLabel": "将 {permission} 恢复为角色默认",
     "permissionSwitchAriaLabel": "{workspace} 的 {permission} 权限",
+    "permissionInfoAriaLabel": "查看{permission}说明",
+    "changeRoleTitle": "切换工作区角色",
+    "changeRoleConfirm": "确认切换",
+    "changeRoleClearPrompt": "将在 {workspace} 中的角色切换为「{role}」会清除当前 {count} 项个人权限调整，确定继续吗？",
+    "cancel": "取消",
+    "suspendedCannotAdd": "已停用的用户无法加入新工作区。",
+    "filterPlaceholder": "筛选工作区…",
+    "filterAll": "全部",
+    "noFilteredWorkspaces": "没有匹配的工作区。",
     "permissions": {
       "resources": {
         "label": "资源管理",
@@ -5426,6 +5438,7 @@
     "added": "已添加到工作区。",
     "roleUpdated": "工作区角色已更新。",
     "permissionUpdated": "权限已更新。",
+    "permissionsReset": "已恢复角色默认权限。",
     "removed": "已从工作区移除。",
     "errors": {
       "failed": "保存失败，请重试。",
