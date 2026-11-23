@@ -967,6 +967,8 @@
           "AGENT_REVISION_CONFLICT": "配置已在其他页面更新，请重新打开设置并准备新修订。"
         }
       },
+      "MCP_EXACT_PACKAGE_VERSION_REQUIRED": "本次修订未发布：MCP 依赖必须固定到精确版本或完整 40 位提交 SHA（不支持标签、分支、短 SHA 或未指定提交）。Python（uvx / uv tool run）请使用 package==1.2.3 或 git+https://github.com/<owner>/<repo>.git@<40位SHA>；npm / GitHub 请使用 package@1.2.3 或 https://github.com/<owner>/<repo>#<40位SHA>。",
+      "mcpVersionResolutionFailed": "本次修订未发布：无法为此 MCP 解析精确的软件包版本或提交。请检查包名和仓库访问，或直接指定精确版本／完整 40 位提交 SHA 后重试。",
       "piPackageMcpBindingRequired": "含 MCP 要求的包必须先明确绑定当前工作区部署及工具才能运行。请在包的工作区安装设置中配置；发布者绑定不能授予其他工作区访问权限。",
       "piPackageMcpBindings": "配置工作区 MCP 绑定",
       "piSdkRuntime": "Pi SDK",

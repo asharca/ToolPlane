@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { resolveServerSourceVersion } from "@/lib/admin/server-source";
 import type { DeploymentForSpawn } from "./spawn-spec";
+import { isPinnedPythonHttpsGitSelector } from "./mcp-definition";
 
 type McpRecipe = Pick<
   DeploymentForSpawn,
@@ -63,6 +64,7 @@ export async function resolvePinnedMcpRecipe(
       source: "npm" | "pypi" | "github";
     }[] = [];
     let executableFound = false;
+    let hasExplicitPackage = false;
     for (let index = start; index < args.length; index += 1) {
       const arg = args[index];
       if (
@@ -88,10 +90,15 @@ export async function resolvePinnedMcpRecipe(
         ref = assigned ?? args[++index];
         if (!ref) throw new Error("Missing package selector.");
         if (assigned !== undefined) prefix = `${flag}=`;
+        if (flag !== "--with") hasExplicitPackage = true;
+        if (python && isPinnedPythonHttpsGitSelector(ref)) {
+          // Already pinned to an immutable HTTPS Git commit; keep it untouched.
+          continue;
+        }
       } else {
         if (arg.startsWith("-")) return { sourceRef, installCfg };
         executableFound = true;
-        if (selectors.length) break;
+        if (hasExplicitPackage) break;
         ref = arg;
       }
       if (!python) {

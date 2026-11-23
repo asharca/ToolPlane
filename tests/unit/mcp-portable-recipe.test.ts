@@ -14,8 +14,11 @@ import {
 import { resolvePinnedMcpRecipe } from "@/lib/process/mcp-pinning";
 import {
   assertSessionMcpRecipePinned,
+  isPinnedPythonHttpsGitSelector,
   mcpDefinitionChecksum,
+  McpRecipePinError,
 } from "@/lib/process/mcp-definition";
+import { sessionMcpPackageLaunch } from "@/lib/process/mcp-runtime-image";
 
 describe("portable MCP recipes", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -213,6 +216,184 @@ describe("portable MCP recipes", () => {
         source: "npm",
         sourceRef: "@team/mcp",
         installCfg: {},
+        serverId: null,
+        name: null,
+      }),
+    ).toThrow("MCP_EXACT_PACKAGE_VERSION_REQUIRED");
+  });
+
+  it.each([
+    {
+      command: "uvx",
+      args: [
+        "--from",
+        `git+https://github.com/asharca/ros-mcp.git@${"c".repeat(40)}`,
+        "ros-mcp",
+      ],
+    },
+    {
+      command: "uvx",
+      args: [
+        `--from=git+https://github.com/asharca/ros-mcp@${"A".repeat(40)}`,
+        "ros-mcp",
+        "--host",
+        "192.0.2.1",
+      ],
+    },
+    {
+      command: "uv",
+      args: [
+        "tool",
+        "run",
+        "--from",
+        `git+https://gitlab.com/group/sub/ros-mcp.git@${"0123456789abcdef".repeat(2)}01234567#subdirectory=packages/mcp`,
+        "--with",
+        "pydantic==2.14.4",
+        "ros-mcp",
+      ],
+    },
+    {
+      command: "uvx",
+      args: [
+        "--with",
+        `git+https://git.example.test/team/helper.git@${"b".repeat(40)}`,
+        "mcp-time[extra]==1.2.3",
+      ],
+    },
+  ])(
+    "accepts full 40-char HTTPS Git commit pins for $command without registry access",
+    async (installCfg) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      const recipe = {
+        source: "config",
+        sourceRef: installCfg.command,
+        installCfg,
+        serverId: null,
+        name: "Git Python MCP",
+      };
+      expect(await resolvePinnedMcpRecipe(recipe)).toEqual({
+        sourceRef: recipe.sourceRef,
+        installCfg,
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(() => assertSessionMcpRecipePinned(recipe)).not.toThrow();
+      const spec = resolveSpawnSpec(recipe);
+      expect(spec.kind).toBe("bridge");
+      if (spec.kind === "bridge") {
+        expect(spec.image).toBe("ghcr.io/astral-sh/uv:python3.13-bookworm");
+      }
+      const launch = sessionMcpPackageLaunch(recipe);
+      expect(launch?.manager).toBe("python");
+    },
+  );
+
+  it("keeps pinned Python Git --from untouched while pinning floating PyPI --with selectors", async () => {
+    const sha = "a".repeat(40);
+    const gitRef = `git+https://github.com/asharca/ros-mcp.git@${sha}`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ info: { version: "2.3.4" } })),
+    );
+    const recipe = {
+      source: "config",
+      sourceRef: "uvx",
+      installCfg: {
+        command: "uvx",
+        args: ["--from", gitRef, "--with", "extra-dep", "ros-mcp"],
+      },
+      serverId: null,
+      name: null,
+    };
+    const pinned = await resolvePinnedMcpRecipe(recipe);
+    expect(pinned.installCfg).toEqual({
+      command: "uvx",
+      args: ["--from", gitRef, "--with", "extra-dep==2.3.4", "ros-mcp"],
+    });
+    expect(() =>
+      assertSessionMcpRecipePinned({ ...recipe, ...pinned }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    // Tag, branch, short/oversized/non-hex SHA, missing revision, wrong separator
+    "git+https://github.com/asharca/ros-mcp.git@v0.2.0",
+    "git+https://github.com/asharca/ros-mcp.git@main",
+    "git+https://github.com/asharca/ros-mcp.git@c661c10",
+    `git+https://github.com/asharca/ros-mcp.git@${"a".repeat(39)}`,
+    `git+https://github.com/asharca/ros-mcp.git@${"a".repeat(41)}`,
+    `git+https://github.com/asharca/ros-mcp.git@${"g".repeat(40)}`,
+    "git+https://github.com/asharca/ros-mcp.git",
+    `git+https://github.com/asharca/ros-mcp.git#${"a".repeat(40)}`,
+    // Unsupported schemes, credentials, query, unsafe hosts, path traversal, bad fragment
+    `git+http://github.com/asharca/ros-mcp.git@${"a".repeat(40)}`,
+    `git+ssh://git@github.com/asharca/ros-mcp.git@${"a".repeat(40)}`,
+    `git+git://github.com/asharca/ros-mcp.git@${"a".repeat(40)}`,
+    `https://github.com/asharca/ros-mcp.git@${"a".repeat(40)}`,
+    `git+https://token@github.com/asharca/ros-mcp.git@${"a".repeat(40)}`,
+    `git+https://user:pass@github.com/asharca/ros-mcp.git@${"a".repeat(40)}`,
+    `git+https://github.com/asharca/ros-mcp.git?ref=main@${"a".repeat(40)}`,
+    `git+https://localhost/asharca/ros-mcp.git@${"a".repeat(40)}`,
+    `git+https://127.0.0.1/asharca/ros-mcp.git@${"a".repeat(40)}`,
+    `git+https://[::1]/asharca/ros-mcp.git@${"a".repeat(40)}`,
+    `git+https://git.local/asharca/ros-mcp.git@${"a".repeat(40)}`,
+    `git+https://github.com/only-owner@${"a".repeat(40)}`,
+    `git+https://github.com/asharca/../ros-mcp.git@${"a".repeat(40)}`,
+    `git+https://github.com/asharca/ros-mcp.git@${"a".repeat(40)}#egg=ros-mcp`,
+    `git+https://github.com/asharca/ros-mcp.git@${"a".repeat(40)}#subdirectory=../escape`,
+  ])(
+    "rejects unpinned or unsupported Python Git selector %s with actionable guidance",
+    (selector) => {
+      expect(isPinnedPythonHttpsGitSelector(selector)).toBe(false);
+      const recipe = {
+        source: "config",
+        sourceRef: "uvx",
+        installCfg: {
+          command: "uvx",
+          args: ["--from", selector, "ros-mcp"],
+        },
+        serverId: null,
+        name: null,
+      };
+      let caught: unknown;
+      try {
+        assertSessionMcpRecipePinned(recipe);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(McpRecipePinError);
+      expect(caught).toMatchObject({
+        code: "MCP_EXACT_PACKAGE_VERSION_REQUIRED",
+      });
+      expect((caught as Error).message).toContain("Revision was not published");
+      expect((caught as Error).message).toContain(
+        "git+https://github.com/owner/repo.git@<40-char-sha>",
+      );
+    },
+  );
+
+  it("still rejects positional Python Git URLs and floating packages paired with --with", () => {
+    const sha = "a".repeat(40);
+    expect(() =>
+      assertSessionMcpRecipePinned({
+        source: "config",
+        sourceRef: "uvx",
+        installCfg: {
+          command: "uvx",
+          args: [`git+https://github.com/asharca/ros-mcp.git@${sha}`],
+        },
+        serverId: null,
+        name: null,
+      }),
+    ).toThrow("MCP_EXACT_PACKAGE_VERSION_REQUIRED");
+    expect(() =>
+      assertSessionMcpRecipePinned({
+        source: "config",
+        sourceRef: "uvx",
+        installCfg: {
+          command: "uvx",
+          args: ["--with", "dep==1.0.0", "floating-mcp"],
+        },
         serverId: null,
         name: null,
       }),
