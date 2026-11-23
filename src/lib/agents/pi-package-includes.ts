@@ -17,7 +17,22 @@ export const AGENT_PI_PACKAGES_INCLUDE = {
         listingId: true,
         status: true,
         resourceMap: true,
-        listing: { select: { id: true, kind: true, status: true } },
+        envConfig: {
+          select: { mode: true, configuredKeys: true },
+        },
+        listing: {
+          select: {
+            id: true,
+            kind: true,
+            status: true,
+            githubRegistryResource: {
+              select: {
+                registry: { select: { official: true, workspaceId: true } },
+              },
+            },
+            officialEnvPreset: { select: { configuredKeys: true } },
+          },
+        },
       },
     },
     release: {

@@ -58,6 +58,16 @@ export function flattenPiPackages(
     string,
     NonNullable<PiPackageSnapshotV1["toolplane"]>["mcp"][number]
   >();
+  const env = new Map<
+    string,
+    NonNullable<NonNullable<PiPackageSnapshotV1["toolplane"]>["env"]>[number]
+  >();
+  const httpProxies = new Map<
+    string,
+    NonNullable<
+      NonNullable<PiPackageSnapshotV1["toolplane"]>["httpProxies"]
+    >[number]
+  >();
   for (const snapshot of snapshots) {
     const treeDigest = createHash("sha256")
       .update(JSON.stringify(snapshot.entries))
@@ -94,6 +104,24 @@ export function flattenPiPackages(
           `MCP requirement ${requirement.key} conflicts; choose one source.`,
         );
       mcp.set(requirement.key, requirement);
+    }
+    for (const item of snapshot.toolplane?.env ?? []) {
+      const previous = env.get(item.name);
+      if (previous && JSON.stringify(previous) !== JSON.stringify(item))
+        throw new PluginError(
+          "pi_package_invalid_selection",
+          `Environment requirement ${item.name} conflicts; choose one source.`,
+        );
+      env.set(item.name, item);
+    }
+    for (const proxy of snapshot.toolplane?.httpProxies ?? []) {
+      const previous = httpProxies.get(proxy.key);
+      if (previous && JSON.stringify(previous) !== JSON.stringify(proxy))
+        throw new PluginError(
+          "pi_package_invalid_selection",
+          `HTTP proxy requirement ${proxy.key} conflicts; choose one source.`,
+        );
+      httpProxies.set(proxy.key, proxy);
     }
     let needsTree = false;
     for (const kind of ["extensions", "skills", "prompts", "themes"] as const) {
@@ -244,6 +272,8 @@ export function flattenPiPackages(
   output.toolplane = {
     schemaVersion: 1,
     mcp: [...mcp.values()],
+    ...(env.size ? { env: [...env.values()] } : {}),
+    ...(httpProxies.size ? { httpProxies: [...httpProxies.values()] } : {}),
     origins,
     reproducibility,
   };

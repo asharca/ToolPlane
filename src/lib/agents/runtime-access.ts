@@ -36,7 +36,26 @@ export type AgentRuntimeTokenPayload = {
 
 const TOKEN_ISSUER = "toolplane";
 const TOKEN_AUDIENCE = "agent-runtime";
+const PLUGIN_PROXY_AUDIENCE = "agent-plugin-proxy";
 const MAX_DEPLOYMENTS = 100;
+
+export type AgentPluginProxyTokenPayload = {
+  workspaceId: string;
+  agentId: string;
+  agentRevisionId: string;
+  sandboxId: string;
+  conversationId?: string;
+  a2aContextId?: string;
+  a2aTaskId?: string;
+  a2aLeaseToken?: string;
+  marketInstallId: string;
+  releaseId: string;
+  proxyKey: string;
+  envMode: "platform_preset" | "custom";
+  exp: number;
+  traceId?: string;
+  parentSpanId?: string;
+};
 
 function secretKey(): Uint8Array {
   const secret = runtimeEnv("AUTH_SECRET");
@@ -295,4 +314,167 @@ export function runtimeProviderUrl(
   url.search = search;
   url.hash = "";
   return url.toString();
+}
+
+export function runtimePluginProxyBase(
+  installId: string,
+  proxyKey: string,
+): string {
+  return `${sandboxRuntimeOrigin()}/api/v1/agent-runtime/plugins/${encodeURIComponent(installId)}/${encodeURIComponent(proxyKey)}`;
+}
+
+export function runtimePluginUpstreamUrl(
+  baseUrl: string,
+  path: readonly string[],
+  search = "",
+): string {
+  const url = new URL(baseUrl);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("Plugin proxy upstream URL must use http or https.");
+  }
+  if (
+    path.some(
+      (part) => !part || part === "." || part === ".." || /[/\\]/.test(part),
+    )
+  ) {
+    throw new Error("Plugin proxy path is invalid.");
+  }
+  if (path.length > 0) {
+    const prefix = url.pathname.replace(/\/+$/, "");
+    url.pathname = `${prefix}/${path.map(encodeURIComponent).join("/")}`;
+  }
+  url.search = search;
+  url.hash = "";
+  return url.toString();
+}
+
+export async function createAgentPluginProxyToken(
+  payload: AgentPluginProxyTokenPayload,
+  now = Date.now(),
+): Promise<string> {
+  const issuedAt = Math.floor(now / 1000);
+  if (
+    (!payload.conversationId && !payload.a2aContextId) ||
+    (payload.conversationId !== undefined &&
+      !validId(payload.conversationId)) ||
+    (payload.a2aContextId !== undefined && !validId(payload.a2aContextId)) ||
+    ((payload.a2aTaskId !== undefined || payload.a2aLeaseToken !== undefined) &&
+      (!validId(payload.a2aTaskId) || !validId(payload.a2aLeaseToken))) ||
+    !validId(payload.workspaceId) ||
+    !validId(payload.agentId) ||
+    !validId(payload.agentRevisionId) ||
+    !validId(payload.sandboxId) ||
+    !validId(payload.marketInstallId) ||
+    !validId(payload.releaseId) ||
+    !/^[a-z][a-z0-9-]{0,63}$/.test(payload.proxyKey) ||
+    (payload.envMode !== "platform_preset" && payload.envMode !== "custom") ||
+    !Number.isSafeInteger(payload.exp) ||
+    payload.exp <= issuedAt ||
+    payload.exp > issuedAt + maxTokenTtl(payload.a2aTaskId !== undefined)
+  ) {
+    throw new Error("Agent plugin proxy token payload is invalid.");
+  }
+
+  return new SignJWT({
+    ...(payload.a2aTaskId
+      ? { a2aTaskId: payload.a2aTaskId, a2aLeaseToken: payload.a2aLeaseToken }
+      : {}),
+    workspaceId: payload.workspaceId,
+    agentId: payload.agentId,
+    agentRevisionId: payload.agentRevisionId,
+    sandboxId: payload.sandboxId,
+    conversationId: payload.conversationId,
+    a2aContextId: payload.a2aContextId,
+    marketInstallId: payload.marketInstallId,
+    releaseId: payload.releaseId,
+    proxyKey: payload.proxyKey,
+    envMode: payload.envMode,
+    traceId: payload.traceId ?? getLogContext()?.traceId,
+    parentSpanId: payload.parentSpanId ?? getLogContext()?.spanId,
+  })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setIssuer(TOKEN_ISSUER)
+    .setAudience(PLUGIN_PROXY_AUDIENCE)
+    .setIssuedAt(issuedAt)
+    .setExpirationTime(payload.exp)
+    .sign(secretKey());
+}
+
+export async function verifyAgentPluginProxyToken(
+  token: string,
+  now = Date.now(),
+): Promise<AgentPluginProxyTokenPayload | null> {
+  if (!token) return null;
+  try {
+    const { payload } = await jwtVerify(token, secretKey(), {
+      algorithms: ["HS256"],
+      issuer: TOKEN_ISSUER,
+      audience: PLUGIN_PROXY_AUDIENCE,
+      currentDate: new Date(now),
+    });
+    const issuedAt = payload.iat;
+    const expiresAt = payload.exp;
+    if (
+      (!payload.conversationId && !payload.a2aContextId) ||
+      (payload.conversationId !== undefined &&
+        !validId(payload.conversationId)) ||
+      (payload.a2aContextId !== undefined && !validId(payload.a2aContextId)) ||
+      ((payload.a2aTaskId !== undefined ||
+        payload.a2aLeaseToken !== undefined) &&
+        (!validId(payload.a2aTaskId) || !validId(payload.a2aLeaseToken))) ||
+      !validId(payload.workspaceId) ||
+      !validId(payload.agentId) ||
+      !validId(payload.agentRevisionId) ||
+      !validId(payload.sandboxId) ||
+      !validId(payload.marketInstallId) ||
+      !validId(payload.releaseId) ||
+      typeof payload.proxyKey !== "string" ||
+      !/^[a-z][a-z0-9-]{0,63}$/.test(payload.proxyKey) ||
+      (payload.envMode !== "platform_preset" && payload.envMode !== "custom") ||
+      typeof issuedAt !== "number" ||
+      typeof expiresAt !== "number" ||
+      issuedAt > Math.floor(now / 1000) + 60 ||
+      expiresAt - issuedAt > maxTokenTtl(payload.a2aTaskId !== undefined) ||
+      (payload.traceId !== undefined &&
+        (typeof payload.traceId !== "string" ||
+          !/^[a-f0-9]{32}$/.test(payload.traceId))) ||
+      (payload.parentSpanId !== undefined &&
+        (typeof payload.parentSpanId !== "string" ||
+          !/^[a-f0-9]{16}$/.test(payload.parentSpanId)))
+    ) {
+      return null;
+    }
+
+    return {
+      ...(typeof payload.a2aTaskId === "string"
+        ? {
+            a2aTaskId: payload.a2aTaskId,
+            a2aLeaseToken: String(payload.a2aLeaseToken),
+          }
+        : {}),
+      workspaceId: payload.workspaceId,
+      agentId: payload.agentId,
+      agentRevisionId: payload.agentRevisionId,
+      sandboxId: payload.sandboxId,
+      ...(typeof payload.conversationId === "string"
+        ? { conversationId: payload.conversationId }
+        : {}),
+      ...(typeof payload.a2aContextId === "string"
+        ? { a2aContextId: payload.a2aContextId }
+        : {}),
+      marketInstallId: payload.marketInstallId,
+      releaseId: payload.releaseId,
+      proxyKey: payload.proxyKey,
+      envMode: payload.envMode,
+      exp: expiresAt,
+      ...(typeof payload.traceId === "string"
+        ? { traceId: payload.traceId }
+        : {}),
+      ...(typeof payload.parentSpanId === "string"
+        ? { parentSpanId: payload.parentSpanId }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
 }

@@ -6,6 +6,18 @@ import { revalidatePath } from "next/cache";
 
 import { db } from "@/lib/db";
 import { writeAudit } from "@/lib/observability/audit";
+import {
+  adminPluginPresetUpdateSchema,
+  clearOfficialPluginEnvPreset,
+  saveOfficialPluginEnvPreset,
+} from "@/lib/plugins/env-store";
+import { PluginError } from "@/lib/plugins/errors";
+import { z } from "zod";
+
+export type AdminPluginPresetActionState = {
+  error?: string;
+  success?: boolean;
+};
 
 export async function withdrawPluginListing(form: FormData) {
   const admin = await actionScope({ admin: true });
@@ -84,4 +96,54 @@ export async function revokePluginRelease(form: FormData) {
       throw error;
     });
   revalidatePath("/admin/market");
+}
+
+export async function saveOfficialPluginEnvPresetAction(
+  _previous: AdminPluginPresetActionState,
+  form: FormData,
+): Promise<AdminPluginPresetActionState> {
+  const admin = await actionScope({ admin: true });
+  const listingId = String(form.get("listingId") ?? "");
+  try {
+    const rawValues = String(form.get("values") ?? "{}");
+    const rawClearKeys = String(form.get("clearKeys") ?? "[]");
+    const parsed = adminPluginPresetUpdateSchema.parse({
+      values: JSON.parse(rawValues),
+      clearKeys: JSON.parse(rawClearKeys),
+    });
+    await saveOfficialPluginEnvPreset(admin.id, listingId, parsed);
+    revalidatePath("/admin/market");
+    return { success: true };
+  } catch (error) {
+    if (error instanceof PluginError) return { error: error.code };
+    if (error instanceof SyntaxError || error instanceof z.ZodError)
+      return { error: "invalid_input" };
+    logSystemEvent("admin.plugins.preset_save_failed", {
+      error,
+      actorId: admin.id,
+      attributes: { listingId },
+    });
+    return { error: "operation_failed" };
+  }
+}
+
+export async function clearOfficialPluginEnvPresetAction(
+  _previous: AdminPluginPresetActionState,
+  form: FormData,
+): Promise<AdminPluginPresetActionState> {
+  const admin = await actionScope({ admin: true });
+  const listingId = String(form.get("listingId") ?? "");
+  try {
+    await clearOfficialPluginEnvPreset(admin.id, listingId);
+    revalidatePath("/admin/market");
+    return { success: true };
+  } catch (error) {
+    if (error instanceof PluginError) return { error: error.code };
+    logSystemEvent("admin.plugins.preset_clear_failed", {
+      error,
+      actorId: admin.id,
+      attributes: { listingId },
+    });
+    return { error: "operation_failed" };
+  }
 }

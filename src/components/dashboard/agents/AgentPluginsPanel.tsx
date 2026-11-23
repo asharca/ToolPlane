@@ -16,10 +16,16 @@ import { Button, ButtonLink } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
 import { pluginAction } from "@/lib/plugins/actions";
 import type { PluginBindingDeployment } from "@/lib/plugins/binding-deployments";
+import type { PluginEnvStatus } from "@/lib/plugins/env-schema";
 import {
+  initialPluginEnvDraft,
+  isPluginEnvDraftReady,
+  PluginEnvFields,
   PluginMcpBindingFields,
   pluginBindingState,
+  serializePluginEnvDraft,
   type PluginBindingDraft,
+  type PluginEnvDraft,
   type PluginMcpRequirement,
 } from "../plugins/PluginForms";
 import { notify } from "../Toaster";
@@ -40,6 +46,7 @@ export type AgentPluginCatalogOption = {
   skillCount: number;
   extensionCount: number;
   requirements: PluginMcpRequirement[];
+  envStatus?: PluginEnvStatus;
 };
 
 type PackageSelection = { marketInstallId: string; releaseId: string };
@@ -91,9 +98,10 @@ export function AgentPluginsPanel({
   const flow = useTranslations("console.plugins.flow");
   const pluginErrors = useTranslations("console.plugins.errors");
   const [adding, setAdding] = useState(false);
-  // One market plugin at a time expands to bind its MCP requirements in place.
+  // One market plugin at a time expands to bind its MCP/env requirements in place.
   const [configuring, setConfiguring] = useState<string | null>(null);
   const [bindings, setBindings] = useState<PluginBindingDraft>({});
+  const [envDraft, setEnvDraft] = useState<PluginEnvDraft | null>(null);
   const [query, setQuery] = useState("");
   const [installing, setInstalling] = useState<string | null>(null);
   const search = useDeferredValue(query.trim().toLowerCase());
@@ -154,6 +162,7 @@ export function AgentPluginsPanel({
   async function install(
     item: AgentPluginCatalogOption,
     mcpBindings: Record<string, unknown>,
+    envConfig?: ReturnType<typeof serializePluginEnvDraft>,
   ) {
     setInstalling(item.listingId);
     try {
@@ -162,6 +171,9 @@ export function AgentPluginsPanel({
       form.set("operation", "add");
       form.set("id", item.listingId);
       form.set("mcpBindings", JSON.stringify(mcpBindings));
+      if (envConfig) {
+        form.set("envConfig", JSON.stringify(envConfig));
+      }
       const result = await pluginAction({}, form);
       if (!result.success) {
         notify(
@@ -174,6 +186,7 @@ export function AgentPluginsPanel({
       }
       window.dispatchEvent(new Event("plugins-changed"));
       setConfiguring(null);
+      setEnvDraft(null);
       await onInstalled(item.listingId);
     } finally {
       setInstalling(null);
@@ -278,6 +291,19 @@ export function AgentPluginsPanel({
                   deployments,
                   open ? bindings : {},
                 );
+                const needsEnv = Boolean(
+                  item.envStatus?.requiresEnv && !item.envStatus.presetComplete,
+                );
+                const needsConfig = item.requirements.length > 0 || needsEnv;
+                const activeDraft =
+                  open && item.envStatus?.requiresEnv
+                    ? (envDraft ?? initialPluginEnvDraft(item.envStatus))
+                    : null;
+                const envReady =
+                  !item.envStatus?.requiresEnv ||
+                  (activeDraft
+                    ? isPluginEnvDraftReady(item.envStatus, activeDraft)
+                    : item.envStatus.presetComplete);
                 const busy = installing === item.listingId;
                 return (
                   <PickerRow
@@ -292,20 +318,33 @@ export function AgentPluginsPanel({
                     expanded={
                       open ? (
                         <div className="space-y-3">
-                          <PluginMcpBindingFields
-                            requirements={item.requirements}
-                            deployments={deployments}
-                            bindings={bindings}
-                            onChange={setBindings}
-                            disabled={busy}
-                          />
+                          {item.requirements.length ? (
+                            <PluginMcpBindingFields
+                              requirements={item.requirements}
+                              deployments={deployments}
+                              bindings={bindings}
+                              onChange={setBindings}
+                              disabled={busy}
+                            />
+                          ) : null}
+                          {item.envStatus?.requiresEnv && activeDraft ? (
+                            <PluginEnvFields
+                              envStatus={item.envStatus}
+                              draft={activeDraft}
+                              onChange={setEnvDraft}
+                              disabled={busy}
+                            />
+                          ) : null}
                           <div className="flex justify-end gap-2">
                             <Button
                               type="button"
                               variant="ghost"
                               size="sm"
                               disabled={busy}
-                              onClick={() => setConfiguring(null)}
+                              onClick={() => {
+                                setConfiguring(null);
+                                setEnvDraft(null);
+                              }}
                             >
                               {t("cancel")}
                             </Button>
@@ -316,10 +355,21 @@ export function AgentPluginsPanel({
                                 !editable ||
                                 full ||
                                 !binding.ready ||
+                                !envReady ||
                                 installing !== null
                               }
                               onClick={() =>
-                                void install(item, binding.selected)
+                                void install(
+                                  item,
+                                  binding.selected,
+                                  activeDraft
+                                    ? serializePluginEnvDraft(
+                                        item.envStatus,
+                                        activeDraft,
+                                        false,
+                                      )
+                                    : undefined,
+                                )
                               }
                             >
                               {busy ? t("installing") : t("installAndAdd")}
@@ -329,7 +379,7 @@ export function AgentPluginsPanel({
                       ) : null
                     }
                   >
-                    {item.requirements.length ? (
+                    {needsConfig ? (
                       open ? null : (
                         <Button
                           type="button"
@@ -338,6 +388,11 @@ export function AgentPluginsPanel({
                           disabled={!editable || full || installing !== null}
                           onClick={() => {
                             setBindings({});
+                            setEnvDraft(
+                              item.envStatus?.requiresEnv
+                                ? initialPluginEnvDraft(item.envStatus)
+                                : null,
+                            );
                             setConfiguring(item.listingId);
                           }}
                         >
@@ -350,7 +405,19 @@ export function AgentPluginsPanel({
                         variant="secondary"
                         size="sm"
                         disabled={!editable || full || installing !== null}
-                        onClick={() => void install(item, {})}
+                        onClick={() =>
+                          void install(
+                            item,
+                            {},
+                            item.envStatus?.requiresEnv
+                              ? serializePluginEnvDraft(
+                                  item.envStatus,
+                                  initialPluginEnvDraft(item.envStatus),
+                                  false,
+                                )
+                              : undefined,
+                          )
+                        }
                       >
                         {busy ? t("installing") : t("installAndAdd")}
                       </Button>
@@ -452,6 +519,13 @@ export function AgentPluginsPanel({
                           {t("state.unavailable")}
                         </AnimatedBadge>
                       ) : null}
+                      {selection &&
+                      pkg.envStatus?.requiresEnv &&
+                      !pkg.envStatus.complete ? (
+                        <AnimatedBadge size="sm" status="danger">
+                          {t("envIncomplete")}
+                        </AnimatedBadge>
+                      ) : null}
                     </div>
                     {pkg.summary ? (
                       <p className="line-clamp-1 text-xs text-muted-foreground">
@@ -461,6 +535,21 @@ export function AgentPluginsPanel({
                     <p className="text-[11px] text-muted-foreground">
                       {counts(pkg)}
                     </p>
+                    {selection &&
+                    pkg.envStatus?.requiresEnv &&
+                    !pkg.envStatus.complete ? (
+                      <p className="font-mono text-xs text-destructive">
+                        {pkg.envStatus.missingRequiredKeys.join(", ")}{" "}
+                        <a
+                          href={pluginHref(pkg.listingId, "#plugin-install")}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-sans text-primary hover:underline"
+                        >
+                          {t("configureEnv")}
+                        </a>
+                      </p>
+                    ) : null}
                     {selection &&
                     pkg.enabledReleaseId &&
                     pkg.syncStatus !== "synced" ? (

@@ -4,6 +4,7 @@ import type { ReasoningLevel } from "./constants";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { visiblePluginWhere } from "@/lib/plugins/catalog";
+import { assertAgentPluginEnvReady } from "@/lib/plugins/env-store";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import { withAgentDraftLease } from "@/lib/agents/agent-execution-gate";
 import {
@@ -201,6 +202,10 @@ export async function validateAndWritePiPackages(
     where: { agentId, agent: { workspaceId } },
   });
   const pins: Array<{ marketInstallId: string; releaseId: string }> = [];
+  const packageEnvChecks: Array<{
+    marketInstallId: string;
+    release: { manifest: unknown; checksum: string };
+  }> = [];
   for (const pkg of piPackages) {
     const install = await tx.marketInstall.findFirst({
       where: {
@@ -251,6 +256,7 @@ export async function validateAndWritePiPackages(
     )
       throw new AgentConfigurationError("PLUGIN_RUNTIME_MISMATCH");
     pins.push({ marketInstallId: pkg.marketInstallId, releaseId });
+    packageEnvChecks.push({ marketInstallId: pkg.marketInstallId, release });
   }
   if (
     existing.length === pins.length &&
@@ -263,6 +269,27 @@ export async function validateAndWritePiPackages(
     )
   )
     return;
+  const activeAgentCredentials = await tx.agentEnvironmentCredential.findMany({
+    where: { agentId, workspaceId, revokedAt: null },
+    select: { name: true },
+  });
+  try {
+    await assertAgentPluginEnvReady(
+      tx,
+      workspaceId,
+      packageEnvChecks,
+      activeAgentCredentials.map((cred) => cred.name),
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === "PI_PACKAGE_ENV_INCOMPLETE" ||
+        error.message === "PI_PACKAGE_ENV_CONFLICT")
+    ) {
+      throw new AgentConfigurationError(error.message);
+    }
+    throw error;
+  }
   await tx.agentPiPackage.deleteMany({
     where: {
       agentId,

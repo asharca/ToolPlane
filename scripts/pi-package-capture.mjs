@@ -1052,6 +1052,10 @@ async function main() {
     toolplane: {
       schemaVersion: 1,
       mcp: manifest.toolplane?.mcp ?? [],
+      ...(manifest.toolplane?.env ? { env: manifest.toolplane.env } : {}),
+      ...(manifest.toolplane?.httpProxies
+        ? { httpProxies: manifest.toolplane.httpProxies }
+        : {}),
       ...(manifest.toolplane?.origins
         ? { origins: manifest.toolplane.origins }
         : {}),

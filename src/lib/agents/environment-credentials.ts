@@ -5,13 +5,10 @@ import { db } from "@/lib/db";
 import { encryptSecretText, decryptSecretText } from "@/lib/security/secrets";
 import { AgentRevisionError, requireAgentRevision } from "./revisions";
 import { writeAudit } from "@/lib/observability/audit";
-
-const environmentName = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
-const reservedEnvironment =
-  /^(?:TOOLPLANE_|TP_|NODE_|LD_|DYLD_|npm_|NPM_|BUN_|AUTH_SECRET$|DATABASE_URL$|DIRECT_URL$|PI_CODING_AGENT_DIR$|PI_PACKAGE_DIR$|HOME$|PATH$|SHELL$|ENV$|BASH_ENV$|PYTHONPATH$)/;
+import { isValidBaseEnvironmentName } from "@/lib/plugins/env-schema";
 
 export function assertAgentCredentialName(name: string) {
-  if (!environmentName.test(name) || reservedEnvironment.test(name)) {
+  if (!isValidBaseEnvironmentName(name)) {
     throw new AgentRevisionError("AGENT_CREDENTIAL_NAME_INVALID");
   }
 }

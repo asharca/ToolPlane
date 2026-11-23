@@ -18,6 +18,7 @@ import {
   handleAnthropicMessages,
 } from "@/lib/agents/anthropic-gateway";
 import { resolveAgentEnvironmentCredentials } from "@/lib/agents/environment-credentials";
+import { collectSessionCustomNonProxyPluginSecrets } from "@/lib/plugins/runtime-env";
 import {
   AgentSecretObfuscator,
   restoreModelResponse,
@@ -153,15 +154,24 @@ async function proxyProviderRequest(
   let secrets: AgentSecretObfuscator | undefined;
   if (grant.secretObfuscation) {
     try {
-      secrets = new AgentSecretObfuscator(
-        await resolveAgentEnvironmentCredentials({
+      const [envCredentials, customPluginSecrets] = await Promise.all([
+        resolveAgentEnvironmentCredentials({
           workspaceId: token.workspaceId,
           agentId: token.agentId,
           agentRevisionId: token.agentRevisionId,
           conversationId: token.conversationId,
           contextId: token.a2aContextId,
         }),
-      );
+        collectSessionCustomNonProxyPluginSecrets({
+          workspaceId: token.workspaceId,
+          agentId: token.agentId,
+          agentRevisionId: token.agentRevisionId,
+        }),
+      ]);
+      secrets = new AgentSecretObfuscator({
+        ...customPluginSecrets,
+        ...envCredentials,
+      });
     } catch {
       return NextResponse.json(
         { error: "runtime credentials are no longer valid" },

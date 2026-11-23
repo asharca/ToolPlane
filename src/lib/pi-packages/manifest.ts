@@ -10,6 +10,11 @@ import {
   scanMarketArtifact,
   type MarketSecretScan,
 } from "@/lib/pi-packages/secret-scan";
+import {
+  piPackageEnvRequirementsSchema,
+  piPackageHttpProxiesSchema,
+  validatePluginEnvDeclarations,
+} from "@/lib/plugins/env-schema";
 
 // Source provenance: immutable capture result
 const npmSourceSchema = z
@@ -169,6 +174,8 @@ const piPackageSnapshotSchema = z
       .object({
         schemaVersion: z.literal(1),
         mcp: piPackageMcpRequirementsSchema,
+        env: piPackageEnvRequirementsSchema.optional(),
+        httpProxies: piPackageHttpProxiesSchema.optional(),
         config: z.record(z.string(), z.json()).optional(),
         enabledFeatures: z.array(z.string()).nullable().optional(),
         nativeRoleModels: NativeRoleModelsSchema.optional(),
@@ -610,6 +617,13 @@ export function parsePiPackageReleaseManifest(
     new Set(requirements.map((item) => item.key)).size !==
       requirements.length ||
     requirements.some((item) => new Set(item.tools).size !== item.tools.length)
+  )
+    invalid("invalid_requirements");
+  if (
+    !validatePluginEnvDeclarations(
+      manifest.package.toolplane?.env,
+      manifest.package.toolplane?.httpProxies,
+    )
   )
     invalid("invalid_requirements");
   for (const [kind, paths] of Object.entries(manifest.package.resources)) {

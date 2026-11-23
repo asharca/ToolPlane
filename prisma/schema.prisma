@@ -105,6 +105,8 @@ model User {
   uploadedAttachments    WorkspaceAttachment[] @relation("WorkspaceAttachmentUploader")
   submittedFeedbacks     Feedback[]            @relation("FeedbackSubmitter")
   approvedFeedbacks      Feedback[]            @relation("FeedbackApprover")
+  updatedOfficialPluginPresets OfficialPluginEnvPreset[] @relation("OfficialPluginEnvPresetUpdater")
+  updatedPluginEnvConfigs MarketInstallEnvConfig[] @relation("MarketInstallEnvConfigUpdater")
   createdAt              DateTime              @default(now())
   updatedAt              DateTime              @updatedAt
 }
@@ -942,6 +944,7 @@ model MarketListing {
   releases               MarketRelease[] @relation("MarketListingReleases")
   installs               MarketInstall[]
   githubRegistryResource GithubRegistryResource?
+  officialEnvPreset      OfficialPluginEnvPreset?
   createdAt              DateTime        @default(now())
   updatedAt              DateTime        @updatedAt
 
@@ -1009,6 +1012,7 @@ model MarketInstall {
   updatedAt          DateTime        @updatedAt
   agentPiPackages         AgentPiPackage[]
   piSessionPackages PiSessionPackage[]
+  envConfig         MarketInstallEnvConfig?
 
   @@unique([targetWorkspaceId, listingId])
   @@unique([targetWorkspaceId, idempotencyKey])
@@ -2416,4 +2420,31 @@ model FeedbackOccurrence {
 
   @@unique([feedbackId, sourceKind, sourceId])
   @@index([sourceKind, sourceId])
+}
+
+model OfficialPluginEnvPreset {
+  id              String        @id @default(cuid())
+  listingId       String        @unique
+  listing         MarketListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  configuredKeys  String[]      @default([])
+  encryptedValues Json
+  updatedById     String?
+  updatedBy       User?         @relation("OfficialPluginEnvPresetUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model MarketInstallEnvConfig {
+  installId       String        @id
+  install         MarketInstall @relation(fields: [installId], references: [id], onDelete: Cascade)
+  workspaceId     String
+  mode            String
+  configuredKeys  String[]      @default([])
+  encryptedValues Json?
+  updatedById     String?
+  updatedBy       User?         @relation("MarketInstallEnvConfigUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([workspaceId])
 }

@@ -42,6 +42,7 @@ import {
   type AgentPluginCatalogOption,
 } from "./AgentPluginsPanel";
 import type { PluginBindingDeployment } from "@/lib/plugins/binding-deployments";
+import type { PluginEnvStatus } from "@/lib/plugins/env-schema";
 import {
   prepareAgentRevisionAction,
   publishAgentRevisionAction,
@@ -124,6 +125,7 @@ export type AgentPiPackageOption = {
   skillCount?: number;
   extensionCount?: number;
   mcpRequirementCount?: number;
+  envStatus?: PluginEnvStatus;
   currentReleaseId: string | null;
   currentVersion: string | null;
   currentAvailable: boolean;
