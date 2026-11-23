@@ -1000,6 +1000,35 @@ export function WorkspaceWork({
                               className="ml-3"
                             />
                           ) : null}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="ml-3 rounded-full"
+                            onClick={() => {
+                              const params = new URLSearchParams({
+                                category: "failure",
+                              });
+                              if (runtimeError?.code) {
+                                params.set("failureCode", runtimeError.code);
+                              }
+                              if (selected?.id) {
+                                params.set("workSessionId", selected.id);
+                              }
+                              if (conversation?.id) {
+                                params.set("conversationId", conversation.id);
+                              }
+                              const targetAgentId =
+                                controlAgent?.id ?? agent?.id;
+                              if (targetAgentId) {
+                                params.set("agentId", targetAgentId);
+                              }
+                              router.push(
+                                `/app/${encodeURIComponent(slug)}/feedback?${params.toString()}`,
+                              );
+                            }}
+                          >
+                            {t("reportThisIssue")}
+                          </Button>
                         </div>
                       ) : null}
                     </MessageScroller>
@@ -1018,6 +1047,11 @@ export function WorkspaceWork({
                   showActivities={false}
                   onBusyChange={setConversationBusy}
                   renderedActivityIds={renderedHookIds}
+                  feedbackContext={{
+                    workspaceSlug: slug,
+                    conversationId: conversation.id,
+                    agentId: conversation.agentId,
+                  }}
                   settingsHref={agentSettingsHref(
                     slug,
                     conversation.agentId,

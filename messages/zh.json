@@ -338,7 +338,15 @@
       "recorded": "已记录工具审批决定。",
       "channelRequest": "工具审批：{tool}\n参数：{summary}\n请在 120 秒内于本聊天/线程回复 /approve {code} 或 /deny {code}。仅发起本轮的已授权发送者可以决定。",
       "channelRecorded": "已记录工具审批决定。",
-      "channelInvalid": "审批不存在、已过期、已决定或你无权操作。请在原聊天/线程使用 /approve 短码 或 /deny 短码。"
+      "channelInvalid": "审批不存在、已过期、已决定或你无权操作。请在原聊天/线程使用 /approve 短码 或 /deny 短码。",
+      "feedbackTitle": "向实例管理员提交反馈",
+      "feedbackAdminNotice": "批准后将把此反馈提交给实例管理员。",
+      "feedbackCategories": {
+        "bug": "缺陷",
+        "failure": "执行失败",
+        "suggestion": "建议",
+        "other": "其他"
+      }
     },
     "liveOutput": {
       "truncated": "实时预览已截断，完整回复请查看保存后的记录。",
@@ -518,6 +526,49 @@
       "removeRecipient": "移除 {email}",
       "invalidEmails": "{count} 个邮箱格式不正确",
       "recipientLimit": "最多 {count} 位收件人"
+    },
+    "feedback": {
+      "title": "反馈",
+      "submitTitle": "提交反馈",
+      "submitDescription": "直接向实例管理员报告缺陷、执行失败或改进建议。",
+      "categoryLabel": "分类",
+      "titleLabel": "标题",
+      "titlePlaceholder": "简要概括问题或建议",
+      "bodyLabel": "详细说明",
+      "bodyPlaceholder": "请描述发生了什么、预期结果或复现步骤...",
+      "prefillFailureTitle": "执行失败 ({code})",
+      "attachSnippetLabel": "附带最近对话片段（最多 10 条消息，已脱敏）",
+      "snippetCountLabel": "消息条数",
+      "adminVisibilityNotice": "提交的反馈将对实例管理员可见。",
+      "submitButton": "提交反馈",
+      "submitting": "提交中…",
+      "submitSuccess": "反馈已提交。",
+      "submitFailed": "提交反馈失败。",
+      "validationRequired": "请填写标题和详细说明。",
+      "loadFailed": "加载我的反馈失败。",
+      "loading": "正在加载反馈…",
+      "myFeedbackTitle": "我的反馈",
+      "itemCount": "共 {count} 条",
+      "emptyTitle": "暂无反馈",
+      "emptyDescription": "你提交或批准的反馈将显示在这里。",
+      "adminNoteLabel": "管理员备注",
+      "categories": {
+        "bug": "缺陷",
+        "failure": "执行失败",
+        "suggestion": "建议",
+        "other": "其他"
+      },
+      "statuses": {
+        "open": "待处理",
+        "acknowledged": "已确认",
+        "resolved": "已解决",
+        "dismissed": "已忽略"
+      },
+      "sources": {
+        "system": "系统",
+        "user": "用户",
+        "model": "模型"
+      }
     },
     "sidebar": {
       "search": "快速导航",
@@ -4140,6 +4191,7 @@
       "executionRefresh": "刷新",
       "executionDecisionUnknown": "无法确认响应是否已记录。请刷新当前请求后再回复；系统不会自动重复提交。",
       "executionFailed": "上次运行失败，未自动重试。请检查模型和工具连接后再开始新一轮。",
+      "reportThisIssue": "反馈此问题",
       "nativeUi": {
         "takeover": {
           "title": "需要你接管",
@@ -5125,6 +5177,7 @@
     "adminConsoleTitle": "管理后台",
     "adminNavOperations": "运维",
     "adminNavNotifications": "站点通知",
+    "adminNavFeedback": "反馈",
     "adminNavAccess": "用户与工作区",
     "adminNavPlatform": "平台",
     "adminNavOverview": "概览",
@@ -5322,5 +5375,72 @@
     "importing": "导入中…",
     "delete": "删除",
     "attachmentLimitCached": "数据库暂时不可用，当前保留上一次有效上传限制；没有有效缓存时会拒绝新的上传。"
+  },
+  "adminFeedback": {
+    "title": "反馈中心",
+    "description": "统一查看系统故障、用户反馈与已批准的模型反馈。",
+    "itemCount": "共 {count} 条",
+    "allSources": "全部来源",
+    "allStatuses": "全部状态",
+    "allCategories": "全部分类",
+    "filter": "筛选",
+    "clear": "清除",
+    "emptyTitle": "暂无反馈记录",
+    "emptyDescription": "系统故障、用户提交和模型生成的反馈将显示在这里。",
+    "emptyFilteredDescription": "当前筛选条件下没有匹配的反馈记录。",
+    "tableLabel": "管理员反馈列表",
+    "titleColumn": "标题",
+    "sourceColumn": "来源",
+    "categoryColumn": "分类",
+    "statusColumn": "状态",
+    "occurrencesColumn": "发生次数",
+    "workspaceColumn": "工作区",
+    "lastSeenColumn": "最近出现",
+    "viewDetails": "查看详情",
+    "paginationItems": "条",
+    "paginationPage": "页",
+    "previous": "上一页",
+    "next": "下一页",
+    "backToList": "返回反馈列表",
+    "bodyPanelTitle": "详细内容",
+    "metadataPanelTitle": "元数据",
+    "platformVersion": "平台版本",
+    "failureCode": "失败代码",
+    "failureReason": "失败原因",
+    "executionStage": "执行阶段",
+    "firstSeenAt": "首次出现",
+    "lastSeenAt": "最近出现",
+    "agentLabel": "智能体",
+    "submittedBy": "提交人",
+    "approvedBy": "批准人",
+    "viewA2aLog": "查看 A2A 日志",
+    "viewRunLog": "查看运行日志",
+    "snippetPanelTitle": "对话片段",
+    "snippetPanelDescription": "随此反馈附带的脱敏对话记录。",
+    "occurrencesPanelTitle": "发生记录",
+    "triagePanelTitle": "处理状态",
+    "adminNoteLabel": "管理员备注",
+    "adminNotePlaceholder": "填写处理说明或解决结果（提交人可见）...",
+    "saveButton": "保存更改",
+    "saving": "保存中…",
+    "updateSuccess": "反馈已更新。",
+    "updateFailed": "更新反馈失败。",
+    "sources": {
+      "system": "系统",
+      "user": "用户",
+      "model": "模型"
+    },
+    "categories": {
+      "bug": "缺陷",
+      "failure": "执行失败",
+      "suggestion": "建议",
+      "other": "其他"
+    },
+    "statuses": {
+      "open": "待处理",
+      "acknowledged": "已确认",
+      "resolved": "已解决",
+      "dismissed": "已忽略"
+    }
   }
 }

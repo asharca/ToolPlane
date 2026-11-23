@@ -338,7 +338,15 @@
       "recorded": "Tool approval decision recorded.",
       "channelRequest": "Tool approval: {tool}\nArguments: {summary}\nReply /approve {code} or /deny {code} in this chat/thread within 120 seconds. Only the authorized sender who requested this turn can decide.",
       "channelRecorded": "Tool approval decision recorded.",
-      "channelInvalid": "Approval unavailable, expired, already decided, or not authorized. Use /approve CODE or /deny CODE in the original chat/thread."
+      "channelInvalid": "Approval unavailable, expired, already decided, or not authorized. Use /approve CODE or /deny CODE in the original chat/thread.",
+      "feedbackTitle": "Submit feedback to instance administrator",
+      "feedbackAdminNotice": "Approving will submit this feedback to the instance administrator.",
+      "feedbackCategories": {
+        "bug": "Bug",
+        "failure": "Failure",
+        "suggestion": "Suggestion",
+        "other": "Other"
+      }
     },
     "liveOutput": {
       "truncated": "Live preview truncated. See the saved record for the full reply.",
@@ -518,6 +526,49 @@
       "removeRecipient": "Remove {email}",
       "invalidEmails": "{count, plural, one {# email address is} other {# email addresses are}} invalid",
       "recipientLimit": "Up to {count} recipients"
+    },
+    "feedback": {
+      "title": "Feedback",
+      "submitTitle": "Submit Feedback",
+      "submitDescription": "Report a bug, execution failure, or suggestion directly to the instance administrator.",
+      "categoryLabel": "Category",
+      "titleLabel": "Title",
+      "titlePlaceholder": "Short summary of the issue or suggestion",
+      "bodyLabel": "Details",
+      "bodyPlaceholder": "Describe what happened, expected behavior, or steps to reproduce...",
+      "prefillFailureTitle": "Execution failure ({code})",
+      "attachSnippetLabel": "Attach recent conversation snippet (up to 10 messages, redacted)",
+      "snippetCountLabel": "Messages",
+      "adminVisibilityNotice": "Submitted feedback is visible to the instance administrator.",
+      "submitButton": "Submit feedback",
+      "submitting": "Submitting…",
+      "submitSuccess": "Feedback submitted.",
+      "submitFailed": "Failed to submit feedback.",
+      "validationRequired": "Please enter both a title and details.",
+      "loadFailed": "Failed to load your feedback.",
+      "loading": "Loading feedback…",
+      "myFeedbackTitle": "My Feedback",
+      "itemCount": "{count, plural, one {# item} other {# items}}",
+      "emptyTitle": "No feedback yet",
+      "emptyDescription": "Feedback you submit or approve will appear here.",
+      "adminNoteLabel": "Administrator note",
+      "categories": {
+        "bug": "Bug",
+        "failure": "Failure",
+        "suggestion": "Suggestion",
+        "other": "Other"
+      },
+      "statuses": {
+        "open": "Open",
+        "acknowledged": "Acknowledged",
+        "resolved": "Resolved",
+        "dismissed": "Dismissed"
+      },
+      "sources": {
+        "system": "System",
+        "user": "User",
+        "model": "Model"
+      }
     },
     "sidebar": {
       "search": "Quick navigation",
@@ -4140,6 +4191,7 @@
       "executionRefresh": "Refresh",
       "executionDecisionUnknown": "The response could not be confirmed. Refresh the current request before responding again; it is never automatically resubmitted.",
       "executionFailed": "The last run failed and was not retried. Check the model and tool connections before starting another turn.",
+      "reportThisIssue": "Report this issue",
       "nativeUi": {
         "takeover": {
           "title": "Takeover required",
@@ -5125,6 +5177,7 @@
     "adminConsoleTitle": "Admin",
     "adminNavOperations": "Operations",
     "adminNavNotifications": "Site notices",
+    "adminNavFeedback": "Feedback",
     "adminNavAccess": "Access",
     "adminNavPlatform": "Platform",
     "adminNavOverview": "Overview",
@@ -5322,5 +5375,72 @@
     "importing": "Importing…",
     "delete": "Delete",
     "attachmentLimitCached": "Database unavailable: the last known safe upload limit is retained. New uploads are blocked if no safe limit is cached."
+  },
+  "adminFeedback": {
+    "title": "Feedback Center",
+    "description": "Review system failures, user reports, and approved model feedback.",
+    "itemCount": "{count} items",
+    "allSources": "All sources",
+    "allStatuses": "All statuses",
+    "allCategories": "All categories",
+    "filter": "Filter",
+    "clear": "Clear",
+    "emptyTitle": "No feedback items",
+    "emptyDescription": "Feedback from system failures, users, and models will appear here.",
+    "emptyFilteredDescription": "No feedback items match the selected filters.",
+    "tableLabel": "Admin feedback list",
+    "titleColumn": "Title",
+    "sourceColumn": "Source",
+    "categoryColumn": "Category",
+    "statusColumn": "Status",
+    "occurrencesColumn": "Occurrences",
+    "workspaceColumn": "Workspace",
+    "lastSeenColumn": "Last seen",
+    "viewDetails": "View details",
+    "paginationItems": "items",
+    "paginationPage": "Page",
+    "previous": "Previous",
+    "next": "Next",
+    "backToList": "Back to feedback",
+    "bodyPanelTitle": "Details",
+    "metadataPanelTitle": "Metadata",
+    "platformVersion": "Platform version",
+    "failureCode": "Failure code",
+    "failureReason": "Failure reason",
+    "executionStage": "Execution stage",
+    "firstSeenAt": "First seen",
+    "lastSeenAt": "Last seen",
+    "agentLabel": "Agent",
+    "submittedBy": "Submitted by",
+    "approvedBy": "Approved by",
+    "viewA2aLog": "View A2A log",
+    "viewRunLog": "View run log",
+    "snippetPanelTitle": "Conversation snippet",
+    "snippetPanelDescription": "Redacted recent transcript attached with this report.",
+    "occurrencesPanelTitle": "Occurrences",
+    "triagePanelTitle": "Triage",
+    "adminNoteLabel": "Admin note",
+    "adminNotePlaceholder": "Add internal notes or resolution details visible to the submitter...",
+    "saveButton": "Save changes",
+    "saving": "Saving…",
+    "updateSuccess": "Feedback updated.",
+    "updateFailed": "Failed to update feedback.",
+    "sources": {
+      "system": "System",
+      "user": "User",
+      "model": "Model"
+    },
+    "categories": {
+      "bug": "Bug",
+      "failure": "Failure",
+      "suggestion": "Suggestion",
+      "other": "Other"
+    },
+    "statuses": {
+      "open": "Open",
+      "acknowledged": "Acknowledged",
+      "resolved": "Resolved",
+      "dismissed": "Dismissed"
+    }
   }
 }

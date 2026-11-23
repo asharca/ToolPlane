@@ -16,7 +16,10 @@ import { assertLocalRuntimeToken } from "@/lib/a2a/local-runtime";
 import { isLocalGrant, type TaskGrant } from "@/lib/a2a/principal";
 import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
 import { requireAgentRevision } from "@/lib/agents/revisions";
-import { toolApprovalDecision } from "@/lib/agents/tool-approval-policy";
+import {
+  isFeedbackToolName,
+  toolApprovalDecision,
+} from "@/lib/agents/tool-approval-policy";
 import { sanitizeLog } from "@/lib/observability/redaction";
 import { getLogContext } from "@/lib/observability/context";
 import { admitChannelSender } from "@/lib/agents/channel-sender-access";
@@ -207,7 +210,9 @@ export async function runtimeToolApproval(
         grant.agentRevisionId,
       );
       const decision = unattended
-        ? "allow"
+        ? isFeedbackToolName(input.toolName)
+          ? "deny"
+          : "allow"
         : toolApprovalDecision(
             revision.config.runtimeKind === "pi-sdk"
               ? revision.config.toolApproval
@@ -269,7 +274,11 @@ export async function runtimeToolApproval(
           tx,
           approval,
           decision === "allow" ? "success" : "denied",
-          unattended ? "unattended_allow" : `policy_${decision}`,
+          unattended
+            ? decision === "allow"
+              ? "unattended_allow"
+              : "unattended_deny"
+            : `policy_${decision}`,
         );
     }
     if (approval.expiresAt <= new Date() && !approval.consumedAt) {

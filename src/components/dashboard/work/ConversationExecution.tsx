@@ -60,6 +60,7 @@ export function ConversationExecution({
   onTakeoverAnswered,
   toolApprovalEndpoint,
   toolApprovalParts = null,
+  feedbackContext,
 }: {
   /** Same-origin endpoint returning the native execution projection. */
   endpoint: string;
@@ -87,6 +88,12 @@ export function ConversationExecution({
   toolApprovalEndpoint?: string;
   /** An authoritative pending set from SSE; null falls back to execution GET. */
   toolApprovalParts?: ToolApprovalDataPart[] | null;
+  feedbackContext?: {
+    workspaceSlug: string;
+    conversationId?: string;
+    agentId?: string;
+    workSessionId?: string;
+  };
 }) {
   const t = useTranslations("console.work");
   const tAgents = useTranslations("console.agents");
@@ -433,6 +440,22 @@ export function ConversationExecution({
             ? `${code}: ${reason}`
             : code,
       );
+      const reportHref = feedbackContext
+        ? (() => {
+            const params = new URLSearchParams({ category: "failure" });
+            if (code) params.set("failureCode", code);
+            if (feedbackContext.workSessionId) {
+              params.set("workSessionId", feedbackContext.workSessionId);
+            }
+            if (feedbackContext.conversationId) {
+              params.set("conversationId", feedbackContext.conversationId);
+            }
+            if (feedbackContext.agentId) {
+              params.set("agentId", feedbackContext.agentId);
+            }
+            return `/app/${encodeURIComponent(feedbackContext.workspaceSlug)}/feedback?${params.toString()}`;
+          })()
+        : null;
       return (
         <div
           role="alert"
@@ -441,14 +464,25 @@ export function ConversationExecution({
           <span className="min-w-0 break-words">
             {runtimeError?.text ?? t("executionFailed")}
           </span>
-          {runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE" && settingsHref ? (
-            <Link
-              href={settingsHref}
-              className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-            >
-              {tAgents("configureAgent")}
-            </Link>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE" &&
+            settingsHref ? (
+              <Link
+                href={settingsHref}
+                className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+              >
+                {tAgents("configureAgent")}
+              </Link>
+            ) : null}
+            {reportHref ? (
+              <Link
+                href={reportHref}
+                className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                {t("reportThisIssue")}
+              </Link>
+            ) : null}
+          </div>
         </div>
       );
     }

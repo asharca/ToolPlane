@@ -7,7 +7,10 @@ import {
   MemoryRecallInput,
   MemoryForgetInput,
 } from "../memory-inputs";
-
+import {
+  FEEDBACK_TOOL_NAME,
+  ModelFeedbackToolInputSchema,
+} from "@/lib/feedback/types";
 /** Append implemented platform definitions here and register their handler in runtime-tools.ts. */
 export const piOptionalPlatformTools: readonly {
   name: string;
@@ -63,6 +66,12 @@ export const piArtifactTool = {
     "Publish an immutable Artifact to this task with named text, JSON, small inline bytes or file parts {path,filename?,mediaType?}/{fileId}. Workspace files stream to task storage (administrator-configured limit: default 10 MiB/file, configurable 1–100 MiB; administrator-configured files per task, default 20; outputs do not count toward the task input total); never paste large bytes or include credentials. Reuse artifactId only for identical retries. Publishing does not complete the task.",
   schema: LocalArtifactInput,
 } as const;
+export const piFeedbackTool = {
+  name: FEEDBACK_TOOL_NAME,
+  description:
+    "Submit a bug report, platform failure feedback, or suggestion to the ToolPlane instance administrator. Always requires explicit approval from the user in the current conversation; never include secrets or raw credentials.",
+  schema: ModelFeedbackToolInputSchema,
+} as const;
 
 /** Data-only catalog shared by revision capture and the runtime MCP bridge. */
 export function piRuntimeCatalog(
@@ -80,5 +89,6 @@ export function piRuntimeCatalog(
         agentOptionalBuiltinTool(tool.name)?.implementation === "platform" &&
         optionalBuiltinTools.includes(tool.name),
     ),
+    piFeedbackTool,
   ];
 }
