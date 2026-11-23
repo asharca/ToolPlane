@@ -125,6 +125,8 @@ export function MorphPopover({
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
     const onPointer = (e: PointerEvent) => {
       const target = e.target as Node;
+      if (target instanceof Element && target.closest("[data-toast-stack]"))
+        return;
       if (
         root &&
         !root.contains(target) &&

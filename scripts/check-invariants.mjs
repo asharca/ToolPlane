@@ -111,6 +111,23 @@ const translatorNamespace = (initializer) => {
   }
   return undefined;
 };
+const toastStackPath = "src/components/motion/animated-toast-stack.tsx";
+const toastStackText = readFileSync(toastStackPath, "utf8");
+if (!toastStackText.includes("data-toast-stack")) {
+  console.error(
+    `${toastStackPath}: Missing data-toast-stack attribute for overlay dismiss exclusion.`,
+  );
+  failed = true;
+}
+const toastZMatch = /\bfixed\s+z-\[(\d+)\]/.exec(toastStackText);
+const toastZ = toastZMatch ? Number(toastZMatch[1]) : null;
+if (toastZ === null) {
+  console.error(
+    `${toastStackPath}: Missing fixed z-[N] stacking layer on toast stack.`,
+  );
+  failed = true;
+}
+
 for (const file of readdirSync("src", { recursive: true })) {
   if (!/\.tsx?$/.test(file)) continue;
   const path = `src/${file}`;
@@ -129,7 +146,12 @@ for (const file of readdirSync("src", { recursive: true })) {
       failed = true;
     }
   }
-  if (!/\b(?:useTranslations|getTranslations)\b/.test(text)) continue;
+  const hasTranslations = /\b(?:useTranslations|getTranslations)\b/.test(text);
+  const checkOverlayZ =
+    toastZ !== null &&
+    path !== toastStackPath &&
+    (/\bz-\[\d+\]/.test(text) || /\bzIndex\b/.test(text));
+  if (!hasTranslations && !checkOverlayZ) continue;
   const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
   const scopes = [new Map()];
   const report = (node, message) => {
@@ -168,10 +190,21 @@ for (const file of readdirSync("src", { recursive: true })) {
       }
     }
   };
+  const checkZText = (node, literalText) => {
+    for (const match of literalText.matchAll(/\bz-\[(\d+)\]/g)) {
+      const value = Number(match[1]);
+      if (value >= toastZ)
+        report(
+          node,
+          `Overlay z-index ${value} must stay below toast stack z-[${toastZ}].`,
+        );
+    }
+  };
   const visit = (node) => {
-    const scoped = ts.isFunctionLike(node);
+    const scoped = hasTranslations && ts.isFunctionLike(node);
     if (scoped) scopes.push(new Map());
     if (
+      hasTranslations &&
       ts.isVariableDeclaration(node) &&
       ts.isIdentifier(node.name) &&
       node.initializer
@@ -180,7 +213,7 @@ for (const file of readdirSync("src", { recursive: true })) {
       if (namespace !== undefined)
         scopes[scopes.length - 1].set(node.name.text, namespace);
     }
-    if (ts.isCallExpression(node) && node.arguments.length) {
+    if (hasTranslations && ts.isCallExpression(node) && node.arguments.length) {
       const callee = node.expression;
       const name = ts.isIdentifier(callee)
         ? callee.text
@@ -191,6 +224,32 @@ for (const file of readdirSync("src", { recursive: true })) {
           : undefined;
       const namespace = name === undefined ? undefined : namespaceOf(name);
       if (namespace !== undefined) checkKey(node, namespace, node.arguments[0]);
+    }
+    if (checkOverlayZ) {
+      if (
+        ts.isStringLiteralLike(node) ||
+        ts.isTemplateHead(node) ||
+        ts.isTemplateMiddle(node) ||
+        ts.isTemplateTail(node)
+      ) {
+        checkZText(node, node.text);
+      } else if (
+        ts.isPropertyAssignment(node) &&
+        ((ts.isIdentifier(node.name) && node.name.text === "zIndex") ||
+          (ts.isStringLiteralLike(node.name) && node.name.text === "zIndex"))
+      ) {
+        const value = ts.isNumericLiteral(node.initializer)
+          ? Number(node.initializer.text)
+          : ts.isStringLiteralLike(node.initializer) &&
+              /^\d+$/.test(node.initializer.text)
+            ? Number(node.initializer.text)
+            : null;
+        if (value !== null && value >= toastZ)
+          report(
+            node,
+            `Overlay z-index ${value} must stay below toast stack z-[${toastZ}].`,
+          );
+      }
     }
     ts.forEachChild(node, visit);
     if (scoped) scopes.pop();

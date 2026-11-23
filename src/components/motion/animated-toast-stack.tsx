@@ -7,6 +7,7 @@ import {
   Check,
   Info,
   LoaderCircle,
+  TriangleAlert,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -29,7 +30,13 @@ import { createPortal } from "react-dom";
 import { EASE_OUT } from "@/lib/ease";
 import { cn } from "@/lib/utils";
 
-export type ToastStatus = "neutral" | "info" | "loading" | "success" | "error";
+export type ToastStatus =
+  | "neutral"
+  | "info"
+  | "loading"
+  | "success"
+  | "warning"
+  | "error";
 export type ToastPosition =
   | "top-left"
   | "top-center"
@@ -75,6 +82,8 @@ export type ToastClassNames = {
 export interface AnimatedToastStackProps {
   toasts: AnimatedToast[];
   onDismiss?: (id: string) => void;
+  dismissLabel?: string;
+  onPauseChange?: (paused: boolean) => void;
   position?: ToastPosition;
   placement?: "static" | "fixed" | "absolute";
   fixed?: boolean;
@@ -91,6 +100,7 @@ export interface UseAnimatedToastStackOptions {
   initialToasts?: ToastInput[];
   defaultDuration?: number;
   limit?: number;
+  paused?: boolean;
 }
 
 const STACK_SPRING: Transition = {
@@ -110,6 +120,7 @@ const STATUS_ICON: Record<ToastStatus, LucideIcon> = {
   info: Info,
   loading: LoaderCircle,
   success: Check,
+  warning: TriangleAlert,
   error: AlertCircle,
 };
 
@@ -118,13 +129,15 @@ const STATUS_CLASS: Record<ToastStatus, string> = {
   info: "text-primary bg-muted",
   loading: "text-primary bg-muted",
   success: "text-emerald-600 bg-emerald-500/10 dark:text-emerald-400",
+  warning: "text-amber-600 bg-amber-500/10 dark:text-amber-400",
   error: "text-destructive bg-destructive/10",
 };
 
 const POSITION_CLASS: Record<ToastPosition, string> = {
-  "top-left": "left-4 top-4",
-  "top-center": "left-1/2 top-4 -translate-x-1/2",
-  "top-right": "right-4 top-4",
+  "top-left": "left-4 top-[max(1rem,env(safe-area-inset-top))]",
+  "top-center":
+    "left-1/2 top-[max(1rem,env(safe-area-inset-top))] -translate-x-1/2",
+  "top-right": "right-4 top-[max(1rem,env(safe-area-inset-top))]",
   "bottom-left": "bottom-6 left-4",
   "bottom-center": "bottom-6 left-1/2 -translate-x-1/2",
   "bottom-right": "bottom-6 right-4",
@@ -149,10 +162,19 @@ export function useAnimatedToastStack({
   initialToasts = [],
   defaultDuration = 4200,
   limit,
+  paused = false,
 }: UseAnimatedToastStackOptions = {}) {
-  const toastTimers = useRef<Map<string, { timer: number; signature: string }>>(
-    new Map(),
-  );
+  const toastTimers = useRef<
+    Map<
+      string,
+      {
+        timer: number | null;
+        remaining: number;
+        startedAt: number | null;
+        signature: string;
+      }
+    >
+  >(new Map());
   const [toasts, setToasts] = useState<AnimatedToast[]>(() =>
     initialToasts.map((toast) => createToast(toast, defaultDuration)),
   );
@@ -169,6 +191,12 @@ export function useAnimatedToastStack({
     (input: ToastInput) => {
       const toast = createToast(input, defaultDuration);
       setToasts((current) => {
+        const existingIndex = current.findIndex((item) => item.id === toast.id);
+        if (existingIndex !== -1) {
+          const next = [...current];
+          next[existingIndex] = { ...current[existingIndex], ...toast };
+          return typeof limit === "number" ? next.slice(-limit) : next;
+        }
         const next = [...current, toast];
         return typeof limit === "number" ? next.slice(-limit) : next;
       });
@@ -198,10 +226,12 @@ export function useAnimatedToastStack({
 
     toastTimers.current.forEach((entry, id) => {
       if (!activeIds.has(id)) {
-        window.clearTimeout(entry.timer);
+        if (entry.timer !== null) window.clearTimeout(entry.timer);
         toastTimers.current.delete(id);
       }
     });
+
+    const now = Date.now();
 
     toasts.forEach((toast) => {
       const duration = toast.duration ?? defaultDuration;
@@ -209,40 +239,75 @@ export function useAnimatedToastStack({
 
       if (duration <= 0) {
         if (existing) {
-          window.clearTimeout(existing.timer);
+          if (existing.timer !== null) window.clearTimeout(existing.timer);
           toastTimers.current.delete(toast.id);
         }
         return;
       }
 
-      const createdAt = toast.createdAt ?? Date.now();
+      const createdAt = toast.createdAt ?? now;
       const signature = `${createdAt}:${duration}`;
 
-      if (existing?.signature === signature) {
+      if (paused) {
+        if (existing && existing.signature === signature) {
+          if (existing.timer !== null) {
+            window.clearTimeout(existing.timer);
+            const elapsed =
+              existing.startedAt !== null ? now - existing.startedAt : 0;
+            toastTimers.current.set(toast.id, {
+              timer: null,
+              remaining: Math.max(existing.remaining - elapsed, 0),
+              startedAt: null,
+              signature,
+            });
+          }
+        } else {
+          if (existing?.timer !== null && existing?.timer !== undefined) {
+            window.clearTimeout(existing.timer);
+          }
+          toastTimers.current.set(toast.id, {
+            timer: null,
+            remaining: Math.max(duration - (now - createdAt), 0),
+            startedAt: null,
+            signature,
+          });
+        }
         return;
       }
 
-      if (existing) {
+      if (existing?.signature === signature && existing.timer !== null) {
+        return;
+      }
+
+      if (existing?.timer !== null && existing?.timer !== undefined) {
         window.clearTimeout(existing.timer);
       }
 
-      const elapsed = Date.now() - createdAt;
-      const remaining = Math.max(duration - elapsed, 0);
+      const delay =
+        existing && existing.signature === signature && existing.timer === null
+          ? Math.min(duration, Math.max(existing.remaining, 1000))
+          : Math.max(duration - (now - createdAt), 0);
+
       const timer = window.setTimeout(() => {
         toastTimers.current.delete(toast.id);
         dismissToast(toast.id);
-      }, remaining);
+      }, delay);
 
-      toastTimers.current.set(toast.id, { timer, signature });
+      toastTimers.current.set(toast.id, {
+        timer,
+        remaining: delay,
+        startedAt: now,
+        signature,
+      });
     });
-  }, [defaultDuration, dismissToast, toasts]);
+  }, [defaultDuration, dismissToast, paused, toasts]);
 
   useEffect(() => {
     const timers = toastTimers.current;
 
     return () => {
       timers.forEach((entry) => {
-        window.clearTimeout(entry.timer);
+        if (entry.timer !== null) window.clearTimeout(entry.timer);
       });
       timers.clear();
     };
@@ -264,6 +329,8 @@ export function useAnimatedToastStack({
 export function AnimatedToastStack({
   toasts,
   onDismiss,
+  dismissLabel = "Dismiss toast",
+  onPauseChange,
   position = "bottom-right",
   placement,
   fixed = false,
@@ -276,6 +343,8 @@ export function AnimatedToastStack({
   renderToast,
 }: AnimatedToastStackProps) {
   const [portalTarget, setPortalTarget] = useState<Element | null>(null);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
   const visibleToasts = toasts.slice(-maxVisible);
   const isBottom = position.startsWith("bottom");
   const resolvedPlacement = placement ?? (fixed ? "fixed" : "static");
@@ -285,14 +354,36 @@ export function AnimatedToastStack({
     setPortalTarget(shouldPortal ? (portalRoot ?? document.body) : null);
   }, [portalRoot, shouldPortal]);
 
+  useEffect(() => {
+    if (visibleToasts.length === 0) {
+      setHovered(false);
+      setFocused(false);
+    }
+  }, [visibleToasts.length]);
+
+  useEffect(() => {
+    onPauseChange?.(visibleToasts.length > 0 && (hovered || focused));
+  }, [focused, hovered, onPauseChange, visibleToasts.length]);
+
   const stack = (
     <ol
+      data-toast-stack=""
       aria-live="polite"
       aria-atomic="false"
+      onPointerOver={() => setHovered(true)}
+      onPointerOut={(event) => {
+        const next = event.relatedTarget as Node | null;
+        if (!next || !event.currentTarget.contains(next)) setHovered(false);
+      }}
+      onFocus={() => setFocused(true)}
+      onBlur={(event) => {
+        const next = event.relatedTarget as Node | null;
+        if (!next || !event.currentTarget.contains(next)) setFocused(false);
+      }}
       className={cn(
         "pointer-events-none flex w-[calc(100vw-2rem)] max-w-sm gap-2",
         isBottom ? "flex-col-reverse" : "flex-col",
-        resolvedPlacement === "fixed" && "fixed z-[90]",
+        resolvedPlacement === "fixed" && "fixed z-[11000]",
         resolvedPlacement === "absolute" && "absolute z-20",
         resolvedPlacement !== "static" && POSITION_CLASS[position],
         classNames?.root,
@@ -305,6 +396,8 @@ export function AnimatedToastStack({
             key={toast.id}
             toast={toast}
             index={index}
+            isBottom={isBottom}
+            dismissLabel={dismissLabel}
             onDismiss={onDismiss}
             classNames={classNames}
             icons={icons}
@@ -329,6 +422,8 @@ export function AnimatedToastStack({
 const ToastItem = memo(function ToastItem({
   toast,
   index,
+  isBottom,
+  dismissLabel,
   onDismiss,
   classNames,
   icons,
@@ -336,6 +431,8 @@ const ToastItem = memo(function ToastItem({
 }: {
   toast: AnimatedToast;
   index: number;
+  isBottom: boolean;
+  dismissLabel: string;
   onDismiss?: (id: string) => void;
   classNames?: ToastClassNames;
   icons?: Partial<Record<ToastStatus, ReactNode>>;
@@ -356,7 +453,12 @@ const ToastItem = memo(function ToastItem({
       initial={
         reduce
           ? { opacity: 0 }
-          : { opacity: 0, y: 22, scale: 0.96, filter: "blur(10px)" }
+          : {
+              opacity: 0,
+              y: isBottom ? 22 : -18,
+              scale: 0.96,
+              filter: "blur(10px)",
+            }
       }
       animate={
         reduce
@@ -391,6 +493,7 @@ const ToastItem = memo(function ToastItem({
       style={{ zIndex: 20 - index }}
     >
       <div
+        role={status === "error" ? "alert" : "status"}
         className={cn(
           "relative overflow-hidden rounded-2xl border border-border bg-card/95 p-3 shadow-2xl backdrop-blur-xl",
           classNames?.surface,
@@ -467,7 +570,7 @@ const ToastItem = memo(function ToastItem({
                 >
                   <p
                     className={cn(
-                      "truncate text-sm font-medium leading-5 text-foreground",
+                      "line-clamp-3 break-words text-sm font-medium leading-5 text-foreground",
                       classNames?.title,
                     )}
                   >
@@ -489,6 +592,7 @@ const ToastItem = memo(function ToastItem({
               {toast.action ? (
                 <button
                   type="button"
+                  onPointerDown={(event) => event.stopPropagation()}
                   onClick={() => toast.action?.onClick(toast)}
                   className={cn(
                     "mt-2 inline-flex h-7 items-center rounded-full bg-muted/80 px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted",
@@ -503,8 +607,10 @@ const ToastItem = memo(function ToastItem({
             {canDismiss ? (
               <button
                 type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onPointerDown={(event) => event.stopPropagation()}
                 onClick={() => onDismiss?.(toast.id)}
-                aria-label="Dismiss toast"
+                aria-label={dismissLabel}
                 className={cn(
                   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground",
                   classNames?.close,

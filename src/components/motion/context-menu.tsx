@@ -149,6 +149,8 @@ export function ContextMenu({
 
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
+      if (target instanceof Element && target.closest("[data-toast-stack]"))
+        return;
       if (
         triggerRef.current?.contains(target) ||
         contentRef.current?.contains(target)
