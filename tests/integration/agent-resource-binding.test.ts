@@ -12,7 +12,10 @@ import {
   prepareAgentRevisionMcpDeployments,
 } from "@/lib/agents/revisions";
 import type { AgentEnvironmentSnapshot } from "@/lib/agents/revision-types";
-import { mcpDefinitionChecksum } from "@/lib/process/mcp-definition";
+import {
+  mcpDefinitionChecksum,
+  McpRecipePinError,
+} from "@/lib/process/mcp-definition";
 import { mcpToolCallDeadlineMs } from "@/lib/process/mcp-tool-timeout";
 import type * as McpRuntimeImage from "@/lib/process/mcp-runtime-image";
 import { createAgentFromControl } from "@/lib/agents/control-service";
@@ -558,4 +561,79 @@ it("materializes the full catalog whenever a deployment is bound", async () => {
   expect(await binding()).toMatchObject({
     allowedToolNames: ["read", "write"],
   });
+});
+
+it("prepares and captures a uvx --from HTTPS Git MCP pinned to a 40-char SHA, while rejecting a tag without publishing", async () => {
+  const sha = "c661c10c8dc53d10731532dc9358360f4523fd74";
+  const agent = await createAgent(workspaceId, "uvx Git commit pin regression");
+  const tagDeployment = await db.deployment.create({
+    data: {
+      workspaceId,
+      name: "RouterOS MCP tag",
+      source: "config",
+      sourceRef: "uvx",
+      installCfg: {
+        command: "uvx",
+        args: [
+          "--from",
+          "git+https://github.com/asharca/ros-mcp.git@v0.2.0",
+          "ros-mcp",
+        ],
+        env: {},
+        toolCatalog: [
+          { name: "tool_a" },
+          { name: "tool_b" },
+          { name: "tool_c" },
+        ],
+      },
+    },
+  });
+  await setAgentTools(workspaceId, agent.id, {
+    deploymentIds: [tagDeployment.id],
+    installedSkillIds: [],
+    toolkitIds: [],
+  });
+  const environment: AgentEnvironmentSnapshot = {
+    kind: "docker",
+    image: `fixture@sha256:${"a".repeat(64)}`,
+    network: "isolated",
+    piVersion: "1.5.2",
+    initialSnapshot: null,
+    resourceLimits: { memoryBytes: 536870912, cpus: 1, pidsLimit: 128 },
+    credentialReferences: [],
+  };
+
+  await expect(
+    prepareAgentRevisionMcpDeployments(workspaceId, agent.id),
+  ).rejects.toBeInstanceOf(McpRecipePinError);
+  expect(await db.agentRevision.count({ where: { agentId: agent.id } })).toBe(
+    0,
+  );
+  const pinnedCfg = {
+    command: "uvx",
+    args: [
+      "--from",
+      `git+https://github.com/asharca/ros-mcp.git@${sha}`,
+      "ros-mcp",
+    ],
+    env: {},
+    toolCatalog: [{ name: "tool_a" }, { name: "tool_b" }, { name: "tool_c" }],
+  };
+  const updated = await db.deployment.update({
+    where: { id: tagDeployment.id },
+    data: { installCfg: pinnedCfg },
+  });
+
+  await prepareAgentRevisionMcpDeployments(workspaceId, agent.id);
+  const config = await db.$transaction((tx) =>
+    captureAgentRevisionConfig(tx, agent.id, environment),
+  );
+  expect(config.mcpGrants).toEqual([
+    expect.objectContaining({
+      deploymentId: tagDeployment.id,
+      definitionChecksum: mcpDefinitionChecksum(updated),
+      runtimeImageDigest: `sha256:${"a".repeat(64)}`,
+      allowedToolNames: ["tool_a", "tool_b", "tool_c"],
+    }),
+  ]);
 });

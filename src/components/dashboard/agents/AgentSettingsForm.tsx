@@ -652,7 +652,9 @@ export function AgentSettingsForm(props: Props) {
             ? t(`modelRouting.errors.${code}`)
             : r.has(`credentialErrors.${code}`)
               ? r(`credentialErrors.${code}`)
-              : code;
+              : t.has(code)
+                ? t(code)
+                : code;
       if (code === "AGENT_REVISION_CONFLICT") setReview(null);
       setError(text);
       notify(text, { severity: "error" });
@@ -719,6 +721,7 @@ export function AgentSettingsForm(props: Props) {
       const preparation = identity();
       if (environment.trim()) preparation.set("environment", environment);
       const preview = await prepareAgentRevisionAction(preparation);
+      if ("error" in preview) throw new DisplayError(preview.error);
       const prepared = {
         expectedRevisionId: preview.expectedRevisionId,
         config: JSON.parse(preview.configJson) as AgentRevisionConfig,

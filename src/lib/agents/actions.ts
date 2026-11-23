@@ -91,6 +91,7 @@ import { approveAgentPluginSync } from "@/lib/plugins/agent-sync";
 import { safeRelativePath } from "@/lib/auth/safe-redirect";
 import { db } from "@/lib/db";
 import { McpPinningError } from "@/lib/process/mcp-pinning";
+import { McpRecipePinError } from "@/lib/process/mcp-definition";
 import { deleteManagedAgent } from "@/lib/agents/deletion";
 import {
   AgentAdvisorSchema,
@@ -1184,32 +1185,42 @@ export async function prepareAgentRevisionAction(formData: FormData) {
     typeof rawEnvironment === "string" && rawEnvironment
       ? AgentEnvironmentSnapshotSchema.parse(JSON.parse(rawEnvironment))
       : undefined;
-  await prepareAgentRevisionMcpDeployments(ctx.ws.id, agentId);
-  return db.$transaction(
-    async (tx) => {
-      const agent = await tx.agent.findFirstOrThrow({
-        where: { id: agentId, workspaceId: ctx.ws.id },
-        select: {
-          currentRevisionVersion: true,
-        },
-      });
-      const current = await tx.agentRevision.findFirst({
-        where: {
+  try {
+    await prepareAgentRevisionMcpDeployments(ctx.ws.id, agentId);
+    return await db.$transaction(
+      async (tx) => {
+        const agent = await tx.agent.findFirstOrThrow({
+          where: { id: agentId, workspaceId: ctx.ws.id },
+          select: {
+            currentRevisionVersion: true,
+          },
+        });
+        const current = await tx.agentRevision.findFirst({
+          where: {
+            agentId,
+            version: agent.currentRevisionVersion,
+            agent: { workspace: workspaceScopeWhere(ctx.ws) },
+          },
+          select: { id: true },
+        });
+        const config = await captureAgentRevisionConfig(
+          tx,
           agentId,
-          version: agent.currentRevisionVersion,
-          agent: { workspace: workspaceScopeWhere(ctx.ws) },
-        },
-        select: { id: true },
-      });
-      const config = await captureAgentRevisionConfig(tx, agentId, environment);
-      // Flight text chunks decode a leading BOM; JSON keeps it inside the payload.
-      return {
-        expectedRevisionId: current?.id ?? null,
-        configJson: JSON.stringify(config),
-      };
-    },
-    { timeout: 120_000 },
-  );
+          environment,
+        );
+        // Flight text chunks decode a leading BOM; JSON keeps it inside the payload.
+        return {
+          expectedRevisionId: current?.id ?? null,
+          configJson: JSON.stringify(config),
+        };
+      },
+      { timeout: 120_000 },
+    );
+  } catch (error) {
+    if (error instanceof McpRecipePinError || error instanceof McpPinningError)
+      return { error: error.code };
+    throw error;
+  }
 }
 
 /** Apply exactly the reviewed configuration using a compare-and-swap default. */
@@ -1229,6 +1240,8 @@ export async function publishAgentRevisionAction(formData: FormData) {
       config: JSON.parse(String(formData.get("config") ?? "")),
     });
   } catch (error) {
+    if (error instanceof McpRecipePinError || error instanceof McpPinningError)
+      return { error: error.code, conflict: null };
     if (error instanceof AgentRevisionError) {
       switch (error.code) {
         case "AGENT_FALLBACK_MODELS_INVALID":
