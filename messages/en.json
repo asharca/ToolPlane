@@ -967,6 +967,8 @@
           "AGENT_REVISION_CONFLICT": "Settings changed elsewhere. Reopen settings and prepare a new revision."
         }
       },
+      "MCP_EXACT_PACKAGE_VERSION_REQUIRED": "Revision was not published: MCP dependencies must be pinned to an exact version or a full 40-character commit SHA (tags, branches, short SHAs, and unpinned Git references are rejected). For Python (uvx / uv tool run), use package==1.2.3 or git+https://github.com/<owner>/<repo>.git@<40-char-sha>; for npm / GitHub, use package@1.2.3 or https://github.com/<owner>/<repo>#<40-char-sha>.",
+      "mcpVersionResolutionFailed": "Revision was not published: couldn't resolve an exact package version or commit for this MCP. Check the package name and registry access, or specify an exact version or full 40-character commit SHA, then try again.",
       "piPackageMcpBindingRequired": "Packages with MCP requirements need explicit current-workspace deployment and tool bindings before they can run. Configure these in the package's workspace installation; a publisher's binding cannot grant another workspace access.",
       "piPackageMcpBindings": "Configure workspace MCP bindings",
       "piSdkRuntime": "Pi SDK",
