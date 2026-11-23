@@ -19,10 +19,7 @@ import {
   submitAgentEntry,
   agentEntryResult,
   agentEntryRuntimeParts,
-  artifactReplyText,
 } from "./execution/entries";
-import { decryptSecretText } from "@/lib/security/secrets";
-import { postGithubComment, type GithubReplyResult } from "./trigger-webhooks";
 import { parseRuntimeFailure } from "./runtime-failure";
 import { appendBudgetWarningText } from "./budget-warning";
 import {
@@ -100,8 +97,6 @@ export function triggerDto(
             url: `/api/v1/triggers/${trigger.id}/webhook`,
             auth: trigger.webhookAuth,
             ignoredSenders: trigger.webhookIgnoredSenders,
-            replyEnabled:
-              trigger.webhookAuth === "github" && !!trigger.webhookReplyToken,
           }
         : null,
     createdAt: trigger.createdAt.toISOString(),
@@ -268,15 +263,19 @@ export async function deliverPendingTrigger(triggerId: string) {
       });
   }
 }
+/** Without a {{payload}} placeholder, the request payload is appended so the agent always sees it. */
 export function triggerPrompt(
   trigger: Pick<AgentTrigger, "prompt">,
   payload?: unknown,
   event = "",
 ) {
-  return trigger.prompt
-    .replaceAll("{{payload}}", () =>
-      payload === undefined ? "" : JSON.stringify(payload),
-    )
+  const json = payload === undefined ? "" : JSON.stringify(payload);
+  const prompt =
+    payload === undefined || trigger.prompt.includes("{{payload}}")
+      ? trigger.prompt
+      : `${trigger.prompt}\n\n{{payload}}`;
+  return prompt
+    .replaceAll("{{payload}}", () => json)
     .replaceAll("{{event}}", () => event);
 }
 export async function runAgentTrigger(
@@ -496,17 +495,14 @@ async function startTriggerEvent(
     });
     return started.conversationId;
   } catch (error) {
-    const code = triggerError(error);
-    const failed = await db.agentTriggerEvent.updateMany({
+    await db.agentTriggerEvent.updateMany({
       where: { id: event.id, status: "running" },
       data: {
         status: "failed",
-        error: code,
+        error: triggerError(error),
         ...(conversationId ? { conversationId } : {}),
-        ...replyFields(trigger, event, "", code),
       },
     });
-    if (failed.count) void sendTriggerReply(event.id).catch(() => {});
     if (event.threadKey !== null)
       void dispatchTriggerThread(trigger, event.threadKey).catch(() => {});
     return conversationId ?? null;
@@ -553,18 +549,15 @@ async function completeTriggerEvents(
   for (const event of events) {
     let status: "done" | "failed" | null = null;
     let error: string | null = null;
-    let reply = "";
     if (event.taskId) {
       const task = await db.a2ATask.findUnique({
         where: { id: event.taskId },
-        select: { state: true, snapshot: true },
+        select: { state: true },
       });
       if (!task || settled(task.state)) {
         status =
           task?.state === TaskState.TASK_STATE_COMPLETED ? "done" : "failed";
         if (status === "failed") error = "TRIGGER_EXECUTION_FAILED";
-        else if (task)
-          reply = artifactReplyText(Task.fromJSON(task.snapshot), false);
       }
     } else if (Date.now() - event.updatedAt.getTime() >= UNSUBMITTED_EVENT_MS) {
       status = "failed";
@@ -573,124 +566,16 @@ async function completeTriggerEvents(
     if (!status) continue;
     const closed = await db.agentTriggerEvent.updateMany({
       where: { id: event.id, status: "running", updatedAt: event.updatedAt },
-      data: {
-        status,
-        error,
-        ...replyFields(event.trigger, event, reply, error),
-      },
+      data: { status, error },
     });
-    if (closed.count) void sendTriggerReply(event.id).catch(() => {});
     if (closed.count && event.threadKey !== null && event.trigger.enabled)
       await dispatchTriggerThread(event.trigger, event.threadKey);
   }
 }
 
-/** A GitHub-mode thread with a reply token gets one comment per settled event. */
-function replyFields(
-  trigger: AgentTrigger,
-  event: { threadKey: string | null },
-  text: string,
-  error: string | null,
-) {
-  if (
-    trigger.webhookAuth !== "github" ||
-    !trigger.webhookReplyToken ||
-    event.threadKey === null
-  )
-    return {};
-  const body = error
-    ? `ToolPlane trigger "${trigger.name}" failed (${error}).`
-    : text.trim();
-  return !body || isSilentAgentReply(body)
-    ? { replyStatus: "skipped", replyAt: new Date() }
-    : { replyStatus: "pending", replyText: body, replyAt: new Date() };
-}
-
-// Measured from the event's acceptance; transient GitHub failures retry within it.
-const REPLY_RETRY_MS = 60 * 60_000;
-
-/** Claims one pending reply and posts it; only fixed error codes are persisted. */
-export async function sendTriggerReply(eventId: string) {
-  const event = await db.agentTriggerEvent.findUnique({
-    where: { id: eventId },
-    include: { trigger: true },
-  });
-  if (event?.replyStatus !== "pending" || !event.replyText || !event.threadKey)
-    return;
-  const claimed = await db.agentTriggerEvent.updateMany({
-    where: { id: event.id, replyStatus: "pending", replyAt: event.replyAt },
-    data: { replyStatus: "sending" },
-  });
-  if (!claimed.count) return;
-  let result: GithubReplyResult = {
-    status: "failed",
-    code: "GITHUB_REPLY_UNAVAILABLE",
-  };
-  try {
-    if (
-      event.trigger.webhookAuth === "github" &&
-      event.trigger.webhookReplyToken
-    )
-      result = await postGithubComment(
-        decryptSecretText(event.trigger.webhookReplyToken),
-        event.threadKey,
-        event.replyText,
-      );
-  } catch {
-    result = { status: "failed", code: "GITHUB_REPLY_FAILED" };
-  }
-  const expired =
-    !event.replyAt || Date.now() - event.createdAt.getTime() >= REPLY_RETRY_MS;
-  const next =
-    result.status === "sent"
-      ? { replyStatus: "sent", replyText: null, replyError: null }
-      : result.status === "retry" && !expired
-        ? { replyStatus: "pending" }
-        : {
-            replyStatus: "failed",
-            replyText: null,
-            replyError:
-              result.status === "failed" ? result.code : "GITHUB_REPLY_FAILED",
-          };
-  await db.agentTriggerEvent.updateMany({
-    where: { id: event.id, replyStatus: "sending" },
-    data: { ...next, replyAt: new Date() },
-  });
-  if (next.replyStatus === "failed")
-    logSystemEvent("agent.trigger.reply_failed", {
-      domain: "agent",
-      level: "warn",
-      workspaceId: event.trigger.workspaceId,
-      agentId: event.trigger.agentId,
-      errorCode: next.replyError ?? undefined,
-      attributes: { triggerId: event.triggerId },
-    });
-}
-
 /** Scheduler recovery: settle interrupted events and restart idle threads. */
 async function recoverTriggerEvents() {
   await completeTriggerEvents({});
-  // A reply interrupted mid-send is retried; GitHub may then show it twice.
-  await db.agentTriggerEvent.updateMany({
-    where: {
-      replyStatus: "sending",
-      replyAt: { lte: new Date(Date.now() - 2 * 60_000) },
-    },
-    data: { replyStatus: "pending" },
-  });
-  const replies = await db.agentTriggerEvent.findMany({
-    where: {
-      replyStatus: "pending",
-      replyAt: { lte: new Date(Date.now() - 30_000) },
-    },
-    orderBy: { replyAt: "asc" },
-    take: 50,
-    select: { id: true },
-  });
-  for (const reply of replies) {
-    if (!runtimeCanOperate()) break;
-    await sendTriggerReply(reply.id);
-  }
   const queued = await db.agentTriggerEvent.findMany({
     where: {
       status: "queued",

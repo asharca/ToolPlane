@@ -88,7 +88,6 @@ const webhookSchema = z
       .array(z.string().trim().min(1).max(100))
       .max(20)
       .optional(),
-    replyToken: z.string().trim().min(1).max(500).nullable().optional(),
   })
   .strict();
 
@@ -107,18 +106,6 @@ const ignoredSenders = (logins: string[] | undefined) =>
   logins === undefined
     ? undefined
     : [...new Set(logins.map((login) => login.toLowerCase()))];
-/** Write-only reply token; only GitHub mode keeps one. */
-function replyTokenData(auth: string, token: string | null | undefined) {
-  if (auth !== "github")
-    return typeof token === "string"
-      ? null
-      : { webhookReplyToken: Prisma.DbNull };
-  if (token === undefined) return {};
-  return {
-    webhookReplyToken:
-      token === null ? Prisma.DbNull : encryptSecretText(token),
-  };
-}
 
 const createSchema = z
   .object({
@@ -343,8 +330,6 @@ export async function handleAgentAutomation(
       return jsonError("INVALID_TRIGGER", 400);
     }
     const auth = webhook?.auth ?? "bearer";
-    const reply = replyTokenData(auth, webhook?.replyToken);
-    if (!reply) return jsonError("INVALID_TRIGGER", 400);
     const secret = value.kind === "webhook" ? webhookSecretData(auth) : null;
     const created = await db.agentTrigger.create({
       data: {
@@ -361,7 +346,6 @@ export async function handleAgentAutomation(
               ...secret.data,
               webhookAuth: auth,
               webhookIgnoredSenders: ignoredSenders(webhook?.ignoredSenders),
-              ...reply,
             }
           : {}),
       },
@@ -405,8 +389,6 @@ export async function handleAgentAutomation(
       return jsonError("INVALID_TRIGGER", 400);
     }
     const auth = webhook?.auth ?? trigger.webhookAuth;
-    const reply = replyTokenData(auth, webhook?.replyToken);
-    if (!reply) return jsonError("INVALID_TRIGGER", 400);
     const secret =
       rotateSecret || auth !== trigger.webhookAuth
         ? webhookSecretData(auth === "github" ? "github" : "bearer")
@@ -426,7 +408,6 @@ export async function handleAgentAutomation(
           ? {
               webhookAuth: auth,
               webhookIgnoredSenders: ignoredSenders(webhook.ignoredSenders),
-              ...reply,
             }
           : {}),
         ...(secret ? secret.data : {}),

@@ -517,7 +517,7 @@ export async function runAgentEntry(
     throw error;
   }
 }
-export function artifactReplyText(task: Task, includeQueuedReplies: boolean) {
+function artifactReplyText(task: Task, includeQueuedReplies: boolean) {
   return task.artifacts
     .flatMap((a) => {
       const queued =
