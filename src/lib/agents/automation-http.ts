@@ -6,25 +6,37 @@ import {
 } from "@/lib/workspace/scope";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { configSchema, permitsHost } from "@/lib/account-connections/config";
-import {
-  isSourceKind,
-  parseSourceConfig,
-  sourceKinds,
-  SourceFailure,
-} from "./trigger-sources";
 import { resolveRequestUser } from "@/lib/auth/request-user";
 import { ORDINARY_AGENT_FILTER } from "./queries";
-import { parseJson } from "./public-api/body";
+import {
+  parseJson,
+  readRequestText,
+  requestBodyMayFit,
+} from "./public-api/body";
 import { AgentApiError } from "./public-api/errors";
 import { takeAgentApiRateLimit } from "./public-api/rate-limit";
 import {
+  acceptTriggerEvent,
   newTriggerSecret,
   nextTriggerRun,
   runAgentTrigger,
   triggerDto,
+  triggerPrompt,
   verifyTriggerSecret,
 } from "./triggers";
+import {
+  githubPromptPayload,
+  githubSender,
+  githubThreadKey,
+  headerKey,
+  verifyGithubSignature,
+  webhookAuthKinds,
+  type WebhookAuth,
+} from "./trigger-webhooks";
+import { decryptSecretText, encryptSecretText } from "@/lib/security/secrets";
+import { A2A_LIMITS } from "@/lib/a2a/model";
+import { Prisma } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { budgetDto, groupedUsage, usageTotals, utcMonth } from "./usage";
 import { parseRuntimeFailure } from "./runtime-failure";
 import { hostedRunnerSpec } from "./platform-runner";
@@ -38,9 +50,6 @@ const deliveryConnectionSelect = {
 } as const;
 const triggerIncludes = {
   deliveryConnection: { select: deliveryConnectionSelect },
-  connection: {
-    select: { id: true, name: true, status: true, accountLabel: true },
-  },
 } as const;
 
 const deliverySchema = z
@@ -72,12 +81,36 @@ async function deliveryData(
     deliveryChatId: parsed.data.chatId,
   };
 }
+const webhookSchema = z
+  .object({
+    auth: z.enum(webhookAuthKinds),
+    ignoredSenders: z
+      .array(z.string().trim().min(1).max(100))
+      .max(20)
+      .optional(),
+  })
+  .strict();
+
+/** A new one-time secret in the storage form its auth mode verifies. */
+function webhookSecretData(auth: WebhookAuth) {
+  const secret = newTriggerSecret();
+  return {
+    secret: secret.secret,
+    data:
+      auth === "github"
+        ? { secretHash: null, webhookSecret: encryptSecretText(secret.secret) }
+        : { secretHash: secret.secretHash, webhookSecret: Prisma.DbNull },
+  };
+}
+const ignoredSenders = (logins: string[] | undefined) =>
+  logins === undefined
+    ? undefined
+    : [...new Set(logins.map((login) => login.toLowerCase()))];
 
 const createSchema = z
   .object({
-    kind: z.enum(["schedule", "webhook", ...sourceKinds]),
-    sourceConfig: z.unknown().optional(),
-    connectionId: z.unknown().optional(),
+    kind: z.enum(["schedule", "webhook"]),
+    webhook: webhookSchema.optional(),
     name: z.string().trim().min(1).max(120),
     prompt: z.string().trim().min(1).max(20_000),
     cron: z.string().max(200).optional(),
@@ -91,42 +124,6 @@ const patchSchema = createSchema
   .partial()
   .extend({ rotateSecret: z.literal(true).optional() })
   .strict();
-async function sourceData(
-  workspaceId: string,
-  kind: string,
-  raw: unknown,
-  connectionId: unknown,
-) {
-  if (!isSourceKind(kind))
-    return raw === undefined && connectionId === undefined
-      ? { sourceConfig: undefined, connectionId: undefined }
-      : jsonError("INVALID_TRIGGER_SOURCE", 400);
-  if (
-    connectionId != null &&
-    (typeof connectionId !== "string" ||
-      !connectionId ||
-      connectionId.length > 200)
-  )
-    return jsonError("INVALID_TRIGGER_SOURCE", 400);
-  const id = typeof connectionId === "string" ? connectionId : null;
-  const sourceConfig = parseSourceConfig(kind, raw);
-  if (!sourceConfig) return jsonError("INVALID_TRIGGER_SOURCE", 400);
-  if (id) {
-    const connection = await db.accountConnection.findFirst({
-      where: { id, workspaceId },
-      select: { config: true },
-    });
-    if (!connection) return jsonError("INVALID_TRIGGER_SOURCE", 400);
-    if (
-      !permitsHost(
-        configSchema.parse(connection.config),
-        new URL(sourceConfig.url),
-      )
-    )
-      return jsonError("TRIGGER_SOURCE_HOST_NOT_ALLOWED", 400);
-  }
-  return { sourceConfig, connectionId: id };
-}
 const budgetSchema = z
   .object({
     monthlyUsd: z.number().finite().min(0).max(1_000_000_000).nullable(),
@@ -135,11 +132,6 @@ const budgetSchema = z
 const jsonError = (error: string, status: number) =>
   Response.json({ error }, { status });
 function apiFailure(error: unknown) {
-  if (error instanceof SourceFailure)
-    return jsonError(
-      error.code,
-      error.code === "SUBSCRIPTION_RATE_LIMITED" ? 429 : 502,
-    );
   if (error instanceof AgentApiError)
     return jsonError(error.code, error.status);
   if (
@@ -325,43 +317,37 @@ export async function handleAgentAutomation(
         "INVALID_TRIGGER",
         body.reason === "too_large" ? 413 : 400,
       );
-    const { delivery, sourceConfig, connectionId, ...value } = body.value;
-    const source = await sourceData(
-      agent.workspaceId,
-      value.kind,
-      sourceConfig,
-      connectionId,
-    );
-    if (source instanceof Response) return source;
+    const { delivery, webhook, ...value } = body.value;
+    if (webhook && value.kind !== "webhook")
+      return jsonError("INVALID_TRIGGER", 400);
     const target = await deliveryData(delivery, agent.workspaceId, agentId);
     if (!target) return jsonError("INVALID_TRIGGER_DELIVERY", 400);
     let nextRunAt: Date | null = null;
     try {
-      if (value.kind !== "webhook") {
-        if (
-          isSourceKind(value.kind) &&
-          (!value.cron?.trim() || !value.timezone?.trim())
-        )
-          return jsonError("INVALID_TRIGGER", 400);
+      if (value.kind === "schedule")
         nextRunAt = nextTriggerRun(value.cron ?? "", value.timezone ?? "UTC");
-      }
     } catch {
       return jsonError("INVALID_TRIGGER", 400);
     }
-    const secret = value.kind === "webhook" ? newTriggerSecret() : null;
+    const auth = webhook?.auth ?? "bearer";
+    const secret = value.kind === "webhook" ? webhookSecretData(auth) : null;
     const created = await db.agentTrigger.create({
       data: {
         ...value,
         ...target,
-        sourceConfig: source.sourceConfig,
-        connectionId: source.connectionId ?? null,
-        cron: value.kind !== "webhook" ? value.cron : null,
-        timezone: value.kind !== "webhook" ? (value.timezone ?? "UTC") : null,
+        cron: value.kind === "schedule" ? value.cron : null,
+        timezone: value.kind === "schedule" ? (value.timezone ?? "UTC") : null,
         nextRunAt: value.enabled === false ? null : nextRunAt,
         workspaceId: agent.workspaceId,
         agentId,
         actorId: user.id,
-        secretHash: secret?.secretHash,
+        ...(secret
+          ? {
+              ...secret.data,
+              webhookAuth: auth,
+              webhookIgnoredSenders: ignoredSenders(webhook?.ignoredSenders),
+            }
+          : {}),
       },
       include: triggerIncludes,
     });
@@ -380,30 +366,10 @@ export async function handleAgentAutomation(
         "INVALID_TRIGGER",
         body.reason === "too_large" ? 413 : 400,
       );
-    const { rotateSecret, delivery, sourceConfig, connectionId, ...value } =
-      body.value;
-    const source = await sourceData(
-      agent.workspaceId,
-      trigger.kind,
-      sourceConfig === undefined && isSourceKind(trigger.kind)
-        ? trigger.sourceConfig
-        : sourceConfig,
-      connectionId === undefined && isSourceKind(trigger.kind)
-        ? trigger.connectionId
-        : connectionId,
-    );
-    if (source instanceof Response) return source;
-    const resetSource =
-      (connectionId !== undefined && connectionId !== trigger.connectionId) ||
-      (isSourceKind(trigger.kind) &&
-        sourceConfig !== undefined &&
-        JSON.stringify(parseSourceConfig(trigger.kind, sourceConfig)) !==
-          JSON.stringify(
-            parseSourceConfig(trigger.kind, trigger.sourceConfig),
-          ));
+    const { rotateSecret, delivery, webhook, ...value } = body.value;
     const target = await deliveryData(delivery, agent.workspaceId, agentId);
     if (!target) return jsonError("INVALID_TRIGGER_DELIVERY", 400);
-    if (trigger.kind !== "webhook" && rotateSecret)
+    if (trigger.kind !== "webhook" && (rotateSecret || webhook))
       return jsonError("INVALID_TRIGGER", 400);
     if (
       trigger.kind === "webhook" &&
@@ -412,13 +378,7 @@ export async function handleAgentAutomation(
       return jsonError("INVALID_TRIGGER", 400);
     let nextRunAt = trigger.nextRunAt;
     try {
-      if (trigger.kind === "schedule" || isSourceKind(trigger.kind)) {
-        if (
-          isSourceKind(trigger.kind) &&
-          (!(value.cron ?? trigger.cron)?.trim() ||
-            !(value.timezone ?? trigger.timezone)?.trim())
-        )
-          return jsonError("INVALID_TRIGGER", 400);
+      if (trigger.kind === "schedule") {
         const next = nextTriggerRun(
           value.cron ?? trigger.cron ?? "",
           value.timezone ?? trigger.timezone ?? "UTC",
@@ -428,7 +388,11 @@ export async function handleAgentAutomation(
     } catch {
       return jsonError("INVALID_TRIGGER", 400);
     }
-    const secret = rotateSecret ? newTriggerSecret() : null;
+    const auth = webhook?.auth ?? trigger.webhookAuth;
+    const secret =
+      rotateSecret || auth !== trigger.webhookAuth
+        ? webhookSecretData(auth === "github" ? "github" : "bearer")
+        : null;
     const [updated] = await db.agentTrigger.updateManyAndReturn({
       where: {
         id: trigger.id,
@@ -439,19 +403,14 @@ export async function handleAgentAutomation(
       data: {
         ...value,
         ...target,
-        ...source,
-        ...(resetSource
+        nextRunAt,
+        ...(webhook
           ? {
-              syncCursor: null,
-              lastSyncAt: null,
-              lastSyncStatus: null,
-              lastSyncError: null,
-              syncRetryAt: null,
-              syncFailures: 0,
+              webhookAuth: auth,
+              webhookIgnoredSenders: ignoredSenders(webhook.ignoredSenders),
             }
           : {}),
-        nextRunAt,
-        ...(secret ? { secretHash: secret.secretHash } : {}),
+        ...(secret ? secret.data : {}),
       },
       include: triggerIncludes,
     });
@@ -516,16 +475,37 @@ export async function handleWorkspaceAgentUsage(req: Request, slug: string) {
     ),
   });
 }
+const GITHUB_BODY_BYTES = 1024 * 1024;
+const BEARER_BODY_BYTES = 64 * 1024;
+
 export async function handleTriggerWebhook(req: Request, triggerId: string) {
   const trigger = await db.agentTrigger.findUnique({
     where: { id: triggerId },
   });
-  const bearer =
-    /^Bearer ([^\s]+)$/i.exec(req.headers.get("authorization") ?? "")?.[1] ??
-    "";
+  if (trigger?.kind !== "webhook") return jsonError("Unauthorized", 401);
+  const github = trigger.webhookAuth === "github";
+  if (!github) {
+    const bearer =
+      /^Bearer ([^\s]+)$/i.exec(req.headers.get("authorization") ?? "")?.[1] ??
+      "";
+    if (!verifyTriggerSecret(trigger.secretHash, bearer))
+      return jsonError("Unauthorized", 401);
+  }
+  const maxBytes = github ? GITHUB_BODY_BYTES : BEARER_BODY_BYTES;
+  if (!requestBodyMayFit(req, maxBytes))
+    return jsonError("INVALID_TRIGGER", 413);
+  const raw = await readRequestText(req, maxBytes).catch(() => null);
+  if (!raw) return jsonError("INVALID_TRIGGER", 400);
+  if (!raw.ok) return jsonError("INVALID_TRIGGER", 413);
+  // GitHub signs the exact body, so its signature is the authentication.
   if (
-    trigger?.kind !== "webhook" ||
-    !verifyTriggerSecret(trigger.secretHash, bearer)
+    github &&
+    (!trigger.webhookSecret ||
+      !verifyGithubSignature(
+        decryptSecretText(trigger.webhookSecret),
+        raw.text,
+        req.headers.get("x-hub-signature-256"),
+      ))
   )
     return jsonError("Unauthorized", 401);
   if (!trigger.enabled) return jsonError("Not found", 404);
@@ -538,13 +518,49 @@ export async function handleTriggerWebhook(req: Request, triggerId: string) {
       endpointDaily: 1000,
       clientDaily: 1000,
     });
-    const body = await parseJson(req, z.unknown(), 64 * 1024);
-    if (!body.ok)
-      return jsonError(
-        "INVALID_TRIGGER",
-        body.reason === "too_large" ? 413 : 400,
-      );
-    return Response.json(await runAgentTrigger(trigger, body.value), {
+    let payload: unknown;
+    try {
+      payload = raw.text ? JSON.parse(raw.text) : undefined;
+    } catch {
+      return jsonError("INVALID_TRIGGER", 400);
+    }
+    let input: { dedupeKey: string; threadKey: string | null; prompt: string };
+    if (github) {
+      const event = headerKey(req.headers.get("x-github-event"));
+      const delivery = headerKey(req.headers.get("x-github-delivery"));
+      if (!event || !delivery) return jsonError("INVALID_TRIGGER", 400);
+      if (event === "ping")
+        return Response.json({ status: "ignored", conversationId: null });
+      const sender = githubSender(payload);
+      if (
+        sender.bot ||
+        (sender.login &&
+          trigger.webhookIgnoredSenders.includes(sender.login.toLowerCase()))
+      )
+        return Response.json(
+          { status: "ignored", conversationId: null },
+          { status: 202 },
+        );
+      input = {
+        dedupeKey: `github:${delivery}`,
+        threadKey: githubThreadKey(payload),
+        prompt: triggerPrompt(
+          trigger,
+          githubPromptPayload(event, payload),
+          event,
+        ),
+      };
+    } else {
+      input = {
+        dedupeKey:
+          headerKey(req.headers.get("idempotency-key")) ?? randomUUID(),
+        threadKey: headerKey(req.headers.get("x-toolplane-thread-key")),
+        prompt: triggerPrompt(trigger, payload),
+      };
+    }
+    if (input.prompt.length > A2A_LIMITS.inputCharacters)
+      return jsonError("TRIGGER_PROMPT_TOO_LARGE", 413);
+    return Response.json(await acceptTriggerEvent(trigger, input), {
       status: 202,
     });
   } catch (error) {

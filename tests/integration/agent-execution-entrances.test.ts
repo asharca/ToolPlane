@@ -2,8 +2,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
-import * as transport from "@/lib/account-connections/pinned-get";
-import { encryptSecretRecord } from "@/lib/security/secrets";
 import { createConversation } from "@/lib/agents/conversation-mutations";
 import { getAgentForRun, getConversation } from "@/lib/agents/queries";
 import { resolveAgentRequestSession } from "@/lib/agents/request-session";
@@ -42,7 +40,6 @@ import {
   verifyAgentRuntimeToken,
 } from "@/lib/agents/runtime-access";
 import { mapTaskSandbox } from "./task-sandbox-fixture";
-import * as worker from "@/lib/agents/execution/worker";
 
 // Entrance authorization exercises real revisions without Docker SDK preparation.
 vi.mock("@/lib/agents/pi-runtime", () => ({
@@ -559,170 +556,6 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
       ).rejects.toThrow("AGENT_BUDGET_EXCEEDED");
     },
   );
-
-  it("seeds HTTP items and admits new matching IDs and revisions once without exposing credentials", async () => {
-    const { agent } = await fixture();
-    const token = (await createApiToken(userId, "Subscription management"))
-      .token;
-    const credential = `fixture-${randomUUID()}`;
-    const api = (
-      method: string,
-      action: "triggers" | "trigger" | "run",
-      id?: string,
-      body?: unknown,
-    ) =>
-      handleAgentAutomation(
-        new Request("http://localhost/api", {
-          method,
-          headers: {
-            authorization: `Bearer ${token}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(body),
-        }),
-        agent.id,
-        action,
-        id,
-      );
-    const connection = await db.accountConnection.create({
-      data: {
-        workspaceId,
-        name: "HTTP fixture",
-        preset: "custom",
-        authType: "bearer",
-        config: { allowedHosts: ["example.org"] },
-        status: "active",
-        encryptedSecret: encryptSecretRecord({ value: credential }),
-      },
-    });
-    const config = {
-      kind: "http",
-      connectionId: connection.id,
-      cron: "*/5 * * * *",
-      timezone: "UTC",
-      name: "Reviews",
-      prompt: "Check {{payload}}",
-      sourceConfig: {
-        url: "https://example.org/notifications",
-        itemsPath: "",
-        idPath: "id",
-        revisionPath: "updated_at",
-        filters: [
-          { path: "reason", values: ["REVIEW_REQUESTED"] },
-          { path: "repository.full_name", values: ["owner/project"] },
-        ],
-      },
-    };
-    const created = await api("POST", "triggers", undefined, config);
-    expect(created.status).toBe(201);
-    const dto = (await created.json()).trigger;
-    expect(dto.source).toEqual({
-      config: config.sourceConfig,
-      connection: {
-        id: connection.id,
-        name: connection.name,
-        status: "active",
-        accountLabel: null,
-      },
-      lastSyncAt: null,
-      lastSyncStatus: null,
-      lastSyncError: null,
-      syncRetryAt: null,
-    });
-    expect(JSON.stringify(dto)).not.toContain(credential);
-    const renamed = await api("PATCH", "trigger", dto.id, { name: "Renamed" });
-    expect(renamed.status).toBe(200);
-
-    const thread = {
-      id: "42",
-      reason: "review_requested",
-      updated_at: "2026-11-01T10:00:00Z",
-      repository: { full_name: "owner/project", private: true },
-      subject: {
-        title: "Review PR",
-        type: "PullRequest",
-        url: "https://api.github.com/repos/owner/project/pulls/7",
-      },
-    };
-    const rest = vi
-      .spyOn(transport, "pinnedGet")
-      .mockImplementation(async (url, headers) => {
-        expect(url.href).toBe(config.sourceConfig.url);
-        expect(headers.authorization).toBe(`Bearer ${credential}`);
-        expect(headers["user-agent"]).toBe("ToolPlane");
-        return {
-          status: 200,
-          headers: new Headers(),
-          text: JSON.stringify([
-            thread,
-            thread,
-            { ...thread, id: "88", reason: "comment" },
-          ]),
-        };
-      });
-    const wake = vi
-      .spyOn(worker, "wakeAgentWorker")
-      .mockImplementation(() => {});
-    try {
-      const poll = async () => {
-        const res = await api("POST", "run", dto.id);
-        expect(res.status).toBe(202);
-        return (await res.json()).conversationId;
-      };
-      expect(await poll()).toBeNull();
-      expect(await poll()).toBeNull();
-      expect(
-        await db.agentTriggerItem.count({ where: { triggerId: dto.id } }),
-      ).toBe(1);
-      expect(
-        await db.conversation.count({ where: { triggerId: dto.id } }),
-      ).toBe(0);
-      for (const revision of ["2026-11-02T10:00:00Z", "2026-11-03T10:00:00Z"]) {
-        thread.id = "43";
-        thread.updated_at = revision;
-        const conversationId = await poll();
-        expect(typeof conversationId).toBe("string");
-        const message = await db.message.findFirstOrThrow({
-          where: { conversationId, role: "user" },
-        });
-        const parts = JSON.stringify(message.parts);
-        expect(parts).toContain(thread.subject.url);
-        expect(parts).toContain(revision);
-        expect(parts).toContain("untrusted");
-        expect(parts).not.toContain(credential);
-        expect(parts).not.toContain("aes-256-gcm");
-        expect(await poll()).toBeNull();
-      }
-      expect(
-        await db.conversation.count({ where: { triggerId: dto.id } }),
-      ).toBe(2);
-      const reset = Math.ceil(Date.now() / 1000) + 120;
-      rest.mockResolvedValueOnce({
-        status: 429,
-        headers: new Headers({ "x-ratelimit-reset": String(reset) }),
-        text: "",
-      });
-      const limited = await api("POST", "run", dto.id);
-      expect(limited.status).toBe(429);
-      expect(await limited.json()).toEqual({
-        error: "SUBSCRIPTION_RATE_LIMITED",
-      });
-      const list = await (await api("GET", "triggers")).json();
-      expect(list.triggers[0].source).toMatchObject({
-        lastSyncStatus: "rate_limited",
-        lastSyncError: "SUBSCRIPTION_RATE_LIMITED",
-        syncRetryAt: new Date(reset * 1000).toISOString(),
-      });
-      expect(JSON.stringify(list)).not.toContain(credential);
-      expect(JSON.stringify(list)).not.toContain("aes-256-gcm");
-      const calls = rest.mock.calls.length;
-      expect(await poll()).toBeNull();
-      expect(rest).toHaveBeenCalledTimes(calls);
-    } finally {
-      rest.mockRestore();
-      wake.mockRestore();
-    }
-  });
 
   it("denies foreign workspace reads and rejects webhook user, toolkit and wrong secrets", async () => {
     const { agent, conversation } = await fixture();

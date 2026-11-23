@@ -10,9 +10,6 @@ export default async function SettingsPage({
   searchParams: Promise<{ section?: string }>;
 }) {
   const [{ workspace }, query] = await Promise.all([params, searchParams]);
-  const section =
-    query.section === "files" || query.section === "connections"
-      ? query.section
-      : "general";
+  const section = query.section === "files" ? "files" : "general";
   return <WorkspaceSettingsContent slug={workspace} section={section} />;
 }

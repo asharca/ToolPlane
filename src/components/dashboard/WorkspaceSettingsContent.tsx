@@ -1,7 +1,6 @@
-import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
-import { FolderOpen, Link2, Settings } from "lucide-react";
+import { FolderOpen, Settings } from "lucide-react";
 import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { db } from "@/lib/db";
@@ -29,9 +28,8 @@ import {
 } from "./ModalSidebarLayout";
 import { DialogBody } from "./dialog";
 import { WorkspaceFilesManager } from "./WorkspaceFilesManager";
-import { AccountConnectionsManager } from "./AccountConnectionsManager";
 
-export type WorkspaceSettingsSection = "general" | "files" | "connections";
+export type WorkspaceSettingsSection = "general" | "files";
 
 export async function WorkspaceSettingsContent({
   slug,
@@ -49,7 +47,6 @@ export async function WorkspaceSettingsContent({
   const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app?view=workspaces&notice=unavailable");
   const isOwner = ws.ownerId === user.id;
-  const canManage = ws.role === "owner" || ws.role === "admin";
   const [providers, members, impact, running, workspaceBytes, ownerQuota] =
     await Promise.all([
       listProviders(ws.id),
@@ -235,18 +232,6 @@ export async function WorkspaceSettingsContent({
                 : null,
             }}
           />
-        </DialogBody>
-      ),
-    },
-    {
-      id: "connections",
-      label: t("connections"),
-      icon: <Link2 className="size-4" />,
-      content: (
-        <DialogBody>
-          <Suspense fallback={null}>
-            <AccountConnectionsManager slug={slug} canManage={canManage} />
-          </Suspense>
         </DialogBody>
       ),
     },

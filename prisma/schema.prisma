@@ -200,7 +200,6 @@ model DailySnapshot {
 }
 
 model Workspace {
-  accountConnections AccountConnection[]
   mcpOAuthCredentials McpOAuthCredential[]
   agentMemories AgentMemory[]
   agentEnvironmentCredentials AgentEnvironmentCredential[]
@@ -809,41 +808,6 @@ model AgentUsage {
   @@index([workspaceId, createdAt])
 }
 
-model AccountConnection {
-  id String @id @default(cuid())
-  workspaceId String
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  name String
-  preset String
-  authType String
-  config Json
-  encryptedSecret Json?
-  expiresAt DateTime?
-  refreshLeaseUntil DateTime?
-  status String @default("pending")
-  accountLabel String?
-  lastError String?
-  createdById String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  triggers AgentTrigger[]
-  oauthPending AccountConnectionOAuthPending[]
-  @@unique([workspaceId, name])
-  @@index([workspaceId])
-}
-
-model AccountConnectionOAuthPending {
-  stateHash String @id
-  connectionId String
-  connection AccountConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
-  userId String
-  encryptedVerifier Json
-  redirectUri String
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  @@index([expiresAt])
-}
-
 model AgentTrigger {
   id String @id @default(cuid())
   workspaceId String
@@ -857,16 +821,12 @@ model AgentTrigger {
   timezone String?
   prompt String
   secretHash String?
-  sourceConfig Json?
-  connectionId String?
-  connection AccountConnection? @relation(fields: [connectionId], references: [id], onDelete: Restrict)
-  lastSyncAt DateTime?
-  lastSyncStatus String?
-  lastSyncError String?
-  syncRetryAt DateTime?
-  syncCursor String?
-  syncFailures Int @default(0)
-  items AgentTriggerItem[]
+  // "bearer" compares secretHash; "github" verifies X-Hub-Signature-256 with the encrypted key.
+  webhookAuth String @default("bearer")
+  webhookSecret Json?
+  webhookIgnoredSenders String[] @default([])
+  events AgentTriggerEvent[]
+  threads AgentTriggerThread[]
   actorId String
   actor User @relation(fields: [actorId], references: [id], onDelete: Cascade)
   nextRunAt DateTime?
@@ -884,18 +844,40 @@ model AgentTrigger {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([agentId, createdAt])
-  @@index([connectionId])
   @@index([enabled, nextRunAt])
 }
 
-model AgentTriggerItem {
+// One durable row per accepted webhook delivery: deduplication plus per-thread FIFO.
+model AgentTriggerEvent {
   id String @id @default(cuid())
   triggerId String
   trigger AgentTrigger @relation(fields: [triggerId], references: [id], onDelete: Cascade)
-  externalId String
-  revision String
+  dedupeKey String
+  threadKey String?
+  prompt String
+  // queued -> running -> done | failed
+  status String
+  conversationId String?
+  taskId String?
+  error String?
   createdAt DateTime @default(now())
-  @@unique([triggerId, externalId, revision])
+  updatedAt DateTime @updatedAt
+  @@unique([triggerId, dedupeKey])
+  @@index([triggerId, threadKey, status, createdAt])
+  @@index([status, updatedAt])
+  @@index([triggerId, createdAt])
+}
+
+// An external thread (e.g. owner/repo#12) continues one conversation until it is deleted.
+model AgentTriggerThread {
+  id String @id @default(cuid())
+  triggerId String
+  trigger AgentTrigger @relation(fields: [triggerId], references: [id], onDelete: Cascade)
+  threadKey String
+  conversationId String @unique
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  @@unique([triggerId, threadKey])
 }
 
 // Private encrypted values; revisions contain only credential IDs and names.
@@ -1424,6 +1406,7 @@ model Conversation {
   workspaceAttachments  WorkspaceAttachment[]
   publicApiConversation AgentPublicConversation?
   workSession           WorkSession?
+  triggerThread         AgentTriggerThread?
   piPackageSet PiSessionPackageSet?
   agentUsage AgentUsage[]
 
