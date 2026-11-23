@@ -99,7 +99,12 @@ export function useDismiss(
     };
     const onPointer = (event: PointerEvent) => {
       const target = event.target as Element | null;
-      if (!target || inside(target)) return;
+      if (
+        !target ||
+        (target instanceof Element && target.closest("[data-toast-stack]")) ||
+        inside(target)
+      )
+        return;
       // Outside this overlay, but inside one that is also open: the gesture is
       // that overlay's to answer, and swallowing its click from behind would
       // cost the user the control they actually aimed at.

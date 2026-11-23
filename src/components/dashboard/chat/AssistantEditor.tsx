@@ -311,7 +311,7 @@ export function AssistantEditor({
         ariaLabel={assistant ? t("editAssistant") : t("newAssistant")}
         closeButtonLabel={common("close")}
         onExitComplete={onClose}
-        className="z-[51] flex h-[min(48rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] max-w-5xl flex-col gap-0 overflow-hidden rounded-2xl p-0"
+        className="flex h-[min(48rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] max-w-5xl flex-col gap-0 overflow-hidden rounded-2xl p-0"
       >
         <DialogHeader
           title={assistant ? t("editAssistant") : t("newAssistant")}

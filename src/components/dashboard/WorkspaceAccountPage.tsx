@@ -28,6 +28,7 @@ import {
 } from "./WorkspaceForms";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { Toaster } from "./Toaster";
 import { resolveUserTimeZone } from "@/lib/timezone";
 
 export type WorkspaceAccountUser = NonNullable<
@@ -258,6 +259,7 @@ export async function WorkspaceAccountPage({
             )}
           </main>
         </div>
+        <Toaster />
       </UserTimeZoneProvider>
     </NextIntlClientProvider>
   );

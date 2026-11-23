@@ -669,3 +669,12 @@
 - **下次怎么验证**：用各客户端 README 里的真实配置（含 Docker 加固和挂载）在浏览器里走一遍，错误文案要指出具体项；新旧流程逐项对照入口，确认每个旧功能在新流程中无需展开即可看到。
 - **约束层（结构）**：[`src/lib/workspace/mcp-intake-docker.ts`](src/lib/workspace/mcp-intake-docker.ts)、[`McpIntakeIssue`](src/lib/workspace/mcp-intake-types.ts)；回归见 `tests/unit/mcp-intake.test.ts`。
 - **确认日期**：2026-11-21。
+
+### TP-L063：消息弹窗必须在所有浮层之上且不与操作区重叠或误关下层菜单
+
+**规则**：全局消息弹窗（`Toaster` / `AnimatedToastStack`）的固定层级必须严格高于所有模态弹窗、命令面板、上下文菜单、弹出层、下拉选择和悬浮提示；默认位置避开模态框底部操作栏、右上角关闭按钮及底部输入栏（使用 `top-center`）；交互气泡（`[data-toast-stack]`）上的点击与滑动不得触发下层浮层的外部点击关闭或吞掉事件；每个认证壳层（控制台、管理后台、工作区/账户页）都必须挂载 `<Toaster />`，且 `afterReload` 队列只存可 JSON 序列化的纯数据。
+
+- **错误与原因（2026-11-23，用户反馈“如果有弹窗，消息弹窗就会被挡住，很多页面都有这个问题”）**：`AnimatedToastStack` 原为 `fixed z-[90]`，低于 `CenterMorphModal`/`CommandPalette`/`ContextMenu`（`z-[100]`）、`Popover`/`MorphPopover`/`Select`/`Tooltip`（`z-[9999]`）和 `ModelPicker`（`z-[10000]`），在任意弹窗打开时提示都会被遮罩和弹窗挡住；`Toaster` 原采用 `bottom-right`，即使提层也会挡住模态框底部按钮和聊天输入栏；`useDismiss`、`MorphPopover`、`ContextMenu` 未忽略 `[data-toast-stack]`，点关闭提示会意外关闭开着的浮层；`WorkspaceAccountPage`（含通知中心、账户设置、工作区列表）缺少 `<Toaster />`；`Toaster` 的 `warning` 传入 JSX `<TriangleAlert />` 会在 `afterReload` 时破坏 `sessionStorage` 序列化，且 `truncate` 会截断错误文案、悬停不暂停倒计时、同文本连发会堆叠。
+- **下次怎么验证**：在打开模态框与弹出层的状态下触发提示，确认 `[data-toast-stack]` 的 `z-[N]` 严格高于所有其他浮层、关闭提示不关闭模态框或 `Popover`/`MorphPopover`、悬停暂停且清空后不残留暂停锁、`warning` + `afterReload` 可无损恢复、同 ID 提示去重；运行 `node scripts/check-invariants.mjs` 确认 `src/` 中不存在 `>=` 提示层级的 `z-[N]` 或 `zIndex`。
+- **约束层（结构＋检查）**：[`animated-toast-stack.tsx`](src/components/motion/animated-toast-stack.tsx)、[`Toaster.tsx`](src/components/dashboard/Toaster.tsx)、[`use-dismiss.ts`](src/lib/hooks/use-dismiss.ts)、[`popover-morph.tsx`](src/components/motion/popover-morph.tsx)、[`context-menu.tsx`](src/components/motion/context-menu.tsx)、[`WorkspaceAccountPage.tsx`](src/components/dashboard/WorkspaceAccountPage.tsx)；静态检查见 [`check-invariants.mjs`](scripts/check-invariants.mjs)；回归见 [`toaster.test.tsx`](tests/unit/toaster.test.tsx)。
+- **确认日期**：2026-11-23（用户反馈）。
