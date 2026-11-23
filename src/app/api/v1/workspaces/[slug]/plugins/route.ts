@@ -2,6 +2,7 @@ import { z } from "zod";
 import { withRequestLogging } from "@/lib/observability/http";
 import { listPlugins } from "@/lib/plugins/catalog";
 import { addPlugin, pluginMcpBindingsSchema } from "@/lib/plugins/installs";
+import { pluginAddEnvConfigSchema } from "@/lib/plugins/env-store";
 import { pluginApiError, pluginJson, pluginRequestContext } from "./_shared";
 
 export const runtime = "nodejs";
@@ -10,6 +11,7 @@ const addBody = z
   .object({
     listingId: z.string().min(1).max(240),
     mcpBindings: pluginMcpBindingsSchema.optional(),
+    envConfig: pluginAddEnvConfigSchema.optional(),
   })
   .strict();
 
@@ -41,7 +43,12 @@ export const POST = withRequestLogging(
       const { workspace } = await pluginRequestContext(req, slug, "plugins");
       const body = await pluginJson(req, addBody);
       return Response.json(
-        await addPlugin(workspace, body.listingId, body.mcpBindings),
+        await addPlugin(
+          workspace,
+          body.listingId,
+          body.mcpBindings,
+          body.envConfig,
+        ),
         { status: 201 },
       );
     } catch (error) {

@@ -13,6 +13,12 @@ import { removeAgentRevisionPackageInTransaction } from "@/lib/agents/revisions"
 import { readCapabilities, requiresReview } from "./capabilities";
 import { PluginError, visiblePluginWhere } from "./catalog";
 import { syncInstallAgents } from "./agent-sync";
+import {
+  applyInstallEnvConfigInTransaction,
+  isOfficialRegistrySource,
+  pluginAddEnvConfigSchema,
+  type PluginAddEnvConfigInput,
+} from "./env-store";
 
 export const pluginMcpBindingsSchema = z
   .record(
@@ -103,8 +109,13 @@ export async function addPlugin(
   scope: WorkspaceScope<"plugins">,
   listingId: string,
   mcpBindings: PluginMcpBindings = {},
+  envConfig?: PluginAddEnvConfigInput,
 ) {
   const { id: workspaceId, actorUserId: userId } = scope;
+  const parsedEnvConfig =
+    envConfig !== undefined
+      ? pluginAddEnvConfigSchema.parse(envConfig)
+      : undefined;
   return db.$transaction(
     async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
@@ -126,6 +137,12 @@ export async function addPlugin(
           status: "published",
         },
         include: {
+          githubRegistryResource: {
+            select: {
+              registry: { select: { official: true, workspaceId: true } },
+            },
+          },
+          officialEnvPreset: { select: { configuredKeys: true } },
           releases: {
             where: { reviewStatus: "approved" },
             orderBy: { version: "desc" },
@@ -138,6 +155,15 @@ export async function addPlugin(
         throw new PluginError("not_found", "Published plugin not found.", 404);
       const existing = await tx.marketInstall.findFirst({
         where: { listingId, targetWorkspaceId: workspaceId },
+        include: {
+          envConfig: {
+            select: {
+              mode: true,
+              configuredKeys: true,
+              encryptedValues: true,
+            },
+          },
+        },
       });
       if (existing && existing.status !== "uninstalled") return existing;
       const bindings = await validatePluginBindings(
@@ -166,6 +192,22 @@ export async function addPlugin(
               idempotencyKey: `plugin:${workspaceId}:${listingId}`,
             },
           });
+      await applyInstallEnvConfigInTransaction(tx, {
+        workspaceId,
+        actorUserId: userId,
+        installId: install.id,
+        listingId: listing.id,
+        isOfficial: isOfficialRegistrySource(
+          listing.githubRegistryResource?.registry,
+        ),
+        presetConfiguredKeys: listing.officialEnvPreset?.configuredKeys ?? [],
+        release,
+        existingEnvConfig: parsedEnvConfig
+          ? (existing?.envConfig ?? null)
+          : null,
+        envConfigInput: parsedEnvConfig,
+        requireComplete: true,
+      });
       await tx.marketListing.update({
         where: { id: listingId },
         data: { installCount: { increment: 1 } },
@@ -181,8 +223,13 @@ export async function updatePlugin(
   installId: string,
   targetReleaseId: string,
   mcpBindings?: PluginMcpBindings,
+  envConfig?: PluginAddEnvConfigInput,
 ) {
   const { id: workspaceId, actorUserId: userId } = scope;
+  const parsedEnvConfig =
+    envConfig !== undefined
+      ? pluginAddEnvConfigSchema.parse(envConfig)
+      : undefined;
   const install = await db.$transaction(
     async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
@@ -203,6 +250,26 @@ export async function updatePlugin(
           targetWorkspaceId: workspaceId,
           status: "ready",
           listing: { ...visiblePluginWhere(workspaceId), status: "published" },
+        },
+        include: {
+          envConfig: {
+            select: {
+              mode: true,
+              configuredKeys: true,
+              encryptedValues: true,
+            },
+          },
+          listing: {
+            select: {
+              id: true,
+              githubRegistryResource: {
+                select: {
+                  registry: { select: { official: true, workspaceId: true } },
+                },
+              },
+              officialEnvPreset: { select: { configuredKeys: true } },
+            },
+          },
         },
       });
       if (!current)
@@ -230,6 +297,21 @@ export async function updatePlugin(
         release,
         mcpBindings ?? storedBindings(current.resourceMap),
       );
+      await applyInstallEnvConfigInTransaction(tx, {
+        workspaceId,
+        actorUserId: userId,
+        installId: current.id,
+        listingId: current.listingId,
+        isOfficial: isOfficialRegistrySource(
+          current.listing.githubRegistryResource?.registry,
+        ),
+        presetConfiguredKeys:
+          current.listing.officialEnvPreset?.configuredKeys ?? [],
+        release,
+        existingEnvConfig: current.envConfig,
+        envConfigInput: parsedEnvConfig,
+        requireComplete: true,
+      });
       const updated = await tx.marketInstall.update({
         where: { id: installId, targetWorkspaceId: workspaceId },
         data: {

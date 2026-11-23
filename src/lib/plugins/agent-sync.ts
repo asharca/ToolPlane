@@ -18,6 +18,7 @@ import { ensureWorkspaceMcpDeploymentPinned } from "@/lib/process/mcp-pinning";
 import { resolvePiPackageMcpPolicy } from "@/lib/agents/pi-package-mcp";
 import type { AgentPackageMcpConnection } from "@/lib/pi-packages/agent-apply";
 import { PluginError, visiblePluginWhere } from "./catalog";
+import { assertAgentPluginEnvReady } from "./env-store";
 
 /** Drafts have no applied environment to publish; only their selected package pin follows. */
 async function followDraftPlugin(
@@ -68,6 +69,36 @@ async function followDraftPlugin(
         "stale_sync",
         "Plugin update is no longer available.",
       );
+    const release = await tx.marketRelease.findUnique({
+      where: { id: releaseId },
+      select: { manifest: true, checksum: true },
+    });
+    if (!release)
+      throw new PluginError(
+        "stale_sync",
+        "Plugin update is no longer available.",
+      );
+    const agentCreds = await tx.agentEnvironmentCredential.findMany({
+      where: { agentId, workspaceId, revokedAt: null },
+      select: { name: true },
+    });
+    const bound = await tx.agentPiPackage.findMany({
+      where: { agentId, agent: { workspaceId } },
+      select: {
+        marketInstallId: true,
+        release: { select: { manifest: true, checksum: true } },
+      },
+    });
+    await assertAgentPluginEnvReady(
+      tx,
+      workspaceId,
+      bound.map((item) =>
+        item.marketInstallId === installId
+          ? { marketInstallId: item.marketInstallId, release }
+          : item,
+      ),
+      agentCreds.map((c) => c.name),
+    );
     const updated = await tx.agentPiPackage.updateMany({
       where: {
         agentId,
@@ -205,7 +236,11 @@ async function syncAgentPlugin(
           "tools_unavailable",
         ].includes(error.code)
           ? error.code.toUpperCase()
-          : "PLUGIN_SYNC_FAILED";
+          : error instanceof Error &&
+              (error.message === "PI_PACKAGE_ENV_INCOMPLETE" ||
+                error.message === "PI_PACKAGE_ENV_CONFLICT")
+            ? error.message
+            : "PLUGIN_SYNC_FAILED";
       logSystemEvent("plugins.agent.sync_failed", {
         domain: "agent",
         agentId,

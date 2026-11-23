@@ -14,6 +14,11 @@ import {
   pluginMcpBindingsSchema,
 } from "./installs";
 import {
+  pluginAddEnvConfigSchema,
+  pluginEnvUpdateSchema,
+  updatePluginEnvConfig,
+} from "./env-store";
+import {
   createPluginSource,
   updatePluginSource,
   deletePluginSource,
@@ -59,14 +64,28 @@ export async function pluginAction(
       const bindings = pluginMcpBindingsSchema.parse(
         JSON.parse(String(form.get("mcpBindings") ?? "{}")),
       );
-      if (operation === "add") await addPlugin(workspace, id, bindings);
+      const rawEnvConfig = form.get("envConfig");
+      const envConfig =
+        typeof rawEnvConfig === "string" && rawEnvConfig.trim()
+          ? pluginAddEnvConfigSchema.parse(JSON.parse(rawEnvConfig))
+          : undefined;
+      if (operation === "add")
+        await addPlugin(workspace, id, bindings, envConfig);
       else
         await updatePlugin(
           workspace,
           id,
           String(form.get("releaseId") ?? ""),
           bindings,
+          envConfig,
         );
+    } else if (operation === "env-update") {
+      const rawEnvConfig = String(form.get("envConfig") ?? "{}");
+      await updatePluginEnvConfig(
+        workspace,
+        id,
+        pluginEnvUpdateSchema.parse(JSON.parse(rawEnvConfig)),
+      );
     } else if (operation === "remove") {
       await removePlugin(workspace, id);
     } else if (operation === "source-add") {

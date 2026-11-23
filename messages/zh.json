@@ -801,7 +801,14 @@
         "resource_artifact_missing": "未能生成该插件的发布内容。请重新同步；仍然失败时，请提升插件版本号后再试。",
         "github_request_failed": "暂时无法访问 GitHub。请稍后重试；持续失败时请检查部署环境的网络连接。",
         "not_found": "插件或版本已不可用，请刷新页面。",
-        "webhook_not_configured": "部署者尚未配置 Webhook 密钥。"
+        "webhook_not_configured": "部署者尚未配置 Webhook 密钥。",
+        "env_config_incomplete": "请先填写全部必填环境变量后再继续。",
+        "preset_incomplete": "平台预设尚未配置完整，请切换为自定义配置或联系管理员。",
+        "preset_unsupported": "此插件不支持平台预设凭据。",
+        "env_url_invalid": "请输入有效的 HTTP 或 HTTPS 地址，且不要包含凭据或查询参数。",
+        "env_value_invalid": "插件环境变量值无效。",
+        "env_key_unknown": "提交了此插件未声明的环境变量名。",
+        "not_official_plugin": "仅官方插件支持平台预设。"
       },
       "sourceStatuses": {
         "pending": "待同步",
@@ -867,7 +874,31 @@
       "batchMessage": {
         "up_to_date": "已是最新版本",
         "unavailable": "插件已下架或来源已移除",
+        "env_config_incomplete": "环境变量配置不完整。",
+        "preset_incomplete": "平台预设不完整，请改为自定义配置。",
         "request_failed": "请求失败，请重试。"
+      },
+      "env": {
+        "title": "环境变量配置",
+        "sourceLabel": "配置来源",
+        "platformPreset": "平台预设",
+        "custom": "自定义配置",
+        "readyPreset": "当前使用平台预设（密钥对工作区隐藏）",
+        "readyCustom": "当前使用工作区自定义配置",
+        "incomplete": "环境变量配置不完整",
+        "missingKeys": "缺少必填变量：{keys}",
+        "switchToCustom": "切换为自定义配置",
+        "switchToPreset": "使用平台预设",
+        "configureAction": "去配置环境变量",
+        "save": "保存环境变量配置",
+        "saved": "已保存环境变量配置",
+        "configured": "已配置",
+        "secretPlaceholder": "已配置 — 留空以保留现有密钥",
+        "clearKey": "清除值",
+        "required": "必填",
+        "optional": "可选",
+        "noPresetHint": "平台预设不可用或尚未配置完整，请在下方填写自定义配置。",
+        "contentsTitle": "声明的环境变量"
       }
     },
     "agents": {
@@ -1985,7 +2016,9 @@
         "configure": "配置并添加",
         "noMatches": "没有匹配的插件",
         "nothing": "没有可添加的插件",
-        "cancel": "取消"
+        "cancel": "取消",
+        "envIncomplete": "环境变量未配置",
+        "configureEnv": "配置环境变量"
       }
     },
     "conversationOperations": {
@@ -2043,6 +2076,8 @@
         "MCP_UNREACHABLE": "无法连接或返回了错误"
       },
       "PI_PACKAGE_UNAVAILABLE": "已启用的 Pi 扩展不可用或审核已撤销，请先检查智能体的扩展绑定。",
+      "PI_PACKAGE_ENV_INCOMPLETE": "已绑定的插件缺少必填环境变量或配置不完整。请前往插件设置完善环境变量后新建会话或工作会话。",
+      "PI_PACKAGE_ENV_CONFLICT": "已绑定的插件声明了与智能体凭据或其他插件冲突的环境变量名。",
       "PI_PACKAGE_CHECKSUM_MISMATCH": "扩展快照被修改，已阻止执行。请联系管理员恢复已审核快照。",
       "PI_EXTENSION_LOAD_FAILED": "所选 Pi 扩展加载失败，请检查其无界面 SDK 兼容性后新建会话。",
       "PI_EXTENSION_RESOURCE_DENIED": "扩展请求了智能体许可目录之外的资源，已阻止执行。",
@@ -4971,6 +5006,20 @@
     "pluginWithdraw": "下架插件",
     "pluginRevoke": "撤销版本",
     "pluginEmpty": "暂无插件",
+    "pluginPresetTitle": "平台预设环境变量",
+    "pluginPresetReady": "平台预设已就绪",
+    "pluginPresetIncomplete": "平台预设不完整",
+    "pluginPresetMissing": "缺少必填变量：{keys}",
+    "pluginPresetSave": "保存预设",
+    "pluginPresetClear": "清空预设",
+    "pluginPresetSaved": "已保存平台预设。",
+    "pluginPresetCleared": "已清空平台预设。",
+    "pluginPresetConfigured": "已配置",
+    "pluginPresetSecretPlaceholder": "留空以保留现有密钥",
+    "pluginPresetClearKey": "清除现有值",
+    "pluginPresetRequired": "必填",
+    "pluginPresetOptional": "可选",
+    "pluginPresetError": "更新平台预设失败。",
     "logsTab_runs": "智能体运行",
     "logsTab_a2a": "A2A",
     "logsTab_mcp": "MCP 调用",

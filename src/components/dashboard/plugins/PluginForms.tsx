@@ -15,6 +15,281 @@ import { notify } from "@/components/dashboard/Toaster";
 import { FormSelect } from "@/components/ui/FormSelect";
 import { pluginAction, type PluginActionState } from "@/lib/plugins/actions";
 import type { PluginBindingDeployment } from "@/lib/plugins/binding-deployments";
+import {
+  envValueKind,
+  isEnvRequired,
+  isEnvSecret,
+  type PluginEnvSourceMode,
+  type PluginEnvStatus,
+} from "@/lib/plugins/env-schema";
+
+export type PluginEnvDraft = {
+  mode: PluginEnvSourceMode;
+  values: Record<string, string>;
+  clearKeys: string[];
+};
+
+export function initialPluginEnvDraft(
+  envStatus: PluginEnvStatus | null | undefined,
+  customNonSecretValues?: Readonly<Record<string, string>>,
+): PluginEnvDraft {
+  const mode: PluginEnvSourceMode =
+    envStatus?.mode ?? envStatus?.effectiveDefaultMode ?? "custom";
+  const values: Record<string, string> = {};
+  if (envStatus && customNonSecretValues) {
+    for (const item of envStatus.requirements) {
+      if (
+        !isEnvSecret(item) &&
+        typeof customNonSecretValues[item.name] === "string"
+      ) {
+        values[item.name] = customNonSecretValues[item.name];
+      }
+    }
+  }
+  return { mode, values, clearKeys: [] };
+}
+
+export function serializePluginEnvDraft(
+  envStatus: PluginEnvStatus | null | undefined,
+  draft: PluginEnvDraft,
+  includeClearKeys: boolean,
+) {
+  if (!envStatus?.requiresEnv) return undefined;
+  if (draft.mode === "platform_preset") {
+    return { mode: "platform_preset" as const };
+  }
+  const values: Record<string, string> = {};
+  const byName = new Map(
+    envStatus.requirements.map((item) => [item.name, item]),
+  );
+  for (const [key, raw] of Object.entries(draft.values)) {
+    const item = byName.get(key);
+    if (!item || draft.clearKeys.includes(key)) continue;
+    if (isEnvSecret(item)) {
+      if (raw.trim()) values[key] = raw;
+    } else if (raw.trim() || includeClearKeys) {
+      values[key] = raw;
+    }
+  }
+  return {
+    mode: "custom" as const,
+    values,
+    ...(includeClearKeys && draft.clearKeys.length
+      ? { clearKeys: draft.clearKeys }
+      : {}),
+  };
+}
+
+export function isPluginEnvDraftReady(
+  envStatus: PluginEnvStatus | null | undefined,
+  draft: PluginEnvDraft,
+): boolean {
+  if (!envStatus?.requiresEnv) return true;
+  if (draft.mode === "platform_preset") {
+    return envStatus.presetComplete;
+  }
+  const customSet = new Set(envStatus.customConfiguredKeys);
+  const clearSet = new Set(draft.clearKeys);
+  for (const item of envStatus.requirements) {
+    if (!isEnvRequired(item)) continue;
+    const hasExplicit = Object.hasOwn(draft.values, item.name);
+    const typed = (draft.values[item.name] ?? "").trim();
+    const alreadyConfigured =
+      customSet.has(item.name) && !clearSet.has(item.name);
+    if (isEnvSecret(item)) {
+      if (!typed && !alreadyConfigured) return false;
+    } else if (clearSet.has(item.name)) {
+      return false;
+    } else if (hasExplicit ? !typed : !alreadyConfigured) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function PluginEnvFields({
+  envStatus,
+  draft,
+  onChange,
+  disabled,
+  allowClearKeys = false,
+}: {
+  envStatus: PluginEnvStatus;
+  draft: PluginEnvDraft;
+  onChange: (next: PluginEnvDraft) => void;
+  disabled?: boolean;
+  allowClearKeys?: boolean;
+}) {
+  const t = useTranslations("console.plugins");
+  const fieldId = useId();
+  if (!envStatus.requiresEnv) return null;
+
+  const configuredSet = new Set(envStatus.customConfiguredKeys);
+  const clearSet = new Set(draft.clearKeys);
+  const missingCustom = envStatus.requirements
+    .filter((item) => {
+      if (!isEnvRequired(item)) return false;
+      const hasExplicit = Object.hasOwn(draft.values, item.name);
+      const typed = (draft.values[item.name] ?? "").trim();
+      const configured =
+        configuredSet.has(item.name) && !clearSet.has(item.name);
+      if (isEnvSecret(item)) return !typed && !configured;
+      if (clearSet.has(item.name)) return true;
+      return hasExplicit ? !typed : !configured;
+    })
+    .map((item) => item.name);
+
+  return (
+    <fieldset className="space-y-3">
+      <legend className="mb-1 text-sm font-medium">{t("env.title")}</legend>
+      {envStatus.presetSupported ? (
+        <div className="grid grid-cols-2 gap-1 rounded-lg border border-border p-1">
+          {(["platform_preset", "custom"] as const).map((mode) => (
+            <Button
+              key={mode}
+              type="button"
+              size="sm"
+              variant={draft.mode === mode ? "secondary" : "ghost"}
+              disabled={disabled}
+              aria-pressed={draft.mode === mode}
+              onClick={() => onChange({ ...draft, mode })}
+            >
+              {t(
+                mode === "platform_preset"
+                  ? "env.platformPreset"
+                  : "env.custom",
+              )}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+
+      {draft.mode === "platform_preset" ? (
+        envStatus.presetComplete ? (
+          <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            {t("env.readyPreset")}
+          </p>
+        ) : (
+          <div className="space-y-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs">
+            <p className="font-medium text-destructive">
+              {t("env.incomplete")}
+            </p>
+            <p className="font-mono text-destructive">
+              {t("env.missingKeys", {
+                keys: envStatus.presetMissingRequiredKeys.join(", "),
+              })}
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={disabled}
+              onClick={() => onChange({ ...draft, mode: "custom" })}
+            >
+              {t("env.switchToCustom")}
+            </Button>
+          </div>
+        )
+      ) : (
+        <div className="space-y-3">
+          {envStatus.presetSupported && !envStatus.presetComplete ? (
+            <p className="text-xs text-muted-foreground">
+              {t("env.noPresetHint")}
+            </p>
+          ) : null}
+          {envStatus.requirements.map((item) => {
+            const secret = isEnvSecret(item);
+            const required = isEnvRequired(item);
+            const configured = configuredSet.has(item.name);
+            const markedClear = clearSet.has(item.name);
+            const defaultUpstreamUrl = envStatus.httpProxies.find(
+              (proxy) => proxy.baseUrlEnv === item.name,
+            )?.defaultUpstreamUrl;
+            const inputId = `${fieldId}-env-${encodeURIComponent(item.name)}`;
+
+            return (
+              <div key={item.name} className="grid gap-1 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label
+                    htmlFor={inputId}
+                    className="font-mono text-xs font-medium"
+                  >
+                    {item.name}
+                    <span className="ml-1.5 font-sans font-normal text-muted-foreground">
+                      · {t(required ? "env.required" : "env.optional")}
+                    </span>
+                  </label>
+                  {configured && !markedClear ? (
+                    <span className="text-xs text-muted-foreground">
+                      {t("env.configured")}
+                    </span>
+                  ) : null}
+                </div>
+                <input
+                  id={inputId}
+                  type={
+                    secret
+                      ? "password"
+                      : envValueKind(item) === "url"
+                        ? "url"
+                        : "text"
+                  }
+                  autoComplete={secret ? "new-password" : "off"}
+                  className={`${pluginFieldClass} font-mono`}
+                  disabled={disabled || markedClear}
+                  value={draft.values[item.name] ?? ""}
+                  placeholder={
+                    secret && configured
+                      ? t("env.secretPlaceholder")
+                      : (defaultUpstreamUrl ?? "")
+                  }
+                  onChange={(event) =>
+                    onChange({
+                      ...draft,
+                      values: {
+                        ...draft.values,
+                        [item.name]: event.target.value,
+                      },
+                    })
+                  }
+                />
+                {item.description ? (
+                  <p className="text-xs text-muted-foreground">
+                    {item.description}
+                  </p>
+                ) : null}
+                {allowClearKeys && configured ? (
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={markedClear}
+                      disabled={disabled}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        onChange({
+                          ...draft,
+                          clearKeys: checked
+                            ? [...draft.clearKeys, item.name]
+                            : draft.clearKeys.filter((k) => k !== item.name),
+                        });
+                      }}
+                    />
+                    {t("env.clearKey")}
+                  </label>
+                ) : null}
+              </div>
+            );
+          })}
+          {missingCustom.length ? (
+            <p className="font-mono text-xs text-destructive">
+              {t("env.missingKeys", { keys: missingCustom.join(", ") })}
+            </p>
+          ) : null}
+        </div>
+      )}
+    </fieldset>
+  );
+}
 
 const pluginFieldClass =
   "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm";
@@ -193,6 +468,7 @@ export type PluginReleaseOption = {
   id: string;
   version: string;
   requirements: PluginMcpRequirement[];
+  envStatus?: PluginEnvStatus | null;
 };
 export type PluginBindingDraft = Record<
   string,
@@ -313,6 +589,8 @@ export function PluginInstallForm({
   defaults,
   canManage,
   status,
+  envStatus,
+  customNonSecretValues,
 }: {
   workspace: string;
   listingId: string;
@@ -323,6 +601,8 @@ export function PluginInstallForm({
   canManage: boolean;
   /** Listing status: published, withdrawn or removed. */
   status: string;
+  envStatus?: PluginEnvStatus | null;
+  customNonSecretValues?: Readonly<Record<string, string>>;
 }) {
   const t = useTranslations("console.plugins");
   const published = status === "published";
@@ -349,6 +629,9 @@ export function PluginInstallForm({
           releases={[latest]}
           deployments={deployments}
           defaults={defaults}
+          defaultEnvStatus={envStatus}
+          customNonSecretValues={customNonSecretValues}
+          submitEnvConfig
           submitLabel={() => t("add")}
         />
       ) : install.releaseId !== latest.id ? (
@@ -363,6 +646,12 @@ export function PluginInstallForm({
             releases={[latest]}
             deployments={deployments}
             defaults={defaults}
+            defaultEnvStatus={envStatus}
+            customNonSecretValues={customNonSecretValues}
+            submitEnvConfig={Boolean(
+              (latest.envStatus ?? envStatus)?.requiresEnv &&
+                !(latest.envStatus ?? envStatus)?.complete,
+            )}
             submitLabel={(version) => t("updateTo", { version })}
           />
         </>
@@ -385,6 +674,8 @@ export function PluginInstallForm({
                   currentReleaseId={install.releaseId}
                   deployments={deployments}
                   defaults={defaults}
+                  defaultEnvStatus={envStatus}
+                  customNonSecretValues={customNonSecretValues}
                   submitLabel={() => t("switchToVersion")}
                 />
               </div>
@@ -417,6 +708,9 @@ function PluginReleaseForm({
   currentReleaseId,
   deployments,
   defaults,
+  defaultEnvStatus,
+  customNonSecretValues,
+  submitEnvConfig = false,
   submitLabel,
 }: {
   workspace: string;
@@ -427,20 +721,33 @@ function PluginReleaseForm({
   currentReleaseId?: string;
   deployments: PluginBindingDeployment[];
   defaults: PluginBindingDraft;
+  defaultEnvStatus?: PluginEnvStatus | null;
+  customNonSecretValues?: Readonly<Record<string, string>>;
+  submitEnvConfig?: boolean;
   submitLabel: (version: string) => string;
 }) {
   const t = useTranslations("console.plugins");
   const fieldId = useId();
+  const router = useRouter();
   const [releaseId, setReleaseId] = useState(
     currentReleaseId ?? releases[0]?.id ?? "",
   );
   const [bindings, setBindings] = useState(defaults);
+  const initialRelease =
+    releases.find(
+      (item) => item.id === (currentReleaseId ?? releases[0]?.id),
+    ) ?? releases[0];
+  const initialEnv = initialRelease?.envStatus ?? defaultEnvStatus ?? null;
+  const [envDraft, setEnvDraft] = useState<PluginEnvDraft>(() =>
+    initialPluginEnvDraft(initialEnv, customNonSecretValues),
+  );
   const [state, action, pending] = useActionState<PluginActionState, FormData>(
     async (previous, form) => {
       const result = await pluginAction(previous, form);
       if (result.success) {
         window.dispatchEvent(new Event("plugins-changed"));
         notify(t("saved"));
+        router.refresh();
       }
       return result;
     },
@@ -448,6 +755,17 @@ function PluginReleaseForm({
   );
   const release = releases.find((item) => item.id === releaseId);
   if (!release) return null;
+  const releaseEnvStatus = release.envStatus ?? defaultEnvStatus ?? null;
+  const showEnvFields = Boolean(
+    releaseEnvStatus?.requiresEnv &&
+      (submitEnvConfig || !releaseEnvStatus.complete),
+  );
+  const serializedEnvConfig = showEnvFields
+    ? serializePluginEnvDraft(releaseEnvStatus, envDraft, false)
+    : undefined;
+  const envReady = showEnvFields
+    ? isPluginEnvDraftReady(releaseEnvStatus, envDraft)
+    : !releaseEnvStatus?.requiresEnv || releaseEnvStatus.complete;
   const { selected: selectedBindings, ready } = pluginBindingState(
     release.requirements,
     deployments,
@@ -464,6 +782,13 @@ function PluginReleaseForm({
         name="mcpBindings"
         value={JSON.stringify(selectedBindings)}
       />
+      {serializedEnvConfig ? (
+        <input
+          type="hidden"
+          name="envConfig"
+          value={JSON.stringify(serializedEnvConfig)}
+        />
+      ) : null}
       {currentReleaseId ? (
         <div className="grid gap-1 text-sm">
           <label htmlFor={`${fieldId}-release`}>{t("version")}</label>
@@ -493,15 +818,112 @@ function PluginReleaseForm({
           required
         />
       ) : null}
+      {showEnvFields && releaseEnvStatus ? (
+        <PluginEnvFields
+          envStatus={releaseEnvStatus}
+          draft={envDraft}
+          onChange={setEnvDraft}
+          disabled={pending}
+        />
+      ) : null}
       <Button
         type="submit"
         className="w-full"
-        disabled={pending || !ready || release.id === currentReleaseId}
+        disabled={
+          pending || !ready || !envReady || release.id === currentReleaseId
+        }
       >
         {pending ? t("working") : submitLabel(release.version)}
       </Button>
       {state.error ? <PluginResult state={state} /> : null}
     </form>
+  );
+}
+
+export function PluginEnvConfigPanel({
+  workspace,
+  installId,
+  envStatus,
+  customNonSecretValues,
+}: {
+  workspace: string;
+  installId: string;
+  envStatus: PluginEnvStatus;
+  customNonSecretValues?: Readonly<Record<string, string>>;
+}) {
+  const t = useTranslations("console.plugins");
+  const router = useRouter();
+  const [draft, setDraft] = useState<PluginEnvDraft>(() =>
+    initialPluginEnvDraft(envStatus, customNonSecretValues),
+  );
+  const [state, action, pending] = useActionState<PluginActionState, FormData>(
+    async (previous, form) => {
+      const result = await pluginAction(previous, form);
+      if (result.success) {
+        setDraft((prev) => {
+          const nextValues = { ...prev.values };
+          for (const item of envStatus.requirements) {
+            if (isEnvSecret(item) || prev.clearKeys.includes(item.name)) {
+              delete nextValues[item.name];
+            }
+          }
+          return { ...prev, values: nextValues, clearKeys: [] };
+        });
+        window.dispatchEvent(new Event("plugins-changed"));
+        notify(t("env.saved"));
+        router.refresh();
+      }
+      return result;
+    },
+    {},
+  );
+  if (!envStatus.requiresEnv) return null;
+  const serialized = serializePluginEnvDraft(envStatus, draft, true);
+  return (
+    <div className="space-y-3 border-t border-border pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-medium">{t("env.sourceLabel")}</span>
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs ${envStatus.complete ? "bg-muted text-foreground" : "bg-destructive/10 text-destructive"}`}
+        >
+          {envStatus.complete
+            ? t(
+                envStatus.mode === "platform_preset"
+                  ? "env.platformPreset"
+                  : "env.custom",
+              )
+            : t("env.incomplete")}
+        </span>
+      </div>
+      {!envStatus.complete && envStatus.missingRequiredKeys.length ? (
+        <p className="font-mono text-xs text-destructive">
+          {t("env.missingKeys", {
+            keys: envStatus.missingRequiredKeys.join(", "),
+          })}
+        </p>
+      ) : null}
+      <form action={action} className="space-y-3">
+        <input type="hidden" name="workspace" value={workspace} />
+        <input type="hidden" name="operation" value="env-update" />
+        <input type="hidden" name="id" value={installId} />
+        <input
+          type="hidden"
+          name="envConfig"
+          value={JSON.stringify(serialized ?? { mode: draft.mode })}
+        />
+        <PluginEnvFields
+          envStatus={envStatus}
+          draft={draft}
+          onChange={setDraft}
+          disabled={pending}
+          allowClearKeys
+        />
+        <Button type="submit" size="sm" className="w-full" disabled={pending}>
+          {pending ? t("working") : t("env.save")}
+        </Button>
+        {state.error ? <PluginResult state={state} /> : null}
+      </form>
+    </div>
   );
 }
 

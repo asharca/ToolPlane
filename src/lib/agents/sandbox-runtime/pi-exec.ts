@@ -64,6 +64,7 @@ export async function reportActivities(
   options: RunSandboxAgentTurnOptions,
   activities: readonly SandboxRuntimeActivity[],
   mcpServers: readonly SandboxRuntimeMcpServer[] = [],
+  secrets: readonly string[] = [options.runtimeAccessToken],
 ) {
   if (!options.onActivity) return;
   for (const activity of activities) {
@@ -82,30 +83,24 @@ export async function reportActivities(
     };
     await options.onActivity({
       ...enriched,
-      ...(enriched.delta
-        ? { delta: redact(enriched.delta, [options.runtimeAccessToken]) }
-        : {}),
+      ...(enriched.delta ? { delta: redact(enriched.delta, secrets) } : {}),
       ...(enriched.toolName
-        ? { toolName: redact(enriched.toolName, [options.runtimeAccessToken]) }
+        ? { toolName: redact(enriched.toolName, secrets) }
         : {}),
       ...(enriched.deploymentId
         ? {
-            deploymentId: redact(enriched.deploymentId, [
-              options.runtimeAccessToken,
-            ]),
+            deploymentId: redact(enriched.deploymentId, secrets),
           }
         : {}),
       ...(enriched.originalToolName
         ? {
-            originalToolName: redact(enriched.originalToolName, [
-              options.runtimeAccessToken,
-            ]),
+            originalToolName: redact(enriched.originalToolName, secrets),
           }
         : {}),
       ...(enriched.patch === undefined
         ? {}
         : (() => {
-            const patch = redact(enriched.patch, [options.runtimeAccessToken]);
+            const patch = redact(enriched.patch, secrets);
             const bytes = Buffer.from(patch);
             return {
               patch:
@@ -120,16 +115,12 @@ export async function reportActivities(
       ...(enriched.input === undefined
         ? {}
         : {
-            input: redact(displayValue(enriched.input), [
-              options.runtimeAccessToken,
-            ]),
+            input: redact(displayValue(enriched.input), secrets),
           }),
       ...(enriched.output === undefined
         ? {}
         : {
-            output: redact(displayValue(enriched.output), [
-              options.runtimeAccessToken,
-            ]),
+            output: redact(displayValue(enriched.output), secrets),
           }),
     });
   }
@@ -146,6 +137,12 @@ export async function runNativeSessionExec(
     hostSourceChecksum: string;
     model: unknown;
     advisor?: unknown;
+    pluginEnv?: {
+      env: Record<string, string>;
+      unsetKeys: string[];
+      sandboxRedactTokens: string[];
+      signature: string;
+    };
   },
   preparation: SandboxTurnPreparation,
 ) {
@@ -236,6 +233,7 @@ export async function runNativeSessionExec(
             system: options.systemPrompt,
             skills: options.skills,
             streamRules: options.streamRules,
+            pluginEnvSignature: sdk.pluginEnv?.signature ?? "",
           }),
         )
         .digest("hex"),
@@ -250,6 +248,9 @@ export async function runNativeSessionExec(
       ),
       context: {
         runtimeToken: options.runtimeAccessToken,
+        pluginEnv: sdk.pluginEnv?.env ?? {},
+        unsetPluginEnvKeys: sdk.pluginEnv?.unsetKeys ?? [],
+        redactTokens: sdk.pluginEnv?.sandboxRedactTokens ?? [],
         uiUrl: options.nativeUiUrl,
         toolApprovalBridge: Boolean(
           options.nativeUiUrl?.includes("/agent-runtime/tasks/"),

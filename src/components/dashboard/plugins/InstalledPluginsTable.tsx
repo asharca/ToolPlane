@@ -33,6 +33,7 @@ import {
   type PluginBatchOperation,
   type PluginBatchResult,
 } from "@/lib/plugins/actions";
+import type { PluginEnvStatus } from "@/lib/plugins/env-schema";
 import type { PluginResourceKind } from "@/lib/plugins/release-contents";
 
 export type InstalledPluginFilter = "all" | "updates" | "unavailable";
@@ -52,6 +53,7 @@ export type InstalledPluginItem = {
   mcp: number;
   omp: boolean;
   agents: number;
+  envStatus: PluginEnvStatus;
   addedAt: string;
 };
 
@@ -90,9 +92,9 @@ export function InstalledPluginsTable({
 
   const byId = new Map(plugins.map((plugin) => [plugin.installId, plugin]));
   const updatable = plugins.filter((plugin) => plugin.updateAvailable);
-  const unavailableCount = plugins.filter(
-    (plugin) => plugin.status !== "published",
-  ).length;
+  const isPluginUnavailable = (plugin: InstalledPluginItem) =>
+    plugin.status !== "published" || !plugin.envStatus.complete;
+  const unavailableCount = plugins.filter(isPluginUnavailable).length;
   const activeFilter =
     filter === "unavailable" && unavailableCount === 0 ? "all" : filter;
   const term = query.trim().toLocaleLowerCase();
@@ -101,7 +103,7 @@ export function InstalledPluginsTable({
       (activeFilter === "updates"
         ? plugin.updateAvailable
         : activeFilter === "unavailable"
-          ? plugin.status !== "published"
+          ? isPluginUnavailable(plugin)
           : true) &&
       (!term ||
         [plugin.name, plugin.summary ?? "", plugin.source].some((value) =>
@@ -318,7 +320,9 @@ export function InstalledPluginsTable({
                       : issue.message}
                 </span>
                 {(issue.message === "invalid_bindings" ||
-                  issue.message === "tools_unavailable") &&
+                  issue.message === "tools_unavailable" ||
+                  issue.message === "env_config_incomplete" ||
+                  issue.message === "preset_incomplete") &&
                 issue.listingId ? (
                   <>
                     {" "}
@@ -326,7 +330,12 @@ export function InstalledPluginsTable({
                       href={detailHref(issue.listingId, "#plugin-install")}
                       className="text-primary hover:underline"
                     >
-                      {t("installed.bind")}
+                      {t(
+                        issue.message === "env_config_incomplete" ||
+                          issue.message === "preset_incomplete"
+                          ? "env.configureAction"
+                          : "installed.bind",
+                      )}
                     </Link>
                   </>
                 ) : null}
@@ -482,10 +491,45 @@ export function InstalledPluginsTable({
                             {t("ompRetired")}
                           </span>
                         ) : null}
+                        {plugin.envStatus.requiresEnv ? (
+                          plugin.envStatus.complete ? (
+                            <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                              {t(
+                                plugin.envStatus.mode === "platform_preset"
+                                  ? "env.platformPreset"
+                                  : "env.custom",
+                              )}
+                            </span>
+                          ) : (
+                            <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-xs text-destructive">
+                              {t("env.incomplete")}
+                            </span>
+                          )
+                        ) : null}
                       </span>
                       <span className="block truncate text-xs text-muted-foreground">
                         {plugin.source}
                       </span>
+                      {plugin.envStatus.requiresEnv &&
+                      !plugin.envStatus.complete &&
+                      plugin.envStatus.missingRequiredKeys.length ? (
+                        <span className="mt-1 block break-all font-mono text-xs text-destructive">
+                          {t("env.missingKeys", {
+                            keys: plugin.envStatus.missingRequiredKeys.join(
+                              ", ",
+                            ),
+                          })}{" "}
+                          <Link
+                            href={detailHref(
+                              plugin.listingId,
+                              "#plugin-install",
+                            )}
+                            className="font-sans text-primary hover:underline"
+                          >
+                            {t("env.configureAction")}
+                          </Link>
+                        </span>
+                      ) : null}
                     </span>
                   </div>,
                   <span key="version" className="font-mono text-xs">

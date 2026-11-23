@@ -23,6 +23,7 @@ import {
 import { defineFailures, type FailureCodeOf } from "@/lib/errors/registry";
 import { ADVISOR_SUGGESTIONS_PART } from "./advisor";
 import { assistantSegments } from "./message-segments";
+import { collectSessionPluginSecretsForRedaction } from "@/lib/plugins/runtime-env";
 
 export const SESSION_EXPORT_MAX_BYTES = 8 * 1024 * 1024;
 const exportFailures = defineFailures({
@@ -75,7 +76,7 @@ function assertSize(value: string) {
 
 /** Known values cover bare echoes; the shared sanitizer covers structured credentials. */
 async function exportSecrets(workspaceId: string, agentId: string) {
-  const [credentials, providers] = await Promise.all([
+  const [credentials, providers, pluginSecrets] = await Promise.all([
     db.agentEnvironmentCredential.findMany({
       // Include revoked references: historical tool output can still contain them.
       where: { workspaceId, agentId },
@@ -85,8 +86,12 @@ async function exportSecrets(workspaceId: string, agentId: string) {
       where: { workspaceId },
       select: { apiKey: true },
     }),
+    collectSessionPluginSecretsForRedaction(workspaceId, agentId),
   ]);
-  const secrets = providers.map((provider) => provider.apiKey).filter(Boolean);
+  const secrets = [
+    ...providers.map((provider) => provider.apiKey).filter(Boolean),
+    ...pluginSecrets,
+  ];
   for (const credential of credentials) {
     const value = JSON.parse(decryptSecretText(credential.encryptedValue));
     if (

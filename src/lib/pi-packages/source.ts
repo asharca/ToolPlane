@@ -273,6 +273,33 @@ export async function captureGithubRegistryPiPackage(input: {
   const snapshot = await capturePiPackage("", {
     archive: writeZip(input.files),
   });
+  let declaredEnv = snapshot.toolplane?.env;
+  let declaredHttpProxies = snapshot.toolplane?.httpProxies;
+  if (declaredEnv === undefined || declaredHttpProxies === undefined) {
+    const packageFile = input.files.find(
+      (file) => file.path === "package.json",
+    );
+    if (packageFile) {
+      try {
+        const pkgJson = JSON.parse(packageFile.data.toString("utf8")) as {
+          toolplane?: { env?: unknown; httpProxies?: unknown };
+        };
+        if (declaredEnv === undefined && pkgJson.toolplane?.env !== undefined)
+          declaredEnv = pkgJson.toolplane.env as NonNullable<
+            PiPackageSnapshotV1["toolplane"]
+          >["env"];
+        if (
+          declaredHttpProxies === undefined &&
+          pkgJson.toolplane?.httpProxies !== undefined
+        )
+          declaredHttpProxies = pkgJson.toolplane.httpProxies as NonNullable<
+            PiPackageSnapshotV1["toolplane"]
+          >["httpProxies"];
+      } catch {
+        throw failed();
+      }
+    }
+  }
   const url = `https://github.com/${input.repository}.git`;
   return parsePiPackageReleaseManifest({
     schemaVersion: 1,
@@ -287,6 +314,26 @@ export async function captureGithubRegistryPiPackage(input: {
     },
     package: {
       ...snapshot,
+      ...(snapshot.toolplane ||
+      declaredEnv !== undefined ||
+      declaredHttpProxies !== undefined
+        ? {
+            toolplane: {
+              schemaVersion: 1 as const,
+              mcp: snapshot.toolplane?.mcp ?? [],
+              ...(snapshot.toolplane?.origins
+                ? { origins: snapshot.toolplane.origins }
+                : {}),
+              ...(snapshot.toolplane?.reproducibility
+                ? { reproducibility: snapshot.toolplane.reproducibility }
+                : {}),
+              ...(declaredEnv !== undefined ? { env: declaredEnv } : {}),
+              ...(declaredHttpProxies !== undefined
+                ? { httpProxies: declaredHttpProxies }
+                : {}),
+            },
+          }
+        : {}),
       source: {
         kind: "git",
         requested: `${url}#${input.commit}`,

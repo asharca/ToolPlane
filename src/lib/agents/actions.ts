@@ -130,6 +130,8 @@ const resourceReviewPublicErrors: Record<string, true> = {
   MCP_CREDENTIAL_INVALID: true,
   MCP_CREDENTIAL_SCOPE_INVALID: true,
   MCP_CREDENTIAL_MIGRATION_REQUIRED: true,
+  PI_PACKAGE_ENV_INCOMPLETE: true,
+  PI_PACKAGE_ENV_CONFLICT: true,
 };
 
 function resourceReviewError(error: unknown) {

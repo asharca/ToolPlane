@@ -22,6 +22,7 @@ import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import { HOST_ONLY_COMMAND_NAMES } from "../runtime-commands";
 import { z } from "zod";
 import { prepareLspRuntime } from "../lsp-runtime";
+import { prepareTurnPluginEnv } from "@/lib/plugins/runtime-env";
 import { observeAgentExecutionStage } from "../execution-stages";
 import { PI_SDK_VERSION, PI_SDK_VERSIONS } from "../pi-version";
 import type {
@@ -112,6 +113,24 @@ export async function runPiSdk(
       packages.length
   )
     throw new Error("PI_PACKAGE_UNAVAILABLE");
+  const pluginEnv = await prepareTurnPluginEnv({
+    workspaceId: options.workspaceId,
+    agentId: options.agentId,
+    agentRevisionId: options.agentRevisionId,
+    sandboxId: options.sandboxId,
+    conversationId: options.conversationId,
+    a2aContextId: options.a2aContextId,
+    runtimeAccessToken: options.runtimeAccessToken,
+    packages: packages.map((item) => ({
+      marketInstallId: item.marketInstallId,
+      releaseId: item.releaseId,
+      manifest: item.manifest,
+    })),
+  });
+  const turnSecrets = [
+    options.runtimeAccessToken,
+    ...pluginEnv.hostRedactTokens,
+  ];
   const packageSetChecksum = createHash("sha256")
     .update(
       JSON.stringify(
@@ -321,7 +340,7 @@ export async function runPiSdk(
       ...parsed.data,
       suggestions: parsed.data.suggestions.map((note) => ({
         ...note,
-        message: redact(note.message, [options.runtimeAccessToken]),
+        message: redact(note.message, turnSecrets),
       })),
     };
     try {
@@ -424,7 +443,7 @@ export async function runPiSdk(
     if (event.type === "queued_message_consumed") {
       await options.onQueuedMessage?.(
         event.message as QueuedAgentMessage,
-        redact(String(event.assistantText ?? ""), [options.runtimeAccessToken]),
+        redact(String(event.assistantText ?? ""), turnSecrets),
       );
       streamed = "";
       return;
@@ -495,15 +514,11 @@ export async function runPiSdk(
           marker.data.kind === "rewind"
             ? {
                 ...marker.data,
-                report: redact(marker.data.report, [
-                  options.runtimeAccessToken,
-                ]),
+                report: redact(marker.data.report, turnSecrets),
               }
             : {
                 ...marker.data,
-                summary: redact(marker.data.summary, [
-                  options.runtimeAccessToken,
-                ]),
+                summary: redact(marker.data.summary, turnSecrets),
               };
         await options.onContextMaintenance?.(safe);
       }
@@ -531,9 +546,7 @@ export async function runPiSdk(
         error = failure ? runtimeFailureText(failure) : "PI_SDK_FAILED";
         return;
       }
-      text = redact(String(event.result?.text ?? ""), [
-        options.runtimeAccessToken,
-      ]);
+      text = redact(String(event.result?.text ?? ""), turnSecrets);
       const context = event.result?.contextBreakdown;
       const breakdown = parseContextBreakdown(context?.categories);
       if (breakdown && typeof context.usedTokens === "number")
@@ -554,7 +567,7 @@ export async function runPiSdk(
       ) {
         await options.onCommandResult?.({
           command: result.command,
-          text: redact(result.text, [options.runtimeAccessToken]),
+          text: redact(result.text, turnSecrets),
           status: result.status,
         });
         if (result.status === "failed") error = "PI_SDK_COMMAND_FAILED";
@@ -563,12 +576,17 @@ export async function runPiSdk(
     }
     const parsed = parsePiStreamLine(line);
     if (parsed?.delta) {
-      const delta = redact(parsed.delta, [options.runtimeAccessToken]);
+      const delta = redact(parsed.delta, turnSecrets);
       streamed += delta;
       await options.onTextDelta?.(delta);
     }
     if (parsed?.activities)
-      await reportActivities(options, parsed.activities, mcpServers);
+      await reportActivities(
+        options,
+        parsed.activities,
+        mcpServers,
+        turnSecrets,
+      );
     if (parsed?.contextTokens !== undefined)
       await reportContextUsage(options, parsed.contextTokens, false);
     if (parsed?.isError) error = "PI_SDK_FAILED";
@@ -582,7 +600,7 @@ export async function runPiSdk(
       args: [SANDBOX_NODE_FLAG, hostPath, configPath],
       signal: options.signal,
       timeoutMs: options.timeoutMs ?? TURN_TIMEOUT_MS,
-      secrets: [options.runtimeAccessToken],
+      secrets: turnSecrets,
       env: {
         PI_OFFLINE: "1",
         PI_TELEMETRY: "0",
@@ -609,6 +627,12 @@ export async function runPiSdk(
       mcpConfig: JSON.parse(buildPiMcpConfig(mcpServers)),
       model: sessionModel,
       advisor,
+      pluginEnv: {
+        env: pluginEnv.env,
+        unsetKeys: pluginEnv.unsetKeys,
+        sandboxRedactTokens: pluginEnv.sandboxRedactTokens,
+        signature: pluginEnv.signature,
+      },
     },
     {
       files: hostFiles,
