@@ -902,7 +902,7 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
     });
     const install = await (async () =>
       addPlugin(
-        await testWorkspaceScope(workspace.id, user.id, "manage"),
+        await testWorkspaceScope(workspace.id, user.id, "plugins"),
         published.listing.id,
       ))();
     const installed = { install };
@@ -1239,7 +1239,7 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
     });
     await (async () =>
       updatePlugin(
-        await testWorkspaceScope(workspace.id, user.id, "manage"),
+        await testWorkspaceScope(workspace.id, user.id, "plugins"),
         installed.install.id,
         v2.release.id,
       ))();
@@ -1265,7 +1265,7 @@ it("runs immutable V1 across reconnects and synchronizes code-changing V2 only a
     expect(
       await (async () =>
         approveAgentPluginSync(
-          await testWorkspaceScope(workspace.id, user.id, "manage"),
+          await testWorkspaceScope(workspace.id, user.id, "plugins"),
           agent.id,
           installed.install.id,
           v2.release.id,

@@ -20,7 +20,6 @@ import {
 } from "@/components/dashboard/plugins/PluginSourceSyncStatus";
 import { getCurrentUser } from "@/lib/auth/current-user";
 
-import { db } from "@/lib/db";
 import { listPluginSources } from "@/lib/plugins/sources";
 
 export const dynamic = "force-dynamic";
@@ -46,19 +45,8 @@ export default async function PluginSourcesPage({
     redirect(`/app/login?next=${encodeURIComponent(`${base}/sources`)}`);
   const workspace = await resolveWorkspaceScope({ slug }, user.id);
   if (!workspace) redirect("/app");
-  const [sources, membership] = await Promise.all([
-    listPluginSources(workspace),
-    db.membership.findUnique({
-      where: {
-        workspaceId_userId: { workspaceId: workspace.id, userId: user.id },
-      },
-      select: { role: true },
-    }),
-  ]);
-  const canManage =
-    workspace.ownerId === user.id ||
-    membership?.role === "admin" ||
-    membership?.role === "owner";
+  const sources = await listPluginSources(workspace);
+  const canManage = workspace.permissions.includes("plugins");
   const dateFormat = new Intl.DateTimeFormat(locale, {
     dateStyle: "medium",
     timeStyle: "short",

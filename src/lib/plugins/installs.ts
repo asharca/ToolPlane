@@ -100,7 +100,7 @@ function storedBindings(resourceMap: unknown): unknown {
 }
 
 export async function addPlugin(
-  scope: WorkspaceScope<"manage">,
+  scope: WorkspaceScope<"plugins">,
   listingId: string,
   mcpBindings: PluginMcpBindings = {},
 ) {
@@ -177,7 +177,7 @@ export async function addPlugin(
 }
 
 export async function updatePlugin(
-  scope: WorkspaceScope<"manage">,
+  scope: WorkspaceScope<"plugins">,
   installId: string,
   targetReleaseId: string,
   mcpBindings?: PluginMcpBindings,
@@ -274,7 +274,7 @@ export async function updatePlugin(
 
 /** Uninstall narrows defaults; immutable revisions and existing sessions retain their pins. */
 export async function removePlugin(
-  scope: WorkspaceScope<"manage">,
+  scope: WorkspaceScope<"plugins">,
   installId: string,
 ) {
   const { id: workspaceId } = scope;

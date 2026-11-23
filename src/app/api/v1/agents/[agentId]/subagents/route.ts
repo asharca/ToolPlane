@@ -43,7 +43,7 @@ async function handle(
     )
       return Response.json({ error: "notFound" }, { status: 404 });
     const manageScope = value
-      ? await resolveWorkspaceScope({ id: workspace.id }, user.id, "manage")
+      ? await resolveWorkspaceScope({ id: workspace.id }, user.id, "agents")
       : null;
     if (value && !manageScope)
       return Response.json(

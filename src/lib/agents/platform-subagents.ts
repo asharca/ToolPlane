@@ -160,7 +160,7 @@ export async function listPlatformSubagents(
 
 /** Selection is a draft; the parent's reviewed edge authorizes delegation to each child. */
 export async function savePlatformSubagents(
-  scope: WorkspaceScope<"manage">,
+  scope: WorkspaceScope<"agents">,
   agentId: string,
   value: z.infer<typeof SubagentSettingsSchema>,
 ) {

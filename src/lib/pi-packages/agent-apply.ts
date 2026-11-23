@@ -29,7 +29,7 @@ export type AgentPackageMcpConnection = {
 
 /** Apply exactly one reviewed package over the applied revision, never the mutable draft. */
 export async function applyPiPackageToAgent(
-  scope: WorkspaceScope<"manage">,
+  scope: WorkspaceScope<"plugins">,
   input: {
     agentId: string;
     expectedRevisionId: string;

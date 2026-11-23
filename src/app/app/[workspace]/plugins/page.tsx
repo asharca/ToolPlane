@@ -23,7 +23,6 @@ import {
 import { PluginPageHeader } from "@/components/dashboard/plugins/PluginPageHeader";
 import { getCurrentUser } from "@/lib/auth/current-user";
 
-import { db } from "@/lib/db";
 import { listPluginCards, pluginReleaseLabel } from "@/lib/plugins/catalog";
 import { listPluginSources } from "@/lib/plugins/sources";
 
@@ -80,23 +79,14 @@ export default async function PluginsPage({
   const hasFilters = Boolean(
     q || sourceId || origin || capability || availability,
   );
-  const [catalog, sources, membership] = await Promise.all([
+  const [catalog, sources] = await Promise.all([
     listPluginCards(workspace, {
       query: q,
       sourceId: sourceId || undefined,
     }),
     listPluginSources(workspace),
-    db.membership.findUnique({
-      where: {
-        workspaceId_userId: { workspaceId: workspace.id, userId: user.id },
-      },
-      select: { role: true },
-    }),
   ]);
-  const canManage =
-    workspace.ownerId === user.id ||
-    membership?.role === "admin" ||
-    membership?.role === "owner";
+  const canManage = workspace.permissions.includes("plugins");
   const items = catalog.items.filter((plugin) => {
     const official = Boolean(plugin.githubRegistryResource?.registry.official);
     if (origin && official !== (origin === "official")) return false;

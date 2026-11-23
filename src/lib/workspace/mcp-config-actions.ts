@@ -257,7 +257,7 @@ async function plan(
   if (
     !remote &&
     !isPackagedStdioCommand(canonical.command) &&
-    ws.role === "member"
+    !ws.permissions.includes("resources")
   )
     fail("arbitraryCommandNotAllowed");
   const previous = record(dep.installCfg);
@@ -302,7 +302,7 @@ async function plan(
     ...values,
   };
   if (
-    ws.capability === "manage" &&
+    ws.permissions.includes("resources") &&
     hasCredentialEcho(entry.document, entry.draft, Object.values(env))
   )
     fail("invalidConfig");
@@ -436,7 +436,7 @@ export async function getMcpConfigAction(
       record(dep.installCfg).credentialEnvelope,
     ).configuredKeys;
     const required = record(dep.installCfg).requiredEnv;
-    const canManage = ws.role !== "member";
+    const canManage = ws.permissions.includes("resources");
     const lock = record(active.resolved);
     return {
       ok: true,
@@ -528,7 +528,7 @@ async function mutate(
   try {
     const ctx = await actionScope({
       slug: input.workspace,
-      capability: "manage",
+      capability: "resources",
     });
     if (!ctx) fail("notAuthorized");
     const { ws } = ctx;
@@ -738,7 +738,7 @@ export async function setMcpSamplingAction(
   try {
     const ctx = await actionScope({
       slug: input.workspace,
-      capability: "manage",
+      capability: "resources",
     });
     if (!ctx) fail("notAuthorized");
     if (typeof input.enabled !== "boolean") fail("invalidConfig");

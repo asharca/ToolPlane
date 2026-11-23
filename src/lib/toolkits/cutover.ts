@@ -1,4 +1,5 @@
 import "server-only";
+import { membershipPermissionWhere } from "@/lib/workspace/scope";
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
@@ -43,7 +44,7 @@ export async function cutoverToolkitToPrivatePackage(
               members: {
                 some: {
                   userId: input.userId,
-                  role: { in: ["owner", "admin"] },
+                  ...membershipPermissionWhere("resources"),
                 },
               },
             },

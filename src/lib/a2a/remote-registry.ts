@@ -80,7 +80,7 @@ export async function assertRemoteManager(
     !(await tx.workspace.count({
       where: {
         id: ctx.workspaceId,
-        ...workspaceAccessWhere(ctx.actorId, "manage"),
+        ...workspaceAccessWhere(ctx.actorId, "agents"),
       },
     }))
   )

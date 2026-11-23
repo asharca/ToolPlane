@@ -1,4 +1,5 @@
 import "server-only";
+import { membershipPermissionWhere } from "@/lib/workspace/scope";
 import type { Prisma, A2ATask, AgentUsage } from "@prisma/client";
 import { Task, TaskState } from "@a2a-js/sdk";
 import { UnsupportedOperationError } from "@a2a-js/sdk/errors";
@@ -338,7 +339,7 @@ export async function recordAgentTaskUsage(row: A2ATask, metering?: TaskUsage) {
     });
     const workspace = await tx.workspace.findUniqueOrThrow({
       where: { id: grant.workspaceId },
-      include: { members: { where: { role: { in: ["owner", "admin"] } } } },
+      include: { members: { where: membershipPermissionWhere("agents") } },
     });
     const recipients = [
       ...new Set([

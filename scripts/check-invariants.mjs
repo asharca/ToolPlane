@@ -115,6 +115,20 @@ for (const file of readdirSync("src", { recursive: true })) {
   if (!/\.tsx?$/.test(file)) continue;
   const path = `src/${file}`;
   const text = readFileSync(path, "utf8");
+  if (
+    !path.startsWith("src/lib/admin/") &&
+    !/^src\/lib\/workspace\/(?:scope|permissions|management)\.ts$/.test(path)
+  ) {
+    const obsolete =
+      /role:\s*\{\s*in:\s*\[\s*"owner",\s*"admin"|capability:\s*"manage"/g;
+    for (const match of text.matchAll(obsolete)) {
+      const line = text.slice(0, match.index).split("\n").length;
+      console.error(
+        `${path}:${line}: Use a domain-specific workspace permission.`,
+      );
+      failed = true;
+    }
+  }
   if (!/\b(?:useTranslations|getTranslations)\b/.test(text)) continue;
   const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
   const scopes = [new Map()];

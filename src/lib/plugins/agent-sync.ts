@@ -21,7 +21,7 @@ import { PluginError, visiblePluginWhere } from "./catalog";
 
 /** Drafts have no applied environment to publish; only their selected package pin follows. */
 async function followDraftPlugin(
-  scope: WorkspaceScope<"manage">,
+  scope: WorkspaceScope<"plugins">,
   agentId: string,
   installId: string,
   releaseId: string,
@@ -127,7 +127,7 @@ async function syncAgentPlugin(
     const scope = await resolveWorkspaceScope(
       { id: workspaceId },
       requestedBy,
-      "manage",
+      "plugins",
     );
     if (!scope)
       throw new PluginError("not_authorized", "Workspace access denied.", 403);
@@ -281,7 +281,7 @@ export async function runPendingAgentPluginSyncs() {
 }
 
 export async function approveAgentPluginSync(
-  scope: WorkspaceScope<"manage">,
+  scope: WorkspaceScope<"plugins">,
   agentId: string,
   installId: string,
   expectedTargetReleaseId: string,

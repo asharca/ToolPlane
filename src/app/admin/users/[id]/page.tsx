@@ -1,16 +1,17 @@
 import { ButtonLink } from "@/components/motion/button";
 import { getLocale, getTranslations } from "next-intl/server";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Activity, ChevronRight, ShieldCheck } from "lucide-react";
+import { Activity, ShieldCheck } from "lucide-react";
 import { adminHref, adminReturnHref } from "@/lib/admin/navigation";
 import { requireAdmin } from "@/lib/auth/admin";
 import { getUserDetail } from "@/lib/admin/users";
+import { listUserWorkspaceAccess } from "@/lib/admin/workspace-members";
 import {
   getUserLimitDefaults,
   getUserQuotaSummary,
 } from "@/lib/storage/user-quota";
 import { UserLimitsSettingsForm } from "@/components/admin/UserLimitsSettingsForm";
+import { UserWorkspaceAccess } from "@/components/admin/UserWorkspaceAccess";
 import { StorageUsage } from "@/components/ui/StorageUsage";
 import {
   setUserRoleAction,
@@ -44,9 +45,10 @@ export default async function AdminUserDetailPage({
   const { id } = await params;
   const u = await getUserDetail(id);
   if (!u) notFound();
-  const [defaults, quota] = await Promise.all([
+  const [defaults, quota, workspaceAccess] = await Promise.all([
     getUserLimitDefaults(),
     getUserQuotaSummary(u.id),
+    listUserWorkspaceAccess(u.id),
   ]);
   const isSelf = admin.id === u.id;
   const ops = await getTranslations("adminOps");
@@ -55,10 +57,12 @@ export default async function AdminUserDetailPage({
     "/admin/users",
   );
   const selfHref = adminHref(`/admin/users/${id}`, { returnTo: backHref });
-  const joined = u.memberships.filter(
-    ({ workspace }) =>
-      !u.ownedWorkspaces.some((owned) => owned.id === workspace.id),
-  );
+  const workspaceAccessEntries = workspaceAccess.map((entry) => ({
+    ...entry,
+    href: adminHref(`/admin/workspaces/${entry.workspace.id}`, {
+      returnTo: selfHref,
+    }),
+  }));
   const impact = u.ownedWorkspaces.reduce(
     (sum, workspace) => ({
       deployments: sum.deployments + workspace._count.deployments,
@@ -179,83 +183,13 @@ export default async function AdminUserDetailPage({
         />
       </AdminPanel>
 
-      <AdminPanel
-        title={t("ownedWorkspaces")}
-        actions={
-          <AdminBadge tone="neutral">
-            {quota.ownedWorkspaces} / {quota.maxOwnedWorkspaces}
-          </AdminBadge>
-        }
-        padded={false}
-      >
-        {u.ownedWorkspaces.length > 0 ? (
-          <ul className="divide-y divide-border">
-            {u.ownedWorkspaces.map((w) => (
-              <li key={w.id}>
-                <Link
-                  href={adminHref(`/admin/workspaces/${w.id}`, {
-                    returnTo: selfHref,
-                  })}
-                  className="group flex min-h-14 min-w-0 items-center justify-between gap-3 px-5 py-2.5 transition-colors hover:bg-muted/55"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-foreground">
-                      {w.name}
-                    </span>
-                    <code className="block truncate font-mono text-xs text-muted-foreground">
-                      /{w.slug}
-                    </code>
-                  </span>
-                  <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                </Link>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="px-5 py-10 text-center text-sm text-muted-foreground">
-            {t("none")}
-          </p>
-        )}
-      </AdminPanel>
-
-      <AdminPanel
-        title={ops("joinedWorkspaces")}
-        actions={<AdminBadge>{joined.length}</AdminBadge>}
-        padded={false}
-      >
-        {joined.length ? (
-          <ul className="divide-y divide-border">
-            {joined.map(({ workspace, role }) => (
-              <li key={workspace.id}>
-                <Link
-                  href={adminHref(`/admin/workspaces/${workspace.id}`, {
-                    returnTo: selfHref,
-                  })}
-                  className="flex min-h-14 items-center justify-between gap-3 px-5 py-3 hover:bg-muted/55"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">
-                      {workspace.name}
-                    </span>
-                    <code className="text-xs text-muted-foreground">
-                      /{workspace.slug}
-                    </code>
-                  </span>
-                  <AdminBadge>
-                    {role === "owner"
-                      ? t("workspaceRoleOwner")
-                      : role === "admin"
-                        ? t("workspaceRoleAdmin")
-                        : t("workspaceRoleMember")}
-                  </AdminBadge>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="px-5 py-6 text-sm text-muted-foreground">{t("none")}</p>
-        )}
-      </AdminPanel>
+      <UserWorkspaceAccess
+        userId={u.id}
+        userSuspended={u.status === "suspended"}
+        entries={workspaceAccessEntries}
+        ownedWorkspaces={quota.ownedWorkspaces}
+        maxOwnedWorkspaces={quota.maxOwnedWorkspaces}
+      />
 
       {!isSelf ? (
         <AdminPanel

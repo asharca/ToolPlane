@@ -31,6 +31,7 @@ export default async function AdminLayout({
         admin: messages.admin,
         adminOps: messages.adminOps,
         adminFeedback: messages.adminFeedback,
+        adminWorkspaceAccess: messages.adminWorkspaceAccess,
         console: messages.console,
       }}
     >

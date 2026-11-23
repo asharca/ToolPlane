@@ -5489,7 +5489,7 @@ describe("independent platform and native subagents", () => {
   const save = (native: boolean, agentIds: string[] = []) =>
     (async () =>
       savePlatformSubagents(
-        await testWorkspaceScope(ws, user, "manage"),
+        await testWorkspaceScope(ws, user, "agents"),
         agents[0],
         {
           native,
@@ -5598,7 +5598,7 @@ describe("independent platform and native subagents", () => {
     await expect(
       (async () =>
         savePlatformSubagents(
-          await testWorkspaceScope(ws, user, "manage"),
+          await testWorkspaceScope(ws, user, "agents"),
           agents[4],
           {
             native: false,
@@ -5610,7 +5610,7 @@ describe("independent platform and native subagents", () => {
     await expect(
       (async () =>
         savePlatformSubagents(
-          await testWorkspaceScope(ws, otherUser, "manage"),
+          await testWorkspaceScope(ws, otherUser, "agents"),
           agents[0],
           {
             native: false,

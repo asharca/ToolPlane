@@ -946,7 +946,7 @@ export async function approveAgentPluginSyncAction(formData: FormData) {
   const agentId = String(formData.get("agentId") ?? "");
   const installId = String(formData.get("installId") ?? "");
   const targetReleaseId = String(formData.get("targetReleaseId") ?? "");
-  const ctx = await actionScope({ slug, capability: "manage" });
+  const ctx = await actionScope({ slug, capability: "plugins" });
   if (
     !ctx ||
     !agentId ||

@@ -1,4 +1,5 @@
 import "server-only";
+import { workspaceRoleOf } from "@/lib/workspace/permissions";
 import {
   resolveWorkspaceScope,
   workspaceAccessWhere,
@@ -40,12 +41,7 @@ export async function listWorkspacesForUser(userId: string) {
   });
   return workspaces.map(({ ownerId, members, _count, ...workspace }) => ({
     ...workspace,
-    role:
-      ownerId === userId
-        ? ("owner" as const)
-        : members[0]?.role === "admin"
-          ? ("admin" as const)
-          : ("member" as const),
+    role: workspaceRoleOf(ownerId, userId, members[0]?.role),
     memberCount: _count.members,
   }));
 }

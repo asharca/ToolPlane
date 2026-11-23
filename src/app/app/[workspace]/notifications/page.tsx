@@ -34,13 +34,8 @@ export default async function NotificationsPage({
     );
   const ws = await resolveWorkspaceScope({ slug: workspace }, user.id);
   if (!ws) redirect("/app?view=notifications");
-  // Owners and workspace admins may publish; the server action re-checks.
   const members = await getWorkspaceMembers(ws.id);
-  const canPublish =
-    ws.ownerId === user.id ||
-    members.some(
-      (member) => member.userId === user.id && member.role === "admin",
-    );
+  const canPublish = ws.permissions.includes("notifications");
   return (
     <>
       <DashboardHeader title={t("title")} />

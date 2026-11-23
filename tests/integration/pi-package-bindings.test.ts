@@ -389,7 +389,7 @@ it("restores original session code after default changes/uninstall and rejects r
   ).rejects.toThrow();
   await (async () =>
     removePlugin(
-      await testWorkspaceScope(workspaceId, userId, "manage"),
+      await testWorkspaceScope(workspaceId, userId, "plugins"),
       installId,
     ))();
   expect(

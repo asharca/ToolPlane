@@ -5378,6 +5378,81 @@
     "delete": "删除",
     "attachmentLimitCached": "数据库暂时不可用，当前保留上一次有效上传限制；没有有效缓存时会拒绝新的上传。"
   },
+  "adminWorkspaceAccess": {
+    "title": "工作区权限",
+    "ownedQuota": "拥有 {used} / {max}",
+    "empty": "暂未加入任何工作区。",
+    "allPermissions": "全部权限",
+    "ownerAllPermissions": "工作区所有者始终拥有全部权限，无法在后台调整或移除。",
+    "roles": {
+      "owner": "所有者",
+      "admin": "管理员",
+      "member": "成员"
+    },
+    "roleAriaLabel": "在 {workspace} 中的角色",
+    "remove": "移除",
+    "removePrompt": "确定将此用户从 {workspace} 中移除吗？",
+    "removing": "移除中…",
+    "adjustmentGranted": "已授予",
+    "adjustmentRevoked": "已撤销",
+    "resetToDefault": "恢复默认",
+    "resetDefaults": "恢复默认",
+    "resetDefaultsAriaLabel": "将 {workspace} 中的所有个人权限恢复为角色默认",
+    "resetAriaLabel": "将 {permission} 恢复为角色默认",
+    "permissionSwitchAriaLabel": "{workspace} 的 {permission} 权限",
+    "permissionInfoAriaLabel": "查看{permission}说明",
+    "changeRoleTitle": "切换工作区角色",
+    "changeRoleConfirm": "确认切换",
+    "changeRoleClearPrompt": "将在 {workspace} 中的角色切换为「{role}」会清除当前 {count} 项个人权限调整，确定继续吗？",
+    "cancel": "取消",
+    "suspendedCannotAdd": "已停用的用户无法加入新工作区。",
+    "filterPlaceholder": "筛选工作区…",
+    "filterAll": "全部",
+    "noFilteredWorkspaces": "没有匹配的工作区。",
+    "permissions": {
+      "resources": {
+        "label": "资源管理",
+        "description": "MCP 部署、技能、工具包、模型供应商、沙箱与工作区设置。"
+      },
+      "agents": {
+        "label": "智能体",
+        "description": "智能体、子智能体、A2A、自动化触发器、消息频道与用量预算。"
+      },
+      "plugins": {
+        "label": "插件",
+        "description": "插件中心安装、来源、本地插件与智能体包同步。"
+      },
+      "notifications": {
+        "label": "通知",
+        "description": "工作区通知的发送与管理。"
+      }
+    },
+    "addSearchPlaceholder": "搜索要加入的工作区…",
+    "addSearchAriaLabel": "搜索可加入的工作区",
+    "addRoleAriaLabel": "初始角色",
+    "addButton": "添加",
+    "adding": "添加中…",
+    "noMatchingWorkspaces": "没有可加入的工作区。",
+    "searching": "搜索中…",
+    "clearSelection": "清除已选工作区",
+    "added": "已添加到工作区。",
+    "roleUpdated": "工作区角色已更新。",
+    "permissionUpdated": "权限已更新。",
+    "permissionsReset": "已恢复角色默认权限。",
+    "removed": "已从工作区移除。",
+    "errors": {
+      "failed": "保存失败，请重试。",
+      "workspaceMissing": "该工作区已不存在。",
+      "unavailable": "该工作区当前不可用。",
+      "userMissing": "该用户已不存在。",
+      "inactiveUser": "已停用的用户不能加入工作区。",
+      "alreadyMember": "该用户已在此工作区中。",
+      "memberMissing": "该用户已不是成员，请刷新页面。",
+      "transferFirst": "不能移除工作区所有者，需先转让所有权。",
+      "ownerLocked": "工作区所有者始终拥有全部权限。",
+      "forbidden": "不允许此修改。"
+    }
+  },
   "adminFeedback": {
     "title": "反馈中心",
     "description": "统一查看系统故障、用户反馈与已批准的模型反馈。",

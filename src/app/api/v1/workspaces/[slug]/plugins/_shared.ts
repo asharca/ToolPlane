@@ -16,7 +16,7 @@ export async function pluginRequestContext<
   const workspace = await resolveWorkspaceScope({ slug }, user.id, capability);
   if (
     !workspace &&
-    capability === "manage" &&
+    capability === "plugins" &&
     (await resolveWorkspaceScope({ slug }, user.id))
   )
     throw new PluginError("not_authorized", "Workspace access denied.", 403);

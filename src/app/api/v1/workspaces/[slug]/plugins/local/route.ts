@@ -14,7 +14,7 @@ export const POST = withRequestLogging(
       const { workspace } = await pluginRequestContext(
         req,
         (await params).slug,
-        "manage",
+        "plugins",
       );
       const input = await parseJson(
         req,

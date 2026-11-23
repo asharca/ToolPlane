@@ -413,6 +413,67 @@ export async function revokeWorkspaceInvitation(
   });
 }
 
+/**
+ * Delete one membership and the credentials it carried. Shared by workspace
+ * owners and platform admins; the caller holds the workspace row lock.
+ */
+export async function detachWorkspaceMember(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  memberId: string,
+) {
+  const result = await tx.membership.deleteMany({
+    where: { workspaceId, userId: memberId },
+  });
+  if (!result.count) invalid("memberMissing");
+  const member = await tx.user.findUnique({
+    where: { id: memberId },
+    select: { email: true },
+  });
+  if (member)
+    await tx.workspaceInvitation.deleteMany({
+      where: { workspaceId, email: member.email.toLowerCase() },
+    });
+  await tx.apiToken.deleteMany({
+    where: { userId: memberId, toolkit: { workspaceId } },
+  });
+  await tx.toolkitInstallation.updateMany({
+    where: { userId: memberId, toolkit: { workspaceId } },
+    data: { status: "revoked" },
+  });
+}
+
+/**
+ * Change a non-owner member's role. A new role is a new baseline, so
+ * individual permission adjustments are cleared. Returns the previous role,
+ * or null when nothing changed.
+ */
+export async function changeWorkspaceMemberRole(
+  tx: Prisma.TransactionClient,
+  workspace: { id: string; ownerId: string },
+  memberId: string,
+  role: "admin" | "member",
+): Promise<string | null> {
+  if (role !== "admin" && role !== "member") invalid("forbidden");
+  if (memberId === workspace.ownerId) invalid("forbidden");
+  const member = await tx.membership.findUnique({
+    where: {
+      workspaceId_userId: { workspaceId: workspace.id, userId: memberId },
+    },
+    include: { user: { select: { status: true } } },
+  });
+  if (!member || (role === "admin" && member.user.status !== "active"))
+    invalid("memberMissing");
+  if (member.role === "owner") invalid("forbidden");
+  if (member.role === role) return null;
+  const changed = await tx.membership.updateMany({
+    where: { id: member.id, workspaceId: workspace.id },
+    data: { role, grantedPermissions: [], revokedPermissions: [] },
+  });
+  if (!changed.count) invalid("memberMissing");
+  return member.role;
+}
+
 export async function removeWorkspaceMember(
   actorId: string,
   slug: string,
@@ -427,25 +488,7 @@ export async function removeWorkspaceMember(
       memberId === actorId,
     );
     if (memberId === workspace.ownerId) invalid("transferFirst");
-    const result = await tx.membership.deleteMany({
-      where: { workspaceId: workspace.id, userId: memberId },
-    });
-    if (!result.count) invalid("memberMissing");
-    const member = await tx.user.findUnique({
-      where: { id: memberId },
-      select: { email: true },
-    });
-    if (member)
-      await tx.workspaceInvitation.deleteMany({
-        where: { workspaceId: workspace.id, email: member.email.toLowerCase() },
-      });
-    await tx.apiToken.deleteMany({
-      where: { userId: memberId, toolkit: { workspaceId: workspace.id } },
-    });
-    await tx.toolkitInstallation.updateMany({
-      where: { userId: memberId, toolkit: { workspaceId: workspace.id } },
-      data: { status: "revoked" },
-    });
+    await detachWorkspaceMember(tx, workspace.id, memberId);
     await writeAudit(tx, {
       actorId,
       workspaceId: workspace.id,
@@ -469,30 +512,21 @@ export async function setWorkspaceMemberRole(
   if (role !== "admin" && role !== "member") invalid("forbidden");
   await db.$transaction(async (tx) => {
     const workspace = await lockedWorkspace(tx, slug, actorId);
-    if (memberId === actorId || memberId === workspace.ownerId)
-      invalid("forbidden");
-    const member = await tx.membership.findUnique({
-      where: {
-        workspaceId_userId: { workspaceId: workspace.id, userId: memberId },
-      },
-      include: { user: { select: { status: true } } },
-    });
-    if (!member || (role === "admin" && member.user.status !== "active"))
-      invalid("memberMissing");
-    if (member.role === "owner") invalid("forbidden");
-    if (member.role === role) return;
-    const changed = await tx.membership.updateMany({
-      where: { id: member.id, workspaceId: workspace.id },
-      data: { role },
-    });
-    if (!changed.count) invalid("memberMissing");
+    if (memberId === actorId) invalid("forbidden");
+    const before = await changeWorkspaceMemberRole(
+      tx,
+      workspace,
+      memberId,
+      role,
+    );
+    if (before === null) return;
     await writeAudit(tx, {
       actorId,
       workspaceId: workspace.id,
       action: "workspace.member_role_changed",
       targetType: "user",
       targetId: memberId,
-      changes: { before: { role: member.role }, after: { role } },
+      changes: { before: { role: before }, after: { role } },
     });
   });
 }

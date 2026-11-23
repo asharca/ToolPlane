@@ -52,7 +52,7 @@ export async function pluginAction(
       revalidatePath(`/app/${slug}`, "layout");
       return { success: true };
     }
-    const ctx = await actionScope({ slug, capability: "manage" });
+    const ctx = await actionScope({ slug, capability: "plugins" });
     if (!ctx) return { error: "not_authorized" };
     const workspace = ctx.ws;
     if (operation === "add" || operation === "update") {
@@ -120,7 +120,7 @@ export async function pluginBatchAction(
   )
     throw new Error("Invalid plugin selection (maximum 100 plugins).");
   const ids = [...new Set(installIds)];
-  const ctx = await actionScope({ slug, capability: "manage" });
+  const ctx = await actionScope({ slug, capability: "plugins" });
   if (!ctx)
     return ids.map((installId) => ({
       installId,

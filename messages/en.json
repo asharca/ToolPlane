@@ -5378,6 +5378,81 @@
     "delete": "Delete",
     "attachmentLimitCached": "Database unavailable: the last known safe upload limit is retained. New uploads are blocked if no safe limit is cached."
   },
+  "adminWorkspaceAccess": {
+    "title": "Workspace access",
+    "ownedQuota": "Owned {used} / {max}",
+    "empty": "Not a member of any workspace.",
+    "allPermissions": "All permissions",
+    "ownerAllPermissions": "Owners always hold every permission and cannot be modified or removed here.",
+    "roles": {
+      "owner": "Owner",
+      "admin": "Admin",
+      "member": "Member"
+    },
+    "roleAriaLabel": "Role in {workspace}",
+    "remove": "Remove",
+    "removePrompt": "Remove this user from {workspace}?",
+    "removing": "Removing…",
+    "adjustmentGranted": "Granted",
+    "adjustmentRevoked": "Revoked",
+    "resetToDefault": "Reset",
+    "resetDefaults": "Reset defaults",
+    "resetDefaultsAriaLabel": "Reset all custom permissions in {workspace} to role defaults",
+    "resetAriaLabel": "Reset {permission} to role default",
+    "permissionSwitchAriaLabel": "{permission} in {workspace}",
+    "permissionInfoAriaLabel": "About {permission}",
+    "changeRoleTitle": "Change workspace role",
+    "changeRoleConfirm": "Switch role",
+    "changeRoleClearPrompt": "Switching to {role} in {workspace} will clear {count} custom permission adjustment(s). Continue?",
+    "cancel": "Cancel",
+    "suspendedCannotAdd": "Suspended users cannot be added to new workspaces.",
+    "filterPlaceholder": "Filter workspaces…",
+    "filterAll": "All",
+    "noFilteredWorkspaces": "No matching workspaces.",
+    "permissions": {
+      "resources": {
+        "label": "Resources",
+        "description": "MCP deployments, skills, toolkits, model providers, sandboxes, and workspace settings."
+      },
+      "agents": {
+        "label": "Agents",
+        "description": "Agents, subagents, A2A, automation triggers, channels, and usage budgets."
+      },
+      "plugins": {
+        "label": "Plugins",
+        "description": "Plugin center installs, sources, local plugins, and agent package sync."
+      },
+      "notifications": {
+        "label": "Notifications",
+        "description": "Workspace notification delivery and management."
+      }
+    },
+    "addSearchPlaceholder": "Search workspaces to add…",
+    "addSearchAriaLabel": "Search joinable workspaces",
+    "addRoleAriaLabel": "Initial role",
+    "addButton": "Add",
+    "adding": "Adding…",
+    "noMatchingWorkspaces": "No joinable workspaces found.",
+    "searching": "Searching…",
+    "clearSelection": "Clear selected workspace",
+    "added": "Added to workspace.",
+    "roleUpdated": "Workspace role updated.",
+    "permissionUpdated": "Permission updated.",
+    "permissionsReset": "Restored role default permissions.",
+    "removed": "Removed from workspace.",
+    "errors": {
+      "failed": "The change could not be saved. Try again.",
+      "workspaceMissing": "This workspace no longer exists.",
+      "unavailable": "This workspace is not active.",
+      "userMissing": "This user no longer exists.",
+      "inactiveUser": "Suspended users cannot be added to a workspace.",
+      "alreadyMember": "This user already belongs to the workspace.",
+      "memberMissing": "This user is no longer a member. Refresh the page.",
+      "transferFirst": "The workspace owner cannot be removed. Ownership must be transferred first.",
+      "ownerLocked": "The workspace owner always holds every permission.",
+      "forbidden": "This change is not allowed."
+    }
+  },
   "adminFeedback": {
     "title": "Feedback Center",
     "description": "Review system failures, user reports, and approved model feedback.",

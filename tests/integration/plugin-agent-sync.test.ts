@@ -191,7 +191,7 @@ beforeAll(async () => {
   installId = (
     await (async () =>
       addPlugin(
-        await testWorkspaceScope(workspaceId, userId, "manage"),
+        await testWorkspaceScope(workspaceId, userId, "plugins"),
         listingId,
       ))()
   ).id;
@@ -280,7 +280,7 @@ it("auto-publishes unchanged capabilities during active execution while existing
     () =>
       (async () =>
         updatePlugin(
-          await testWorkspaceScope(workspaceId, userId, "manage"),
+          await testWorkspaceScope(workspaceId, userId, "plugins"),
           installId,
           v2,
         ))(),
@@ -335,7 +335,7 @@ it("auto-publishes unchanged capabilities during active execution while existing
 it("rejects a stale approval target without changing the binding or publishing a revision", async () => {
   await (async () =>
     updatePlugin(
-      await testWorkspaceScope(workspaceId, userId, "manage"),
+      await testWorkspaceScope(workspaceId, userId, "plugins"),
       installId,
       v3,
     ))();
@@ -344,7 +344,7 @@ it("rejects a stale approval target without changing the binding or publishing a
   await expect(
     (async () =>
       approveAgentPluginSync(
-        await testWorkspaceScope(workspaceId, userId, "manage"),
+        await testWorkspaceScope(workspaceId, userId, "plugins"),
         agentId,
         installId,
         v2,
@@ -357,7 +357,7 @@ it("rejects a stale approval target without changing the binding or publishing a
 it("pauses code changes without a revision, preserves review through draft edits, and applies approval", async () => {
   await (async () =>
     updatePlugin(
-      await testWorkspaceScope(workspaceId, userId, "manage"),
+      await testWorkspaceScope(workspaceId, userId, "plugins"),
       installId,
       v3,
     ))();
@@ -383,7 +383,7 @@ it("pauses code changes without a revision, preserves review through draft edits
   await expect(
     (async () =>
       approveAgentPluginSync(
-        await testWorkspaceScope(workspaceId, memberId, "manage"),
+        await testWorkspaceScope(workspaceId, memberId, "plugins"),
         agentId,
         installId,
         v3,
@@ -391,7 +391,7 @@ it("pauses code changes without a revision, preserves review through draft edits
   ).rejects.toMatchObject({ code: "not_authorized" });
   await (async () =>
     approveAgentPluginSync(
-      await testWorkspaceScope(workspaceId, userId, "manage"),
+      await testWorkspaceScope(workspaceId, userId, "plugins"),
       agentId,
       installId,
       v3,
@@ -404,7 +404,7 @@ it("pauses code changes without a revision, preserves review through draft edits
   expect((await agent()).currentRevisionVersion).toBe(3);
   await (async () =>
     approveAgentPluginSync(
-      await testWorkspaceScope(workspaceId, userId, "manage"),
+      await testWorkspaceScope(workspaceId, userId, "plugins"),
       draftAgentId,
       installId,
       v3,
@@ -428,7 +428,7 @@ it("pauses code changes without a revision, preserves review through draft edits
   await expect(
     (async () =>
       approveAgentPluginSync(
-        await testWorkspaceScope(workspaceId, userId, "manage"),
+        await testWorkspaceScope(workspaceId, userId, "plugins"),
         agentId,
         installId,
         v3,
@@ -443,7 +443,7 @@ it("queues syncs blocked by agent maintenance and retries with the updating admi
       unrelated.runInAsyncScope(() =>
         (async () =>
           updatePlugin(
-            await testWorkspaceScope(workspaceId, userId, "manage"),
+            await testWorkspaceScope(workspaceId, userId, "plugins"),
             installId,
             v3,
           ))(),
@@ -477,7 +477,7 @@ it("fails a queued update if its requesting user loses administrator access", as
       unrelated.runInAsyncScope(() =>
         (async () =>
           updatePlugin(
-            await testWorkspaceScope(workspaceId, memberId, "manage"),
+            await testWorkspaceScope(workspaceId, memberId, "plugins"),
             installId,
             v3,
           ))(),
@@ -527,7 +527,7 @@ it("isolates reads and install mutations by workspace and denies ordinary member
   await expect(
     (async () =>
       updatePlugin(
-        await testWorkspaceScope(otherWorkspaceId, userId, "manage"),
+        await testWorkspaceScope(otherWorkspaceId, userId, "plugins"),
         installId,
         v2,
       ))(),
@@ -535,14 +535,14 @@ it("isolates reads and install mutations by workspace and denies ordinary member
   await expect(
     (async () =>
       removePlugin(
-        await testWorkspaceScope(otherWorkspaceId, userId, "manage"),
+        await testWorkspaceScope(otherWorkspaceId, userId, "plugins"),
         installId,
       ))(),
   ).rejects.toMatchObject({ code: "not_found" });
   await expect(
     (async () =>
       approveAgentPluginSync(
-        await testWorkspaceScope(otherWorkspaceId, userId, "manage"),
+        await testWorkspaceScope(otherWorkspaceId, userId, "plugins"),
         agentId,
         installId,
         v3,
@@ -551,7 +551,7 @@ it("isolates reads and install mutations by workspace and denies ordinary member
   await expect(
     (async () =>
       updatePlugin(
-        await testWorkspaceScope(workspaceId, memberId, "manage"),
+        await testWorkspaceScope(workspaceId, memberId, "plugins"),
         installId,
         v2,
       ))(),
@@ -563,7 +563,7 @@ it("uninstalls by narrowing agent defaults without deleting session snapshots", 
   const previousVersion = (await agent()).currentRevisionVersion;
   await (async () =>
     removePlugin(
-      await testWorkspaceScope(workspaceId, userId, "manage"),
+      await testWorkspaceScope(workspaceId, userId, "plugins"),
       installId,
     ))();
   expect(

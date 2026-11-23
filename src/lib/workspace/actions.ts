@@ -384,7 +384,7 @@ export async function approveUnsafeRemoteMcpHttpAction(
 ): Promise<McpJsonConfigActionState> {
   const workspace = String(formData.get("workspace") ?? "");
   const deploymentId = String(formData.get("deploymentId") ?? "");
-  const ctx = await actionScope({ slug: workspace, capability: "manage" });
+  const ctx = await actionScope({ slug: workspace, capability: "resources" });
   if (!ctx) return { error: "notAuthorized" };
   if (formData.get("allowUnsafeHttp") !== "true")
     return { error: "invalidJsonConfig" };
@@ -824,7 +824,7 @@ export async function setDeploymentEnvAction(
   const slug = String(formData.get("workspace") ?? "");
   const deploymentId = String(formData.get("deploymentId") ?? "");
   if (!slug || !deploymentId) return { error: "deploymentNotFound" };
-  const ctx = await actionScope({ slug, capability: "manage" });
+  const ctx = await actionScope({ slug, capability: "resources" });
   if (!ctx) return { error: "notAuthorized" };
 
   const patch = formData.has("changes")
@@ -944,7 +944,7 @@ export async function revealDeploymentEnvAction({
 }): Promise<DeploymentEnvRevealResult> {
   if (!workspace || !deploymentId) return { error: "deploymentNotFound" };
   if (!ENV_KEY.test(key)) return { error: "variableNotFound" };
-  const ctx = await actionScope({ slug: workspace, capability: "manage" });
+  const ctx = await actionScope({ slug: workspace, capability: "resources" });
   if (!ctx) return { error: "notAuthorized" };
   const dep = await db.deployment.findFirst({
     where: {
@@ -1023,7 +1023,7 @@ export async function cloneDeploymentAction(formData: FormData) {
       if (!source) return null;
       if (
         source.source === "config" &&
-        ctx.ws.role === "member" &&
+        !ctx.ws.permissions.includes("resources") &&
         !isPackagedStdioCommand(source.sourceRef ?? "")
       )
         return null;

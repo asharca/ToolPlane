@@ -96,7 +96,7 @@ export default async function PluginDetailPage({
       throw error;
     },
   );
-  const canManage = workspace.role === "owner" || workspace.role === "admin";
+  const canManage = workspace.permissions.includes("plugins");
   const [deployments, agents] = await Promise.all([
     listPluginBindingDeployments(workspace.id),
     canManage
