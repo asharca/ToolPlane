@@ -103,6 +103,8 @@ model User {
   createdAgentEndpoints  AgentEndpoint[]       @relation("AgentEndpointCreator")
   createdAgentApiClients AgentApiClient[]      @relation("AgentApiClientCreator")
   uploadedAttachments    WorkspaceAttachment[] @relation("WorkspaceAttachmentUploader")
+  submittedFeedbacks     Feedback[]            @relation("FeedbackSubmitter")
+  approvedFeedbacks      Feedback[]            @relation("FeedbackApprover")
   createdAt              DateTime              @default(now())
   updatedAt              DateTime              @updatedAt
 }
@@ -239,6 +241,7 @@ model Workspace {
   githubResourceRegistries GithubResourceRegistry[]
   marketInstalls         MarketInstall[]          @relation("MarketInstallWorkspace")
   agentEndpoints         AgentEndpoint[]
+  feedbacks              Feedback[]
   createdAt              DateTime                 @default(now())
   updatedAt              DateTime                 @updatedAt
 
@@ -764,6 +767,7 @@ model Agent {
   piPackages              AgentPiPackage[]
   publicEndpoints         AgentEndpoint[]          @relation("EndpointSourceAgent")
   publicRuntimeAllocation AgentEndpointRuntime?    @relation("EndpointRuntimeAgent")
+  feedbacks               Feedback[]
 
   @@unique([workspaceId, slug])
   @@unique([id, workspaceId])
@@ -2352,4 +2356,64 @@ model AgentMessageFeedback {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@unique([messageId, createdById])
+}
+
+model Feedback {
+  id                  String               @id @default(cuid())
+  // "system" | "user" | "model"
+  source              String
+  // "bug" | "failure" | "suggestion" | "other"
+  category            String
+  // "open" | "acknowledged" | "resolved" | "dismissed"
+  status              String               @default("open")
+  title               String               @db.VarChar(200)
+  body                String?
+  failureCode         String?
+  failureReason       String?
+  executionStage      String?
+  fingerprint         String?              @unique
+  occurrences         Int                  @default(1)
+  firstSeenAt         DateTime             @default(now())
+  lastSeenAt          DateTime             @default(now())
+  platformVersion     String?
+  // Optional redacted conversation snippet explicitly attached by user.
+  conversationSnippet Json?
+  workspaceId         String?
+  workspace           Workspace?           @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  agentId             String?
+  agent               Agent?               @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  conversationId      String?
+  taskId              String?
+  workSessionId       String?
+  submittedById       String?
+  submittedBy         User?                @relation("FeedbackSubmitter", fields: [submittedById], references: [id], onDelete: SetNull)
+  approvedById        String?
+  approvedBy          User?                @relation("FeedbackApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  adminNote           String?
+  resolvedAt          DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  occurrenceRecords   FeedbackOccurrence[]
+
+  @@index([source, status, updatedAt])
+  @@index([submittedById, createdAt])
+  @@index([approvedById, createdAt])
+  @@index([workspaceId, updatedAt])
+  @@index([conversationId])
+}
+
+model FeedbackOccurrence {
+  id             String   @id @default(cuid())
+  feedbackId     String
+  feedback       Feedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  // "work" | "a2a_task"
+  sourceKind     String
+  sourceId       String
+  workspaceId    String?
+  agentId        String?
+  conversationId String?
+  createdAt      DateTime @default(now())
+
+  @@unique([feedbackId, sourceKind, sourceId])
+  @@index([sourceKind, sourceId])
 }

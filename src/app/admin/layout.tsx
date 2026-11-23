@@ -30,6 +30,7 @@ export default async function AdminLayout({
         filePreview: messages.filePreview,
         admin: messages.admin,
         adminOps: messages.adminOps,
+        adminFeedback: messages.adminFeedback,
         adminWorkspaceAccess: messages.adminWorkspaceAccess,
         console: messages.console,
       }}

@@ -1,5 +1,5 @@
 import { z } from "zod";
-
+import { FEEDBACK_TOOL_NAME } from "@/lib/feedback/types";
 export const ToolApprovalPolicySchema = z
   .object({
     mode: z.enum(["off", "write", "exec", "all"]),
@@ -10,10 +10,18 @@ export const ToolApprovalPolicySchema = z
   .strict();
 export type ToolApprovalPolicy = z.infer<typeof ToolApprovalPolicySchema>;
 
+export function isFeedbackToolName(tool: string): boolean {
+  return (
+    tool === FEEDBACK_TOOL_NAME ||
+    /^mcp__s\d+_t\d+__toolplane_feedback$/.test(tool)
+  );
+}
+
 export function toolApprovalDecision(
   policy: ToolApprovalPolicy | undefined,
   tool: string,
 ) {
+  if (isFeedbackToolName(tool)) return "ask";
   const override =
     policy?.overrides && Object.hasOwn(policy.overrides, tool)
       ? policy.overrides[tool]

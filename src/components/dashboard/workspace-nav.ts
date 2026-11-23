@@ -3,6 +3,7 @@ import {
   Boxes,
   Brain,
   Cpu,
+  Flag,
   LibraryBig,
   MessageSquare,
   Plug,
@@ -57,6 +58,7 @@ export const WORKSPACE_NAV_GROUPS: WorkspaceNavGroup[] = [
       { labelKey: "sandboxes", segment: "sandboxes", icon: Boxes },
       { labelKey: "observability", segment: "observability", icon: ScrollText },
       { labelKey: "members", segment: "members", icon: Users },
+      { labelKey: "feedback", segment: "feedback", icon: Flag },
     ],
   },
 ];

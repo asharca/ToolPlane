@@ -39,6 +39,7 @@ import {
 } from "@/lib/agents/sandbox-execution-gate";
 import { PiRuntimeInterruptedError } from "@/lib/agents/pi-harness";
 import { parseRuntimeFailure } from "@/lib/agents/runtime-failure";
+import { recordSystemFailureFeedback } from "@/lib/feedback/service";
 import { reconcileLocalWaits } from "@/lib/a2a/local-continuation";
 import { reconcileRemoteTasks } from "@/lib/a2a/remote-executor";
 import {
@@ -312,6 +313,29 @@ export function executeAgentTask(
               ? { nativeOperationId }
               : undefined,
           );
+          if (result.state === TaskState.TASK_STATE_FAILED) {
+            const parsedFailure = parseRuntimeFailure(result.message);
+            if (parsedFailure) {
+              await db
+                .$transaction((tx) =>
+                  recordSystemFailureFeedback(tx, {
+                    code: parsedFailure.code,
+                    reason: parsedFailure.reason ?? null,
+                    stage: "execution",
+                    runtimeKind: row.executionBackend,
+                    sourceKind: "a2a_task",
+                    sourceId: id,
+                    workspaceId: grant.workspaceId,
+                    agentId: isLocalGrant(grant) ? grant.agentId : null,
+                    conversationId: isLocalGrant(grant)
+                      ? (grant.entryPolicy?.conversationId ?? null)
+                      : null,
+                    taskId: id,
+                  }),
+                )
+                .catch(() => {});
+            }
+          }
         } catch (cause) {
           const error =
             cause instanceof MeteredExecutionError ? cause.cause : cause;
@@ -346,17 +370,40 @@ export function executeAgentTask(
               where: { id },
               select: { leaseToken: true, nativeOperationId: true },
             });
-            if (current?.leaseToken === row.leaseToken)
+            if (current?.leaseToken === row.leaseToken) {
+              const failureMessage = nativeFailure(error);
               await finishTask(
                 id,
                 row.leaseToken,
                 TaskState.TASK_STATE_FAILED,
-                nativeFailure(error),
+                failureMessage,
                 undefined,
                 current.nativeOperationId
                   ? { nativeOperationId: current.nativeOperationId }
                   : undefined,
               );
+              const parsedFailure = parseRuntimeFailure(failureMessage);
+              if (parsedFailure) {
+                await db
+                  .$transaction((tx) =>
+                    recordSystemFailureFeedback(tx, {
+                      code: parsedFailure.code,
+                      reason: parsedFailure.reason ?? null,
+                      stage: "execution",
+                      runtimeKind: row.executionBackend,
+                      sourceKind: "a2a_task",
+                      sourceId: id,
+                      workspaceId: grant.workspaceId,
+                      agentId: isLocalGrant(grant) ? grant.agentId : null,
+                      conversationId: isLocalGrant(grant)
+                        ? (grant.entryPolicy?.conversationId ?? null)
+                        : null,
+                      taskId: id,
+                    }),
+                  )
+                  .catch(() => {});
+              }
+            }
             return;
           }
           // Remote dispatch remains send-once: only its existing observer may reconnect.
@@ -367,14 +414,36 @@ export function executeAgentTask(
             );
             return;
           }
-          if (row.leaseToken)
+          if (row.leaseToken) {
+            const failureMessage = nativeFailure(error);
             await finishTask(
               id,
               row.leaseToken,
               TaskState.TASK_STATE_FAILED,
-              nativeFailure(error),
+              failureMessage,
             );
-          else throw error;
+            const parsedFailure = parseRuntimeFailure(failureMessage);
+            if (parsedFailure) {
+              await db
+                .$transaction((tx) =>
+                  recordSystemFailureFeedback(tx, {
+                    code: parsedFailure.code,
+                    reason: parsedFailure.reason ?? null,
+                    stage: "execution",
+                    runtimeKind: row.executionBackend,
+                    sourceKind: "a2a_task",
+                    sourceId: id,
+                    workspaceId: grant.workspaceId,
+                    agentId: isLocalGrant(grant) ? grant.agentId : null,
+                    conversationId: isLocalGrant(grant)
+                      ? (grant.entryPolicy?.conversationId ?? null)
+                      : null,
+                    taskId: id,
+                  }),
+                )
+                .catch(() => {});
+            }
+          } else throw error;
         } finally {
           clearTimeout(timeout);
           clearInterval(watchdog);

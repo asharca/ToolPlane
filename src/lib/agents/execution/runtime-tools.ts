@@ -25,6 +25,11 @@ import {
   piRuntimeCatalog,
   piOptionalPlatformTools,
 } from "./runtime-tool-catalog";
+import {
+  FEEDBACK_TOOL_NAME,
+  ModelFeedbackToolInputSchema,
+} from "@/lib/feedback/types";
+import { submitModelFeedback } from "@/lib/feedback/service";
 import { A2AHttpError } from "@/lib/a2a/principal";
 import { requireAgentRevision } from "@/lib/agents/revisions";
 import type { AgentRuntimeTokenPayload } from "@/lib/agents/runtime-access";
@@ -363,6 +368,44 @@ async function executeRuntimeTool(
   }
   if (name === "a2a_publish_artifact")
     return publishLocalArtifact(row.id, row.leaseToken, raw);
+  if (name === FEEDBACK_TOOL_NAME) {
+    const parsed = ModelFeedbackToolInputSchema.safeParse(raw);
+    if (!parsed.success) throw parsed.error;
+    const entryKind =
+      grant.ancestorTaskIds.length || !grant.entryPolicy
+        ? "a2a"
+        : grant.entryPolicy.kind;
+    if (entryKind === "a2a" || entryKind === "trigger") {
+      throw new Error("User approval is required before submitting feedback.");
+    }
+    const approval = await db.agentToolApproval.findFirst({
+      where: {
+        taskId: row.id,
+        lease: row.leaseToken,
+        OR: [
+          { toolName: FEEDBACK_TOOL_NAME },
+          { toolName: { endsWith: `__${FEEDBACK_TOOL_NAME}` } },
+        ],
+        status: { in: ["approved", "consumed"] },
+        decidedBy: { not: null },
+      },
+      orderBy: [{ decidedAt: "desc" }, { createdAt: "desc" }],
+      select: { decidedBy: true },
+    });
+    if (!approval) {
+      throw new Error("User approval is required before submitting feedback.");
+    }
+    const created = await submitModelFeedback({
+      workspaceId: grant.workspaceId,
+      agentId: grant.agentId,
+      conversationId:
+        token.conversationId ?? grant.entryPolicy?.conversationId ?? null,
+      taskId: row.id,
+      approvedById: approval.decidedBy,
+      input: parsed.data,
+    });
+    return { ok: true, feedbackId: created.id, status: created.status };
+  }
   if (
     !(await db.agent.count({
       where: {
