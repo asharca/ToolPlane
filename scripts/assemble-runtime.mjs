@@ -189,6 +189,77 @@ async function pruneNodePty(output) {
   );
 }
 
+async function pruneMigratorDevAssets(migratorNodeModules) {
+  const rootStat = await lstat(migratorNodeModules);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error(
+      `Migrator node_modules root must be a real directory: ${migratorNodeModules}`,
+    );
+  }
+  const pnpmDir = path.join(migratorNodeModules, ".pnpm");
+  if (!(await pathExists(pnpmDir))) return { files: 0, bytes: 0 };
+  const pnpmStat = await lstat(pnpmDir);
+  if (!pnpmStat.isDirectory() || pnpmStat.isSymbolicLink()) {
+    throw new Error(
+      `Migrator .pnpm store must be a real directory: ${pnpmDir}`,
+    );
+  }
+
+  const rules = [
+    [
+      "@prisma+studio-core@",
+      [
+        "node_modules/@prisma/studio-core/dist/ui",
+        "node_modules/@prisma/studio-core/dist/metafile-cjs.json",
+        "node_modules/@prisma/studio-core/dist/metafile-esm.json",
+      ],
+    ],
+    [
+      "@prisma+dev@",
+      [
+        "node_modules/@prisma/dev/dist/runtime-assets/pglite.wasm",
+        "node_modules/@prisma/dev/dist/runtime-assets/pglite.data",
+      ],
+    ],
+    [
+      "@electric-sql+pglite@",
+      [
+        "node_modules/@electric-sql/pglite/dist/pglite.wasm",
+        "node_modules/@electric-sql/pglite/dist/pglite.data",
+      ],
+    ],
+    [
+      "prisma@",
+      [
+        "node_modules/prisma/build/query_compiler_fast_bg.sqlserver.wasm",
+        "node_modules/prisma/build/query_compiler_fast_bg.cockroachdb.wasm",
+        "node_modules/prisma/build/query_compiler_fast_bg.mysql.wasm",
+        "node_modules/prisma/build/query_compiler_fast_bg.sqlite.wasm",
+      ],
+    ],
+  ];
+
+  const removed = { files: 0, bytes: 0 };
+  for (const entry of await readdir(pnpmDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    const matched = rules.find(([prefix]) => entry.name.startsWith(prefix));
+    if (!matched) continue;
+    const storeEntryDir = path.join(pnpmDir, entry.name);
+    for (const rel of matched[1]) {
+      const target = path.join(storeEntryDir, rel);
+      if (!(await pathExists(target))) continue;
+      const targetStat = await lstat(target);
+      if (targetStat.isSymbolicLink()) continue;
+      removed.bytes += targetStat.isDirectory()
+        ? await directorySize(target)
+        : targetStat.size;
+      removed.files += 1;
+      await rm(target, { recursive: true, force: true });
+    }
+  }
+  return removed;
+}
+
 async function pruneShikiRuntime(packageRoot) {
   for (const entry of await readdir(packageRoot, { withFileTypes: true })) {
     const entryPath = path.join(packageRoot, entry.name);
@@ -494,9 +565,22 @@ const migratorMetadata = await pruneMigrationMetadata(
 console.log(
   `Removed ${migratorMetadata.files} migration metadata files (${(migratorMetadata.bytes / 1024 / 1024).toFixed(1)} MiB)`,
 );
+const migratorDevAssets = await pruneMigratorDevAssets(
+  path.join(embeddedRuntimeRoot, "migrator", "node_modules"),
+);
+console.log(
+  `Removed ${migratorDevAssets.files} unused migrator dev asset entries (${(migratorDevAssets.bytes / 1024 / 1024).toFixed(1)} MiB)`,
+);
 await run(
   path.join(outputRoot, "node_modules", ".bin", "prisma"),
   ["validate"],
+  {
+    CHECKPOINT_DISABLE: "1",
+  },
+);
+await run(
+  path.join(outputRoot, "node_modules", ".bin", "prisma"),
+  ["migrate", "deploy", "--help"],
   {
     CHECKPOINT_DISABLE: "1",
   },

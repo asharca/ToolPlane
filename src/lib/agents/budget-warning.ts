@@ -1,8 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { createTranslator } from "next-intl";
-import enMessages from "../../../messages/en.json";
-import zhMessages from "../../../messages/zh.json";
+import { loadMessages } from "@/i18n/messages";
 import { db } from "@/lib/db";
 
 export const BUDGET_WARNING_PART = "data-budget-warning";
@@ -41,7 +40,7 @@ export async function appendBudgetWarningText(
     select: { owner: { select: { locale: true } } },
   });
   const locale = workspace.owner.locale === "zh" ? "zh" : "en";
-  const messages = locale === "zh" ? zhMessages : enMessages;
+  const messages = loadMessages(locale);
   const t = createTranslator({ locale, messages: messages.console.agentUsage });
   return `${text}\n\n${t("turnBudgetWarning")}`;
 }
