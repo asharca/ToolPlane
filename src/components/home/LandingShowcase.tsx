@@ -23,7 +23,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FaGithub } from "react-icons/fa";
+import { GithubIcon } from "@/components/ui/GithubIcon";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import {
   BouncyAccordion,
@@ -422,7 +422,7 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
                     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                          <FaGithub
+                          <GithubIcon
                             aria-hidden="true"
                             className="size-4 shrink-0 text-muted-foreground"
                           />
@@ -1065,7 +1065,7 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
                     size="md"
                     className="whitespace-nowrap"
                   >
-                    <FaGithub aria-hidden="true" className="size-4" />
+                    <GithubIcon aria-hidden="true" className="size-4" />
                     {home.cta.githubCta}
                   </ButtonLink>
                 </div>

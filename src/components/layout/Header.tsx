@@ -3,7 +3,7 @@
 import { BookOpen, Menu } from "lucide-react";
 import Link from "next/link";
 import { useLocale } from "next-intl";
-import { FaGithub } from "react-icons/fa";
+import { GithubIcon } from "@/components/ui/GithubIcon";
 import { Button, ButtonLink } from "@/components/motion/button";
 import {
   Popover,
@@ -72,7 +72,7 @@ export function Header() {
             size="sm"
             className="hidden whitespace-nowrap xl:inline-flex"
           >
-            <FaGithub aria-hidden="true" className="size-3.5" />
+            <GithubIcon aria-hidden="true" className="size-3.5" />
             {navigation.sourceCode}
           </ButtonLink>
           <ButtonLink href="/app" size="sm" className="whitespace-nowrap">
@@ -113,7 +113,7 @@ export function Header() {
                   variant="ghost"
                   className="justify-start"
                 >
-                  <FaGithub aria-hidden="true" className="size-4" />
+                  <GithubIcon aria-hidden="true" className="size-4" />
                   {navigation.sourceCode}
                 </ButtonLink>
               </nav>

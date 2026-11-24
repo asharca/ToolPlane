@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getLocale } from "next-intl/server";
-import { FaGithub } from "react-icons/fa";
+import { GithubIcon } from "@/components/ui/GithubIcon";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { getMarketingContent } from "@/lib/marketing/content";
 import { SITE } from "@/lib/site";
@@ -25,7 +25,7 @@ function FooterItem({ link }: { link: FooterLink }) {
         rel="noopener noreferrer"
       >
         {link.href === SITE.sourceUrl && (
-          <FaGithub aria-hidden="true" className="mr-1.5 size-3.5" />
+          <GithubIcon aria-hidden="true" className="mr-1.5 size-3.5" />
         )}
         {link.label}
       </a>

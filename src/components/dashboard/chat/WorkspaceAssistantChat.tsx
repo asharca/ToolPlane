@@ -11,6 +11,7 @@ import { ModelProviderNotice } from "@/components/dashboard/ModelProviderNotice"
 
 import { Button } from "@/components/motion/button";
 
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
   useCallback,
@@ -54,10 +55,7 @@ import {
 } from "@/components/dashboard/chat/ChatApp";
 import { AssistantConversation } from "./AssistantConversation";
 import { AssistantEditor } from "./AssistantEditor";
-import {
-  ChatBranchPanel,
-  type ChatBranchState,
-} from "@/components/dashboard/chat/ChatBranchFlow";
+import type { ChatBranchState } from "@/components/dashboard/chat/ChatBranchFlow";
 import type { ModelProviderOption } from "@/components/dashboard/models/ModelPicker";
 import type { ModelSelection } from "@/components/dashboard/ComposerModelSelect";
 import type { ReasoningLevel } from "@/lib/agents/constants";
@@ -87,6 +85,14 @@ import { usePersistentSidebarGroups } from "@/lib/use-persistent-sidebar-groups"
 import type { AgentUIMessage } from "@/lib/agents/message-segments";
 import type { RevisionMcpToolChange } from "@/lib/revisions/upgrade-diff";
 import { McpToolsUpdatedNote } from "@/components/dashboard/RevisionUpgradeNotice";
+
+const ChatBranchPanel = dynamic(
+  () =>
+    import("@/components/dashboard/chat/ChatBranchFlow").then(
+      (mod) => mod.ChatBranchPanel,
+    ),
+  { ssr: false },
+);
 
 type ProviderOption = ModelProviderOption & { format: string };
 type McpOption = {

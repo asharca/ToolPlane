@@ -204,7 +204,8 @@ const nextConfig: NextConfig = {
     ],
   },
   experimental: {
-    turbopackFileSystemCacheForDev: false,
+    turbopackFileSystemCacheForDev: true,
+    optimizePackageImports: ["radix-ui", "motion/react"],
     serverActions: {
       bodySizeLimit: "64mb",
     },
