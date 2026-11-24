@@ -3,7 +3,7 @@
 import { useTranslations } from "next-intl";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Check, ChevronDown, Plus, Settings } from "lucide-react";
+import { Check, ChevronDown, Plus } from "lucide-react";
 import { ButtonLink } from "@/components/motion/button/base";
 import {
   MorphPopover,
@@ -118,15 +118,6 @@ export function WorkspaceSwitcher({
           ))}
         </div>
         <div className="mt-1 border-t border-border pt-1">
-          <ButtonLink
-            href={`/app/${encodeURIComponent(slug)}/settings?returnTo=${encodeURIComponent(pathname)}`}
-            variant="ghost"
-            className="h-auto w-full justify-start gap-2.5 rounded-lg px-2.5 py-2 text-xs text-foreground"
-            onClick={() => setOpen(false)}
-          >
-            <Settings className="size-3.5 text-muted-foreground" />
-            {managementT("settings")}
-          </ButtonLink>
           {creating ? (
             <div className="p-3">
               <CreateWorkspaceForm autoFocus quota={quota} />

@@ -63,7 +63,7 @@ function ModelPreferenceRow({
   }
 
   return (
-    <div className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0 sm:max-w-md">
         <p className="text-sm font-medium text-foreground">{title}</p>
         <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
@@ -75,7 +75,7 @@ function ModelPreferenceRow({
           </p>
         ) : null}
       </div>
-      <div className="flex min-w-0 items-center gap-1.5 sm:w-80">
+      <div className="flex min-w-0 items-center gap-1.5 sm:w-96">
         <ModelPicker
           className="flex-1"
           providers={providers}
@@ -136,7 +136,7 @@ export function WorkspaceModelSettings({
   titleModel: ModelSelection | null;
 }) {
   return (
-    <div className="divide-y divide-border">
+    <>
       <ModelPreferenceRow
         slug={slug}
         preference="default"
@@ -149,7 +149,7 @@ export function WorkspaceModelSettings({
         providers={providers}
         initialValue={titleModel}
       />
-    </div>
+    </>
   );
 }
 
@@ -182,7 +182,7 @@ export function ModelRetrySetting({
   }
 
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0 sm:max-w-md">
         <p className="text-sm font-medium text-foreground">
           {t("modelRetryAttempts")}
@@ -197,7 +197,7 @@ export function ModelRetrySetting({
         ) : null}
       </div>
       <FormSelect
-        className="sm:w-80"
+        className="sm:w-96"
         label={t("modelRetryAttempts")}
         value={value}
         disabled={pending}

@@ -102,7 +102,7 @@ export function TokenManager({
             label={t("tokenName")}
             htmlFor="token-name"
             dirty={tokenName !== savedName}
-            className="flex-1"
+            className="min-w-0 flex-1 sm:max-w-sm"
           >
             <Input
               id="token-name"
@@ -129,7 +129,7 @@ export function TokenManager({
             icon={KeyRound}
             title={t("noTokensYet")}
             description={t("createOneAboveToConnectAnAgentOrCli")}
-            className="min-h-48"
+            className="min-h-28"
           />
         ) : (
           <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">

@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
-import { FolderOpen, Settings } from "lucide-react";
 import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { db } from "@/lib/db";
@@ -10,34 +9,20 @@ import {
   getWorkspaceStorageBytes,
 } from "@/lib/storage/user-quota";
 import { listProviders } from "@/lib/agents/queries";
+import { ButtonLink } from "@/components/motion/button";
 import { StorageUsage } from "@/components/ui/StorageUsage";
 import {
   ModelRetrySetting,
   WorkspaceModelSettings,
 } from "./models/WorkspaceModelSettings";
-import { DashboardPanel } from "./DashboardUI";
 import {
   RenameWorkspaceForm,
   WorkspaceDeleteForm,
   WorkspaceLeaveAction,
   WorkspaceTransferForm,
 } from "./WorkspaceForms";
-import {
-  ModalSidebarLayout,
-  ModalSidebarSectionLink,
-} from "./ModalSidebarLayout";
-import { DialogBody } from "./dialog";
-import { WorkspaceFilesManager } from "./WorkspaceFilesManager";
 
-export type WorkspaceSettingsSection = "general" | "files";
-
-export async function WorkspaceSettingsContent({
-  slug,
-  section,
-}: {
-  slug: string;
-  section: WorkspaceSettingsSection;
-}) {
+export async function WorkspaceSettingsContent({ slug }: { slug: string }) {
   const [t, management] = await Promise.all([
     getTranslations("console.settings"),
     getTranslations("console.workspaces"),
@@ -91,25 +76,31 @@ export async function WorkspaceSettingsContent({
     )
       ? { providerId, model }
       : null;
-  const sections = [
-    {
-      id: "general",
-      label: t("general"),
-      icon: <Settings className="size-4" />,
-      content: (
-        <DialogBody>
-          <DashboardPanel
-            title={t("general")}
-            description={management("sharedHint")}
-          >
+
+  return (
+    <div className="space-y-8">
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">
+            {t("general")}
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {management("sharedHint")}
+          </p>
+        </div>
+        <div className="divide-y divide-border rounded-xl border border-border bg-card">
+          <div className="px-5 py-4">
             <RenameWorkspaceForm
               slug={slug}
               name={ws.name}
               canManage={isOwner}
             />
-          </DashboardPanel>
-          <DashboardPanel title={t("storageUsage")}>
-            <div className="space-y-3">
+          </div>
+          <div className="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0 flex-1 space-y-2.5 sm:max-w-md">
+              <p className="text-sm font-medium text-foreground">
+                {t("storageUsage")}
+              </p>
               {ownerQuota && (
                 <StorageUsage
                   label={t("ownedWorkspaceStorage")}
@@ -121,126 +112,117 @@ export async function WorkspaceSettingsContent({
                 label={t("thisWorkspaceStorage")}
                 usedBytes={workspaceBytes}
               />
-              <ModalSidebarSectionLink
-                section="files"
-                className="text-sm font-medium text-primary hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
-              >
-                {t("manageFiles")}
-              </ModalSidebarSectionLink>
             </div>
-          </DashboardPanel>
-          <DashboardPanel
-            title={t("modelPreferences")}
-            description={t("modelPreferencesDesc")}
-          >
-            {isOwner ? (
-              <WorkspaceModelSettings
-                slug={slug}
-                providers={providers.map((provider) => ({
-                  id: provider.id,
-                  name: provider.name,
-                  models: provider.models,
-                  modelRecords: (provider.modelRecords ?? []).map((model) => ({
-                    modelId: model.modelId,
-                    primaryType: model.primaryType,
-                    capabilities: model.capabilities,
-                    inputModalities: model.inputModalities,
-                    cost: model.cost,
-                  })),
-                }))}
-                defaultModel={modelSelection(
-                  ws.defaultModelProviderId,
-                  ws.defaultModel,
-                )}
-                titleModel={modelSelection(
-                  ws.titleModelProviderId,
-                  ws.titleModel,
-                )}
-              />
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                {management("ownerOnly")}
-              </p>
-            )}
-          </DashboardPanel>
-          <DashboardPanel title={t("modelRetry")}>
-            <ModelRetrySetting
-              slug={slug}
-              initialAttempts={ws.modelRetryAttempts}
-            />
-          </DashboardPanel>
+            <ButtonLink
+              href={`/app/${encodeURIComponent(slug)}/files`}
+              variant="secondary"
+              size="sm"
+              className="shrink-0 self-start sm:self-center"
+            >
+              {t("manageFiles")}
+            </ButtonLink>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">
+            {t("modelPreferences")}
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("modelPreferencesDesc")}
+          </p>
+        </div>
+        <div className="divide-y divide-border rounded-xl border border-border bg-card">
           {isOwner ? (
-            <DashboardPanel title={t("dangerZone")} tone="danger">
-              <div className="space-y-5">
-                {members.some((member) => member.userId !== user.id) ? (
-                  <WorkspaceTransferForm
-                    slug={slug}
-                    name={ws.name}
-                    members={members
-                      .filter((member) => member.userId !== user.id)
-                      .map((member) => ({
-                        userId: member.userId,
-                        label: member.user.name
-                          ? `${member.user.name} (${member.user.email})`
-                          : member.user.email,
-                      }))}
-                  />
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    {management("transferEmpty")}
-                  </p>
-                )}
-                <WorkspaceDeleteForm
+            <WorkspaceModelSettings
+              slug={slug}
+              providers={providers.map((provider) => ({
+                id: provider.id,
+                name: provider.name,
+                models: provider.models,
+                modelRecords: (provider.modelRecords ?? []).map((model) => ({
+                  modelId: model.modelId,
+                  primaryType: model.primaryType,
+                  capabilities: model.capabilities,
+                  inputModalities: model.inputModalities,
+                  cost: model.cost,
+                })),
+              }))}
+              defaultModel={modelSelection(
+                ws.defaultModelProviderId,
+                ws.defaultModel,
+              )}
+              titleModel={modelSelection(
+                ws.titleModelProviderId,
+                ws.titleModel,
+              )}
+            />
+          ) : (
+            <p className="px-5 py-4 text-sm text-muted-foreground">
+              {management("ownerOnly")}
+            </p>
+          )}
+          <ModelRetrySetting
+            slug={slug}
+            initialAttempts={ws.modelRetryAttempts}
+          />
+        </div>
+      </section>
+
+      <section id="danger-zone" className="scroll-mt-6 space-y-3">
+        {isOwner ? (
+          <>
+            <h2 className="text-sm font-semibold text-destructive">
+              {t("dangerZone")}
+            </h2>
+            <div className="space-y-5 rounded-xl border border-destructive/25 bg-card p-5">
+              {members.some((member) => member.userId !== user.id) ? (
+                <WorkspaceTransferForm
                   slug={slug}
                   name={ws.name}
-                  impact={management("deleteImpact", {
-                    members: members.length,
-                    resources: impact
-                      ? Object.values(impact._count).reduce(
-                          (sum, count) => sum + count,
-                          0,
-                        )
-                      : 0,
-                    running,
-                  })}
+                  members={members
+                    .filter((member) => member.userId !== user.id)
+                    .map((member) => ({
+                      userId: member.userId,
+                      label: member.user.name
+                        ? `${member.user.name} (${member.user.email})`
+                        : member.user.email,
+                    }))}
                 />
-              </div>
-            </DashboardPanel>
-          ) : (
-            <DashboardPanel title={management("leave")}>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {management("transferEmpty")}
+                </p>
+              )}
+              <WorkspaceDeleteForm
+                slug={slug}
+                name={ws.name}
+                impact={management("deleteImpact", {
+                  members: members.length,
+                  resources: impact
+                    ? Object.values(impact._count).reduce(
+                        (sum, count) => sum + count,
+                        0,
+                      )
+                    : 0,
+                  running,
+                })}
+              />
+            </div>
+          </>
+        ) : (
+          <>
+            <h2 className="text-sm font-semibold text-foreground">
+              {management("leave")}
+            </h2>
+            <div className="rounded-xl border border-border bg-card p-5">
               <WorkspaceLeaveAction slug={slug} />
-            </DashboardPanel>
-          )}
-        </DialogBody>
-      ),
-    },
-    {
-      id: "files",
-      label: t("files"),
-      icon: <FolderOpen className="size-4" />,
-      content: (
-        <DialogBody>
-          <WorkspaceFilesManager
-            workspaceId={ws.id}
-            initialUsage={{
-              workspaceBytes,
-              owner: ownerQuota
-                ? {
-                    usedBytes: ownerQuota.usedBytes,
-                    storageQuotaBytes: ownerQuota.storageQuotaBytes,
-                  }
-                : null,
-            }}
-          />
-        </DialogBody>
-      ),
-    },
-  ];
-  return (
-    <ModalSidebarLayout
-      label={t("title")}
-      sections={sections}
-      initialSection={section}
-    />
+            </div>
+          </>
+        )}
+      </section>
+    </div>
   );
 }

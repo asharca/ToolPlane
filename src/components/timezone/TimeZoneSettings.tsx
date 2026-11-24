@@ -14,11 +14,6 @@ import { useTranslations } from "next-intl";
 import { updateTimeZonePreference } from "@/lib/auth/timezone-actions";
 import { AUTO_TIME_ZONE_VALUE, listSupportedTimeZones } from "@/lib/timezone";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
-import {
-  DialogCancel,
-  DialogField,
-  DialogFooter,
-} from "@/components/dashboard/dialog";
 import { useUserTimeZone } from "./UserTimeZoneContext";
 
 export function TimeZoneSettings({
@@ -27,6 +22,7 @@ export function TimeZoneSettings({
   timeZoneOverride: string | null;
 }) {
   const t = useTranslations("console.settings");
+  const common = useTranslations("common");
   const router = useRouter();
   const { detectedTimeZone } = useUserTimeZone();
   const [state, formAction] = useActionState(updateTimeZonePreference, {});
@@ -54,50 +50,51 @@ export function TimeZoneSettings({
     <form
       action={formAction}
       onReset={() => setSelected(savedTimeZone)}
-      className="space-y-3"
+      className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
     >
       <input
         type="hidden"
         name="detectedTimeZone"
         value={detectedTimeZone ?? ""}
       />
-      <div className="min-w-0">
-        <DialogField
-          label={t("timezone")}
+      <div className="min-w-0 sm:max-w-md">
+        <label
           htmlFor="user-time-zone"
-          dirty={selected !== savedTimeZone}
+          className="block text-sm font-medium text-foreground"
         >
-          <FormSelect
-            key={savedTimeZone}
-            id="user-time-zone"
-            name="timeZone"
-            defaultValue={savedTimeZone}
-            onValueChange={setSelected}
-            label={t("timezone")}
-            options={[
-              {
-                value: AUTO_TIME_ZONE_VALUE,
-                label: detectedTimeZone
-                  ? t("timezoneAutomatic", { timeZone: detectedTimeZone })
-                  : t("timezoneDetecting"),
-              },
-              ...timeZones.map((timeZone) => ({
-                value: timeZone,
-                label: timeZone,
-              })),
-            ]}
-          />
-        </DialogField>
+          {t("timezone")}
+        </label>
+        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+          {t("timezoneScheduled")}
+        </p>
         {state.error ? (
-          <p role="alert" className="mt-2 text-xs text-destructive">
+          <p role="alert" className="mt-1.5 text-xs text-destructive">
             {t(state.error)}
           </p>
         ) : null}
       </div>
-      <DialogFooter
-        cancel={<DialogCancel />}
-        className="static -mx-5 -mb-4 mt-5 bg-transparent px-5"
-      >
+      <div className="flex min-w-0 items-center gap-2 sm:w-96">
+        <FormSelect
+          key={savedTimeZone}
+          id="user-time-zone"
+          name="timeZone"
+          defaultValue={savedTimeZone}
+          onValueChange={setSelected}
+          label={t("timezone")}
+          className="min-w-0 flex-1"
+          options={[
+            {
+              value: AUTO_TIME_ZONE_VALUE,
+              label: detectedTimeZone
+                ? t("timezoneAutomatic", { timeZone: detectedTimeZone })
+                : t("timezoneDetecting"),
+            },
+            ...timeZones.map((timeZone) => ({
+              value: timeZone,
+              label: timeZone,
+            })),
+          ]}
+        />
         <SubmitButton
           pendingLabel={t("savingTimezone")}
           savedLabel={t("timezoneSaved")}
@@ -105,10 +102,11 @@ export function TimeZoneSettings({
           disabled={selected === savedTimeZone}
           variant="primary"
           size="md"
+          className="shrink-0"
         >
-          {t("saveTimezone")}
+          {common("save")}
         </SubmitButton>
-      </DialogFooter>
+      </div>
     </form>
   );
 }

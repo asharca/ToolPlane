@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo } from "react";
-import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Sun, Moon, Code2, Home } from "lucide-react";
 import {
   CommandPalette,
@@ -31,9 +31,6 @@ export function DashboardCommandPalette({
   const sidebarT = useTranslations("console.sidebar");
   const router = useRouter();
   const pathname = usePathname() ?? "";
-  const searchParams = useSearchParams();
-  const queryString = searchParams.toString();
-  const returnTo = `${pathname}${queryString ? `?${queryString}` : ""}`;
   const { isDark, toggle: toggleTheme } = useThemeToggle();
   useEffect(() => {
     if (!open) return;
@@ -95,11 +92,7 @@ export function DashboardCommandPalette({
               : item.segment === "plugins" && pluginUpdateCount > 0
                 ? pluginUpdateCount
                 : undefined,
-            onSelect: go(
-              item.segment === "settings"
-                ? `${b}/settings?returnTo=${encodeURIComponent(returnTo)}`
-                : `${b}/${item.segment}`,
-            ),
+            onSelect: go(`${b}/${item.segment}`),
           });
         }
       }
@@ -142,7 +135,6 @@ export function DashboardCommandPalette({
     closePalette,
     pathname,
     isDark,
-    returnTo,
     router,
     t,
     sidebarT,

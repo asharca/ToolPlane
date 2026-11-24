@@ -1027,10 +1027,7 @@ export function WorkspaceWork({
                             </Button>
                           ) : null}
                           {storageQuotaExceeded ? (
-                            <ManageFilesButton
-                              returnTo={workReturnTo}
-                              className="ml-3"
-                            />
+                            <ManageFilesButton className="ml-3" />
                           ) : null}
                           {retryableMessageId ? (
                             <Button

@@ -595,6 +595,7 @@
       "observability": "Logs",
       "members": "Members",
       "notifications": "Notifications",
+      "files": "Files",
       "settings": "Settings",
       "openMenu": "Open menu",
       "closeMenu": "Close menu",

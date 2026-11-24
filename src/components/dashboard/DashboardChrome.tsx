@@ -87,6 +87,8 @@ export function DashboardChrome({
         return t("notifications");
       case "feedback":
         return t("feedback");
+      case "files":
+        return t("files");
       case "settings":
         return t("settings");
       default:

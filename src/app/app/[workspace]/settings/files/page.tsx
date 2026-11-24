@@ -1,6 +1,4 @@
-import { WorkspaceSettingsContent } from "@/components/dashboard/WorkspaceSettingsContent";
-
-export const dynamic = "force-dynamic";
+import { redirect } from "next/navigation";
 
 export default async function SettingsFilesPage({
   params,
@@ -8,5 +6,5 @@ export default async function SettingsFilesPage({
   params: Promise<{ workspace: string }>;
 }) {
   const { workspace } = await params;
-  return <WorkspaceSettingsContent slug={workspace} section="files" />;
+  redirect(`/app/${encodeURIComponent(workspace)}/files`);
 }

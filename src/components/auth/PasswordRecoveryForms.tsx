@@ -17,11 +17,7 @@ import { ButtonLink } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
-import {
-  DialogCancel,
-  DialogField,
-  DialogFooter,
-} from "@/components/dashboard/dialog";
+import { DialogField } from "@/components/dashboard/dialog";
 
 function ActionMessage({ state }: { state: AuthState }) {
   if (state.error) {
@@ -169,7 +165,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
   );
 }
 
-export function ChangePasswordForm() {
+export function ChangePasswordForm({ email }: { email?: string }) {
   const [state, action] = useActionState(changePasswordAction, {});
   const t = useTranslations("auth");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -186,6 +182,16 @@ export function ChangePasswordForm() {
 
   return (
     <form action={action} className="space-y-5">
+      {email ? (
+        <input
+          type="email"
+          name="username"
+          autoComplete="username"
+          value={email}
+          readOnly
+          hidden
+        />
+      ) : null}
       <div className="max-w-md space-y-5">
         <DialogField
           label={t("currentPassword")}
@@ -240,14 +246,11 @@ export function ChangePasswordForm() {
         </DialogField>
         <ActionMessage state={state} />
       </div>
-      <DialogFooter
-        cancel={<DialogCancel />}
-        className="static -mx-5 -mb-4 bg-transparent px-5"
-      >
+      <div>
         <SubmitButton pendingLabel={t("pending")} flash={false} size="md">
           {t("changePassword")}
         </SubmitButton>
-      </DialogFooter>
+      </div>
     </form>
   );
 }

@@ -1,7 +1,4 @@
-import { ModalSidebarLayout } from "./ModalSidebarLayout";
-
 import { getLocale, getTranslations } from "next-intl/server";
-
 import { KeyRound, LockKeyhole, Settings } from "lucide-react";
 import { listApiTokens } from "@/lib/auth/tokens";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
@@ -11,23 +8,28 @@ import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { ChangePasswordForm } from "@/components/auth/PasswordRecoveryForms";
 import { DashboardPanel } from "./DashboardUI";
 import { DialogBody } from "./dialog";
+import { ModalSidebarLayout } from "./ModalSidebarLayout";
 import { TokenManager } from "./TokenManager";
 import type { WorkspaceAccountUser } from "./WorkspaceAccountPage";
 
 export type PersonalSettingsSection = "preferences" | "security" | "tokens";
+
 export async function PersonalSettingsContent({
   user,
   section = "preferences",
+  workspaceSlug = "",
 }: {
   user: WorkspaceAccountUser;
   section?: PersonalSettingsSection;
+  workspaceSlug?: string;
 }) {
-  const [t, locale] = await Promise.all([
+  const [t, workspacesT, authT, locale, tokens] = await Promise.all([
     getTranslations("console.settings"),
+    getTranslations("console.workspaces"),
+    getTranslations("auth"),
     getLocale(),
+    listApiTokens(user.id),
   ]);
-  const workspacesT = await getTranslations("console.workspaces");
-  const tokens = await listApiTokens(user.id);
   const timeZone = resolveUserTimeZone(user);
   const date = (value: Date | null) =>
     value
@@ -46,7 +48,10 @@ export async function PersonalSettingsContent({
           </p>
           <DashboardPanel title={t("preferences")}>
             <div className="space-y-5">
-              <p className="break-all text-sm">{user.email}</p>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className="text-sm font-medium">{authT("email")}</span>
+                <p className="break-all text-sm">{user.email}</p>
+              </div>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <span className="text-sm font-medium">{t("language")}</span>
                 <LocaleSwitcher />
@@ -78,7 +83,7 @@ export async function PersonalSettingsContent({
             title={t("security")}
             description={t("passwordSettingsDesc")}
           >
-            <ChangePasswordForm />
+            <ChangePasswordForm email={user.email} />
           </DashboardPanel>
         </DialogBody>
       ),
@@ -93,6 +98,7 @@ export async function PersonalSettingsContent({
             {workspacesT("accountHint")}
           </p>
           <TokenManager
+            workspaceSlug={workspaceSlug}
             tokens={tokens.map((token) => ({
               id: token.id,
               name: token.name,
@@ -105,6 +111,7 @@ export async function PersonalSettingsContent({
       ),
     },
   ];
+
   return (
     <ModalSidebarLayout
       label={workspacesT("accountNavigation")}

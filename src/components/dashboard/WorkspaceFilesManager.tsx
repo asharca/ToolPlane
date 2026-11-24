@@ -20,6 +20,7 @@ import {
   FileImage,
   FileText,
   FileVideo,
+  FolderOpen,
   Loader2,
   Trash2,
 } from "lucide-react";
@@ -483,18 +484,20 @@ export function WorkspaceFilesManager({
 
   return (
     <div className="space-y-5">
-      <div className="space-y-3">
-        {usage.owner ? (
+      <div className="rounded-xl border border-border bg-card px-5 py-4">
+        <div className={usage.owner ? "grid gap-5 sm:grid-cols-2" : undefined}>
+          {usage.owner ? (
+            <StorageUsage
+              label={settingsT("ownedWorkspaceStorage")}
+              usedBytes={usage.owner.usedBytes}
+              quotaBytes={usage.owner.storageQuotaBytes}
+            />
+          ) : null}
           <StorageUsage
-            label={settingsT("ownedWorkspaceStorage")}
-            usedBytes={usage.owner.usedBytes}
-            quotaBytes={usage.owner.storageQuotaBytes}
+            label={settingsT("thisWorkspaceStorage")}
+            usedBytes={usage.workspaceBytes}
           />
-        ) : null}
-        <StorageUsage
-          label={settingsT("thisWorkspaceStorage")}
-          usedBytes={usage.workspaceBytes}
-        />
+        </div>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Tabs
@@ -541,25 +544,31 @@ export function WorkspaceFilesManager({
         className="min-w-0 space-y-3"
       >
         {loadError ? (
-          <DashboardEmptyState
-            title={loadError.message ?? t("loadError")}
-            actions={
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => setReload((value) => value + 1)}
-              >
-                {t("retry")}
-              </Button>
-            }
-          />
+          <div className="rounded-xl border border-border bg-card">
+            <DashboardEmptyState
+              title={loadError.message ?? t("loadError")}
+              actions={
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setReload((value) => value + 1)}
+                >
+                  {t("retry")}
+                </Button>
+              }
+            />
+          </div>
         ) : !page ? (
-          <p role="status" className="text-sm text-muted-foreground">
-            {common("loading")}
-          </p>
+          <div className="rounded-xl border border-border bg-card px-5 py-12 text-center">
+            <p role="status" className="text-sm text-muted-foreground">
+              {common("loading")}
+            </p>
+          </div>
         ) : files.length === 0 ? (
-          <DashboardEmptyState title={t("empty")} />
+          <div className="rounded-xl border border-border bg-card">
+            <DashboardEmptyState icon={FolderOpen} title={t("empty")} />
+          </div>
         ) : (
           <DashboardTable
             ariaLabel={settingsT("files")}

@@ -308,7 +308,7 @@ function MemberRow({
           />
         ) : transferable ? (
           <ButtonLink
-            href={`/app/${encodeURIComponent(slug)}/settings`}
+            href={`/app/${encodeURIComponent(slug)}/settings#danger-zone`}
             variant="ghost"
             size="sm"
             className="w-full justify-start"

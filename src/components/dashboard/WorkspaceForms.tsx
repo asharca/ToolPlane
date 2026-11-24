@@ -7,11 +7,6 @@ import { FormSelect } from "@/components/ui/FormSelect";
 
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
-import {
-  DialogCancel,
-  DialogField,
-  DialogFooter,
-} from "@/components/dashboard/dialog";
 
 import { useActionState, useId, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
@@ -40,7 +35,6 @@ export function WorkspaceActionForm({
   children,
   label,
   danger = false,
-  cancelable = false,
   disabled = false,
   submitDisabled = false,
 }: {
@@ -50,8 +44,6 @@ export function WorkspaceActionForm({
   danger?: boolean;
   disabled?: boolean;
   submitDisabled?: boolean;
-  /** Settings-dialog forms put Cancel and submit in a section footer. */
-  cancelable?: boolean;
 }) {
   const t = useTranslations("console.workspaces");
   const [state, formAction, pending] = useActionState(action, {});
@@ -80,7 +72,7 @@ export function WorkspaceActionForm({
         className="min-w-0 space-y-3 disabled:opacity-60"
       >
         {children}
-        {cancelable ? null : submit}
+        {submit}
       </fieldset>
       {state.error ? (
         <p role="alert" className="text-sm text-destructive">
@@ -91,14 +83,6 @@ export function WorkspaceActionForm({
         <p role="status">
           <AnimatedBadge status="success">{state.success}</AnimatedBadge>
         </p>
-      ) : null}
-      {cancelable ? (
-        <DialogFooter
-          cancel={<DialogCancel disabled={pending} />}
-          className="static -mx-5 -mb-4 mt-5 bg-transparent px-5"
-        >
-          {submit}
-        </DialogFooter>
       ) : null}
     </form>
   );
@@ -152,29 +136,47 @@ export function RenameWorkspaceForm({
   canManage: boolean;
 }) {
   const t = useTranslations("console.workspaces");
+  const common = useTranslations("common");
   const id = useId();
   const [value, setValue] = useState(name);
   const [savedName, setSavedName] = useState(name);
+  const [state, formAction, pending] = useActionState(
+    renameWorkspaceAction,
+    {},
+  );
   if (savedName !== name) {
     setSavedName(name);
     setValue(name);
   }
   return canManage ? (
-    <WorkspaceActionForm
-      action={renameWorkspaceAction}
-      label={t("save")}
-      cancelable
-      submitDisabled={value.trim() === name.trim() || !value.trim()}
+    <form
+      action={formAction}
+      aria-busy={pending}
+      data-unsaved-changes={pending || value !== name ? "true" : undefined}
+      className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
     >
       <input type="hidden" name="workspace" value={slug} />
-      <DialogField
-        label={t("name")}
-        htmlFor={id}
-        dirty={value !== name}
-        description={
-          <span className="break-all">{t("stableAddress", { slug })}</span>
-        }
-      >
+      <div className="min-w-0 sm:max-w-md">
+        <label
+          htmlFor={id}
+          className="block text-sm font-medium text-foreground"
+        >
+          {t("name")}
+        </label>
+        <p className="mt-0.5 break-all text-xs leading-5 text-muted-foreground">
+          {t("stableAddress", { slug })}
+        </p>
+        {state.error ? (
+          <p role="alert" className="mt-1.5 text-xs text-destructive">
+            {state.error}
+          </p>
+        ) : state.success ? (
+          <p role="status" className="mt-1.5">
+            <AnimatedBadge status="success">{state.success}</AnimatedBadge>
+          </p>
+        ) : null}
+      </div>
+      <div className="flex min-w-0 items-center gap-2 sm:w-96">
         <Input
           id={id}
           name="name"
@@ -182,14 +184,29 @@ export function RenameWorkspaceForm({
           onChange={setValue}
           required
           maxLength={80}
-          className="w-full"
+          disabled={pending}
+          className="min-w-0 flex-1"
         />
-      </DialogField>
-    </WorkspaceActionForm>
+        <Button
+          type="submit"
+          disabled={pending || value.trim() === name.trim() || !value.trim()}
+          variant="primary"
+          size="md"
+          className="shrink-0"
+        >
+          {pending ? t("working") : common("save")}
+        </Button>
+      </div>
+    </form>
   ) : (
-    <div className="space-y-2">
-      <p className="font-medium">{name}</p>
-      <p className="text-sm text-muted-foreground">{t("ownerOnly")}</p>
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0 sm:max-w-md">
+        <p className="text-sm font-medium text-foreground">{t("name")}</p>
+        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+          {t("ownerOnly")}
+        </p>
+      </div>
+      <p className="text-sm text-foreground">{name}</p>
     </div>
   );
 }
@@ -264,7 +281,7 @@ export function WorkspaceDeleteForm({
                   maxLength={80}
                   autoComplete="off"
                   disabled={pending}
-                  className="w-full"
+                  className="w-full max-w-md"
                 />
                 <Button
                   type="submit"
@@ -323,6 +340,7 @@ export function WorkspaceTransferForm({
                   required
                   defaultValue=""
                   label={t("newOwner")}
+                  className="w-full max-w-md"
                   options={[
                     { value: "", label: t("selectMember"), disabled: true },
                     ...members.map((member) => ({
@@ -340,7 +358,7 @@ export function WorkspaceTransferForm({
                   required
                   maxLength={80}
                   autoComplete="off"
-                  className="w-full"
+                  className="w-full max-w-md"
                 />
               </WorkspaceActionForm>
             </>

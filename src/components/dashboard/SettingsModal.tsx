@@ -5,12 +5,7 @@ import {
 } from "@/components/motion/center-morph-modal";
 
 import { createContext, useContext, useState, type ReactNode } from "react";
-import {
-  usePathname,
-  useRouter,
-  useSearchParams,
-  useSelectedLayoutSegments,
-} from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { hasUnsavedWorkspaceChanges } from "@/lib/workspace/navigation";
 import { DialogHeader } from "./dialog";
@@ -52,15 +47,9 @@ export function SettingsModal({
   const t = useTranslations("console.common");
   const workspaceT = useTranslations("console.workspaces");
   const returnTo = useSearchParams().get("returnTo");
-  const pathname = usePathname() ?? "";
-  const modalSegments = useSelectedLayoutSegments("modal");
-  const displayTitle =
-    pathname.endsWith("/settings/account") || modalSegments.includes("account")
-      ? workspaceT("account")
-      : title;
   const closeHref =
     (returnTo === "/app?view=workspaces" || returnTo?.startsWith("/app/")) &&
-    !returnTo.includes("/settings")
+    !returnTo.includes("/settings/account")
       ? returnTo
       : fallbackHref;
   const close = () => {
@@ -80,7 +69,7 @@ export function SettingsModal({
       }}
     >
       <CenterMorphModalContent
-        ariaLabel={displayTitle}
+        ariaLabel={title}
         closeButtonLabel={t("close")}
         onExitComplete={() => {
           if (intercepted) router.back();
@@ -88,7 +77,7 @@ export function SettingsModal({
         }}
         className={`flex flex-col overflow-hidden w-full ${compact ? "max-w-5xl h-[min(48rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)]" : "max-w-6xl h-[calc(100dvh-4rem)]"}`}
       >
-        <DialogHeader title={displayTitle} />
+        <DialogHeader title={title} />
         <CloseSettingsContext.Provider value={() => setOpen(false)}>
           <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
         </CloseSettingsContext.Provider>
