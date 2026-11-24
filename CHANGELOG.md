@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.45.0](https://github.com/asharca/ToolPlane/compare/v0.44.0...v0.45.0) (2026-11-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agents:** 触发器收敛为定时与签名 Webhook，并按线程延续会话 ([#300](https://github.com/asharca/ToolPlane/issues/300))
+
+### Features
+
+* **agents:** 支持管理账号连接并在触发器中使用 ([#299](https://github.com/asharca/ToolPlane/issues/299)) ([619392a](https://github.com/asharca/ToolPlane/commit/619392af5998d20745d52eb2a2950ee4de6aacc5))
+* **agents:** 支持订阅 GitHub 通知、X 提及和 YouTube 频道 ([c7dd933](https://github.com/asharca/ToolPlane/commit/c7dd933ca9fa2cbc758e6d64affaf3151fa3d020))
+* **agents:** 触发器收敛为定时与签名 Webhook，并按线程延续会话 ([#300](https://github.com/asharca/ToolPlane/issues/300)) ([15a9113](https://github.com/asharca/ToolPlane/commit/15a9113e6d6e5f3ab9c590719863fa5bc8eb1343))
+* **console:** 移除一级页面重复标题并统一顶栏与双栏布局 ([#292](https://github.com/asharca/ToolPlane/issues/292)) ([569d282](https://github.com/asharca/ToolPlane/commit/569d282c40e458e08e4e9615d820302ea7b35b9b))
+* **feedback:** 在管理员后台新增统一反馈区，支持系统、用户与模型反馈 ([#302](https://github.com/asharca/ToolPlane/issues/302)) ([00a9845](https://github.com/asharca/ToolPlane/commit/00a984518360c86487f2b66f3cdfcedff61ed4c6))
+* **mcp:** 支持原文配置版本、任意 stdio 命令与完整 MCP 协议 ([#288](https://github.com/asharca/ToolPlane/issues/288)) ([71209f2](https://github.com/asharca/ToolPlane/commit/71209f29a4f0a495de20fca4e50869a702b5e371))
+* **plugins:** 官方插件支持平台预设与自定义环境变量 ([#304](https://github.com/asharca/ToolPlane/issues/304)) ([accc899](https://github.com/asharca/ToolPlane/commit/accc8994b27fd89008bacc71d233cce50ed9ec2e))
+* **providers:** 支持通过 OAuth 连接模型供应商 ([c739953](https://github.com/asharca/ToolPlane/commit/c7399539743159a17bbbaa4bd2dc80240ca3ae18))
+* **workspaces:** 平台管理员按用户管理工作区成员、角色与单项权限 ([#301](https://github.com/asharca/ToolPlane/issues/301)) ([966b080](https://github.com/asharca/ToolPlane/commit/966b0804d768b59010a73256d8e083caf8008b20))
+* **work:** 统一展示用户附件和智能体产物 ([f391079](https://github.com/asharca/ToolPlane/commit/f391079aac3e78e014659a7a6ba3346534996bb2))
+
+
+### Bug Fixes
+
+* **console:** address Playwright UX audit issues ([#307](https://github.com/asharca/ToolPlane/issues/307)-[#314](https://github.com/asharca/ToolPlane/issues/314)) ([#315](https://github.com/asharca/ToolPlane/issues/315)) ([b2bc31f](https://github.com/asharca/ToolPlane/commit/b2bc31f83790eac7558bcc78d452015759459514))
+* **mcp:** 支持 uvx/uv 发布校验使用固定 40 位提交 SHA 的 HTTPS Git 来源 ([#303](https://github.com/asharca/ToolPlane/issues/303)) ([e0682b3](https://github.com/asharca/ToolPlane/commit/e0682b347b0c41b5f1f080e941739843ea91fcc5))
+* **ui:** 提升消息弹窗层级至所有浮层之上并优化顶部居中交互 ([#305](https://github.com/asharca/ToolPlane/issues/305)) ([8915bf5](https://github.com/asharca/ToolPlane/commit/8915bf5e589c556e82f13e9f2532799e181f3960))
+
 ## [0.44.0](https://github.com/asharca/ToolPlane/compare/v0.43.2...v0.44.0) (2026-11-20)
 
 
