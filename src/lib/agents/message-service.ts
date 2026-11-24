@@ -85,7 +85,7 @@ import {
   type RuntimeFailureTranslator,
 } from "./runtime-failure";
 import { createTranslator } from "next-intl";
-import zhMessages from "../../../messages/zh.json";
+import { loadMessages } from "@/i18n/messages";
 import { notifyTaskOutput } from "./execution/live-output";
 import { recordedTaskOutput } from "./execution/live-output-read";
 import { configuredAppOrigin } from "@/lib/http/origin";
@@ -98,15 +98,29 @@ import {
 export const CHANNEL_EXECUTION_FAILURE_MESSAGE =
   "本次执行未能完成，未自动重试。请在工作区查看会话执行状态，检查模型或工具连接后再发送新消息。";
 
-const zhRuntimeCommands = createTranslator({
-  locale: "zh",
-  messages: zhMessages.console.runtimeCommands,
-});
-type RuntimeCommandKey = Parameters<typeof zhRuntimeCommands>[0];
+function createZhRuntimeCommands() {
+  return createTranslator({
+    locale: "zh",
+    messages: loadMessages("zh").console.runtimeCommands,
+  });
+}
+
+type ZhRuntimeCommands = ReturnType<typeof createZhRuntimeCommands>;
+type RuntimeCommandKey = Parameters<ZhRuntimeCommands>[0];
+
+let cachedZhRuntimeCommands: ZhRuntimeCommands | undefined;
+
+function getZhRuntimeCommands(): ZhRuntimeCommands {
+  cachedZhRuntimeCommands ??= createZhRuntimeCommands();
+  return cachedZhRuntimeCommands;
+}
+
 const zhRuntimeFailureTranslator: RuntimeFailureTranslator = Object.assign(
   (key: string, values?: Record<string, string | number>) =>
-    zhRuntimeCommands(key as RuntimeCommandKey, values),
-  { has: (key: string) => zhRuntimeCommands.has(key as RuntimeCommandKey) },
+    getZhRuntimeCommands()(key as RuntimeCommandKey, values),
+  {
+    has: (key: string) => getZhRuntimeCommands().has(key as RuntimeCommandKey),
+  },
 );
 
 /** Channel replies are Chinese; only the allowlisted failure token is shown. */
