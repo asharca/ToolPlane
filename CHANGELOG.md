@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.1](https://github.com/asharca/ToolPlane/compare/v0.45.0...v0.45.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **runtime:** load i18n messages from disk to avoid duplicating catalogs in server chunks ([#318](https://github.com/asharca/ToolPlane/issues/318)) ([7dfccac](https://github.com/asharca/ToolPlane/commit/7dfccac04f240b5d5b5f48589a3c82059ec55291))
+
 ## [0.45.0](https://github.com/asharca/ToolPlane/compare/v0.44.0...v0.45.0) (2026-11-24)
 
 
