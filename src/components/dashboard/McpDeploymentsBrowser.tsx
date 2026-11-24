@@ -19,6 +19,7 @@ import {
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button, ButtonLink } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
+import { Pagination } from "@/components/motion/pagination";
 import {
   Popover,
   PopoverContent,
@@ -768,37 +769,20 @@ export function McpDeploymentsBrowser({
       )}
 
       {totalPages > 1 ? (
-        <nav
-          aria-label={common("pagination")}
-          className="flex shrink-0 items-center justify-between gap-3 border-t border-border pt-3"
-        >
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
           <p
             className="text-sm tabular-nums text-muted-foreground"
             aria-live="polite"
           >
             {currentPage} / {totalPages}
           </p>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={currentPage === 1}
-              onClick={() => setPage(currentPage - 1)}
-            >
-              {common("previous")}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={currentPage === totalPages}
-              onClick={() => setPage(currentPage + 1)}
-            >
-              {common("next")}
-            </Button>
-          </div>
-        </nav>
+          <Pagination
+            totalPages={totalPages}
+            page={currentPage}
+            onPageChange={setPage}
+            aria-label={common("pagination")}
+          />
+        </div>
       ) : null}
     </section>
   );

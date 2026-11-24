@@ -372,7 +372,7 @@ export function InstalledPluginsTable({
           <legend className="sr-only">{t("installed.title")}</legend>
           <DashboardTable
             ariaLabel={t("installed.title")}
-            minWidth="52rem"
+            minWidth="62rem"
             adjustableColumns={false}
             selectable={canManage}
             selectedRowIds={canManage ? selection : undefined}
@@ -453,32 +453,54 @@ export function InstalledPluginsTable({
             }
             headers={[
               { label: t("installed.plugin") },
-              { label: t("version") },
-              { label: t("contents") },
-              { label: t("installed.agents"), align: "right" },
-              { label: t("installed.addedAt") },
+              { label: t("version"), width: "10rem" },
+              { label: t("contents"), width: "10.5rem" },
+              {
+                label: t("installed.agents"),
+                align: "right",
+                width: "5.5rem",
+              },
+              { label: t("installed.addedAt"), width: "8.5rem" },
               ...(canManage
-                ? [{ label: t("installed.actions"), align: "right" as const }]
+                ? [
+                    {
+                      label: t("installed.actions"),
+                      align: "right" as const,
+                      width: "9rem",
+                    },
+                  ]
                 : []),
             ]}
             rows={visible.map((plugin) => {
               const published = plugin.status === "published";
               const detail = detailHref(plugin.listingId);
+              const versionLabel = `v${plugin.currentVersion}${
+                plugin.updateAvailable && plugin.latestVersion
+                  ? ` → v${plugin.latestVersion}`
+                  : ""
+              }`;
               return {
                 id: plugin.installId,
                 cells: [
-                  <div key="plugin" className="flex min-w-0 items-center gap-3">
+                  <div
+                    key="plugin"
+                    className="flex min-w-0 items-center gap-3 py-2 whitespace-normal"
+                  >
                     <Puzzle className="size-5 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0">
-                      <span className="flex min-w-0 items-center gap-2">
-                        <Link
-                          href={detail}
-                          className="truncate font-medium hover:underline"
-                        >
-                          {plugin.name}
-                        </Link>
+                    <div className="min-w-0 flex-1">
+                      <Link
+                        href={detail}
+                        title={plugin.name}
+                        className="block truncate font-medium hover:underline"
+                      >
+                        {plugin.name}
+                      </Link>
+                      <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+                        <span className="truncate text-xs text-muted-foreground">
+                          {plugin.source}
+                        </span>
                         {!published ? (
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
                             <CircleSlash className="size-3" />
                             {t(
                               plugin.status === "withdrawn"
@@ -487,19 +509,19 @@ export function InstalledPluginsTable({
                             )}
                           </span>
                         ) : plugin.updateAvailable ? (
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] leading-none text-primary">
                             <ArrowUpCircle className="size-3" />
                             {t("updateAvailable")}
                           </span>
                         ) : null}
                         {plugin.omp ? (
-                          <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-400">
+                          <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[11px] leading-none text-amber-700 dark:text-amber-400">
                             {t("ompRetired")}
                           </span>
                         ) : null}
                         {plugin.envStatus.requiresEnv ? (
                           plugin.envStatus.complete ? (
-                            <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                            <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
                               {t(
                                 plugin.envStatus.mode === "platform_preset"
                                   ? "env.platformPreset"
@@ -507,15 +529,12 @@ export function InstalledPluginsTable({
                               )}
                             </span>
                           ) : (
-                            <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-xs text-destructive">
+                            <span className="shrink-0 rounded-full bg-destructive/10 px-1.5 py-0.5 text-[11px] leading-none text-destructive">
                               {t("env.incomplete")}
                             </span>
                           )
                         ) : null}
-                      </span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {plugin.source}
-                      </span>
+                      </div>
                       {plugin.envStatus.requiresEnv &&
                       !plugin.envStatus.complete &&
                       plugin.envStatus.missingRequiredKeys.length ? (
@@ -536,16 +555,20 @@ export function InstalledPluginsTable({
                           </Link>
                         </span>
                       ) : null}
-                    </span>
+                    </div>
                   </div>,
-                  <span key="version" className="font-mono text-xs">
-                    v{plugin.currentVersion}
-                    {plugin.updateAvailable && plugin.latestVersion
-                      ? ` → v${plugin.latestVersion}`
-                      : ""}
+                  <span
+                    key="version"
+                    title={versionLabel}
+                    className="block truncate font-mono text-xs"
+                  >
+                    {versionLabel}
                   </span>,
                   plugin.contents.length || plugin.mcp ? (
-                    <span key="contents" className="flex gap-1 text-xs">
+                    <span
+                      key="contents"
+                      className="flex flex-wrap gap-1 py-1 whitespace-normal text-xs"
+                    >
                       {plugin.contents.map(({ kind, count }) => (
                         <span
                           key={kind}

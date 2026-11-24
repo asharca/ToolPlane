@@ -21,7 +21,6 @@ import {
   FileText,
   FileVideo,
   FolderOpen,
-  Loader2,
   Trash2,
 } from "lucide-react";
 import { Button, ButtonLink } from "@/components/motion/button";
@@ -29,9 +28,14 @@ import {
   CenterMorphModal,
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
+import { Loader } from "@/components/motion/loader";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { Tooltip } from "@/components/motion/tooltip";
-import { StorageUsage, useFormatBytes } from "@/components/ui/StorageUsage";
+import {
+  AnimatedBytes,
+  StorageUsage,
+  useFormatBytes,
+} from "@/components/ui/StorageUsage";
 import { apiRequest } from "@/lib/client/api";
 import { previewType } from "@/lib/file-preview";
 import { cn } from "@/lib/utils";
@@ -385,10 +389,11 @@ export function WorkspaceFilesManager({
     const actions = (
       <div key="actions" className="flex items-center justify-end gap-1">
         {pending ? (
-          <Loader2
-            role="status"
-            aria-label={t("deleting")}
-            className="size-4 animate-spin text-muted-foreground"
+          <Loader
+            variant="spinner"
+            size={16}
+            label={t("deleting")}
+            className="text-muted-foreground"
           />
         ) : (
           <>
@@ -484,20 +489,45 @@ export function WorkspaceFilesManager({
 
   return (
     <div className="space-y-5">
-      <div className="rounded-xl border border-border bg-card px-5 py-4">
-        <div className={usage.owner ? "grid gap-5 sm:grid-cols-2" : undefined}>
-          {usage.owner ? (
-            <StorageUsage
-              label={settingsT("ownedWorkspaceStorage")}
-              usedBytes={usage.owner.usedBytes}
-              quotaBytes={usage.owner.storageQuotaBytes}
-            />
-          ) : null}
-          <StorageUsage
-            label={settingsT("thisWorkspaceStorage")}
-            usedBytes={usage.workspaceBytes}
-          />
-        </div>
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
+        {usage.owner ? (
+          usage.owner.usedBytes !== usage.workspaceBytes ? (
+            <div className="flex flex-col divide-y divide-border sm:flex-row sm:items-stretch sm:divide-x sm:divide-y-0">
+              <div className="flex shrink-0 flex-col justify-center px-5 py-3.5 sm:min-w-44">
+                <span className="text-xs font-medium text-muted-foreground">
+                  {settingsT("thisWorkspaceStorage")}
+                </span>
+                <span className="mt-1 whitespace-nowrap text-base font-semibold leading-tight tabular-nums text-foreground">
+                  <AnimatedBytes bytes={usage.workspaceBytes} />
+                </span>
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col justify-center px-5 py-3.5">
+                <StorageUsage
+                  label={settingsT("ownedWorkspaceStorage")}
+                  usedBytes={usage.owner.usedBytes}
+                  quotaBytes={usage.owner.storageQuotaBytes}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="px-5 py-3.5">
+              <StorageUsage
+                label={settingsT("ownedWorkspaceStorage")}
+                usedBytes={usage.owner.usedBytes}
+                quotaBytes={usage.owner.storageQuotaBytes}
+              />
+            </div>
+          )
+        ) : (
+          <div className="flex items-center justify-between gap-4 px-5 py-3.5">
+            <span className="text-xs font-medium text-muted-foreground">
+              {settingsT("thisWorkspaceStorage")}
+            </span>
+            <span className="whitespace-nowrap text-sm font-semibold tabular-nums text-foreground">
+              <AnimatedBytes bytes={usage.workspaceBytes} />
+            </span>
+          </div>
+        )}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Tabs
@@ -560,10 +590,14 @@ export function WorkspaceFilesManager({
             />
           </div>
         ) : !page ? (
-          <div className="rounded-xl border border-border bg-card px-5 py-12 text-center">
-            <p role="status" className="text-sm text-muted-foreground">
-              {common("loading")}
-            </p>
+          <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-card px-5 py-12 text-center text-sm text-muted-foreground">
+            <Loader
+              variant="dots"
+              size={18}
+              label={common("loading")}
+              className="text-muted-foreground"
+            />
+            <span role="status">{common("loading")}</span>
           </div>
         ) : files.length === 0 ? (
           <div className="rounded-xl border border-border bg-card">

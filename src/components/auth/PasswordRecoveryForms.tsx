@@ -13,29 +13,36 @@ import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
 } from "@/lib/auth/password-policy";
+import {
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+} from "@/components/motion/alert";
 import { ButtonLink } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
-import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { DialogField } from "@/components/dashboard/dialog";
 
 function ActionMessage({ state }: { state: AuthState }) {
   if (state.error) {
     return (
-      <p role="alert" className="text-sm text-destructive">
-        {state.error}
-      </p>
+      <Alert variant="destructive">
+        <AlertIcon />
+        <AlertContent>
+          <AlertDescription>{state.error}</AlertDescription>
+        </AlertContent>
+      </Alert>
     );
   }
   if (state.success) {
     return (
-      <p
-        role="status"
-        className="flex items-start gap-2 text-sm text-foreground"
-      >
-        <AnimatedBadge status="success" size="sm" aria-hidden="true" />
-        <span className="min-w-0">{state.success}</span>
-      </p>
+      <Alert variant="success">
+        <AlertIcon />
+        <AlertContent>
+          <AlertDescription>{state.success}</AlertDescription>
+        </AlertContent>
+      </Alert>
     );
   }
   return null;

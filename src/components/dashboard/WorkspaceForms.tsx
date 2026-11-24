@@ -1,15 +1,24 @@
 "use client";
-import { AnimatedBadge } from "@/components/motion/animated-badge";
-
-import { BouncyAccordion } from "@/components/motion/bouncy-accordion";
-
-import { FormSelect } from "@/components/ui/FormSelect";
-
-import { Button } from "@/components/motion/button";
-import { Input } from "@/components/motion/input";
 
 import { useActionState, useId, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
+import {
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+} from "@/components/motion/alert";
+import { AnimatedBadge } from "@/components/motion/animated-badge";
+import { Button } from "@/components/motion/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleIndicator,
+  CollapsibleTrigger,
+} from "@/components/motion/collapsible";
+import { Input } from "@/components/motion/input";
+import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { FormSelect } from "@/components/ui/FormSelect";
 import {
   createWorkspaceAction,
   renameWorkspaceAction,
@@ -75,9 +84,12 @@ export function WorkspaceActionForm({
         {submit}
       </fieldset>
       {state.error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {state.error}
-        </p>
+        <Alert variant="destructive">
+          <AlertIcon />
+          <AlertContent>
+            <AlertDescription>{state.error}</AlertDescription>
+          </AlertContent>
+        </Alert>
       ) : null}
       {state.success ? (
         <p role="status">
@@ -136,6 +148,7 @@ export function RenameWorkspaceForm({
   canManage: boolean;
 }) {
   const t = useTranslations("console.workspaces");
+  const settingsT = useTranslations("console.settings");
   const common = useTranslations("common");
   const id = useId();
   const [value, setValue] = useState(name);
@@ -167,13 +180,12 @@ export function RenameWorkspaceForm({
           {t("stableAddress", { slug })}
         </p>
         {state.error ? (
-          <p role="alert" className="mt-1.5 text-xs text-destructive">
-            {state.error}
-          </p>
-        ) : state.success ? (
-          <p role="status" className="mt-1.5">
-            <AnimatedBadge status="success">{state.success}</AnimatedBadge>
-          </p>
+          <Alert variant="destructive" className="mt-2">
+            <AlertIcon />
+            <AlertContent>
+              <AlertDescription>{state.error}</AlertDescription>
+            </AlertContent>
+          </Alert>
         ) : null}
       </div>
       <div className="flex min-w-0 items-center gap-2 sm:w-96">
@@ -187,15 +199,17 @@ export function RenameWorkspaceForm({
           disabled={pending}
           className="min-w-0 flex-1"
         />
-        <Button
-          type="submit"
+        <SubmitButton
+          pendingLabel={t("working")}
+          savedLabel={state.success || settingsT("timezoneSaved")}
+          error={state.error}
           disabled={pending || value.trim() === name.trim() || !value.trim()}
           variant="primary"
           size="md"
           className="shrink-0"
         >
-          {pending ? t("working") : common("save")}
-        </Button>
+          {common("save")}
+        </SubmitButton>
       </div>
     </form>
   ) : (
@@ -214,28 +228,24 @@ export function RenameWorkspaceForm({
 export function WorkspaceLeaveAction({ slug }: { slug: string }) {
   const t = useTranslations("console.workspaces");
   return (
-    <BouncyAccordion
-      items={[
-        {
-          id: "details",
-          title: <>{t("leave")}</>,
-          description: (
-            <>
-              <div className="mt-2 rounded-lg border border-border p-3">
-                <WorkspaceActionForm
-                  action={leaveWorkspaceAction}
-                  label={t("confirm")}
-                  danger
-                >
-                  <input type="hidden" name="workspace" value={slug} />
-                  <p className="text-muted-foreground">{t("leaveHint")}</p>
-                </WorkspaceActionForm>
-              </div>
-            </>
-          ),
-        },
-      ]}
-    />
+    <Collapsible className="rounded-xl border border-border bg-background/50 p-1">
+      <CollapsibleTrigger>
+        <span>{t("leave")}</span>
+        <CollapsibleIndicator />
+      </CollapsibleTrigger>
+      <CollapsibleContent contentClassName="px-3 pb-3 pt-2">
+        <div className="rounded-lg border border-border p-3">
+          <WorkspaceActionForm
+            action={leaveWorkspaceAction}
+            label={t("confirm")}
+            danger
+          >
+            <input type="hidden" name="workspace" value={slug} />
+            <p className="text-muted-foreground">{t("leaveHint")}</p>
+          </WorkspaceActionForm>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -255,53 +265,54 @@ export function WorkspaceDeleteForm({
   const id = useId();
   const [state, action, pending] = useActionState(deleteWorkspaceAction, {});
   return (
-    <BouncyAccordion
-      defaultValue={status !== "active" ? "details" : null}
-      items={[
-        {
-          id: "details",
-          title: <>{t(status === "active" ? "delete" : "retryDelete")}</>,
-          description: (
-            <>
-              <form action={action} className="space-y-3" aria-busy={pending}>
-                <p className="text-muted-foreground">{t("deleteHint")}</p>
-                {impact ? (
-                  <p className="text-muted-foreground">{impact}</p>
-                ) : null}
-                <input type="hidden" name="workspace" value={slug} />
-                <label htmlFor={id} className="block break-words">
-                  {t("typeName", { name })}
-                </label>
-                <Input
-                  id={id}
-                  name="confirmation"
-                  value={confirmation}
-                  onChange={(value) => setConfirmation(value)}
-                  required
-                  maxLength={80}
-                  autoComplete="off"
-                  disabled={pending}
-                  className="w-full max-w-md"
-                />
-                <Button
-                  type="submit"
-                  disabled={pending || confirmation !== name}
-                  variant="secondary"
-                  size="md"
-                >
-                  {pending ? t("deleting") : t("confirmDelete")}
-                </Button>
-                {state.error ? (
-                  <p role="alert" className="text-destructive">
-                    {state.error}
-                  </p>
-                ) : null}
-              </form>
-            </>
-          ),
-        },
-      ]}
-    />
+    <Collapsible
+      defaultOpen={status !== "active"}
+      className="rounded-xl border border-border bg-background/50 p-1"
+    >
+      <CollapsibleTrigger>
+        <span>{t(status === "active" ? "delete" : "retryDelete")}</span>
+        <CollapsibleIndicator />
+      </CollapsibleTrigger>
+      <CollapsibleContent contentClassName="px-3 pb-3 pt-2">
+        <form action={action} className="space-y-3" aria-busy={pending}>
+          <p className="text-sm text-muted-foreground">{t("deleteHint")}</p>
+          {impact ? (
+            <p className="text-sm text-muted-foreground">{impact}</p>
+          ) : null}
+          <input type="hidden" name="workspace" value={slug} />
+          <label htmlFor={id} className="block break-words text-sm">
+            {t("typeName", { name })}
+          </label>
+          <Input
+            id={id}
+            name="confirmation"
+            value={confirmation}
+            onChange={(value) => setConfirmation(value)}
+            required
+            maxLength={80}
+            autoComplete="off"
+            disabled={pending}
+            className="w-full max-w-md"
+          />
+          <Button
+            type="submit"
+            disabled={pending || confirmation !== name}
+            variant="secondary"
+            size="md"
+          >
+            {pending ? t("deleting") : t("confirmDelete")}
+          </Button>
+          {state.error ? (
+            <Alert variant="destructive">
+              <AlertIcon />
+              <AlertContent>
+                <AlertDescription>{state.error}</AlertDescription>
+              </AlertContent>
+            </Alert>
+          ) : null}
+        </form>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -317,55 +328,51 @@ export function WorkspaceTransferForm({
   const t = useTranslations("console.workspaces");
   const id = useId();
   return (
-    <BouncyAccordion
-      items={[
-        {
-          id: "details",
-          title: <>{t("transfer")}</>,
-          description: (
-            <>
-              <WorkspaceActionForm
-                action={transferWorkspaceOwnershipAction}
-                label={t("confirmTransfer")}
-                danger
-              >
-                <p className="text-muted-foreground">{t("transferHint")}</p>
-                <input type="hidden" name="workspace" value={slug} />
-                <label htmlFor={`${id}-member`} className="block">
-                  {t("newOwner")}
-                </label>
-                <FormSelect
-                  id={`${id}-member`}
-                  name="memberId"
-                  required
-                  defaultValue=""
-                  label={t("newOwner")}
-                  className="w-full max-w-md"
-                  options={[
-                    { value: "", label: t("selectMember"), disabled: true },
-                    ...members.map((member) => ({
-                      value: member.userId,
-                      label: member.label,
-                    })),
-                  ]}
-                />
-                <label htmlFor={`${id}-name`} className="block break-words">
-                  {t("typeName", { name })}
-                </label>
-                <Input
-                  id={`${id}-name`}
-                  name="confirmation"
-                  required
-                  maxLength={80}
-                  autoComplete="off"
-                  className="w-full max-w-md"
-                />
-              </WorkspaceActionForm>
-            </>
-          ),
-        },
-      ]}
-    />
+    <Collapsible className="rounded-xl border border-border bg-background/50 p-1">
+      <CollapsibleTrigger>
+        <span>{t("transfer")}</span>
+        <CollapsibleIndicator />
+      </CollapsibleTrigger>
+      <CollapsibleContent contentClassName="px-3 pb-3 pt-2">
+        <WorkspaceActionForm
+          action={transferWorkspaceOwnershipAction}
+          label={t("confirmTransfer")}
+          danger
+        >
+          <p className="text-sm text-muted-foreground">{t("transferHint")}</p>
+          <input type="hidden" name="workspace" value={slug} />
+          <label htmlFor={`${id}-member`} className="block text-sm">
+            {t("newOwner")}
+          </label>
+          <FormSelect
+            id={`${id}-member`}
+            name="memberId"
+            required
+            defaultValue=""
+            label={t("newOwner")}
+            className="w-full max-w-md"
+            options={[
+              { value: "", label: t("selectMember"), disabled: true },
+              ...members.map((member) => ({
+                value: member.userId,
+                label: member.label,
+              })),
+            ]}
+          />
+          <label htmlFor={`${id}-name`} className="block break-words text-sm">
+            {t("typeName", { name })}
+          </label>
+          <Input
+            id={`${id}-name`}
+            name="confirmation"
+            required
+            maxLength={80}
+            autoComplete="off"
+            className="w-full max-w-md"
+          />
+        </WorkspaceActionForm>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 

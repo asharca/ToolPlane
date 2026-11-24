@@ -10,8 +10,6 @@ import {
 } from "@/components/motion/popover-morph";
 import { ButtonLink } from "@/components/motion/button/base";
 import { Tooltip } from "@/components/motion/tooltip";
-import { LocaleSwitcher } from "@/components/layout/LocaleSwitcher";
-import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { workspaceInitials } from "@/lib/workspace/navigation";
 import { logoutAction } from "@/lib/auth/actions";
 
@@ -90,10 +88,6 @@ export function AccountMenu({
             {sidebar("adminConsole")}
           </ButtonLink>
         ) : null}
-        <div className="mt-1 flex items-center justify-between gap-2 border-t border-border px-2 py-1.5">
-          <LocaleSwitcher />
-          <ThemeToggle />
-        </div>
         <form
           action={logoutAction}
           className="mt-1 border-t border-border pt-1"

@@ -8,6 +8,7 @@ import { useTranslations } from "next-intl";
 import { Button, ButtonLink } from "@/components/motion/button";
 import { Checkbox } from "@/components/motion/checkbox";
 import { Input } from "@/components/motion/input";
+import { Pagination } from "@/components/motion/pagination";
 import {
   Popover,
   PopoverContent,
@@ -326,32 +327,19 @@ export function InstalledSkillsTable({
         />
       ) : null}
       {skills.length ? (
-        <nav
-          aria-label={common("pagination")}
-          className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3"
-        >
-          <p className="text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+          <p className="text-xs tabular-nums text-muted-foreground">
             {currentPage} / {totalPages}
           </p>
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={currentPage <= 1}
-              onClick={() => setPage(currentPage - 1)}
-            >
-              {common("previous")}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={currentPage >= totalPages}
-              onClick={() => setPage(currentPage + 1)}
-            >
-              {common("next")}
-            </Button>
-          </div>
-        </nav>
+          {totalPages > 1 ? (
+            <Pagination
+              totalPages={totalPages}
+              page={currentPage}
+              onPageChange={setPage}
+              aria-label={common("pagination")}
+            />
+          ) : null}
+        </div>
       ) : null}
     </section>
   );

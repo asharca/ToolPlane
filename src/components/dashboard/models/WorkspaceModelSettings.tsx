@@ -1,10 +1,21 @@
 "use client";
 
-import { Button } from "@/components/motion/button";
-
 import { useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import { RotateCcw } from "lucide-react";
+import {
+  AdaptiveStepper,
+  AdaptiveStepperDecrement,
+  AdaptiveStepperIncrement,
+  AdaptiveStepperValue,
+} from "@/components/motion/adaptive-stepper";
+import {
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+} from "@/components/motion/alert";
+import { Button } from "@/components/motion/button";
 import {
   ModelPicker,
   ModelPickerTrigger,
@@ -15,7 +26,6 @@ import {
   updateWorkspaceModelPreferenceAction,
   updateWorkspaceModelRetryAction,
 } from "@/lib/agents/actions";
-import { FormSelect } from "@/components/ui/FormSelect";
 
 function ModelPreferenceRow({
   slug,
@@ -70,9 +80,14 @@ function ModelPreferenceRow({
           {description}
         </p>
         {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {t("modelPreferenceSaveError")}
-          </p>
+          <Alert variant="destructive" className="mt-2">
+            <AlertIcon />
+            <AlertContent>
+              <AlertDescription>
+                {t("modelPreferenceSaveError")}
+              </AlertDescription>
+            </AlertContent>
+          </Alert>
         ) : null}
       </div>
       <div className="flex min-w-0 items-center gap-1.5 sm:w-96">
@@ -161,21 +176,21 @@ export function ModelRetrySetting({
   initialAttempts: number;
 }) {
   const t = useTranslations("console.settings");
-  const [value, setValue] = useState(String(initialAttempts));
+  const [attempts, setAttempts] = useState(initialAttempts);
   const [error, setError] = useState(false);
   const [pending, startTransition] = useTransition();
 
-  function save(next: string) {
-    const previous = value;
-    setValue(next);
+  function save(next: number) {
+    const previous = attempts;
+    setAttempts(next);
     setError(false);
     startTransition(async () => {
       const formData = new FormData();
       formData.set("workspace", slug);
-      formData.set("attempts", next);
+      formData.set("attempts", String(next));
       const result = await updateWorkspaceModelRetryAction({}, formData);
       if (result.error) {
-        setValue(previous);
+        setAttempts(previous);
         setError(true);
       }
     });
@@ -191,23 +206,42 @@ export function ModelRetrySetting({
           {t("modelRetryAttemptsDesc")}
         </p>
         {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {t("modelPreferenceSaveError")}
-          </p>
+          <Alert variant="destructive" className="mt-2">
+            <AlertIcon />
+            <AlertContent>
+              <AlertDescription>
+                {t("modelPreferenceSaveError")}
+              </AlertDescription>
+            </AlertContent>
+          </Alert>
         ) : null}
       </div>
-      <FormSelect
-        className="sm:w-96"
-        label={t("modelRetryAttempts")}
-        value={value}
-        disabled={pending}
-        onValueChange={save}
-        options={Array.from({ length: 11 }, (_, count) => ({
-          value: String(count),
-          label:
-            count === 0 ? t("modelRetryOff") : t("modelRetryCount", { count }),
-        }))}
-      />
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 sm:w-96 sm:justify-end">
+        <span className="text-sm tabular-nums text-muted-foreground">
+          {attempts === 0
+            ? t("modelRetryOff")
+            : t("modelRetryCount", { count: attempts })}
+        </span>
+        {/* Match AdaptiveStepper's Liquid SVG fill (--background) cleanly inside bg-card rows. */}
+        <div className="inline-flex rounded-full border border-border bg-background p-0.5">
+          <AdaptiveStepper
+            value={attempts}
+            min={0}
+            max={10}
+            step={1}
+            disabled={pending}
+            aria-label={t("modelRetryAttempts")}
+            formatValueText={(count) =>
+              count === 0 ? t("modelRetryOff") : t("modelRetryCount", { count })
+            }
+            onValueChange={save}
+          >
+            <AdaptiveStepperDecrement aria-label={t("decreaseRetry")} />
+            <AdaptiveStepperValue />
+            <AdaptiveStepperIncrement aria-label={t("increaseRetry")} />
+          </AdaptiveStepper>
+        </div>
+      </div>
     </div>
   );
 }
