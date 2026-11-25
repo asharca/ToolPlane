@@ -33,6 +33,14 @@ export interface CodeBlockProps {
   wrap?: boolean;
   copyable?: boolean;
   onCopy?: () => void | Promise<void>;
+  /** Shown instead of the language id, e.g. the fence label the author wrote. */
+  displayLanguage?: string;
+  labels?: {
+    streaming?: ReactNode;
+    complete?: ReactNode;
+    copy?: string;
+    copied?: string;
+  };
   className?: string;
 }
 
@@ -47,6 +55,8 @@ export function CodeBlock({
   wrap = false,
   copyable = true,
   onCopy,
+  displayLanguage,
+  labels,
   className,
 }: CodeBlockProps) {
   const reduce = useReducedMotion() ?? false;
@@ -117,7 +127,7 @@ export function CodeBlock({
           </span>
         ) : null}
         <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/55">
-          {language}
+          {displayLanguage ?? language}
         </span>
         <span
           className={cn(
@@ -132,13 +142,23 @@ export function CodeBlock({
           ) : (
             <Check className="size-3" />
           )}
-          {streaming ? "Writing" : "Ready"}
+          {streaming
+            ? (labels?.streaming ?? "Writing")
+            : (labels?.complete ?? "Ready")}
         </span>
         {copyable || onCopy ? (
           <motion.button
             type="button"
-            aria-label={copied ? "Copied" : "Copy code"}
-            title={copied ? "Copied" : "Copy code"}
+            aria-label={
+              copied
+                ? (labels?.copied ?? "Copied")
+                : (labels?.copy ?? "Copy code")
+            }
+            title={
+              copied
+                ? (labels?.copied ?? "Copied")
+                : (labels?.copy ?? "Copy code")
+            }
             onClick={handleCopy}
             whileTap={reduce ? undefined : { scale: 0.9 }}
             transition={SPRING_PRESS}

@@ -19,6 +19,7 @@ export type ConfirmSubmitButtonProps = {
   prompt: ReactNode;
   pendingLabel?: ReactNode;
   disabled?: boolean;
+  tone?: "default" | "danger";
   className?: string;
   triggerClassName?: string;
   confirmClassName?: string;
@@ -43,6 +44,7 @@ export function ConfirmSubmitButton({
   prompt,
   pendingLabel,
   disabled,
+  tone = "default",
   className,
   triggerClassName,
   confirmClassName,
@@ -136,7 +138,7 @@ export function ConfirmSubmitButton({
             disabled={disabled || pending}
             aria-busy={pending || undefined}
             aria-describedby={promptId}
-            variant={confirmVariant}
+            variant={tone === "danger" ? "destructive" : confirmVariant}
             size={confirmSize}
             className={confirmClassName}
             state={pending ? "loading" : "idle"}

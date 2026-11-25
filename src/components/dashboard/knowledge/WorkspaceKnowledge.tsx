@@ -5,7 +5,22 @@ import {
   DisplayError,
   displayErrorText,
 } from "@/components/dashboard/display-error";
-import { Button } from "@/components/motion/button";
+import {
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+} from "@/components/motion/alert";
+import { Button, ButtonLink } from "@/components/motion/button";
+import {
+  CenterMorphModal,
+  CenterMorphModalContent,
+} from "@/components/motion/center-morph-modal";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/motion/collapsible";
 import { Input } from "@/components/motion/input";
 import { FormCheckbox } from "@/components/ui/FormCheckbox";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
@@ -15,10 +30,18 @@ import {
   AnimatedSidebarContent,
 } from "@/components/motion/animated-sidebar";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
+import { DashboardEmptyState } from "@/components/dashboard/DashboardUI";
+import {
+  DialogCancel,
+  DialogFooter,
+  DialogHeader,
+} from "@/components/dashboard/dialog";
 import { FilePathTree } from "@/components/dashboard/FilePathTree";
+import { notify } from "@/components/dashboard/Toaster";
 
 import { useTranslations } from "next-intl";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import {
   Cpu,
@@ -88,6 +111,9 @@ export function WorkspaceKnowledge({
   agents: Array<{ id: string; name: string }>;
 }) {
   const t = useTranslations("console.knowledge");
+  const common = useTranslations("common");
+  const router = useRouter();
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const tabs: Array<{
     id: KnowledgeTab;
     label: string;
@@ -201,6 +227,7 @@ export function WorkspaceKnowledge({
           base.id === selected.id ? { ...base, agentIds: next } : base,
         ),
       );
+      notify(common("saveChanges"));
     } catch (cause) {
       setError(displayErrorText(cause, t("accessError")));
     } finally {
@@ -232,9 +259,26 @@ export function WorkspaceKnowledge({
         throw new DisplayError(response.message ?? t("createError"));
       const base = response.data;
       if (!base.id) throw new DisplayError(t("createError"));
-      window.location.reload();
+      const newBase: KnowledgeBase = {
+        id: base.id,
+        name: name.trim(),
+        providerId,
+        providerName: selectedProvider?.name ?? null,
+        embeddingModel: model,
+        chunkSize,
+        chunkOverlap,
+        topK,
+        threshold,
+        agentIds: [],
+        documents: [],
+      };
+      setBases((current) => [newBase, ...current]);
+      selectBase(newBase);
+      notify(t("createBase"));
+      router.refresh();
     } catch (cause) {
       setError(displayErrorText(cause, t("createError")));
+    } finally {
       setBusy(false);
     }
   }
@@ -276,6 +320,7 @@ export function WorkspaceKnowledge({
             : base,
         ),
       );
+      notify(common("saveChanges"));
     } catch (cause) {
       setError(displayErrorText(cause, t("settingsError")));
     } finally {
@@ -283,16 +328,33 @@ export function WorkspaceKnowledge({
     }
   }
 
-  async function deleteBase() {
-    if (
-      !selected ||
-      !window.confirm(t("deleteConfirm", { name: selected.name }))
-    )
-      return;
-    const response = await apiRequest(`/api/v1/knowledge/${selected.id}`, {
-      method: "DELETE",
-    });
-    if (response.ok) window.location.reload();
+  function deleteBase() {
+    if (!selected) return;
+    setConfirmDeleteOpen(true);
+  }
+
+  async function performDeleteBase() {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      const response = await apiRequest(`/api/v1/knowledge/${selected.id}`, {
+        method: "DELETE",
+      });
+      if (response.ok) {
+        const remaining = bases.filter((base) => base.id !== selected.id);
+        setBases(remaining);
+        if (remaining[0]) {
+          selectBase(remaining[0]);
+        } else {
+          setSelectedId("");
+          beginCreate();
+        }
+        notify(t("deleteBase"));
+        router.refresh();
+      }
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function upload() {
@@ -335,6 +397,8 @@ export function WorkspaceKnowledge({
         ),
       );
       setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      notify(t("import"));
     } catch (cause) {
       setError(displayErrorText(cause, t("importError")));
     } finally {
@@ -377,6 +441,7 @@ export function WorkspaceKnowledge({
             : base,
         ),
       );
+      notify(t("reindexDocument"));
     } catch (cause) {
       setError(displayErrorText(cause, t("reindexError")));
     } finally {
@@ -390,7 +455,7 @@ export function WorkspaceKnowledge({
       `/api/v1/knowledge/${selected.id}/documents/${documentId}`,
       { method: "DELETE" },
     );
-    if (response.ok)
+    if (response.ok) {
       setBases((current) =>
         current.map((base) =>
           base.id === selected.id
@@ -403,6 +468,8 @@ export function WorkspaceKnowledge({
             : base,
         ),
       );
+      notify(t("deleteDocument"));
+    }
   }
 
   async function testRecall() {
@@ -526,7 +593,7 @@ export function WorkspaceKnowledge({
                       setModel(selection.model);
                     }}
                     onConfigure={() => {
-                      window.location.assign(providersHref);
+                      router.push(providersHref);
                     }}
                     trigger={
                       <ModelPickerTrigger
@@ -550,49 +617,59 @@ export function WorkspaceKnowledge({
                     </p>
                   ) : null}
                 </div>
-                <div>
-                  <Input
-                    min={200}
-                    max={8000}
-                    type={"number"}
-                    value={String(chunkSize)}
-                    label={t("chunkSize")}
-                    onChange={(value) => setChunkSize(Number(value))}
-                    className="w-full"
-                  />
-                </div>
-                <div>
-                  <Input
-                    min={0}
-                    type={"number"}
-                    value={String(chunkOverlap)}
-                    label={t("chunkOverlap")}
-                    onChange={(value) => setChunkOverlap(Number(value))}
-                    className="w-full"
-                  />
-                </div>
-                <div>
-                  <Input
-                    min={1}
-                    max={20}
-                    type={"number"}
-                    value={String(topK)}
-                    label={t("resultsPerSearch")}
-                    onChange={(value) => setTopK(Number(value))}
-                    className="w-full"
-                  />
-                </div>
-                <div>
-                  <Input
-                    min={-1}
-                    max={1}
-                    step={0.05}
-                    type={"number"}
-                    value={String(threshold)}
-                    label={t("similarityThreshold")}
-                    onChange={(value) => setThreshold(Number(value))}
-                    className="w-full"
-                  />
+                <div className="sm:col-span-2">
+                  <Collapsible className="rounded-xl border border-border px-4 py-3">
+                    <CollapsibleTrigger className="px-0 py-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+                      {t("settings")} · {chunkSize} / {chunkOverlap} · top-
+                      {topK} · {threshold}
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="grid gap-x-5 gap-y-4 pt-3 sm:grid-cols-2">
+                      <div>
+                        <Input
+                          min={200}
+                          max={8000}
+                          type={"number"}
+                          value={String(chunkSize)}
+                          label={t("chunkSize")}
+                          onChange={(value) => setChunkSize(Number(value))}
+                          className="w-full"
+                        />
+                      </div>
+                      <div>
+                        <Input
+                          min={0}
+                          type={"number"}
+                          value={String(chunkOverlap)}
+                          label={t("chunkOverlap")}
+                          onChange={(value) => setChunkOverlap(Number(value))}
+                          className="w-full"
+                        />
+                      </div>
+                      <div>
+                        <Input
+                          min={1}
+                          max={20}
+                          type={"number"}
+                          value={String(topK)}
+                          label={t("resultsPerSearch")}
+                          onChange={(value) => setTopK(Number(value))}
+                          className="w-full"
+                        />
+                      </div>
+                      <div>
+                        <Input
+                          min={-1}
+                          max={1}
+                          step={0.05}
+                          type={"number"}
+                          value={String(threshold)}
+                          label={t("similarityThreshold")}
+                          onChange={(value) => setThreshold(Number(value))}
+                          className="w-full"
+                        />
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
                 </div>
               </div>
             )}
@@ -683,6 +760,23 @@ export function WorkspaceKnowledge({
 
             {activeTab === "documents" ? (
               <div className="p-5 sm:p-7">
+                {!sandboxes.some((s) => s.running) ? (
+                  <Alert variant="warning" className="mb-4">
+                    <AlertIcon />
+                    <AlertContent className="flex flex-wrap items-center justify-between gap-2">
+                      <AlertDescription className="text-xs">
+                        {t("sourceSandbox")} ({t("stopped")})
+                      </AlertDescription>
+                      <ButtonLink
+                        href={`/app/${encodeURIComponent(slug)}/sandboxes`}
+                        variant="secondary"
+                        size="sm"
+                      >
+                        {t("sourceSandbox")} →
+                      </ButtonLink>
+                    </AlertContent>
+                  </Alert>
+                ) : null}
                 <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end">
                   <FormSelect
                     label={t("sourceSandbox")}
@@ -871,30 +965,47 @@ export function WorkspaceKnowledge({
                     {t("agentAccessDescription")}
                   </p>
                 </div>
-                <div className="divide-y divide-border">
-                  {agents.map((agent) => {
-                    const checked = agentIds.includes(agent.id);
-                    return (
-                      <div
-                        key={agent.id}
-                        className="flex items-center justify-between gap-4 py-3.5 text-sm"
+                {agents.length === 0 ? (
+                  <DashboardEmptyState
+                    icon={Users}
+                    title={t("agentAccess")}
+                    description={t("agentAccessDescription")}
+                    actions={
+                      <ButtonLink
+                        href={`/app/${encodeURIComponent(slug)}/agents`}
+                        variant="secondary"
+                        size="sm"
                       >
-                        <FormCheckbox
-                          checked={checked}
-                          disabled={busy}
-                          label={agent.name}
-                          onCheckedChange={() =>
-                            void saveAgentBindings(
-                              checked
-                                ? agentIds.filter((id) => id !== agent.id)
-                                : [...agentIds, agent.id],
-                            )
-                          }
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
+                        {t("agentAccess")} →
+                      </ButtonLink>
+                    }
+                  />
+                ) : (
+                  <div className="divide-y divide-border">
+                    {agents.map((agent) => {
+                      const checked = agentIds.includes(agent.id);
+                      return (
+                        <div
+                          key={agent.id}
+                          className="flex items-center justify-between gap-4 py-3.5 text-sm"
+                        >
+                          <FormCheckbox
+                            checked={checked}
+                            disabled={busy}
+                            label={agent.name}
+                            onCheckedChange={() =>
+                              void saveAgentBindings(
+                                checked
+                                  ? agentIds.filter((id) => id !== agent.id)
+                                  : [...agentIds, agent.id],
+                              )
+                            }
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             ) : null}
 
@@ -922,7 +1033,7 @@ export function WorkspaceKnowledge({
                         setModel(selection.model);
                       }}
                       onConfigure={() => {
-                        window.location.assign(providersHref);
+                        router.push(providersHref);
                       }}
                       trigger={
                         <ModelPickerTrigger
@@ -1009,6 +1120,38 @@ export function WorkspaceKnowledge({
           </div>
         ) : null}
       </main>
+      <CenterMorphModal
+        open={confirmDeleteOpen}
+        onOpenChange={setConfirmDeleteOpen}
+      >
+        <CenterMorphModalContent
+          ariaLabel={t("deleteBase")}
+          closeButtonLabel={common("close")}
+          className="max-w-md"
+        >
+          <DialogHeader
+            title={t("deleteBase")}
+            description={
+              selected ? t("deleteConfirm", { name: selected.name }) : undefined
+            }
+          />
+          <DialogFooter cancel={<DialogCancel />}>
+            <Button
+              type="button"
+              variant="primary"
+              size="md"
+              disabled={busy}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                setConfirmDeleteOpen(false);
+                void performDeleteBase();
+              }}
+            >
+              {t("deleteBase")}
+            </Button>
+          </DialogFooter>
+        </CenterMorphModalContent>
+      </CenterMorphModal>
     </div>
   );
 }

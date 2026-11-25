@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { Input } from "@/components/motion/input";
 import { Button } from "@/components/motion/button";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { notify } from "@/components/dashboard/Toaster";
 import { AdminBadge, AdminPanel } from "@/components/admin/AdminUI";
 import { updateAgentConcurrencySettingsAction } from "@/lib/admin/settings-actions";
 import type { AdminSettingsActionState } from "@/lib/admin/settings-actions";
@@ -26,7 +27,12 @@ export function AgentConcurrencySettingsForm({
   const [state, action, pending] = useActionState<
     AdminSettingsActionState,
     FormData
-  >(updateAgentConcurrencySettingsAction, {});
+  >(async (prev, form) => {
+    const result = await updateAgentConcurrencySettingsAction(prev, form);
+    if (result.error) notify(result.error, { severity: "error" });
+    else if (result.ok) notify(t("saved"));
+    return result;
+  }, {});
 
   return (
     <AdminPanel
@@ -69,17 +75,10 @@ export function AgentConcurrencySettingsForm({
                 step={1}
                 required
                 defaultValue={String(value)}
-                aria-describedby="agent-concurrency-help"
               />
             </div>
           ))}
         </div>
-        <p
-          id="agent-concurrency-help"
-          className="text-sm text-muted-foreground"
-        >
-          {t("agentConcurrencyBehavior")}
-        </p>
         <div className="flex flex-wrap gap-2">
           <SubmitButton
             pendingLabel={t("saving")}
@@ -107,11 +106,6 @@ export function AgentConcurrencySettingsForm({
         {state.error ? (
           <p role="alert" className="text-sm text-destructive">
             {state.error}
-          </p>
-        ) : null}
-        {state.ok ? (
-          <p aria-live="polite" className="text-sm text-accent-foreground">
-            {t("saved")}
           </p>
         ) : null}
       </form>

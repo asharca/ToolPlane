@@ -31,7 +31,7 @@ export function ThemeToggle({
     <BeUIThemeToggle
       aria-label={label}
       aria-pressed={mounted ? isDark : undefined}
-      className="size-8"
+      className="size-8 rounded-lg text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       iconClassName="size-4"
     />
   );

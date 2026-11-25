@@ -1,5 +1,6 @@
 "use client";
 import { Button, ButtonLink } from "@/components/motion/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 
 import { useTranslations } from "next-intl";
 import { useActionState, useState } from "react";
@@ -56,41 +57,39 @@ export function SkillMarkdownViewer({
           </h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex rounded-xl border border-border bg-muted/30 p-0.5">
-            <Button
-              type="button"
-              disabled={isPending}
-              onClick={() => setMode("rendered")}
-              variant={mode === "rendered" ? "primary" : "ghost"}
-              size="sm"
-            >
-              <Eye className="size-3.5" />
-              {t("rendered")}
-            </Button>
-            <Button
-              type="button"
-              disabled={isPending}
-              onClick={() => setMode("source")}
-              variant={mode === "source" ? "primary" : "ghost"}
-              size="sm"
-            >
-              <Code2 className="size-3.5" />
-              {t(editable ? "editSource" : "sourceCode")}
-            </Button>
-          </div>
+          <Tabs
+            value={mode}
+            onValueChange={(next) => setMode(next as "rendered" | "source")}
+            variant="segment"
+          >
+            <TabsList>
+              <TabsTrigger value="rendered" disabled={isPending}>
+                <span className="inline-flex items-center gap-1.5">
+                  <Eye className="size-3.5" />
+                  {t("rendered")}
+                </span>
+              </TabsTrigger>
+              <TabsTrigger value="source" disabled={isPending}>
+                <span className="inline-flex items-center gap-1.5">
+                  <Code2 className="size-3.5" />
+                  {t(editable ? "editSource" : "sourceCode")}
+                </span>
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
           <CopyButton text={draft} label={t("copy")} />
           {downloadHref ? (
             <>
-              <ButtonLink href={downloadHref} variant="secondary" size="md">
-                <Download className="size-4" />
+              <ButtonLink href={downloadHref} variant="secondary" size="sm">
+                <Download className="size-3.5" />
                 {t("downloadSkillBundle")}
               </ButtonLink>
               <ButtonLink
                 href={`${downloadHref}?format=markdown`}
                 variant="ghost"
-                size="md"
+                size="sm"
               >
-                <Download className="size-4" />
+                <Download className="size-3.5" />
                 {t("downloadSkillmd")}
               </ButtonLink>
             </>
@@ -134,7 +133,7 @@ export function SkillMarkdownViewer({
             value={content}
             onChange={(event) => setContent(event.target.value)}
             rows={24}
-            className="w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-[28rem]"
+            className="min-h-[28rem] w-full resize-y rounded-lg bg-muted/35 p-3 font-mono text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           <Button
             variant="primary"

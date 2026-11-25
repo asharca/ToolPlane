@@ -18,6 +18,8 @@ import {
   MorphPopoverContent,
   MorphPopoverTrigger,
 } from "@/components/motion/popover-morph";
+import { Tooltip } from "@/components/motion/tooltip";
+import { ConfirmActionDialog } from "./ConversationUxPrimitives";
 import { apiRequest } from "@/lib/client/api";
 
 const SafeStreamdown = dynamic(
@@ -198,9 +200,11 @@ export function SystemUpdateButton({
 }) {
   const t = useTranslations("console.systemUpdate");
   const settingsT = useTranslations("console.settings");
+  const commonT = useTranslations("common");
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [uiState, setUiState] = useState<UiState>("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const restartPollRef = useRef<AbortController | null>(null);
   const checkedOnMountRef = useRef(false);
 
@@ -230,10 +234,10 @@ export function SystemUpdateButton({
   }, []);
 
   useEffect(() => {
-    if (checkedOnMountRef.current) return;
+    if (!canInstall || checkedOnMountRef.current) return;
     checkedOnMountRef.current = true;
     void refresh();
-  }, [refresh]);
+  }, [canInstall, refresh]);
 
   const waitForRestart = useCallback(
     async (
@@ -287,12 +291,7 @@ export function SystemUpdateButton({
       uiState === "restarting"
     )
       return;
-    if (
-      !window.confirm(
-        t("confirmUpdate", { version: status.latestVersion ?? "" }),
-      )
-    )
-      return;
+    setConfirmOpen(false);
     setUiState("updating");
     setMessage(null);
     const targetVersion = status?.latestVersion ?? null;
@@ -414,205 +413,229 @@ export function SystemUpdateButton({
               : "bg-muted-foreground";
 
   return (
-    <MorphPopover
-      className={compact ? undefined : "w-full"}
-      onOpenChange={(open) => {
-        if (open && !busy) void refresh();
-      }}
-    >
-      <MorphPopoverTrigger>
-        <Button
-          type="button"
-          aria-label={triggerLabel}
-          title={triggerLabel}
-          variant="ghost"
-          className={`relative h-9 shrink-0 gap-[9px] rounded-lg px-[9px] text-sm font-normal text-foreground hover:bg-foreground/5 ${compact ? "w-9 justify-center" : "w-full justify-start"}`}
-        >
-          {busy ? (
-            <RefreshCw
-              aria-hidden="true"
-              className="size-[18px] shrink-0 animate-spin"
-            />
-          ) : (
-            <ArrowUpCircle
-              aria-hidden="true"
-              className="size-[18px] shrink-0"
-            />
-          )}
-          {compact ? null : (
-            <span className="truncate">{settingsT("systemUpdate")}</span>
-          )}
-          {hasUpdate ? (
-            <span
-              aria-hidden="true"
-              className={`absolute size-2 rounded-full bg-(--color-warning) ${compact ? "right-1.5 top-1.5" : "right-2 top-1/2 -translate-y-1/2"}`}
-            />
-          ) : null}
-        </Button>
-      </MorphPopoverTrigger>
-
-      <MorphPopoverContent
-        side="top"
-        align="start"
-        sideOffset={10}
-        className="flex max-h-[calc(100dvh-2rem)] w-80 max-w-[calc(100vw-2rem)] flex-col overflow-hidden border-foreground/15 bg-popover text-popover-foreground"
+    <>
+      <MorphPopover
+        className="w-full"
+        onOpenChange={(open) => {
+          if (open && !busy) void refresh();
+        }}
       >
-        <header className="flex items-start gap-2 px-4 pb-3 pt-3.5">
-          <div aria-live="polite" className="min-w-0 flex-1">
-            <h2 className="text-sm font-semibold text-foreground">
-              {settingsT("systemUpdate")}
-            </h2>
-            <p
-              className="mt-1 truncate font-mono text-xs text-muted-foreground"
-              title={versionDetail ?? undefined}
-            >
-              {versionDetail ?? "—"}
-            </p>
-          </div>
-          {status?.repository ? (
-            <a
-              href={`https://github.com/${status.repository}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={status.repository}
-              title={status.repository}
-              className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
-            >
-              <GithubIcon aria-hidden="true" className="size-3.5" />
-            </a>
-          ) : null}
-          {canInstall ? (
+        <Tooltip
+          content={triggerLabel}
+          open={compact ? undefined : false}
+          side="right"
+          wrapperClassName="flex w-full"
+        >
+          <MorphPopoverTrigger>
             <Button
               type="button"
-              onClick={refresh}
-              disabled={busy}
-              aria-label={t("checkAndUpdate")}
-              title={t("checkAndUpdate")}
+              aria-label={triggerLabel}
               variant="ghost"
-              size="icon"
-              className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
-            >
-              <RefreshCw className={`size-3.5 ${busy ? "animate-spin" : ""}`} />
-            </Button>
-          ) : null}
-        </header>
-
-        {canInstall ? (
-          <div className="mx-3 mb-3 rounded-lg bg-foreground/[0.04] px-3 py-2">
-            <p
-              role={uiState === "error" ? "alert" : "status"}
-              className="flex items-center gap-2 text-xs font-medium text-foreground"
+              className="relative h-9 w-full shrink-0 justify-start gap-2 rounded-lg px-2 text-sm font-normal text-foreground hover:bg-foreground/5"
             >
               <span
                 aria-hidden="true"
-                className={`size-1.5 shrink-0 rounded-full ${statusTone}`}
-              />
-              {label}
-            </p>
-            {detail ? (
-              <p
-                className="mt-1 line-clamp-3 break-words pl-3.5 text-xs leading-5 text-muted-foreground"
-                title={detail}
+                className="grid size-5 shrink-0 place-items-center"
               >
-                {detail}
-              </p>
-            ) : null}
-            {activeStage >= 0 ? (
-              <ol
-                aria-label={t("updateProgress")}
-                className="mt-2 flex items-center gap-1.5 pl-3.5"
-              >
-                {stages.map((stage, index) => {
-                  const complete = index < activeStage;
-                  const active = index === activeStage;
-                  return (
-                    <li
-                      key={stage}
-                      className={`flex min-w-0 items-center gap-1 text-[11px] ${
-                        active || complete
-                          ? "text-foreground"
-                          : "text-muted-foreground"
-                      }`}
-                    >
-                      {complete ? (
-                        <Check className="size-3 shrink-0 text-primary" />
-                      ) : active ? (
-                        <RefreshCw className="size-3 shrink-0 animate-spin" />
-                      ) : (
-                        <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/50" />
-                      )}
-                      <span className="truncate">{stage}</span>
-                    </li>
-                  );
-                })}
-              </ol>
-            ) : null}
-          </div>
-        ) : null}
+                {busy ? (
+                  <RefreshCw className="size-[18px] shrink-0 animate-spin" />
+                ) : (
+                  <ArrowUpCircle className="size-[18px] shrink-0" />
+                )}
+              </span>
+              {compact ? null : (
+                <span className="truncate">{settingsT("systemUpdate")}</span>
+              )}
+              {hasUpdate ? (
+                <span
+                  aria-hidden="true"
+                  className={`absolute size-2 rounded-full bg-(--color-warning) ${compact ? "right-1.5 top-1.5" : "right-2 top-1/2 -translate-y-1/2"}`}
+                />
+              ) : null}
+            </Button>
+          </MorphPopoverTrigger>
+        </Tooltip>
 
-        <section
-          className="border-t border-border px-4 py-3"
-          aria-label={t("changelog")}
+        <MorphPopoverContent
+          side="top"
+          align="start"
+          sideOffset={10}
+          className="flex max-h-[calc(100dvh-2rem)] w-80 max-w-[calc(100vw-2rem)] flex-col overflow-hidden border-foreground/15 bg-popover text-popover-foreground"
         >
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <h3 className="text-xs font-medium text-muted-foreground">
-              {t("changelog")}
-            </h3>
-            {status?.releaseUrl ? (
+          <header className="flex items-start gap-2 px-4 pb-3 pt-3.5">
+            <div aria-live="polite" className="min-w-0 flex-1">
+              <h2 className="text-sm font-semibold text-foreground">
+                {settingsT("systemUpdate")}
+              </h2>
+              <p
+                className="mt-1 truncate font-mono text-xs text-muted-foreground"
+                title={versionDetail ?? undefined}
+              >
+                {versionDetail ?? "—"}
+              </p>
+            </div>
+            {status?.repository ? (
               <a
-                href={status.releaseUrl}
+                href={`https://github.com/${status.repository}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                aria-label={status.repository}
+                title={status.repository}
+                className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
               >
-                <span className="truncate">
-                  {status.releaseName || status.latestVersion}
-                </span>
-                <ExternalLink aria-hidden="true" className="size-3 shrink-0" />
+                <GithubIcon aria-hidden="true" className="size-3.5" />
               </a>
             ) : null}
-          </div>
-          {status?.releaseNotes?.trim() ? (
-            <div className="max-h-56 overflow-y-auto overscroll-contain break-words pb-2 pr-1 text-xs leading-5 [overflow-wrap:anywhere] [&_h1]:mb-1 [&_h1]:mt-0 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:mb-1 [&_h2]:mt-3 [&_h2]:text-xs [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-2 [&_h3]:text-xs [&_h3]:font-medium [&_li]:my-0 [&_li]:py-0.5 [&_p]:my-1 [&_ul]:my-1">
-              <SafeStreamdown mode="static" parseIncompleteMarkdown={false}>
-                {status.releaseNotes}
-              </SafeStreamdown>
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              {uiState === "checking" ? t("checking") : t("noReleaseNotes")}
-            </p>
-          )}
-        </section>
+            {canInstall ? (
+              <Button
+                type="button"
+                onClick={refresh}
+                disabled={busy}
+                aria-label={t("checkAndUpdate")}
+                title={t("checkAndUpdate")}
+                variant="ghost"
+                size="icon"
+                className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
+              >
+                <RefreshCw
+                  className={`size-3.5 ${busy ? "animate-spin" : ""}`}
+                />
+              </Button>
+            ) : null}
+          </header>
 
-        {showUpdate ? (
-          <footer className="border-t border-border p-3">
-            <Button
-              type="button"
-              onClick={runUpdate}
-              disabled={busy}
-              variant="primary"
-              size="sm"
-              className="w-full"
-            >
-              {busy ? (
-                <RefreshCw className="size-3.5 animate-spin" />
-              ) : (
-                <Download className="size-3.5" />
-              )}
-              {uiState === "updating"
-                ? t("updating")
-                : uiState === "applying"
-                  ? t("applying")
-                  : uiState === "restarting"
-                    ? t("restartingShort")
-                    : uiState === "checking"
-                      ? t("checking")
-                      : t("updateNow")}
-            </Button>
-          </footer>
-        ) : null}
-      </MorphPopoverContent>
-    </MorphPopover>
+          {canInstall ? (
+            <div className="mx-3 mb-3 rounded-lg bg-foreground/[0.04] px-3 py-2">
+              <p
+                role={uiState === "error" ? "alert" : "status"}
+                className="flex items-center gap-2 text-xs font-medium text-foreground"
+              >
+                <span
+                  aria-hidden="true"
+                  className={`size-1.5 shrink-0 rounded-full ${statusTone}`}
+                />
+                {label}
+              </p>
+              {detail ? (
+                <p
+                  className="mt-1 line-clamp-3 break-words pl-3.5 text-xs leading-5 text-muted-foreground"
+                  title={detail}
+                >
+                  {detail}
+                </p>
+              ) : null}
+              {activeStage >= 0 ? (
+                <ol
+                  aria-label={t("updateProgress")}
+                  className="mt-2 flex items-center gap-1.5 pl-3.5"
+                >
+                  {stages.map((stage, index) => {
+                    const complete = index < activeStage;
+                    const active = index === activeStage;
+                    return (
+                      <li
+                        key={stage}
+                        className={`flex min-w-0 items-center gap-1 text-[11px] ${
+                          active || complete
+                            ? "text-foreground"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {complete ? (
+                          <Check className="size-3 shrink-0 text-primary" />
+                        ) : active ? (
+                          <RefreshCw className="size-3 shrink-0 animate-spin" />
+                        ) : (
+                          <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/50" />
+                        )}
+                        <span className="truncate">{stage}</span>
+                      </li>
+                    );
+                  })}
+                </ol>
+              ) : null}
+            </div>
+          ) : null}
+
+          <section
+            className="border-t border-border px-4 py-3"
+            aria-label={t("changelog")}
+          >
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <h3 className="text-xs font-medium text-muted-foreground">
+                {t("changelog")}
+              </h3>
+              {status?.releaseUrl ? (
+                <a
+                  href={status.releaseUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  <span className="truncate">
+                    {status.releaseName || status.latestVersion}
+                  </span>
+                  <ExternalLink
+                    aria-hidden="true"
+                    className="size-3 shrink-0"
+                  />
+                </a>
+              ) : null}
+            </div>
+            {status?.releaseNotes?.trim() ? (
+              <div className="max-h-56 overflow-y-auto overscroll-contain break-words pb-2 pr-1 text-xs leading-5 [overflow-wrap:anywhere] [&_h1]:mb-1 [&_h1]:mt-0 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:mb-1 [&_h2]:mt-3 [&_h2]:text-xs [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-2 [&_h3]:text-xs [&_h3]:font-medium [&_li]:my-0 [&_li]:py-0.5 [&_p]:my-1 [&_ul]:my-1">
+                <SafeStreamdown mode="static" parseIncompleteMarkdown={false}>
+                  {status.releaseNotes}
+                </SafeStreamdown>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {uiState === "checking" ? t("checking") : t("noReleaseNotes")}
+              </p>
+            )}
+          </section>
+
+          {showUpdate ? (
+            <footer className="border-t border-border p-3">
+              <Button
+                type="button"
+                onClick={() => setConfirmOpen(true)}
+                disabled={busy}
+                variant="primary"
+                size="sm"
+                className="w-full"
+              >
+                {busy ? (
+                  <RefreshCw className="size-3.5 animate-spin" />
+                ) : (
+                  <Download className="size-3.5" />
+                )}
+                {uiState === "updating"
+                  ? t("updating")
+                  : uiState === "applying"
+                    ? t("applying")
+                    : uiState === "restarting"
+                      ? t("restartingShort")
+                      : uiState === "checking"
+                        ? t("checking")
+                        : t("updateNow")}
+              </Button>
+            </footer>
+          ) : null}
+        </MorphPopoverContent>
+      </MorphPopover>
+      <ConfirmActionDialog
+        open={confirmOpen}
+        title={settingsT("systemUpdate")}
+        description={t("confirmUpdate", {
+          version: status?.latestVersion ?? "",
+        })}
+        confirmLabel={t("updateNow")}
+        cancelLabel={commonT("cancel")}
+        busy={busy}
+        onConfirm={runUpdate}
+        onClose={() => setConfirmOpen(false)}
+      />
+    </>
   );
 }

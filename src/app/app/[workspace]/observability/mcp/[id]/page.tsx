@@ -30,12 +30,13 @@ export default async function McpCallPage({
   const t = await getTranslations("console.observability.viewer");
   const base = `/app/${encodeURIComponent(slug)}/observability`;
   const { returnTo } = await searchParams;
-  const runBack = returnTo?.startsWith(`${base}/runs/`) ? returnTo : null;
+  const safeBack = returnTo?.startsWith(base) ? returnTo : null;
+  const runBack = safeBack?.startsWith(`${base}/runs/`) ? safeBack : null;
   return (
     <DashboardPage>
       <ButtonLink
         href={
-          runBack ??
+          safeBack ??
           `${base}?tab=${detail.source === "calls" ? "mcp" : detail.source}`
         }
         variant="ghost"

@@ -50,7 +50,7 @@ export default async function SettingsPage({
 
   return (
     <DashboardPage>
-      <DashboardHeader title={t("title")} />
+      <DashboardHeader title={t("title")} visible />
       <div className="max-w-4xl">
         <WorkspaceSettingsContent slug={ws.slug} />
       </div>

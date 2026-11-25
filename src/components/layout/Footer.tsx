@@ -60,6 +60,7 @@ export async function Footer() {
   const productLinks = navigation.links.filter((link) => link.href !== "/");
   const resourceLinks: FooterLink[] = [
     { label: footer.docs, href: navigation.docsUrl },
+    { label: footer.apiReference, href: "/docs-api" },
     { label: footer.sourceCode, href: SITE.sourceUrl },
     { label: footer.mcpProtocol, href: SITE.protocolUrl },
     { label: footer.mcpGuide, href: "/what-is-an-mcp-server" },
@@ -70,8 +71,8 @@ export async function Footer() {
   ];
 
   return (
-    <footer className="px-2 pb-2 pt-8 sm:px-3 sm:pb-3">
-      <div className="mx-auto max-w-[96rem] rounded-xl border border-border/80 bg-card px-5 py-7 sm:px-7">
+    <footer className="px-4 pb-4 pt-8 sm:px-6 sm:pb-6 lg:px-8">
+      <div className="mx-auto max-w-6xl rounded-xl border border-border/80 bg-card px-5 py-7 sm:px-7">
         <div className="grid grid-cols-2 gap-7 md:grid-cols-4">
           <div className="col-span-2 md:col-span-1">
             <Logo svgSize={28} wordmarkClass="text-lg" />

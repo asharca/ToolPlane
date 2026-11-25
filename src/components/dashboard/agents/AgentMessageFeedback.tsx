@@ -12,21 +12,32 @@ export function AgentMessageFeedback({
   agentId,
   conversationId,
   messageId,
+  initialFeedback,
 }: {
   agentId: string;
   conversationId: string;
   messageId: string;
+  initialFeedback?: FeedbackDto | null;
 }) {
   const t = useTranslations("console.evolution");
   const id = useId();
   const url = `/api/v1/agents/${encodeURIComponent(agentId)}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/feedback`;
-  const [feedback, setFeedback] = useState<FeedbackDto | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const [feedback, setFeedback] = useState<FeedbackDto | null>(
+    initialFeedback ?? null,
+  );
+  const [loaded, setLoaded] = useState(initialFeedback !== undefined);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
-  const [comment, setComment] = useState("");
+  const [comment, setComment] = useState(initialFeedback?.comment ?? "");
   const [error, setError] = useState("");
   useEffect(() => {
+    if (initialFeedback !== undefined) {
+      setFeedback(initialFeedback);
+      setComment(initialFeedback?.comment ?? "");
+      setLoaded(true);
+      setError("");
+      return;
+    }
     const controller = new AbortController();
     setLoaded(false);
     setFeedback(null);
@@ -46,7 +57,7 @@ export function AgentMessageFeedback({
         if (!controller.signal.aborted) setError(evolutionErrorCode(cause));
       });
     return () => controller.abort();
-  }, [url]);
+  }, [initialFeedback, url]);
   async function save(rating: FeedbackDto["rating"] | null) {
     setBusy(true);
     setError("");

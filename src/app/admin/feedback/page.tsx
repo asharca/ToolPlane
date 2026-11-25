@@ -14,7 +14,7 @@ import {
 } from "@/components/admin/AdminUI";
 import { DashboardTable } from "@/components/dashboard/DashboardUI";
 import { FormSelect } from "@/components/ui/FormSelect";
-import { Button } from "@/components/motion/button";
+import { Button, ButtonLink } from "@/components/motion/button";
 import { listAdminFeedback } from "@/lib/admin/feedback";
 import { normalizeAdminPage } from "@/lib/admin/pagination";
 import { adminHref } from "@/lib/admin/navigation";
@@ -175,12 +175,9 @@ export default async function AdminFeedbackPage({
           {t("filter")}
         </Button>
         {hasFilters ? (
-          <Link
-            href="/admin/feedback"
-            className="rounded-lg px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
+          <ButtonLink href="/admin/feedback" size="sm" variant="ghost">
             {t("clear")}
-          </Link>
+          </ButtonLink>
         ) : null}
       </form>
 

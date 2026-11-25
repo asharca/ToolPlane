@@ -498,7 +498,7 @@ export function ContextMenuContent({
       inert={!context.open}
       style={{ left: position.x, top: position.y }}
       className={cn(
-        "fixed z-[100] [filter:drop-shadow(0_18px_28px_rgba(0,0,0,0.2))]",
+        "fixed z-(--z-popover) [filter:drop-shadow(0_18px_28px_rgba(0,0,0,0.2))]",
         context.open ? "pointer-events-auto" : "pointer-events-none",
       )}
     >
@@ -536,7 +536,7 @@ export function ContextMenuContent({
         onKeyDown={onKeyDown}
         onContextMenu={(event) => event.preventDefault()}
         className={cn(
-          "min-w-56 overflow-hidden rounded-xl border border-border bg-card p-1.5 text-foreground outline-none",
+          "min-w-56 overflow-hidden rounded-xl border border-border bg-popover p-1.5 text-foreground outline-none",
           className,
         )}
       >

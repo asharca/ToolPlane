@@ -62,6 +62,11 @@ export function WorkspaceActionForm({
       disabled={disabled || submitDisabled || pending}
       variant={danger ? "secondary" : "primary"}
       size="md"
+      className={
+        danger
+          ? "border-destructive/40 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          : undefined
+      }
     >
       {pending ? t("working") : label}
     </Button>
@@ -299,6 +304,7 @@ export function WorkspaceDeleteForm({
             disabled={pending || confirmation !== name}
             variant="secondary"
             size="md"
+            className="border-destructive/40 bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
             {pending ? t("deleting") : t("confirmDelete")}
           </Button>
@@ -326,6 +332,7 @@ export function WorkspaceTransferForm({
   members: { userId: string; label: string }[];
 }) {
   const t = useTranslations("console.workspaces");
+  const [confirmation, setConfirmation] = useState("");
   const id = useId();
   return (
     <Collapsible className="rounded-xl border border-border bg-background/50 p-1">
@@ -337,6 +344,7 @@ export function WorkspaceTransferForm({
         <WorkspaceActionForm
           action={transferWorkspaceOwnershipAction}
           label={t("confirmTransfer")}
+          submitDisabled={confirmation !== name}
           danger
         >
           <p className="text-sm text-muted-foreground">{t("transferHint")}</p>
@@ -365,6 +373,8 @@ export function WorkspaceTransferForm({
           <Input
             id={`${id}-name`}
             name="confirmation"
+            value={confirmation}
+            onChange={setConfirmation}
             required
             maxLength={80}
             autoComplete="off"

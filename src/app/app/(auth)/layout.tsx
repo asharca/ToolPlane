@@ -18,7 +18,11 @@ export default async function AuthLayout({
   const messages = await getMessages();
   return (
     <NextIntlClientProvider
-      messages={{ common: messages.common, auth: messages.auth }}
+      messages={{
+        common: messages.common,
+        auth: messages.auth,
+        console: messages.console,
+      }}
     >
       <div className="flex min-h-dvh flex-col bg-background">
         <header className="flex h-14 items-center justify-between px-6">

@@ -32,21 +32,24 @@ export default async function ToolkitHistoryPage({
   const base = `/app/${encodeURIComponent(slug)}`;
   return (
     <DashboardPage className="space-y-6">
-      <header className="space-y-3">
-        <p className="text-sm text-muted-foreground">{t("historyTitle")}</p>
-        <h1 className="break-words text-2xl font-semibold">{toolkit.name}</h1>
-        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-          {t("historyReadOnly")}
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <ButtonLink href={`${base}/toolkits`} variant="ghost" size="sm">
-            {t("historyTitle")}
-          </ButtonLink>
+      <div className="space-y-2">
+        <ButtonLink href={`${base}/toolkits`} variant="ghost" size="sm">
+          ← {t("historyTitle")}
+        </ButtonLink>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1">
+            <h1 className="break-words text-2xl font-semibold">
+              {toolkit.name}
+            </h1>
+            <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+              {t("historyReadOnly")}
+            </p>
+          </div>
           <ButtonLink href={`${base}/plugins`} variant="secondary" size="sm">
             {t("browsePiPackages")}
           </ButtonLink>
         </div>
-      </header>
+      </div>
       <DashboardPanel title={t("mcps")}>
         {toolkit.servers.length ? (
           <ul className="divide-y divide-border">

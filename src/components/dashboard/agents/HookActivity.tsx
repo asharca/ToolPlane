@@ -1,5 +1,6 @@
 "use client";
 
+import { useAgentUiLabels } from "../agent-ui-labels";
 import { z } from "zod";
 import { useTranslations } from "next-intl";
 import { ToolResult } from "@/components/agents/tool-result";
@@ -19,6 +20,7 @@ export const HookActivitySchema = z.object({
 /** Sanitized records of real handler invocations, never hook inputs or error payloads. */
 export function HookActivity({ value }: { value: unknown }) {
   const t = useTranslations("console.work.nativeUi.hooks");
+  const agentUi = useAgentUiLabels();
   const parsed = HookActivitySchema.safeParse(value);
   if (!parsed.success) return null;
   const hook = parsed.data;
@@ -31,6 +33,7 @@ export function HookActivity({ value }: { value: unknown }) {
         status={hook.status === "completed" ? "success" : "error"}
         kind="custom"
         meta={t("duration", { ms: Math.round(hook.durationMs) })}
+        labels={agentUi.toolResult}
       >
         <dl className="grid gap-2 text-xs sm:grid-cols-[auto_minmax(0,1fr)]">
           <dt className="text-muted-foreground">{t("plugin")}</dt>

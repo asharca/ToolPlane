@@ -6,7 +6,7 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   FolderPlus,
-  ListFilter,
+  MoreHorizontal,
   Plus,
   Search,
   X,
@@ -18,6 +18,7 @@ import {
   MorphPopoverContent,
   MorphPopoverTrigger,
 } from "@/components/motion/popover-morph";
+import { Tooltip } from "@/components/motion/tooltip";
 import { SPRING_SWAP } from "@/lib/ease";
 
 type SidebarToolbarProps = {
@@ -120,45 +121,48 @@ export function SidebarToolbar(props: SidebarToolbarProps) {
               {props.title}
             </span>
             <div className="flex shrink-0 items-center gap-0.5">
-              <Button
-                ref={searchButton}
-                type="button"
-                variant="ghost"
-                size="icon"
-                className={iconButtonClassName}
-                aria-label={props.searchLabel}
-                title={props.searchLabel}
-                onClick={() => setSearchOpen(true)}
-              >
-                <Search aria-hidden="true" className="size-4" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className={iconButtonClassName}
-                aria-label={props.addLabel}
-                title={props.addLabel}
-                onClick={props.onAdd}
-              >
-                <Plus aria-hidden="true" className="size-4" />
-              </Button>
+              <Tooltip content={props.searchLabel}>
+                <Button
+                  ref={searchButton}
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className={iconButtonClassName}
+                  aria-label={props.searchLabel}
+                  onClick={() => setSearchOpen(true)}
+                >
+                  <Search aria-hidden="true" className="size-4" />
+                </Button>
+              </Tooltip>
+              <Tooltip content={props.addLabel}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className={iconButtonClassName}
+                  aria-label={props.addLabel}
+                  onClick={props.onAdd}
+                >
+                  <Plus aria-hidden="true" className="size-4" />
+                </Button>
+              </Tooltip>
               <MorphPopover
                 open={props.moreOpen}
                 onOpenChange={props.onMoreOpenChange}
               >
-                <MorphPopoverTrigger>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className={iconButtonClassName}
-                    aria-label={props.moreLabel}
-                    title={props.moreLabel}
-                  >
-                    <ListFilter aria-hidden="true" className="size-4" />
-                  </Button>
-                </MorphPopoverTrigger>
+                <Tooltip content={props.moreLabel}>
+                  <MorphPopoverTrigger>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className={iconButtonClassName}
+                      aria-label={props.moreLabel}
+                    >
+                      <MoreHorizontal aria-hidden="true" className="size-4" />
+                    </Button>
+                  </MorphPopoverTrigger>
+                </Tooltip>
                 <MorphPopoverContent
                   side="bottom"
                   align="end"
@@ -187,9 +191,9 @@ export function SidebarToolbar(props: SidebarToolbarProps) {
                         <ChevronsDownUp className="size-4 shrink-0" />
                         <span>{props.collapseLabel}</span>
                       </Button>
+                      <div className="my-1 h-px bg-border" />
                     </>
                   ) : null}
-                  <div className="my-1 h-px bg-border" />
                   <Button
                     type="button"
                     variant="ghost"

@@ -40,9 +40,17 @@ export interface TodoListProps {
   collapseOnComplete?: boolean;
   maxHeight?: number;
   className?: string;
+  /** Localized status text, accessible names and the empty state. */
+  labels?: Partial<Record<TodoItemStatus, string>> & {
+    ariaLabel?: string;
+    empty?: ReactNode;
+    completedSummary?: (completed: number, total: number) => string;
+  };
 }
 
-function statusLabel(status: TodoItemStatus) {
+function statusLabel(status: TodoItemStatus, labels?: TodoListProps["labels"]) {
+  const localized = labels?.[status];
+  if (localized) return localized;
   if (status === "in-progress") return "In progress";
   if (status === "completed") return "Completed";
   if (status === "cancelled") return "Cancelled";
@@ -209,6 +217,7 @@ export function TodoList({
   collapseOnComplete = true,
   maxHeight = 248,
   className,
+  labels,
 }: TodoListProps) {
   const reduce = useReducedMotion() ?? false;
   const baseId = useId();
@@ -260,7 +269,7 @@ export function TodoList({
 
   return (
     <section
-      aria-label="Agent task list"
+      aria-label={labels?.ariaLabel ?? "Agent task list"}
       className={cn(
         "w-full overflow-hidden rounded-2xl border border-border/70",
         className,
@@ -285,7 +294,9 @@ export function TodoList({
           )}
         >
           <span className="sr-only">
-            {completed} of {items.length} tasks completed
+            {labels?.completedSummary
+              ? labels.completedSummary(completed, items.length)
+              : `${completed} of ${items.length} tasks completed`}
           </span>
           <span aria-hidden="true" className="inline-flex">
             <ActionSwapRollText value={String(completed)}>
@@ -343,7 +354,9 @@ export function TodoList({
                         status={status}
                         progress={item.progress}
                       />
-                      <span className="sr-only">{statusLabel(status)}: </span>
+                      <span className="sr-only">
+                        {statusLabel(status, labels)}:{" "}
+                      </span>
                       <span
                         className={cn(
                           "min-w-0 flex-1 truncate text-sm leading-5",
@@ -387,7 +400,7 @@ export function TodoList({
             </ol>
           ) : (
             <p className="px-1.5 py-2 text-sm text-muted-foreground">
-              No tasks yet
+              {labels?.empty ?? "No tasks yet"}
             </p>
           )}
         </div>

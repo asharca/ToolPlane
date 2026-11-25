@@ -4,9 +4,18 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, ButtonLink } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
+import { Loader } from "@/components/motion/loader";
 import { DashboardPanel, DashboardTable } from "./DashboardUI";
 import { notify } from "./Toaster";
 import { apiRequest } from "@/lib/client/api";
+
+function formatUsdCost(costUsd: number): string {
+  if (!Number.isFinite(costUsd) || costUsd === 0) return "$0.00";
+  if (Math.abs(costUsd) >= 0.01) return `$${costUsd.toFixed(2)}`;
+  if (Math.abs(costUsd) >= 0.0001)
+    return `$${costUsd.toFixed(4).replace(/0+$/, "")}`;
+  return `$${costUsd.toFixed(6)}`;
+}
 
 export type UsageTotals = {
   costUsd: number;
@@ -95,9 +104,13 @@ export function AgentUsagePanel({
           {error}
         </p>
       ) : !data ? (
-        <p role="status" className="text-sm text-muted-foreground">
-          {common("loading")}
-        </p>
+        <div
+          role="status"
+          className="flex items-center gap-2 text-sm text-muted-foreground"
+        >
+          <Loader size={18} label={common("loading")} />
+          <span>{common("loading")}</span>
+        </div>
       ) : null}
       {data ? (
         <>
@@ -105,8 +118,11 @@ export function AgentUsagePanel({
             <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
               <div>
                 <dt className="text-xs text-muted-foreground">{t("cost")}</dt>
-                <dd className="mt-1 text-xl font-semibold">
-                  ${data.monthToDate.costUsd.toFixed(6)}
+                <dd
+                  className="mt-1 text-xl font-semibold tabular-nums"
+                  title={`$${data.monthToDate.costUsd.toFixed(6)}`}
+                >
+                  {formatUsdCost(data.monthToDate.costUsd)}
                 </dd>
               </div>
               <div>
@@ -201,7 +217,13 @@ export function AgentUsagePanel({
                 id: day.date,
                 cells: [
                   day.date,
-                  `$${day.costUsd.toFixed(6)}`,
+                  <span
+                    key="cost"
+                    className="tabular-nums"
+                    title={`$${day.costUsd.toFixed(6)}`}
+                  >
+                    {formatUsdCost(day.costUsd)}
+                  </span>,
                   day.inputTokens.toLocaleString(),
                   day.outputTokens.toLocaleString(),
                   day.cacheReadTokens.toLocaleString(),
@@ -252,9 +274,13 @@ export function WorkspaceAgentUsage({ slug }: { slug: string }) {
     );
   if (!data)
     return (
-      <p role="status" className="text-sm text-muted-foreground">
-        {common("loading")}
-      </p>
+      <div
+        role="status"
+        className="flex items-center gap-2 text-sm text-muted-foreground"
+      >
+        <Loader size={18} label={common("loading")} />
+        <span>{common("loading")}</span>
+      </div>
     );
   return (
     <DashboardPanel title={t("workspaceTitle")} padded={false}>
@@ -281,7 +307,13 @@ export function WorkspaceAgentUsage({ slug }: { slug: string }) {
             >
               {agent.name}
             </ButtonLink>,
-            `$${agent.costUsd.toFixed(6)}`,
+            <span
+              key="cost"
+              className="tabular-nums"
+              title={`$${agent.costUsd.toFixed(6)}`}
+            >
+              {formatUsdCost(agent.costUsd)}
+            </span>,
             agent.inputTokens.toLocaleString(),
             agent.outputTokens.toLocaleString(),
             agent.cacheReadTokens.toLocaleString(),

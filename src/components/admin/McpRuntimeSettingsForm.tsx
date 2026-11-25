@@ -3,13 +3,14 @@ import { Input } from "@/components/motion/input";
 import { Button } from "@/components/motion/button";
 
 import { useActionState } from "react";
-import { Clock3, RotateCcw, Save } from "lucide-react";
+import { RotateCcw, Save } from "lucide-react";
 import { useTranslations } from "next-intl";
 import {
   updateMcpStartupTimeoutSettingsAction,
   type AdminSettingsActionState,
 } from "@/lib/admin/settings-actions";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { notify } from "@/components/dashboard/Toaster";
 import { AdminBadge, AdminPanel } from "@/components/admin/AdminUI";
 
 export function McpRuntimeSettingsForm({
@@ -29,7 +30,12 @@ export function McpRuntimeSettingsForm({
   const [state, action, isPending] = useActionState<
     AdminSettingsActionState,
     FormData
-  >(updateMcpStartupTimeoutSettingsAction, {});
+  >(async (prev, form) => {
+    const result = await updateMcpStartupTimeoutSettingsAction(prev, form);
+    if (result.error) notify(result.error, { severity: "error" });
+    else if (result.ok) notify(t("saved"));
+    return result;
+  }, {});
   const sourceLabel =
     source === "database"
       ? t("settingsSourceAdmin")
@@ -48,16 +54,6 @@ export function McpRuntimeSettingsForm({
       }
     >
       <form action={action} className="space-y-5">
-        <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/25 p-4">
-          <Clock3
-            className="mt-0.5 size-5 shrink-0 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <p className="text-sm leading-6 text-muted-foreground">
-            {t("mcpStartupTimeoutsBehavior")}
-          </p>
-        </div>
-
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
             <label
@@ -142,11 +138,6 @@ export function McpRuntimeSettingsForm({
         {state.error ? (
           <p className="text-sm text-destructive" role="alert">
             {state.error}
-          </p>
-        ) : null}
-        {state.ok ? (
-          <p className="text-sm text-accent-foreground" aria-live="polite">
-            {t("saved")}
           </p>
         ) : null}
       </form>

@@ -113,10 +113,7 @@ export function ActionMessage({ state }: { state: ActionState }) {
   }
   if (state.warning) {
     return (
-      <p
-        className="mt-2 text-sm text-muted-foreground text-muted-foreground"
-        role="alert"
-      >
+      <p className="mt-2 text-sm text-muted-foreground" role="alert">
         {state.warning}
       </p>
     );
@@ -222,6 +219,7 @@ function useProviderOAuth({
   selectedPreset?: ProviderPreset;
   onCompleted: (providerId?: string) => void;
 }) {
+  const common = useTranslations("common");
   const [oauthSession, setOAuthSession] =
     useState<ProviderOAuthSessionSnapshot | null>(null);
   const [oauthStarting, setOAuthStarting] = useState(false);
@@ -345,7 +343,7 @@ function useProviderOAuth({
     );
     setOAuthStarting(false);
     if (!result.ok) {
-      setOAuthError(result.message ?? "Could not start browser sign-in.");
+      setOAuthError(result.message ?? common("operationFailed"));
       return;
     }
     handleSnapshot(result.data);
@@ -370,7 +368,7 @@ function useProviderOAuth({
     );
     setOAuthSubmitting(false);
     if (!result.ok) {
-      setOAuthError(result.message ?? "Could not submit verification code.");
+      setOAuthError(result.message ?? common("operationFailed"));
       return;
     }
     setManualInput("");
@@ -1391,7 +1389,6 @@ export function EditProviderDialog({
       }}
       title={t("editProvider")}
       maxWidth="max-w-2xl"
-      labelledTrigger
       trigger={
         <Button
           size="icon"
@@ -1404,7 +1401,14 @@ export function EditProviderDialog({
       }
     >
       {effectiveAuthMode === "oauth" ? (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <form
+          action={updateAction}
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
+          <input type="hidden" name="workspace" value={slug} />
+          <input type="hidden" name="providerId" value={provider.id} />
+          <input type="hidden" name="format" value={format} />
+          <input type="hidden" name="baseUrl" value={String(baseUrl)} />
           <DialogBody>
             {supportsOAuth && supportsApiKey && !isWaitingOAuth ? (
               <DialogField label={t("authMethod")} layout="row">
@@ -1499,6 +1503,7 @@ export function EditProviderDialog({
                   onBaseUrlChange={setBaseUrl}
                   oauthError={oauthError ?? oauthSession?.error ?? null}
                 />
+                <ActionMessage state={updateState} />
               </>
             )}
           </DialogBody>
@@ -1519,7 +1524,11 @@ export function EditProviderDialog({
             <DialogFooter cancel={<DialogCancel />}>
               <Button
                 type="button"
-                variant="primary"
+                variant={
+                  provider.authType === "oauth" && format === provider.format
+                    ? "secondary"
+                    : "primary"
+                }
                 size="md"
                 disabled={oauthStarting || !name.trim()}
                 aria-busy={oauthStarting || undefined}
@@ -1542,9 +1551,26 @@ export function EditProviderDialog({
                   </>
                 )}
               </Button>
+              {provider.authType === "oauth" && format === provider.format ? (
+                <SubmitButton
+                  error={updateState.error}
+                  pendingLabel={t("saving")}
+                  savedLabel={t("saved")}
+                  disabled={
+                    !name.trim() ||
+                    (name === provider.name &&
+                      String(baseUrl) === String(provider.baseUrl ?? ""))
+                  }
+                  variant="primary"
+                  size="md"
+                >
+                  <Save aria-hidden="true" className="size-4" />
+                  {t("saveChanges")}
+                </SubmitButton>
+              ) : null}
             </DialogFooter>
           )}
-        </div>
+        </form>
       ) : (
         <form
           action={updateAction}

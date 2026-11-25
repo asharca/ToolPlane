@@ -38,12 +38,6 @@ importers:
       '@novnc/novnc':
         specifier: 1.7.0
         version: 1.7.0
-      '@paper-design/shaders-react':
-        specifier: ^0.0.81
-        version: 0.0.81(@types/react@19.2.17)(react@19.3.0)
-      '@primer/octicons-react':
-        specifier: 19.33.0
-        version: 19.33.0(react@19.3.0)
       '@prisma/adapter-pg':
         specifier: ^7.8.0
         version: 7.8.0
@@ -140,9 +134,6 @@ importers:
       react-dom:
         specifier: 19.3.0
         version: 19.3.0(react@19.3.0)
-      react-icons:
-        specifier: ^5.7.0
-        version: 5.7.0(react@19.3.0)
       rehype-harden:
         specifier: 1.1.8
         version: 1.1.8
@@ -1367,18 +1358,6 @@ packages:
   '@oxc-project/types@0.139.0':
     resolution: {integrity: sha512-r9gHphtCs+1M7J0pw6Sn/hh/Wpa/iQrOOkrNAlVLF/gHq+/CJmHIWKKUUhdWjcD6CIa8idarspCsASiXCXvFUw==}
 
-  '@paper-design/shaders-react@0.0.81':
-    resolution: {integrity: sha512-3FMkeZqj9sSvK/WkgekGu3crnOQd4R2iH8IT+jVBuQmq1m8p88VFvxh63s9bSt2exBwjBNaRfSo0FSCeNxqh3w==}
-    peerDependencies:
-      '@types/react': ^18 || ^19
-      react: ^18 || ^19
-    peerDependenciesMeta:
-      '@types/react':
-        optional: true
-
-  '@paper-design/shaders@0.0.81':
-    resolution: {integrity: sha512-jeGdyjMscZ2bxmQdo8lhwUufHUf4iq3s1ayjh8PXU7Go42Rw8E3I0It1FZdc3HuWt5J82m//DRWaxsRqRfA4Gg==}
-
   '@parcel/watcher-android-arm64@2.5.6':
     resolution: {integrity: sha512-YQxSS34tPF/6ZG7r/Ih9xy+kP/WwediEUsqmtf0cuCV5TPPKw/PQHRhueUo6JdeFJaqV3pyjm0GdYjZotbRt/A==}
     engines: {node: '>= 10.0.0'}
@@ -1469,12 +1448,6 @@ packages:
 
   '@phosphor-icons/core@2.1.1':
     resolution: {integrity: sha512-v4ARvrip4qBCImOE5rmPUylOEK4iiED9ZyKjcvzuezqMaiRASCHKcRIuvvxL/twvLpkfnEODCOJp5dM4eZilxQ==}
-
-  '@primer/octicons-react@19.33.0':
-    resolution: {integrity: sha512-7VL8WuLXXZvUV/DP895ESFXPl/FJq816amCT3KZcmpQgxM1uv6lJGCcsEFpLX3K6SE+3qcmsftPpxn3ctr06+g==}
-    engines: {node: '>=8'}
-    peerDependencies:
-      react: '>=16.3'
 
   '@prisma/adapter-pg@7.8.0':
     resolution: {integrity: sha512-ygb3UkerK3v8MDpXVgCISdRNDozpxh6+JVJgiIGbSr5KBgz10LLf5ejUskPGoXlsIjxsOu6nuy1JVQr2EKGSlg==}
@@ -5199,11 +5172,6 @@ packages:
     peerDependencies:
       react: ^19.3.0
 
-  react-icons@5.7.0:
-    resolution: {integrity: sha512-LBLy340Rzqy6+/yVhZKT3B/QpP1BZaesGqasf09HPOBzRarcDIFH0WwXlXQfE7q7ipxK4MSiC5DIBWURCny6fw==}
-    peerDependencies:
-      react: '*'
-
   react-is@17.0.2:
     resolution: {integrity: sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==}
 
@@ -7142,15 +7110,6 @@ snapshots:
 
   '@oxc-project/types@0.139.0': {}
 
-  '@paper-design/shaders-react@0.0.81(@types/react@19.2.17)(react@19.3.0)':
-    dependencies:
-      '@paper-design/shaders': 0.0.81
-      react: 19.3.0
-    optionalDependencies:
-      '@types/react': 19.2.17
-
-  '@paper-design/shaders@0.0.81': {}
-
   '@parcel/watcher-android-arm64@2.5.6':
     optional: true
 
@@ -7212,10 +7171,6 @@ snapshots:
       '@parcel/watcher-win32-x64': 2.5.6
 
   '@phosphor-icons/core@2.1.1': {}
-
-  '@primer/octicons-react@19.33.0(react@19.3.0)':
-    dependencies:
-      react: 19.3.0
 
   '@prisma/adapter-pg@7.8.0':
     dependencies:
@@ -11590,10 +11545,6 @@ snapshots:
     dependencies:
       react: 19.3.0
       scheduler: 0.28.0
-
-  react-icons@5.7.0(react@19.3.0):
-    dependencies:
-      react: 19.3.0
 
   react-is@17.0.2: {}
 

@@ -509,6 +509,16 @@ export default async function SandboxesPage({
                         return {
                           id: s.id,
                           name: s.name,
+                          status,
+                          searchText: [
+                            item.title,
+                            item.subtitle,
+                            item.storeSummary,
+                            s.kind,
+                            item.agent?.name,
+                          ]
+                            .filter(Boolean)
+                            .join(" "),
                           batchEligible:
                             !managed &&
                             !disabledLegacy &&

@@ -1,12 +1,10 @@
 import { getLocale, getTranslations } from "next-intl/server";
-import { KeyRound, LockKeyhole, Settings } from "lucide-react";
 import { listApiTokens } from "@/lib/auth/tokens";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 import { TimeZoneSettings } from "@/components/timezone/TimeZoneSettings";
 import { LocaleSwitcher } from "@/components/layout/LocaleSwitcher";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { ChangePasswordForm } from "@/components/auth/PasswordRecoveryForms";
-import { DashboardPanel } from "./DashboardUI";
 import { DialogBody } from "./dialog";
 import { ModalSidebarLayout } from "./ModalSidebarLayout";
 import { TokenManager } from "./TokenManager";
@@ -40,63 +38,49 @@ export async function PersonalSettingsContent({
     {
       id: "preferences",
       label: t("preferences"),
-      icon: <Settings className="size-4" />,
       content: (
         <DialogBody>
-          <p className="text-sm text-muted-foreground">
-            {workspacesT("accountHint")}
-          </p>
-          <DashboardPanel title={t("preferences")}>
-            <div className="space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span className="text-sm font-medium">{authT("email")}</span>
-                <p className="break-all text-sm">{user.email}</p>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span className="text-sm font-medium">{t("language")}</span>
-                <LocaleSwitcher />
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-medium">
-                  {workspacesT("appearance")}
-                </span>
-                <ThemeToggle showLabel />
-              </div>
-              <div className="border-t border-border pt-5">
-                <TimeZoneSettings timeZoneOverride={user.timeZoneOverride} />
-              </div>
+          <div className="space-y-5 rounded-xl border border-border bg-card p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-sm font-medium">{authT("email")}</span>
+              <p className="break-all text-sm">{user.email}</p>
             </div>
-          </DashboardPanel>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-sm font-medium">{t("language")}</span>
+              <LocaleSwitcher />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-medium">
+                {workspacesT("appearance")}
+              </span>
+              <ThemeToggle showLabel />
+            </div>
+            <div className="border-t border-border pt-5">
+              <TimeZoneSettings timeZoneOverride={user.timeZoneOverride} />
+            </div>
+          </div>
         </DialogBody>
       ),
     },
     {
       id: "security",
       label: t("security"),
-      icon: <LockKeyhole className="size-4" />,
       content: (
         <DialogBody>
-          <p className="text-sm text-muted-foreground">
-            {workspacesT("accountHint")}
-          </p>
-          <DashboardPanel
-            title={t("security")}
-            description={t("passwordSettingsDesc")}
-          >
+          <div className="space-y-5 rounded-xl border border-border bg-card p-5">
+            <p className="text-sm text-muted-foreground">
+              {t("passwordSettingsDesc")}
+            </p>
             <ChangePasswordForm email={user.email} />
-          </DashboardPanel>
+          </div>
         </DialogBody>
       ),
     },
     {
       id: "tokens",
       label: t("tokens"),
-      icon: <KeyRound className="size-4" />,
       content: (
         <DialogBody>
-          <p className="text-sm text-muted-foreground">
-            {workspacesT("accountHint")}
-          </p>
           <TokenManager
             workspaceSlug={workspaceSlug}
             tokens={tokens.map((token) => ({

@@ -11,7 +11,8 @@ import {
   AdminPanel,
 } from "@/components/admin/AdminUI";
 import { AdminPluginPresetForm } from "@/components/admin/AdminPluginPresetForm";
-import { Button } from "@/components/motion/button";
+import { ConfirmDialog } from "@/components/admin/ConfirmDialog";
+import type { AdminActionState } from "@/lib/admin/user-actions";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import {
   evaluatePluginEnvStatus,
@@ -28,6 +29,22 @@ export const dynamic = "force-dynamic";
 export default async function AdminPluginsPage() {
   await requireAdmin();
   const t = await getTranslations("admin");
+  async function withdrawListingAction(
+    _prev: AdminActionState,
+    form: FormData,
+  ): Promise<AdminActionState> {
+    "use server";
+    await withdrawPluginListing(form);
+    return { ok: true };
+  }
+  async function revokeReleaseAction(
+    _prev: AdminActionState,
+    form: FormData,
+  ): Promise<AdminActionState> {
+    "use server";
+    await revokePluginRelease(form);
+    return { ok: true };
+  }
   const listings = await db.marketListing.findMany({
     where: { kind: "pi-package" },
     orderBy: { updatedAt: "desc" },
@@ -90,12 +107,16 @@ export default async function AdminPluginsPage() {
                 : listing.status}
             </p>
             {listing.status === "published" && (
-              <form action={withdrawPluginListing} className="mt-3">
-                <input type="hidden" name="listingId" value={listing.id} />
-                <Button type="submit" variant="secondary">
-                  {t("pluginWithdraw")}
-                </Button>
-              </form>
+              <div className="mt-3">
+                <ConfirmDialog
+                  label={t("pluginWithdraw")}
+                  prompt={`${t("pluginWithdraw")}: ${listing.name} (${listing.namespace}/${listing.slug})`}
+                  action={withdrawListingAction}
+                  hidden={{ listingId: listing.id }}
+                  tone="danger"
+                  showStatusMessage={false}
+                />
+              </div>
             )}
             {presetPanel ? (
               <AdminPluginPresetForm
@@ -118,16 +139,14 @@ export default async function AdminPluginsPage() {
                       : release.reviewStatus}
                   </span>
                   {release.reviewStatus === "approved" && (
-                    <form action={revokePluginRelease}>
-                      <input
-                        type="hidden"
-                        name="releaseId"
-                        value={release.id}
-                      />
-                      <Button type="submit" variant="secondary">
-                        {t("pluginRevoke")}
-                      </Button>
-                    </form>
+                    <ConfirmDialog
+                      label={t("pluginRevoke")}
+                      prompt={`${t("pluginRevoke")}: ${listing.name} v${pluginReleaseLabel(release)}`}
+                      action={revokeReleaseAction}
+                      hidden={{ releaseId: release.id }}
+                      tone="danger"
+                      showStatusMessage={false}
+                    />
                   )}
                 </li>
               ))}

@@ -151,6 +151,8 @@ export interface CenterMorphModalContentProps {
   /** Render the close control inside the panel's top-right corner. Default true. */
   showCloseButton?: boolean;
   closeButtonLabel?: string;
+  /** Accessible name of the backdrop dismiss control. */
+  dismissLabel?: string;
   /** Runs after the native exit finishes; defer navigation or parent removal here. */
   onExitComplete?: () => void;
   className?: string;
@@ -197,6 +199,7 @@ export function CenterMorphModalContent({
   dismissible = true,
   showCloseButton = true,
   closeButtonLabel = "Close modal",
+  dismissLabel,
   onExitComplete,
   className,
   backdropClassName,
@@ -230,23 +233,36 @@ export function CenterMorphModalContent({
   useEffect(() => {
     if (!mounted || !context.open) return;
     setBackgroundScrollLocked(true);
+    const previousActive =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     const focusFrame = requestAnimationFrame(() => {
       const [firstFocusable] = getFocusableElements(panelRef.current);
       (firstFocusable ?? panelRef.current)?.focus({ preventScroll: true });
     });
     return () => {
       cancelAnimationFrame(focusFrame);
-      document
-        .getElementById(context.triggerId)
-        ?.focus({ preventScroll: true });
+      // Controlled modals have no trigger, so fall back to where focus was.
+      const target =
+        document.getElementById(context.triggerId) ??
+        (previousActive?.isConnected ? previousActive : null);
+      target?.focus({ preventScroll: true });
     };
   }, [mounted, context.open, context.triggerId]);
 
   useEffect(() => {
     if (!context.open) return;
     const onKeyDown = (event: KeyboardEvent) => {
+      // Only the topmost dialog reacts, so Escape closes one layer at a time.
+      const dialogs = document.querySelectorAll(
+        '[role="dialog"][aria-modal="true"]',
+      );
+      const topmost = dialogs[dialogs.length - 1];
+      if (topmost && panelRef.current && topmost !== panelRef.current) return;
       if (event.key === "Escape" && dismissible) {
         event.preventDefault();
+        event.stopImmediatePropagation();
         context.setOpen(false);
         return;
       }
@@ -281,7 +297,7 @@ export function CenterMorphModalContent({
             <>
               <motion.button
                 type="button"
-                aria-label="Dismiss modal"
+                aria-label={dismissLabel ?? "Dismiss modal"}
                 tabIndex={-1}
                 disabled={!dismissible}
                 initial={{ "--modal-opacity": 0 }}
@@ -294,7 +310,7 @@ export function CenterMorphModalContent({
                 }}
                 onClick={() => context.setOpen(false)}
                 className={cn(
-                  "pointer-events-auto fixed inset-0 z-[100] h-full w-full cursor-default bg-background/10 backdrop-blur-sm [opacity:var(--modal-opacity)]",
+                  "pointer-events-auto fixed inset-0 z-(--z-modal) h-full w-full cursor-default bg-background/10 backdrop-blur-sm [opacity:var(--modal-opacity)]",
                   backdropClassName,
                 )}
               />
@@ -305,7 +321,7 @@ export function CenterMorphModalContent({
                   tests/fixed-overlay-edge-sampling.test.tsx. */}
               <div
                 inert={!isPresent}
-                className="pointer-events-none fixed inset-4 z-[100] flex items-center justify-center"
+                className="pointer-events-none fixed inset-4 z-(--z-modal) flex items-center justify-center"
               >
                 {/* Outer overlay never scrolls: the panel is bounded by
                   `max-h-full` inside `inset-4` so only internal modal panes
@@ -358,7 +374,7 @@ export function CenterMorphModalContent({
                         : CENTER_UNFOLD_TRANSITION
                     }
                     className={cn(
-                      "pointer-events-auto relative flex max-h-full w-full max-w-[26rem] origin-center flex-col overflow-hidden rounded-[30px] border border-border bg-background [opacity:var(--modal-opacity)] [clip-path:var(--modal-clip)]",
+                      "pointer-events-auto relative flex max-h-full w-full max-w-[26rem] origin-center flex-col overflow-hidden rounded-[30px] border border-border bg-popover [opacity:var(--modal-opacity)] [clip-path:var(--modal-clip)]",
                       className,
                     )}
                   >

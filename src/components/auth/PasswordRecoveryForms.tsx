@@ -23,6 +23,7 @@ import { ButtonLink } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { DialogField } from "@/components/dashboard/dialog";
+import { PasswordInput } from "./PasswordInput";
 
 function ActionMessage({ state }: { state: AuthState }) {
   if (state.error) {
@@ -48,14 +49,17 @@ function ActionMessage({ state }: { state: AuthState }) {
   return null;
 }
 
-export function ForgotPasswordForm() {
+export function ForgotPasswordForm({ next }: { next?: string } = {}) {
   const [state, action] = useActionState(forgotPasswordAction, {});
   const t = useTranslations("auth");
+  const loginHref = next
+    ? `/app/login?next=${encodeURIComponent(next)}`
+    : "/app/login";
 
   return (
-    <div className="mx-auto w-full max-w-sm px-4 py-16">
-      <div className="rounded-xl border border-border bg-card p-5 sm:p-6">
-        <h1 className="mb-1 text-2xl font-bold tracking-tight text-foreground">
+    <div className="mx-auto w-full max-w-sm px-4 py-12">
+      <div className="rounded-xl border border-border bg-card p-6 sm:p-7">
+        <h1 className="mb-1 text-2xl font-semibold tracking-tight text-foreground">
           {t("forgotPasswordTitle")}
         </h1>
         <p className="mb-6 text-sm text-muted-foreground">
@@ -82,7 +86,7 @@ export function ForgotPasswordForm() {
       </div>
       <p className="mt-6 text-center text-sm text-muted-foreground">
         <Link
-          href="/app/login"
+          href={loginHref}
           className="font-medium text-foreground underline-offset-4 hover:underline"
         >
           {t("backToSignIn")}
@@ -101,9 +105,9 @@ export function ResetPasswordForm({ token }: { token: string }) {
   }, [token]);
 
   return (
-    <div className="mx-auto w-full max-w-sm px-4 py-16">
-      <div className="rounded-xl border border-border bg-card p-5 sm:p-6">
-        <h1 className="mb-1 text-2xl font-bold tracking-tight text-foreground">
+    <div className="mx-auto w-full max-w-sm px-4 py-12">
+      <div className="rounded-xl border border-border bg-card p-6 sm:p-7">
+        <h1 className="mb-1 text-2xl font-semibold tracking-tight text-foreground">
           {t("resetPasswordTitle")}
         </h1>
         <p className="mb-6 text-sm text-muted-foreground">
@@ -116,15 +120,28 @@ export function ResetPasswordForm({ token }: { token: string }) {
               {t("continueToSignIn")}
             </ButtonLink>
           </div>
+        ) : !token ? (
+          <div className="space-y-4">
+            <Alert variant="destructive">
+              <AlertIcon />
+              <AlertContent>
+                <AlertDescription>
+                  {state.error || t("resetLinkInvalid")}
+                </AlertDescription>
+              </AlertContent>
+            </Alert>
+            <ButtonLink href="/app/forgot-password" className="w-full">
+              {t("requestNewLink")}
+            </ButtonLink>
+          </div>
         ) : (
           <form action={action} className="space-y-4">
             <input type="hidden" name="token" value={token} />
             <div className="space-y-1.5">
-              <Input
+              <PasswordInput
                 label={t("newPassword")}
                 id="new-password"
                 name="password"
-                type="password"
                 required
                 minLength={PASSWORD_MIN_LENGTH}
                 maxLength={PASSWORD_MAX_LENGTH}
@@ -134,21 +151,15 @@ export function ResetPasswordForm({ token }: { token: string }) {
                 {t("passwordHint", { min: PASSWORD_MIN_LENGTH })}
               </p>
             </div>
-            <Input
+            <PasswordInput
               label={t("confirmPassword")}
               id="password-confirmation"
               name="passwordConfirmation"
-              type="password"
               required
               minLength={PASSWORD_MIN_LENGTH}
               maxLength={PASSWORD_MAX_LENGTH}
               autoComplete="new-password"
             />
-            {!token && !state.error ? (
-              <p role="alert" className="text-sm text-destructive">
-                {t("resetLinkInvalid")}
-              </p>
-            ) : null}
             <ActionMessage state={state} />
             <SubmitButton
               pendingLabel={t("pending")}
@@ -160,14 +171,16 @@ export function ResetPasswordForm({ token }: { token: string }) {
           </form>
         )}
       </div>
-      <p className="mt-6 text-center text-sm text-muted-foreground">
-        <Link
-          href="/app/forgot-password"
-          className="font-medium text-foreground underline-offset-4 hover:underline"
-        >
-          {t("requestNewLink")}
-        </Link>
-      </p>
+      {token ? (
+        <p className="mt-6 text-center text-sm text-muted-foreground">
+          <Link
+            href="/app/forgot-password"
+            className="font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            {t("requestNewLink")}
+          </Link>
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -205,10 +218,9 @@ export function ChangePasswordForm({ email }: { email?: string }) {
           htmlFor="current-password"
           dirty={currentPassword !== ""}
         >
-          <Input
+          <PasswordInput
             id="current-password"
             name="currentPassword"
-            type="password"
             value={currentPassword}
             onChange={setCurrentPassword}
             required
@@ -222,10 +234,9 @@ export function ChangePasswordForm({ email }: { email?: string }) {
           description={t("passwordHint", { min: PASSWORD_MIN_LENGTH })}
           dirty={newPassword !== ""}
         >
-          <Input
+          <PasswordInput
             id="settings-new-password"
             name="newPassword"
-            type="password"
             value={newPassword}
             onChange={setNewPassword}
             required
@@ -239,10 +250,9 @@ export function ChangePasswordForm({ email }: { email?: string }) {
           htmlFor="settings-password-confirmation"
           dirty={confirmation !== ""}
         >
-          <Input
+          <PasswordInput
             id="settings-password-confirmation"
             name="passwordConfirmation"
-            type="password"
             value={confirmation}
             onChange={setConfirmation}
             required

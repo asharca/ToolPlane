@@ -27,6 +27,7 @@ import {
 import { useThemeToggle } from "@/components/motion/theme-toggle";
 import { apiRequest } from "@/lib/client/api";
 import { SITE } from "@/lib/site";
+import { workspaceSwitchHref } from "@/lib/workspace/navigation";
 import { FEEDBACK_NAV_ITEM, WORKSPACE_NAV_GROUPS } from "./workspace-nav";
 
 type WorkspaceSummary = { id: string; slug: string; name: string };
@@ -80,18 +81,54 @@ type QuickJumpPayload = {
 
 const NAV_SEGMENT_KEYWORDS: Record<string, string[]> = {
   chat: ["chat", "assistant", "conversation", "对话", "助手", "聊天"],
-  work: ["work", "task", "session", "工作", "任务", "会话"],
+  work: [
+    "work",
+    "task",
+    "session",
+    "agent",
+    "bot",
+    "pi",
+    "工作",
+    "任务",
+    "会话",
+    "智能体",
+  ],
   agents: ["agent", "bot", "pi", "智能体"],
   mcp: ["mcp", "server", "tool", "工具", "服务"],
   skills: ["skill", "prompt", "技能"],
   plugins: ["plugin", "market", "extension", "插件", "扩展"],
   sandboxes: ["sandbox", "container", "docker", "terminal", "沙箱", "终端"],
-  models: ["model", "provider", "llm", "api", "模型", "供应商"],
+  providers: ["model", "provider", "llm", "api", "模型", "供应商", "提供商"],
   knowledge: ["knowledge", "rag", "docs", "知识库", "文档"],
-  logs: ["log", "trace", "audit", "日志", "审计"],
+  observability: ["log", "trace", "audit", "observability", "日志", "审计"],
+  members: ["member", "team", "user", "invite", "role", "成员", "团队", "邀请"],
+  files: ["file", "storage", "upload", "attachment", "文件", "存储", "附件"],
+  notifications: [
+    "notification",
+    "inbox",
+    "alert",
+    "announcement",
+    "通知",
+    "消息",
+    "公告",
+  ],
   settings: ["settings", "workspace", "preferences", "设置", "配置"],
   feedback: ["feedback", "bug", "support", "反馈"],
 };
+
+function renderEntityMetaBadge(meta: string | null | undefined, kind: string) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+      {meta ? (
+        <>
+          <span className="max-w-36 truncate">{meta}</span>
+          <span aria-hidden="true">·</span>
+        </>
+      ) : null}
+      <span>{kind}</span>
+    </span>
+  );
+}
 
 function workspaceSlug(pathname: string): string | null {
   const parts = pathname.split("/");
@@ -208,7 +245,9 @@ export function DashboardCommandPalette({
           "个人设置",
           "账号",
         ],
-        onSelect: go(`${base}/settings/account`),
+        onSelect: go(
+          `${base}/settings/account?returnTo=${encodeURIComponent(pathname || `${base}/chat`)}`,
+        ),
       });
     }
 
@@ -229,8 +268,7 @@ export function DashboardCommandPalette({
             label: thread.title?.trim() || thread.assistantName || threadKind,
             group: recentGroup,
             icon: MessageSquare,
-            hint: thread.assistantName ?? undefined,
-            badge: threadKind,
+            badge: renderEntityMetaBadge(thread.assistantName, threadKind),
             keywords: [
               thread.title ?? "",
               thread.assistantName ?? "",
@@ -254,8 +292,7 @@ export function DashboardCommandPalette({
               workKind,
             group: recentGroup,
             icon: Terminal,
-            hint: session.agentName ?? undefined,
-            badge: workKind,
+            badge: renderEntityMetaBadge(session.agentName, workKind),
             keywords: [
               session.title ?? "",
               session.task ?? "",
@@ -283,8 +320,7 @@ export function DashboardCommandPalette({
           label: assistant.name,
           group: assistantsAndAgentsGroup,
           icon: Sparkles,
-          hint: assistant.model ?? undefined,
-          badge: assistantKind,
+          badge: renderEntityMetaBadge(assistant.model, assistantKind),
           keywords: [
             assistant.name,
             assistant.model ?? "",
@@ -302,8 +338,7 @@ export function DashboardCommandPalette({
           label: agent.name,
           group: assistantsAndAgentsGroup,
           icon: Bot,
-          hint: agent.model ?? undefined,
-          badge: agentKind,
+          badge: renderEntityMetaBadge(agent.model, agentKind),
           keywords: [agent.name, agent.model ?? "", "agent", "智能体"],
           onSelect: go(`${base}/work?agent=${encodeURIComponent(agent.id)}`),
         });
@@ -316,8 +351,10 @@ export function DashboardCommandPalette({
           label: server.name,
           group: resourcesGroup,
           icon: Plug,
-          hint: server.sandboxName ?? server.status,
-          badge: mcpKind,
+          badge: renderEntityMetaBadge(
+            server.sandboxName ?? server.status,
+            mcpKind,
+          ),
           keywords: [
             server.name,
             server.sandboxName ?? "",
@@ -333,10 +370,9 @@ export function DashboardCommandPalette({
           label: sandbox.name,
           group: resourcesGroup,
           icon: Boxes,
-          hint: sandbox.kind,
-          badge: sandboxKind,
+          badge: renderEntityMetaBadge(sandbox.kind, sandboxKind),
           keywords: [sandbox.name, sandbox.kind, "sandbox", "沙箱"],
-          onSelect: go(`${base}/sandboxes`),
+          onSelect: go(`${base}/sandboxes/${encodeURIComponent(sandbox.id)}`),
         });
       }
     }
@@ -382,7 +418,11 @@ export function DashboardCommandPalette({
           label: workspace.name,
           group: workspacesGroup,
           icon: ArrowRightLeft,
-          hint: workspace.slug,
+          badge: (
+            <span className="font-mono text-xs text-muted-foreground">
+              /{workspace.slug}
+            </span>
+          ),
           keywords: [
             workspace.name,
             workspace.slug,
@@ -390,7 +430,11 @@ export function DashboardCommandPalette({
             "switch",
             "工作区",
           ],
-          onSelect: go(`/app/${encodeURIComponent(workspace.slug)}/chat`),
+          onSelect: go(
+            slug
+              ? workspaceSwitchHref(slug, workspace.slug, pathname)
+              : `/app/${encodeURIComponent(workspace.slug)}/chat`,
+          ),
         });
       }
     }
@@ -430,6 +474,7 @@ export function DashboardCommandPalette({
     closePalette,
     isDark,
     onToggleSidebar,
+    pathname,
     pluginUpdateCount,
     quickJump,
     router,

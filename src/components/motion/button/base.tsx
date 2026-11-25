@@ -15,10 +15,14 @@ import {
   useState,
 } from "react";
 import { EASE_OUT, SPRING_PRESS } from "@/lib/ease";
-import { useHoverCapable } from "@/lib/hooks/use-hover-capable";
 import { cn } from "@/lib/utils";
 
-export type ButtonVariant = "primary" | "secondary" | "ghost" | "outline";
+export type ButtonVariant =
+  | "primary"
+  | "secondary"
+  | "ghost"
+  | "outline"
+  | "destructive";
 export type ButtonSize = "sm" | "md" | "lg" | "icon";
 
 export interface ButtonProps
@@ -43,10 +47,13 @@ type Ripple = { id: number; x: number; y: number; size: number };
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
   primary: "bg-primary text-primary-foreground hover:bg-primary/90",
-  secondary: "border border-border bg-card text-foreground hover:border-border",
+  secondary:
+    "border border-border bg-card text-foreground hover:border-(--color-border-strong) hover:bg-muted/40",
   ghost: "text-muted-foreground hover:text-foreground hover:bg-muted/60",
   outline:
     "border border-border bg-transparent text-foreground hover:bg-muted/60",
+  destructive:
+    "bg-destructive text-destructive-foreground hover:bg-destructive/90",
 };
 
 const SIZE_CLASS: Record<ButtonSize, string> = {
@@ -61,7 +68,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     {
       variant = "primary",
       size = "md",
-      pressScale = 0.93,
+      pressScale = 0.97,
       ripple = false,
       className,
       children,
@@ -71,7 +78,6 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     ref,
   ) {
     const reduce = useReducedMotion();
-    const canHover = useHoverCapable();
     const [ripples, setRipples] = useState<Ripple[]>([]);
     const nextId = useRef(0);
 
@@ -101,12 +107,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         type="button"
         whileTap={reduce ? undefined : { scale: pressScale }}
-        whileHover={reduce || !canHover ? undefined : { scale: 1.02 }}
         transition={SPRING_PRESS}
         onPointerDown={handlePointerDown}
         className={cn(
           "inline-flex items-center justify-center whitespace-nowrap font-medium select-none [&_svg]:shrink-0",
           "transition-colors",
+          "outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
           "disabled:pointer-events-none disabled:opacity-50",
           ripple && "relative overflow-hidden",
           VARIANT_CLASS[variant],
@@ -153,7 +159,7 @@ export const ButtonLink = forwardRef<HTMLAnchorElement, ButtonLinkProps>(
     {
       variant = "primary",
       size = "md",
-      pressScale = 0.93,
+      pressScale = 0.97,
       className,
       children,
       ...rest
@@ -161,17 +167,16 @@ export const ButtonLink = forwardRef<HTMLAnchorElement, ButtonLinkProps>(
     ref,
   ) {
     const reduce = useReducedMotion();
-    const canHover = useHoverCapable();
 
     return (
       <motion.a
         ref={ref}
         whileTap={reduce ? undefined : { scale: pressScale }}
-        whileHover={reduce || !canHover ? undefined : { scale: 1.02 }}
         transition={SPRING_PRESS}
         className={cn(
           "inline-flex items-center justify-center whitespace-nowrap font-medium select-none [&_svg]:shrink-0",
           "transition-colors",
+          "outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
           VARIANT_CLASS[variant],
           SIZE_CLASS[size],
           className,

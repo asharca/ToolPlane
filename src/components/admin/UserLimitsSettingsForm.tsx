@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { useTranslations } from "next-intl";
 import { AdminBadge, AdminPanel } from "@/components/admin/AdminUI";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { notify } from "@/components/dashboard/Toaster";
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import type { AdminSettingsActionState } from "@/lib/admin/settings-actions";
@@ -27,10 +28,18 @@ type Props = {
 
 export function UserLimitsSettingsForm({ defaults, user }: Props) {
   const t = useTranslations("admin");
+  const baseAction = user
+    ? updateUserLimitOverridesAction
+    : updateUserLimitDefaultsAction;
   const [state, action, pending] = useActionState<
     AdminSettingsActionState,
     FormData
-  >(user ? updateUserLimitOverridesAction : updateUserLimitDefaultsAction, {});
+  >(async (prev, form) => {
+    const result = await baseAction(prev, form);
+    if (result.error) notify(result.error, { severity: "error" });
+    else if (result.ok) notify(t("saved"));
+    return result;
+  }, {});
   const values = user ? user.overrides : defaults;
   return (
     <AdminPanel
@@ -111,11 +120,6 @@ export function UserLimitsSettingsForm({ defaults, user }: Props) {
         {state.error && (
           <p role="alert" className="text-sm text-destructive">
             {state.error}
-          </p>
-        )}
-        {state.ok && (
-          <p role="status" className="text-sm text-accent-foreground">
-            {t("saved")}
           </p>
         )}
       </form>

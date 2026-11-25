@@ -4,7 +4,6 @@ import { useId, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
-  AlertTriangle,
   Check,
   Eye,
   EyeOff,
@@ -19,6 +18,14 @@ import {
   Trash2,
   Undo2,
 } from "lucide-react";
+import { FileDiff } from "@/components/agents/file-diff";
+import {
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
+} from "@/components/motion/alert";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
@@ -313,22 +320,26 @@ export function McpConfigDocumentEditor({
             </div>
 
             {preview.extractedSecrets.length > 0 ? (
-              <div className="space-y-1.5 rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-3 py-2.5">
-                <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-                  <Lock className="size-3.5 text-amber-500" />
-                  <span>{t("config.extractedSecretsLabel")}</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {preview.extractedSecrets.map((key) => (
-                    <code
-                      key={key}
-                      className="rounded bg-background/80 px-1.5 py-0.5 font-mono text-xs text-foreground"
-                    >
-                      {key}
-                    </code>
-                  ))}
-                </div>
-              </div>
+              <Alert variant="warning" className="p-3">
+                <AlertIcon>
+                  <Lock className="size-4" />
+                </AlertIcon>
+                <AlertContent className="space-y-1.5">
+                  <AlertTitle className="text-xs">
+                    {t("config.extractedSecretsLabel")}
+                  </AlertTitle>
+                  <AlertDescription className="flex flex-wrap gap-1.5">
+                    {preview.extractedSecrets.map((key) => (
+                      <code
+                        key={key}
+                        className="rounded bg-background/80 px-1.5 py-0.5 font-mono text-xs text-foreground"
+                      >
+                        {key}
+                      </code>
+                    ))}
+                  </AlertDescription>
+                </AlertContent>
+              </Alert>
             ) : null}
 
             {preview.ignoredFields.length > 0 ? (
@@ -350,75 +361,75 @@ export function McpConfigDocumentEditor({
             ) : null}
 
             {preview.missingVariables.length > 0 ? (
-              <div className="space-y-2.5 rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-3 py-3">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
-                  <div className="min-w-0 space-y-0.5">
-                    <p className="text-xs font-medium text-foreground">
+              <Alert variant="warning" className="p-3">
+                <AlertIcon />
+                <AlertContent className="space-y-2.5">
+                  <div className="space-y-0.5">
+                    <AlertTitle className="text-xs">
                       {t("config.missingVariablesLabel")}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
+                    </AlertTitle>
+                    <AlertDescription className="text-xs">
                       {t("config.missingVariablesHint")}
-                    </p>
+                    </AlertDescription>
                   </div>
-                </div>
-                <div className="space-y-2">
-                  {preview.missingVariables.map((key) => {
-                    const isVisible = Boolean(revealedMissing[key]);
-                    return (
-                      <div
-                        key={key}
-                        className="grid gap-2 sm:grid-cols-[minmax(8rem,0.4fr)_minmax(0,1fr)] sm:items-center"
-                      >
-                        <label
-                          htmlFor={`preview-missing-${key}`}
-                          className="truncate font-mono text-xs font-medium text-foreground"
+                  <div className="space-y-2">
+                    {preview.missingVariables.map((key) => {
+                      const isVisible = Boolean(revealedMissing[key]);
+                      return (
+                        <div
+                          key={key}
+                          className="grid gap-2 sm:grid-cols-[minmax(8rem,0.4fr)_minmax(0,1fr)] sm:items-center"
                         >
-                          {key}
-                        </label>
-                        <div className="flex items-center gap-1.5">
-                          <Input
-                            id={`preview-missing-${key}`}
-                            type={isVisible ? "text" : "password"}
-                            value={missingValues[key] ?? ""}
-                            onChange={(val) =>
-                              setMissingValues((prev) => ({
-                                ...prev,
-                                [key]: val,
-                              }))
-                            }
-                            placeholder={t("config.variableValuePlaceholder")}
-                            disabled={busy}
-                            className="min-w-0 flex-1 font-mono text-xs"
-                          />
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            aria-label={
-                              isVisible
-                                ? t("config.hideTypedValue")
-                                : t("config.showTypedValue")
-                            }
-                            onClick={() =>
-                              setRevealedMissing((prev) => ({
-                                ...prev,
-                                [key]: !prev[key],
-                              }))
-                            }
+                          <label
+                            htmlFor={`preview-missing-${key}`}
+                            className="truncate font-mono text-xs font-medium text-foreground"
                           >
-                            {isVisible ? (
-                              <EyeOff className="size-3.5" />
-                            ) : (
-                              <Eye className="size-3.5" />
-                            )}
-                          </Button>
+                            {key}
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <Input
+                              id={`preview-missing-${key}`}
+                              type={isVisible ? "text" : "password"}
+                              value={missingValues[key] ?? ""}
+                              onChange={(val) =>
+                                setMissingValues((prev) => ({
+                                  ...prev,
+                                  [key]: val,
+                                }))
+                              }
+                              placeholder={t("config.variableValuePlaceholder")}
+                              disabled={busy}
+                              className="min-w-0 flex-1 font-mono text-xs"
+                            />
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              aria-label={
+                                isVisible
+                                  ? t("config.hideTypedValue")
+                                  : t("config.showTypedValue")
+                              }
+                              onClick={() =>
+                                setRevealedMissing((prev) => ({
+                                  ...prev,
+                                  [key]: !prev[key],
+                                }))
+                              }
+                            >
+                              {isVisible ? (
+                                <EyeOff className="size-3.5" />
+                              ) : (
+                                <Eye className="size-3.5" />
+                              )}
+                            </Button>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+                      );
+                    })}
+                  </div>
+                </AlertContent>
+              </Alert>
             ) : null}
 
             <div className="space-y-1.5">
@@ -430,23 +441,17 @@ export function McpConfigDocumentEditor({
                   {t("config.noDiffChanges")}
                 </p>
               ) : (
-                <pre className="max-h-60 overflow-auto rounded-lg border border-border bg-background p-3 font-mono text-xs leading-5">
-                  {previewChanges.map((change) => (
-                    <div
-                      key={change.key}
-                      className={
-                        change.type === "added"
-                          ? "bg-emerald-500/10 px-1.5 text-emerald-700 dark:text-emerald-300"
-                          : "bg-destructive/10 px-1.5 text-destructive"
-                      }
-                    >
-                      <span className="mr-2 select-none">
-                        {change.type === "added" ? "+" : "-"}
-                      </span>
-                      <span>{change.line}</span>
-                    </div>
-                  ))}
-                </pre>
+                <FileDiff
+                  file={t("config.diffLabel")}
+                  language="json"
+                  lines={previewChanges.map((change, idx) => ({
+                    id: change.key,
+                    type: change.type,
+                    oldLine: change.type === "removed" ? idx + 1 : undefined,
+                    newLine: change.type === "added" ? idx + 1 : undefined,
+                    content: change.line,
+                  }))}
+                />
               )}
             </div>
 
@@ -789,26 +794,28 @@ export function McpConfigVariablesPanel({
                       disabled={isPending}
                       className="min-w-0 flex-1 font-mono text-xs"
                     />
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      disabled={isPending}
-                      aria-label={
-                        row.visible
-                          ? t("config.hideTypedValue")
-                          : t("config.showTypedValue")
-                      }
-                      onClick={() =>
-                        updateRow(row.id, { visible: !row.visible })
-                      }
-                    >
-                      {row.visible ? (
-                        <EyeOff className="size-3.5" />
-                      ) : (
-                        <Eye className="size-3.5" />
-                      )}
-                    </Button>
+                    {row.value.length > 0 ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={isPending}
+                        aria-label={
+                          row.visible
+                            ? t("config.hideTypedValue")
+                            : t("config.showTypedValue")
+                        }
+                        onClick={() =>
+                          updateRow(row.id, { visible: !row.visible })
+                        }
+                      >
+                        {row.visible ? (
+                          <EyeOff className="size-3.5" />
+                        ) : (
+                          <Eye className="size-3.5" />
+                        )}
+                      </Button>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

@@ -37,28 +37,26 @@ export default async function NotificationsPage({
   const members = await getWorkspaceMembers(ws.id);
   const canPublish = ws.permissions.includes("notifications");
   return (
-    <>
-      <DashboardHeader title={t("title")} />
-      <DashboardPage className="max-w-4xl py-8">
-        <NotificationInbox
-          userId={user.id}
-          page={page}
-          unreadOnly={unreadOnly}
-          timeZone={resolveUserTimeZone(user)}
-          baseHref={baseHref}
-          actions={
-            canPublish ? (
-              <PublishWorkspaceNotification
-                workspaceSlug={ws.slug}
-                members={members.map((member) => ({
-                  name: member.user.name ?? member.user.email.split("@")[0],
-                  email: member.user.email,
-                }))}
-              />
-            ) : null
-          }
-        />
-      </DashboardPage>
-    </>
+    <DashboardPage className="max-w-4xl py-8">
+      <DashboardHeader title={t("title")} visible />
+      <NotificationInbox
+        userId={user.id}
+        page={page}
+        unreadOnly={unreadOnly}
+        timeZone={resolveUserTimeZone(user)}
+        baseHref={baseHref}
+        actions={
+          canPublish ? (
+            <PublishWorkspaceNotification
+              workspaceSlug={ws.slug}
+              members={members.map((member) => ({
+                name: member.user.name ?? member.user.email.split("@")[0],
+                email: member.user.email,
+              }))}
+            />
+          ) : null
+        }
+      />
+    </DashboardPage>
   );
 }

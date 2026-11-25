@@ -2,13 +2,14 @@
 import { Button } from "@/components/motion/button";
 
 import { useActionState } from "react";
-import { Network, RotateCcw, Save } from "lucide-react";
+import { RotateCcw, Save } from "lucide-react";
 import { useTranslations } from "next-intl";
 import {
   updatePrivateHostsSettingsAction,
   type AdminSettingsActionState,
 } from "@/lib/admin/settings-actions";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { notify } from "@/components/dashboard/Toaster";
 import { AdminBadge, AdminPanel } from "@/components/admin/AdminUI";
 
 const MAX_PRIVATE_HOSTS_LENGTH = 8_192;
@@ -24,7 +25,12 @@ export function PrivateHostsSettingsForm({
   const [state, action, isPending] = useActionState<
     AdminSettingsActionState,
     FormData
-  >(updatePrivateHostsSettingsAction, {});
+  >(async (prev, form) => {
+    const result = await updatePrivateHostsSettingsAction(prev, form);
+    if (result.error) notify(result.error, { severity: "error" });
+    else if (result.ok) notify(t("privateHostsSaved"));
+    return result;
+  }, {});
   const sourceLabel =
     source === "database"
       ? t("settingsSourceAdmin")
@@ -43,16 +49,6 @@ export function PrivateHostsSettingsForm({
       }
     >
       <form action={action} className="space-y-5">
-        <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/25 p-4">
-          <Network
-            className="mt-0.5 size-5 shrink-0 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <p className="text-sm leading-6 text-muted-foreground">
-            {t("privateHostsBehavior")}
-          </p>
-        </div>
-
         <div className="space-y-1.5">
           <label
             htmlFor="private-hosts"
@@ -70,7 +66,7 @@ export function PrivateHostsSettingsForm({
             autoCapitalize="none"
             autoCorrect="off"
             aria-describedby="private-hosts-hint"
-            className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="min-h-36 w-full resize-y rounded-lg border border-border bg-background p-3 font-mono text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           <p id="private-hosts-hint" className="text-xs text-muted-foreground">
             {t("privateHostsHint")}
@@ -107,11 +103,6 @@ export function PrivateHostsSettingsForm({
         {state.error ? (
           <p className="text-sm text-destructive" role="alert">
             {state.error}
-          </p>
-        ) : null}
-        {state.ok ? (
-          <p className="text-sm text-accent-foreground" aria-live="polite">
-            {t("privateHostsSaved")}
           </p>
         ) : null}
       </form>

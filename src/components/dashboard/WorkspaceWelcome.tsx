@@ -1,10 +1,9 @@
 "use client";
+import Link from "next/link";
 import { ButtonLink, Button } from "@/components/motion/button";
-
-import { useState } from "react";
-
 import { Check, X } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { usePersistentBoolean } from "@/lib/use-persistent-boolean";
 
 export function WorkspaceWelcome({
   slug,
@@ -22,7 +21,10 @@ export function WorkspaceWelcome({
   hasConversations: boolean;
 }) {
   const t = useTranslations("console.workspaces");
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissed, setDismissed] = usePersistentBoolean(
+    `toolplane:welcome-dismissed:${slug}`,
+    false,
+  );
   if (dismissed) return null;
   const base = `/app/${encodeURIComponent(slug)}`;
   const steps = [
@@ -81,9 +83,12 @@ export function WorkspaceWelcome({
                     {step.label}
                   </ButtonLink>
                 ) : (
-                  <span className="text-sm text-muted-foreground">
+                  <Link
+                    href={step.href}
+                    className="text-sm text-muted-foreground transition-colors hover:text-foreground hover:underline"
+                  >
                     {step.label}
-                  </span>
+                  </Link>
                 )}
               </li>
             );

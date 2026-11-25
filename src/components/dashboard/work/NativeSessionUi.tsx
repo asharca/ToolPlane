@@ -2,9 +2,11 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { z } from "zod";
 import { ApprovalCard } from "@/components/agents/approval-card";
+import { useAgentUiLabels } from "../agent-ui-labels";
 import { TodoList } from "@/components/agents/todo-list";
 import { Input } from "@/components/motion/input";
 import { Button } from "@/components/motion/button";
@@ -163,6 +165,7 @@ function NativeDialog({
   onOpenScreen?: () => void;
 }) {
   const t = useTranslations("console.work.nativeUi");
+  const ui = useTranslations("console.agentUi");
   const id = useId();
   const [value, setValue] = useState(
     request.method === "editor" ? (request.prefill ?? "") : "",
@@ -171,7 +174,7 @@ function NativeDialog({
   return (
     <fieldset
       disabled={disabled || busy}
-      className="min-w-0 space-y-2 [overflow-wrap:anywhere]"
+      className="min-w-0 space-y-2 rounded-xl border border-border/60 bg-muted/40 p-2 [overflow-wrap:anywhere]"
       onKeyDown={(event) => {
         if (disabled || busy) return;
         if (event.key === "Escape") {
@@ -234,6 +237,7 @@ function NativeDialog({
       </legend>
       {request.source ? <SubagentSourceLabel source={request.source} /> : null}
       <ApprovalCard
+        className="border-0 bg-transparent p-2 shadow-none"
         title={
           request.method === "takeover" ? t("takeover.title") : request.title
         }
@@ -297,6 +301,37 @@ function NativeDialog({
               : undefined
         }
         submitLabel={t("submit")}
+        rejectLabel={t("decline")}
+        cancelLabel={t("cancel")}
+        labels={{
+          pending: ui("approvalPending"),
+          submitting: ui("approvalSubmitting"),
+          approved: ui("approvalApproved"),
+          rejected: ui("approvalRejected"),
+          "changes-requested": ui("approvalChanges"),
+          answered: t("submitted"),
+          previousQuestion: ui("previousQuestion"),
+          nextQuestion: ui("nextQuestion"),
+        }}
+        onReject={
+          request.method === "confirm"
+            ? () =>
+                onRespond({
+                  type: "extension_ui_response",
+                  id: request.id,
+                  confirmed: false,
+                })
+            : undefined
+        }
+        onCancel={() =>
+          onRespond({
+            type: "extension_ui_response",
+            id: request.id,
+            ...(request.method === "takeover"
+              ? { confirmed: false }
+              : { cancelled: true }),
+          })
+        }
         onSubmit={(answers) => {
           if (request.method === "ask") {
             onRespond({
@@ -383,38 +418,6 @@ function NativeDialog({
           </div>
         ) : null}
       </ApprovalCard>
-      <div className="flex flex-wrap items-center gap-2 px-1">
-        {request.method === "confirm" ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              onRespond({
-                type: "extension_ui_response",
-                id: request.id,
-                confirmed: false,
-              })
-            }
-          >
-            {t("decline")}
-          </Button>
-        ) : null}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() =>
-            onRespond({
-              type: "extension_ui_response",
-              id: request.id,
-              ...(request.method === "takeover"
-                ? { confirmed: false }
-                : { cancelled: true }),
-            })
-          }
-        >
-          {t("cancel")}
-        </Button>
-      </div>
     </fieldset>
   );
 }
@@ -451,6 +454,8 @@ export function NativeSessionUi({
   toolApprovalDisabled?: boolean;
 }) {
   const t = useTranslations("console.work.nativeUi");
+  const agentUi = useAgentUiLabels();
+  const [approvalIndex, setApprovalIndex] = useState(0);
   const seen = useRef<{ scope: string; ids: Set<string> }>({
     scope: "",
     ids: new Set(),
@@ -609,6 +614,7 @@ export function NativeSessionUi({
       ].map(([key, { phase, source }]) => (
         <TodoList
           key={key}
+          labels={agentUi.todoList}
           title={
             source ? (
               <>
@@ -654,18 +660,64 @@ export function NativeSessionUi({
           {editorText}
         </p>
       ) : null}
-      {projection.toolApprovals
-        .filter((card) => card.status === "pending")
-        .map((card) => (
-          <ToolApprovalRequest
-            key={`${scope}:${card.id}`}
-            card={card}
-            busy={busyId === card.id}
-            disabled={toolApprovalDisabled || busyId !== null}
-            onDecide={onToolApproval}
-            onExpire={onToolApprovalExpire}
-          />
-        ))}
+      {(() => {
+        const pendingApprovals = projection.toolApprovals.filter(
+          (card) => card.status === "pending",
+        );
+        if (!pendingApprovals.length) return null;
+        const activeIndex = Math.min(
+          approvalIndex,
+          pendingApprovals.length - 1,
+        );
+        const activeCard = pendingApprovals[activeIndex];
+        return (
+          <div className="space-y-1.5">
+            {pendingApprovals.length > 1 ? (
+              <div className="flex items-center justify-between gap-2 px-1 text-xs text-muted-foreground">
+                <span className="font-medium tabular-nums">
+                  {activeIndex + 1} / {pendingApprovals.length}
+                </span>
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 rounded-md"
+                    disabled={activeIndex <= 0}
+                    onClick={() =>
+                      setApprovalIndex((index) => Math.max(0, index - 1))
+                    }
+                  >
+                    <ChevronLeft className="size-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 rounded-md"
+                    disabled={activeIndex >= pendingApprovals.length - 1}
+                    onClick={() =>
+                      setApprovalIndex((index) =>
+                        Math.min(pendingApprovals.length - 1, index + 1),
+                      )
+                    }
+                  >
+                    <ChevronRight className="size-3.5" />
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            <ToolApprovalRequest
+              key={`${scope}:${activeCard.id}`}
+              card={activeCard}
+              busy={busyId === activeCard.id}
+              disabled={toolApprovalDisabled || busyId !== null}
+              onDecide={onToolApproval}
+              onExpire={onToolApprovalExpire}
+            />
+          </div>
+        );
+      })()}
       {projection.uiRequests.map((request) => (
         <NativeDialog
           key={`${scope}:${request.id}`}

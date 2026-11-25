@@ -30,26 +30,22 @@ function buildVariants(side: Side): Variants {
     initial: {
       opacity: 0,
       scale: 0.9,
-      filter: "blur(5px)",
       x: o.x ?? 0,
       y: o.y ?? 0,
     },
     animate: {
       opacity: 1,
       scale: 1,
-      filter: "blur(0px)",
       x: 0,
       y: 0,
       transition: {
         ...TOOLTIP_SPRING,
         opacity: { duration: 0.14, ease: EASE_OUT },
-        filter: { duration: 0.18, ease: EASE_OUT },
       },
     },
     exit: {
       opacity: 0,
       scale: 0.94,
-      filter: "blur(3px)",
       x: (o.x ?? 0) * 0.6,
       y: (o.y ?? 0) * 0.6,
       transition: { duration: 0.12, ease: EASE_OUT },
@@ -89,7 +85,7 @@ export function TooltipSurface({
       animate="animate"
       exit="exit"
       className={cn(
-        "block whitespace-nowrap rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground shadow-lg",
+        "block whitespace-nowrap rounded-lg border border-border bg-popover px-2.5 py-1 text-xs font-medium text-foreground shadow-lg",
         className,
       )}
       {...props}

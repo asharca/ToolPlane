@@ -6,7 +6,6 @@
   components,
   utilities;
 @import "./beui.css";
-@import "@xterm/xterm/css/xterm.css";
 
 @source "../../node_modules/streamdown/dist/*.js";
 @source "../../node_modules/@streamdown/code/dist/*.js";
@@ -16,13 +15,55 @@
    than structural --border (about 1.6:1), without outlining every control in
    near-text contrast. Structural borders stay on --border. */
 :root {
+  --primary: #006fd6;
+  --primary-foreground: #ffffff;
+  --danger: oklch(53% 0.22 25);
+  --destructive: var(--danger);
+  --destructive-foreground: #ffffff;
+  --popover: #ffffff;
+  --popover-foreground: var(--foreground);
+  --ring: oklch(58% 0.2 255);
   --input: oklch(15% 0 0 / 0.24);
   --field: oklch(15% 0 0 / 0.025);
+  --font-sans:
+    var(--font-geist-sans), ui-sans-serif, system-ui, "PingFang SC",
+    "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --font-display: var(--font-sans);
+  --z-sticky: 20;
+  --z-drawer: 40;
+  --z-modal: 80;
+  --z-command: 90;
+  --z-popover: 100;
+  --z-tooltip: 110;
+  --z-toast: 11000;
 }
 
 .dark {
+  --danger: oklch(67% 0.2 25);
+  --destructive: var(--danger);
+  --destructive-foreground: #ffffff;
+  --popover: #232323;
+  --popover-foreground: var(--foreground);
+  --ring: oklch(68% 0.18 255);
   --input: rgb(255 255 255 / 0.16);
   --field: rgb(255 255 255 / 0.03);
+}
+
+@layer base {
+  body {
+    text-rendering: auto;
+  }
+
+  :where(
+    a,
+    button,
+    [role="button"],
+    [role="tab"],
+    [tabindex]:not([tabindex="-1"])
+  ):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
 }
 
 @layer utilities {

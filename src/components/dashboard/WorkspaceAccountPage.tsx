@@ -11,7 +11,6 @@ import {
 } from "@/lib/workspace/queries";
 import { getUserQuotaSummary } from "@/lib/storage/user-quota";
 import {
-  ACCOUNT_SETTINGS_HREF,
   WORKSPACE_MANAGER_HREF,
   lastWorkspaceCookieName,
   workspaceInitials,
@@ -105,19 +104,6 @@ export async function WorkspaceAccountPage({
             </div>
           </header>
           <main className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-8 sm:py-10">
-            {view === "account" ? (
-              <nav aria-label={t("accountNavigation")} className="flex gap-2">
-                <ButtonLink
-                  href={ACCOUNT_SETTINGS_HREF}
-                  aria-current="page"
-                  variant="secondary"
-                  size="md"
-                >
-                  {t("account")}
-                </ButtonLink>
-              </nav>
-            ) : null}
-
             {view === "notifications" ? (
               <NotificationInbox
                 userId={user.id}
@@ -126,7 +112,14 @@ export async function WorkspaceAccountPage({
                 timeZone={resolveUserTimeZone(user)}
               />
             ) : view === "account" ? (
-              <PersonalSettingsContent user={user} />
+              <>
+                <h1 className="text-xl font-semibold tracking-tight">
+                  {t("account")}
+                </h1>
+                <div className="overflow-hidden rounded-xl border border-border bg-card">
+                  <PersonalSettingsContent user={user} />
+                </div>
+              </>
             ) : (
               <>
                 <div>

@@ -84,12 +84,12 @@ export function TableMenu({
         ? createPortal(
             <>
               <div
-                className="fixed inset-0 z-40"
+                className="fixed inset-0 z-(--z-popover)"
                 onPointerDown={() => setCoords(null)}
               />
               <motion.div
                 role="menu"
-                className="fixed z-50 overflow-hidden rounded-xl border border-border bg-background p-1 shadow-xl"
+                className="fixed z-(--z-popover) overflow-hidden rounded-xl border border-border bg-popover p-1 shadow-xl"
                 style={{
                   top: coords.top,
                   left: coords.left,

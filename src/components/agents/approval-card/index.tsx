@@ -204,8 +204,13 @@ export function ApprovalCard({
   onReject,
   onRequestChanges,
   onDismiss,
+  onCancel,
   approveLabel = "Approve",
+  rejectLabel = "Reject",
+  requestChangesLabel = "Request changes",
+  cancelLabel = "Cancel",
   submitLabel = "Submit response",
+  labels,
   result,
   className,
 }: ApprovalCardProps) {
@@ -230,7 +235,7 @@ export function ApprovalCard({
     : EMPTY_ANSWER;
   const displayTitle = question?.title ?? title;
   const titleKey = question?.id ?? String(status);
-  const statusLabel = getStatusLabel(status);
+  const statusLabel = labels?.[status] ?? getStatusLabel(status);
 
   const clearAutoAdvance = useCallback(() => {
     if (autoAdvanceTimer.current === undefined) return;
@@ -342,7 +347,7 @@ export function ApprovalCard({
             {onDismiss ? (
               <button
                 type="button"
-                aria-label="Dismiss"
+                aria-label={labels?.dismiss ?? "Dismiss"}
                 onClick={onDismiss}
                 className="grid size-5 shrink-0 place-items-center rounded-lg text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               >
@@ -393,7 +398,9 @@ export function ApprovalCard({
                     <Button
                       variant="ghost"
                       size="icon"
-                      aria-label="Previous question"
+                      aria-label={
+                        labels?.previousQuestion ?? "Previous question"
+                      }
                       disabled={busy || currentStep === 0}
                       onClick={() => setStep(currentStep - 1)}
                       className="rounded-lg"
@@ -406,16 +413,29 @@ export function ApprovalCard({
                     />
                   </>
                 ) : null}
+                {onCancel ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    onClick={onCancel}
+                    className="ml-auto rounded-lg text-muted-foreground"
+                  >
+                    {cancelLabel}
+                  </Button>
+                ) : null}
                 <Button
                   size={currentStep === questions.length - 1 ? "sm" : "icon"}
                   aria-label={
                     currentStep === questions.length - 1
-                      ? "Submit response"
-                      : "Next question"
+                      ? typeof submitLabel === "string"
+                        ? submitLabel
+                        : "Submit response"
+                      : (labels?.nextQuestion ?? "Next question")
                   }
                   disabled={busy || !isAnswered(currentAnswer)}
                   onClick={continueQuestion}
-                  className="ml-auto rounded-lg"
+                  className={cn("rounded-lg", !onCancel && "ml-auto")}
                 >
                   {busy ? (
                     <LoaderCircle
@@ -449,7 +469,7 @@ export function ApprovalCard({
                     onClick={onRequestChanges}
                     className="rounded-lg"
                   >
-                    Request changes
+                    {requestChangesLabel}
                   </Button>
                 ) : null}
                 {onReject ? (
@@ -460,7 +480,18 @@ export function ApprovalCard({
                     onClick={onReject}
                     className="rounded-lg text-muted-foreground hover:text-rose-600 dark:hover:text-rose-400"
                   >
-                    Reject
+                    {rejectLabel}
+                  </Button>
+                ) : null}
+                {onCancel ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    onClick={onCancel}
+                    className="rounded-lg text-muted-foreground"
+                  >
+                    {cancelLabel}
                   </Button>
                 ) : null}
               </div>

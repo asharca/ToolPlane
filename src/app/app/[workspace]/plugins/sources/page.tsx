@@ -4,6 +4,11 @@ import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { ArrowLeft, GitBranch } from "lucide-react";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/motion/collapsible";
+import {
   DashboardEmptyState,
   DashboardPage,
   DashboardToolbar,
@@ -190,11 +195,11 @@ export default async function PluginSourcesPage({
                   error={source.error}
                 />
                 {!source.official && canManage ? (
-                  <details className="mt-3 border-t border-border pt-3">
-                    <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
+                  <Collapsible className="mt-3 border-t border-border pt-3">
+                    <CollapsibleTrigger className="px-0 py-1 text-sm text-muted-foreground hover:text-foreground">
                       {t("settings")}
-                    </summary>
-                    <div className="mt-4 space-y-5">
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="space-y-5 pt-4">
                       <section className="space-y-2">
                         <h3 className="text-sm font-medium">
                           {t("credentials")}
@@ -246,8 +251,8 @@ export default async function PluginSourcesPage({
                           confirm
                         />
                       </div>
-                    </div>
-                  </details>
+                    </CollapsibleContent>
+                  </Collapsible>
                 ) : null}
               </li>
             );

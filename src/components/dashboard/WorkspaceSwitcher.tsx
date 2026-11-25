@@ -61,9 +61,9 @@ export function WorkspaceSwitcher({
           <button
             type="button"
             aria-label={t("switchWorkspace")}
-            className="group flex h-10 w-full min-w-0 items-center gap-2 overflow-hidden rounded-xl px-2 text-left text-sm text-foreground outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-foreground/20"
+            className="group flex h-9 w-full min-w-0 items-center gap-2 overflow-hidden rounded-lg px-2 text-left text-sm text-foreground outline-none transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <span className="grid size-6 shrink-0 place-items-center rounded-md border border-border/60 bg-background text-[10px] font-semibold text-foreground">
+            <span className="grid size-5 shrink-0 place-items-center rounded-md border border-border/60 bg-background text-[10px] font-semibold text-foreground">
               {workspaceInitials(workspaceName)}
             </span>
             {!compact && (

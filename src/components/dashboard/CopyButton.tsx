@@ -3,6 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Copy } from "lucide-react";
+import type {
+  ButtonSize,
+  ButtonVariant,
+} from "@/components/motion/button/base";
 import {
   StatefulButton,
   type ButtonState,
@@ -88,11 +92,15 @@ export function CopyButton({
   label,
   className,
   iconOnly = false,
+  variant = "secondary",
+  size,
 }: {
   text: string;
   label?: string;
   className?: string;
   iconOnly?: boolean;
+  variant?: ButtonVariant;
+  size?: ButtonSize;
 }) {
   const t = useTranslations("console.common");
   const resolvedLabel = label ?? t("copy");
@@ -126,8 +134,8 @@ export function CopyButton({
   }
   return (
     <StatefulButton
-      variant="secondary"
-      size={iconOnly ? "icon" : "sm"}
+      variant={variant}
+      size={size ?? (iconOnly ? "icon" : "sm")}
       className={className}
       state={state}
       onClick={copy}
@@ -152,13 +160,7 @@ export function CopyButton({
         )
       }
     >
-      <span
-        className={iconOnly ? "sr-only" : undefined}
-        role="status"
-        aria-live="polite"
-      >
-        {resolvedLabel}
-      </span>
+      <span className={iconOnly ? "sr-only" : undefined}>{resolvedLabel}</span>
     </StatefulButton>
   );
 }

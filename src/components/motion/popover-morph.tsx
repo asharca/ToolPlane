@@ -396,7 +396,7 @@ function MorphPopoverSurface({
         transformOrigin: originFor(resolvedSide, align),
       }}
       className={cn(
-        "fixed z-[9999]",
+        "fixed z-(--z-popover)",
         shadow && "[filter:drop-shadow(0_10px_18px_rgba(0,0,0,0.14))]",
       )}
     >
@@ -412,7 +412,7 @@ function MorphPopoverSurface({
           overflowY: "auto",
         }}
         className={cn(
-          "overflow-hidden border border-border bg-background",
+          "overflow-hidden border border-border bg-popover",
           className,
         )}
       >

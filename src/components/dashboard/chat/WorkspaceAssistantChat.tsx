@@ -43,7 +43,6 @@ import {
   Settings2,
   SquarePen,
   Trash2,
-  X,
 } from "lucide-react";
 import {
   AISidebar,
@@ -75,6 +74,7 @@ import {
   type ModelSelection,
 } from "@/components/dashboard/ComposerModelSelect";
 import {
+  ConversationFilePreview,
   conversationComposerDockClassName,
   conversationComposerSurfaceClassName,
 } from "@/components/dashboard/ConversationComposer";
@@ -1867,6 +1867,10 @@ export function WorkspaceAssistantChat({
                   pinnedRevision={activeThread.revision}
                   assistantName={activeAssistant.name}
                   assistantDescription={activeAssistant.description}
+                  contextWindow={activeAssistant.contextWindow}
+                  contextWindowEstimated={
+                    activeAssistant.contextWindowEstimated
+                  }
                   mcpToolChanges={
                     activeThread.revision === activeAssistant.revision
                       ? activeAssistant.mcpToolChanges
@@ -2016,27 +2020,29 @@ export function WorkspaceAssistantChat({
                           <Globe className="size-4" />
                         </Button>
                       </div>
-                      {draftFiles.map((file) => (
-                        <Button
-                          key={file.url}
-                          size="sm"
-                          variant="ghost"
-                          className="order-1 col-span-full mx-4 mt-3 max-w-[calc(100%-2rem)] justify-self-start gap-2 rounded-full bg-muted/50 text-xs"
-                          aria-label={agentsT("removeAttachment", {
-                            name: file.filename ?? file.mediaType,
-                          })}
-                          onClick={() =>
-                            setDraftFiles((previous) =>
-                              previous.filter((item) => item.url !== file.url),
-                            )
-                          }
-                        >
-                          <span className="truncate">
-                            {file.filename ?? file.mediaType}
-                          </span>
-                          <X className="size-3 shrink-0" aria-hidden="true" />
-                        </Button>
-                      ))}
+                      {draftFiles.length > 0 ? (
+                        <div className="order-1 col-span-full mx-4 mt-3 flex flex-wrap items-center gap-2">
+                          {draftFiles.map((file) => (
+                            <ConversationFilePreview
+                              key={file.url}
+                              display="chip"
+                              name={file.filename ?? file.mediaType}
+                              url={file.url}
+                              mimeType={file.mediaType}
+                              removeLabel={agentsT("removeAttachment", {
+                                name: file.filename ?? file.mediaType,
+                              })}
+                              onRemove={() =>
+                                setDraftFiles((previous) =>
+                                  previous.filter(
+                                    (item) => item.url !== file.url,
+                                  ),
+                                )
+                              }
+                            />
+                          ))}
+                        </div>
+                      ) : null}
                       <form
                         onSubmit={(event) => {
                           event.preventDefault();
@@ -2063,7 +2069,7 @@ export function WorkspaceAssistantChat({
                             }
                           }}
                           rows={1}
-                          className="scrollbar-hide order-2 col-span-full block max-h-[35vh] min-h-12 w-full resize-none overflow-y-auto bg-transparent px-4 pb-2 pt-3.5 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/55 disabled:opacity-60"
+                          className="scrollbar-hide order-2 col-span-full block max-h-[40vh] min-h-12 w-full resize-none overflow-y-auto bg-transparent px-4 pb-2 pt-3.5 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/55 disabled:opacity-60"
                         />
                         <div className="order-4 flex min-h-9 flex-wrap items-center justify-end gap-1 self-end px-2.5 pb-2.5 pt-1 sm:order-3 sm:col-start-2 sm:pl-1">
                           <ComposerModelSelect

@@ -63,6 +63,14 @@ export interface PromptInputProps
   minRows?: number;
   maxRows?: number;
   leadingAction?: ReactNode;
+  /** Allow submitting an empty prompt, e.g. when only attachments are present. */
+  canSubmit?: boolean;
+  labels?: {
+    addToPrompt?: string;
+    chooseModel?: string;
+    stopGenerating?: string;
+    sendPrompt?: string;
+  };
   className?: string;
 }
 
@@ -82,6 +90,8 @@ export function PromptInput({
   minRows = 2,
   maxRows = 8,
   leadingAction,
+  canSubmit: allowEmptySubmit = false,
+  labels,
   className,
   disabled,
   placeholder = "Ask the agent to do something…",
@@ -102,7 +112,8 @@ export function PromptInput({
   const currentModel = models.find(
     (option) => option.value === currentModelValue,
   );
-  const canSubmit = Boolean(currentValue.trim()) && !disabled && !loading;
+  const canSubmit =
+    (Boolean(currentValue.trim()) || allowEmptySubmit) && !disabled && !loading;
 
   const resizeTextarea = useCallback(() => {
     const textarea = textareaRef.current;
@@ -143,7 +154,7 @@ export function PromptInput({
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     const prompt = currentValue.trim();
-    if (!prompt || disabled || loading) return;
+    if ((!prompt && !allowEmptySubmit) || disabled || loading) return;
 
     onSubmit?.(prompt, currentModelValue);
     if (value === undefined) setInternalValue("");
@@ -169,7 +180,7 @@ export function PromptInput({
     <form
       onSubmit={submit}
       className={cn(
-        "relative w-full rounded-xl border border-border/80 bg-background p-2 transition-colors focus-within:border-foreground/25",
+        "relative w-full rounded-xl border border-border/80 bg-background p-2 text-sm transition-colors focus-within:border-foreground/25",
         disabled && "opacity-60",
         className,
       )}
@@ -177,7 +188,7 @@ export function PromptInput({
       <div
         ref={measurementRef}
         aria-hidden="true"
-        className="pointer-events-none invisible absolute inset-x-2 top-0 whitespace-pre-wrap px-2 text-sm leading-6 [overflow-wrap:break-word]"
+        className="pointer-events-none invisible absolute inset-x-2 top-0 whitespace-pre-wrap px-2 text-[length:inherit] leading-6 [overflow-wrap:break-word]"
       >
         {`${currentValue}\u200b`}
       </div>
@@ -191,7 +202,7 @@ export function PromptInput({
         {...textareaProps}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={handleKeyDown}
-        className="scrollbar-hide block w-full resize-none overflow-y-auto bg-transparent px-2 pt-1.5 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/55"
+        className="scrollbar-hide block w-full resize-none overflow-y-auto bg-transparent px-2 pt-1.5 text-[length:inherit] leading-6 text-foreground outline-none placeholder:text-muted-foreground/55"
       />
 
       <div className="mt-1 flex min-h-8 items-center gap-1">
@@ -203,7 +214,7 @@ export function PromptInput({
                 variant="ghost"
                 size="icon"
                 disabled={disabled || loading}
-                aria-label="Add to prompt"
+                aria-label={labels?.addToPrompt ?? "Add to prompt"}
                 className="size-8 rounded-lg"
               >
                 <motion.span
@@ -270,7 +281,7 @@ export function PromptInput({
                   </span>
                 ) : null}
                 <span className="truncate text-muted-foreground">
-                  {currentModel?.label ?? "Choose model"}
+                  {currentModel?.label ?? labels?.chooseModel ?? "Choose model"}
                 </span>
               </span>
             </SelectTrigger>
@@ -302,7 +313,11 @@ export function PromptInput({
           type={loading ? "button" : "submit"}
           size="icon"
           disabled={loading ? !onStop : !canSubmit}
-          aria-label={loading ? "Stop generating" : "Send prompt"}
+          aria-label={
+            loading
+              ? (labels?.stopGenerating ?? "Stop generating")
+              : (labels?.sendPrompt ?? "Send prompt")
+          }
           onClick={loading ? onStop : undefined}
           className="ml-auto size-8 rounded-lg"
         >

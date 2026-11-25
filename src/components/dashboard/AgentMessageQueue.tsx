@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { ListPlus, MessageSquarePlus, Trash2 } from "lucide-react";
 import { Button } from "@/components/motion/button";
+import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Tooltip } from "@/components/motion/tooltip";
 import { notify } from "@/components/dashboard/Toaster";
 import { apiRequest } from "@/lib/client/api";
@@ -203,11 +204,16 @@ export function AgentMessageQueueView({
         {queue.messages.map((message) => (
           <li
             key={message.id}
-            className="flex min-w-0 items-start gap-2 text-sm"
+            className="flex min-w-0 items-center gap-2 text-sm"
           >
-            <span className="shrink-0 text-xs text-muted-foreground">
+            <AnimatedBadge
+              size="sm"
+              showIcon={false}
+              status={message.mode === "steer" ? "warning" : "neutral"}
+              className="shrink-0"
+            >
               {t(message.mode)}
-            </span>
+            </AnimatedBadge>
             <span className="min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
               {message.text}
             </span>
@@ -220,38 +226,50 @@ export function AgentMessageQueueView({
 
 export function AgentQueueActions({
   disabled,
+  attachmentsBlocked = false,
   onSend,
 }: {
   disabled: boolean;
+  attachmentsBlocked?: boolean;
   onSend: (mode: QueueMode) => void;
 }) {
   const t = useTranslations("console.messageQueue");
   return (
     <>
-      <Tooltip content={t("steerHint")}>
+      <Tooltip content={attachmentsBlocked ? t("textOnly") : t("steerHint")}>
         <Button
           type="button"
           variant="ghost"
-          size="icon"
+          size="sm"
           disabled={disabled}
           aria-label={t("steer")}
           aria-keyshortcuts="Enter"
+          className="h-7 gap-1.5 rounded-full px-2.5 text-xs"
           onClick={() => onSend("steer")}
         >
-          <MessageSquarePlus className="size-4" />
+          <MessageSquarePlus className="size-3.5 shrink-0" />
+          <span className="hidden sm:inline">{t("steer")}</span>
+          <kbd className="hidden font-mono text-[10px] text-muted-foreground md:inline">
+            ↵
+          </kbd>
         </Button>
       </Tooltip>
-      <Tooltip content={t("followUpHint")}>
+      <Tooltip content={attachmentsBlocked ? t("textOnly") : t("followUpHint")}>
         <Button
           type="button"
           variant="ghost"
-          size="icon"
+          size="sm"
           disabled={disabled}
           aria-label={t("follow_up")}
           aria-keyshortcuts="Alt+Enter"
+          className="h-7 gap-1.5 rounded-full px-2.5 text-xs"
           onClick={() => onSend("follow_up")}
         >
-          <ListPlus className="size-4" />
+          <ListPlus className="size-3.5 shrink-0" />
+          <span className="hidden sm:inline">{t("follow_up")}</span>
+          <kbd className="hidden font-mono text-[10px] text-muted-foreground md:inline">
+            ⌥↵
+          </kbd>
         </Button>
       </Tooltip>
     </>

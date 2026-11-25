@@ -18,7 +18,19 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "preset": "recommended"
+      "preset": "recommended",
+      "style": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "@primer/octicons-react": "Use lucide-react icons instead.",
+              "react-icons": "Use lucide-react icons instead.",
+              "@paper-design/shaders-react": "Unused shader dependency removed."
+            }
+          }
+        }
+      }
     }
   },
   "assist": { "actions": { "source": { "organizeImports": "off" } } }

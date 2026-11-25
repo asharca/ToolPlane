@@ -11,8 +11,12 @@ import Image from "next/image";
 import { useTranslations } from "next-intl";
 import { Download, File as FileIcon, FileX, Loader2, X } from "lucide-react";
 import { Button } from "@/components/motion/button";
-import { Tooltip } from "@/components/motion/tooltip";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
+import {
+  MorphPopover,
+  MorphPopoverContent,
+  MorphPopoverTrigger,
+} from "@/components/motion/popover-morph";
 import {
   FilePreviewDialog,
   saveBlob,
@@ -35,7 +39,7 @@ import { AgentQueueActions, type QueueMode } from "./AgentMessageQueue";
 export const conversationComposerSurfaceClassName =
   "rounded-3xl border border-foreground/10 bg-background shadow-sm transition-[border-color,box-shadow] focus-within:border-foreground/20 focus-within:shadow-md dark:bg-muted/40";
 // The vendored PromptInput sets the textarea height to the text height only, so content-box keeps its top padding from clipping the text.
-export const conversationComposerClassName = `${conversationComposerSurfaceClassName} px-2 pt-2 pb-0 [&>textarea]:box-content [&>textarea]:text-[15px] [&>textarea]:leading-6 [&>textarea]:max-h-[40vh] [&>div:last-child]:mt-0 [&>div:last-child]:flex-wrap [&>div:last-child]:px-0.5 [&>div:last-child]:pb-2.5 [&>div:last-child]:pt-1 [&>div:last-child_button]:rounded-full [&>div:last-child>button:last-child]:ml-0 [&>div:last-child>button:last-child]:size-9 [&>div:last-child>button:last-child]:rounded-full`;
+export const conversationComposerClassName = `${conversationComposerSurfaceClassName} px-2 pt-2 pb-0 text-[15px] [&>textarea]:box-content [&>textarea]:leading-6 [&>textarea]:max-h-[40vh] [&>div:last-child]:mt-0 [&>div:last-child]:flex-wrap [&>div:last-child]:px-0.5 [&>div:last-child]:pb-2.5 [&>div:last-child]:pt-1 [&>div:last-child_button]:rounded-full [&>div:last-child>button:last-child]:ml-0 [&>div:last-child>button:last-child]:size-9 [&>div:last-child>button:last-child]:rounded-full`;
 export const conversationComposerDockClassName =
   "relative z-10 mx-auto w-full max-w-3xl shrink-0 px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 before:pointer-events-none before:absolute before:inset-x-0 before:-top-8 before:h-8 before:bg-gradient-to-t before:from-background before:to-transparent sm:px-4";
 
@@ -43,14 +47,20 @@ export const conversationComposerDockClassName =
 export function ConversationComposer({
   className,
   attachments,
+  hasAttachments,
   onRunningSubmit,
   queuePending = false,
   ...props
 }: PromptInputProps & {
   attachments?: ReactNode;
+  hasAttachments?: boolean;
   onRunningSubmit?: (mode: QueueMode) => void;
   queuePending?: boolean;
 }) {
+  const agentUiT = useTranslations("console.agentUi");
+  const attachmentsBlocked = Boolean(
+    onRunningSubmit && (hasAttachments ?? Boolean(attachments)),
+  );
   const input = (
     <PromptInput
       minRows={1}
@@ -62,6 +72,10 @@ export function ConversationComposer({
           : undefined,
         className,
       )}
+      labels={{
+        stopGenerating: agentUiT("stopGenerating"),
+        sendPrompt: agentUiT("sendPrompt"),
+      }}
       {...props}
       leadingAction={
         onRunningSubmit ? (
@@ -72,8 +86,10 @@ export function ConversationComposer({
                 props.disabled ||
                   props.readOnly ||
                   queuePending ||
+                  attachmentsBlocked ||
                   !props.value?.trim(),
               )}
+              attachmentsBlocked={attachmentsBlocked}
               onSend={onRunningSubmit}
             />
           </>
@@ -97,6 +113,7 @@ export function ConversationComposer({
           !props.disabled &&
           !props.readOnly &&
           !queuePending &&
+          !attachmentsBlocked &&
           props.value?.trim()
         )
           onRunningSubmit(event.altKey ? "follow_up" : "steer");
@@ -179,53 +196,61 @@ export function ConversationContextUsage({
     Math.min(100, Math.max(0, (usage.usedTokens / usage.maxTokens) * 100)),
   );
   return (
-    <Tooltip
-      content={
-        <div className="space-y-2">
-          <p>{t("contextUsage")}</p>
-          <p>
-            {usage.estimated ? "≈ " : ""}
-            {usage.usedTokens.toLocaleString()} /{" "}
-            {usage.maxTokens.toLocaleString()} ({percentage}%)
-          </p>
-          <p>{usage.modelName}</p>
-          {usage.breakdown ? (
-            <ContextBreakdown
-              breakdown={usage.breakdown}
-              maxTokens={usage.maxTokens}
-            />
-          ) : null}
-          {usage.estimated ? <p>{t("contextUsageEstimated")}</p> : null}
-        </div>
-      }
-    >
-      <button
-        type="button"
-        aria-label={`${t("contextUsage")} ${percentage}%`}
-        aria-busy={busy || undefined}
-      >
-        <meter
-          min={0}
-          max={100}
-          value={percentage}
-          aria-label={t("contextUsage")}
-          className="sr-only"
-        />
-        <AnimatedBadge
-          status={
-            busy
-              ? "loading"
-              : percentage >= 90
-                ? "danger"
-                : percentage >= 75
-                  ? "warning"
-                  : "neutral"
-          }
+    <MorphPopover>
+      <MorphPopoverTrigger>
+        <button
+          type="button"
+          aria-label={`${t("contextUsage")} ${percentage}%`}
+          aria-busy={busy || undefined}
         >
-          {percentage}%
-        </AnimatedBadge>
-      </button>
-    </Tooltip>
+          <meter
+            min={0}
+            max={100}
+            value={percentage}
+            aria-label={t("contextUsage")}
+            className="sr-only"
+          />
+          <AnimatedBadge
+            status={
+              busy
+                ? "loading"
+                : percentage >= 90
+                  ? "danger"
+                  : percentage >= 75
+                    ? "warning"
+                    : "neutral"
+            }
+          >
+            {percentage}%
+          </AnimatedBadge>
+        </button>
+      </MorphPopoverTrigger>
+      <MorphPopoverContent
+        side="top"
+        align="end"
+        sideOffset={8}
+        className="z-50 w-64 max-w-[calc(100vw-2rem)] space-y-2 p-3 text-xs"
+      >
+        <p className="font-medium text-foreground">{t("contextUsage")}</p>
+        <p className="tabular-nums text-muted-foreground">
+          {usage.estimated ? "≈ " : ""}
+          {usage.usedTokens.toLocaleString()} /{" "}
+          {usage.maxTokens.toLocaleString()} ({percentage}%)
+        </p>
+        <p className="truncate font-mono text-[11px] text-muted-foreground">
+          {usage.modelName}
+        </p>
+        {usage.breakdown ? (
+          <ContextBreakdown
+            breakdown={usage.breakdown}
+            maxTokens={usage.maxTokens}
+          />
+        ) : null}
+        {usage.estimated ? (
+          <p className="text-muted-foreground">{t("contextUsageEstimated")}</p>
+        ) : null}
+      </MorphPopoverContent>
+    </MorphPopover>
   );
 }
 

@@ -12,8 +12,10 @@ export const dynamic = "force-dynamic";
 
 export default async function AgentRunPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ workspace: string; taskId: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 }) {
   const { workspace: slug, taskId } = await params;
   const user = await getCurrentUser();
@@ -27,9 +29,11 @@ export default async function AgentRunPage({
   if (!detail) notFound();
   const t = await getTranslations("console.observability.viewer");
   const base = `/app/${encodeURIComponent(slug)}/observability`;
+  const { returnTo } = await searchParams;
+  const safeBack = returnTo?.startsWith(base) ? returnTo : null;
   return (
     <DashboardPage>
-      <ButtonLink href={base} variant="ghost" size="sm">
+      <ButtonLink href={safeBack ?? base} variant="ghost" size="sm">
         ← {t("runs")}
       </ButtonLink>
       <AgentRunDetail detail={detail} base={base} workspaceSlug={slug} />

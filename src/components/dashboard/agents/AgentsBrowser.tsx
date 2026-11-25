@@ -763,7 +763,7 @@ export function AgentsBrowser({
                             "flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted",
                             ready
                               ? "text-muted-foreground"
-                              : "text-muted-foreground text-muted-foreground",
+                              : "text-amber-600 dark:text-amber-400",
                           )}
                         >
                           {ready ? (

@@ -154,15 +154,10 @@ export function ConfirmActionDialog({
         >
           <Button
             type="button"
-            variant={destructive ? "secondary" : "primary"}
+            variant={destructive ? "destructive" : "primary"}
             size="md"
             disabled={busy}
             onClick={() => void onConfirm()}
-            className={
-              destructive
-                ? "border-destructive/40 bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                : undefined
-            }
           >
             {confirmLabel}
           </Button>

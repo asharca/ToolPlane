@@ -266,12 +266,12 @@ export default async function SandboxDetailPage({
             className="block space-y-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground"
           >
             {t("localRoot")}
-            <span className="relative block">
-              <FolderOpen className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <span className="block">
               <Input
                 id="connector-remote-root"
                 name="connectorRemoteRoot"
                 required
+                leftIcon={<FolderOpen className="size-4" />}
                 defaultValue={
                   connector.remoteRoot || DEFAULT_CONNECTOR_REMOTE_ROOT
                 }
@@ -672,7 +672,7 @@ export default async function SandboxDetailPage({
                     <SubmitButton
                       flash={false}
                       pendingLabel={t("stopping")}
-                      variant="ghost"
+                      variant="secondary"
                       size="sm"
                     >
                       {t("stop")}
@@ -684,7 +684,7 @@ export default async function SandboxDetailPage({
                     <SubmitButton
                       flash={false}
                       pendingLabel={t("restarting")}
-                      variant="ghost"
+                      variant="secondary"
                       size="sm"
                     >
                       {t("restart")}
@@ -698,7 +698,7 @@ export default async function SandboxDetailPage({
                   <SubmitButton
                     flash={false}
                     pendingLabel={t("starting")}
-                    variant="ghost"
+                    variant="primary"
                     size="sm"
                   >
                     {t("start")}

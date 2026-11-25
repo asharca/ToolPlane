@@ -91,8 +91,8 @@ export function WorkspaceMembers({
     setInvite((state) => ({ open: true, email, key: state.key + 1 }));
 
   return (
-    <div className="space-y-8">
-      <DashboardHeader title={t("members")} />
+    <div className="space-y-6">
+      <DashboardHeader title={t("members")} visible />
       <DashboardToolbar
         actions={
           <div className="flex flex-wrap items-center gap-2">

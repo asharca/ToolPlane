@@ -1,6 +1,14 @@
 "use client";
 
+import { useAgentUiLabels } from "../agent-ui-labels";
 import { Button } from "@/components/motion/button";
+import {
+  Alert,
+  AlertAction,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+} from "@/components/motion/alert";
 import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
 import {
   ManageFilesButton,
@@ -211,6 +219,7 @@ export function AgentConversation({
 }) {
   const router = useRouter();
   const t = useTranslations("console.agents");
+  const agentUi = useAgentUiLabels();
   const common = useTranslations("common");
   const work = useTranslations("console.work");
   const chatAssistants = useTranslations("console.chatAssistants");
@@ -795,6 +804,7 @@ export function AgentConversation({
         followOutput={followingOutput}
         onFollowChange={setFollowingOutput}
         navigation="rail"
+        labels={agentUi.scroller}
         className={
           displayMessages.length
             ? "min-h-0 flex-1"
@@ -1139,48 +1149,57 @@ export function AgentConversation({
           onClick={() => setFollowingOutput(true)}
           label={work("scrollToBottom")}
         />
-        {typeof composerNotice === "function"
-          ? composerNotice(
-              setComposerText,
-              belowEditorElement,
-              renderedActivityIds,
-            )
-          : composerNotice}
-        {submitError || chat.error ? (
-          <div
-            role="alert"
-            className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
-          >
-            <span>
-              {configurationError
-                ? work("configureAgent")
-                : submitError === STORAGE_QUOTA_EXCEEDED
-                  ? t("attachmentStorageQuotaExceeded")
-                  : runtimeError
-                    ? runtimeError.text
-                    : (submitError ??
-                      displayErrorText(chat.error, work("processFailed")))}
-            </span>
-            {(configurationError ||
-              runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE") &&
-            settingsHref ? (
-              <Link
-                href={settingsHref}
-                className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-              >
-                {t("configureAgent")}
-              </Link>
-            ) : null}
-            {submitError === STORAGE_QUOTA_EXCEEDED ? (
-              <ManageFilesButton />
-            ) : null}
-          </div>
-        ) : null}
-        <AgentMessageQueueView
-          queue={messageQueue.queue}
-          onClear={() => void messageQueue.clear()}
-          disabled={!ready || messageQueue.pending || messageQueue.forbidden}
-        />
+        <div className="mb-2 max-h-[42dvh] space-y-2 overflow-y-auto overscroll-contain empty:hidden">
+          {typeof composerNotice === "function"
+            ? composerNotice(
+                setComposerText,
+                belowEditorElement,
+                renderedActivityIds,
+              )
+            : composerNotice}
+          {submitError || chat.error ? (
+            <Alert variant="destructive" className="mb-3">
+              <AlertIcon />
+              <AlertContent>
+                <AlertDescription>
+                  {configurationError
+                    ? work("configureAgent")
+                    : submitError === STORAGE_QUOTA_EXCEEDED
+                      ? t("attachmentStorageQuotaExceeded")
+                      : runtimeError
+                        ? runtimeError.text
+                        : (submitError ??
+                          displayErrorText(chat.error, work("processFailed")))}
+                </AlertDescription>
+              </AlertContent>
+              {((configurationError ||
+                runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE") &&
+                settingsHref) ||
+              submitError === STORAGE_QUOTA_EXCEEDED ? (
+                <AlertAction>
+                  {(configurationError ||
+                    runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE") &&
+                  settingsHref ? (
+                    <Link
+                      href={settingsHref}
+                      className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                    >
+                      {t("configureAgent")}
+                    </Link>
+                  ) : null}
+                  {submitError === STORAGE_QUOTA_EXCEEDED ? (
+                    <ManageFilesButton />
+                  ) : null}
+                </AlertAction>
+              ) : null}
+            </Alert>
+          ) : null}
+          <AgentMessageQueueView
+            queue={messageQueue.queue}
+            onClear={() => void messageQueue.clear()}
+            disabled={!ready || messageQueue.pending || messageQueue.forbidden}
+          />
+        </div>
         <div data-ui="chat.composer" {...dropProps} className="relative">
           <ComposerDropOverlay
             dragging={dragging}
@@ -1194,7 +1213,7 @@ export function AgentConversation({
                     <ConversationFilePreview
                       key={attachment.id}
                       file={attachment.file}
-                      display="inline"
+                      display="chip"
                       name={attachment.file.name}
                       mimeType={attachment.file.type}
                       removeLabel={t("removeAttachment", {
@@ -1206,6 +1225,15 @@ export function AgentConversation({
                 </div>
               ) : null
             }
+            hasAttachments={attachments.length > 0}
+            canSubmit={
+              attachments.length > 0 &&
+              !(nativeRunning && !messageQueue.fallback)
+            }
+            labels={{
+              stopGenerating: agentUi.composer.stopGenerating,
+              sendPrompt: agentUi.composer.sendPrompt,
+            }}
             value={composerText}
             onValueChange={setComposerText}
             onPaste={handlePaste}
@@ -1224,7 +1252,11 @@ export function AgentConversation({
             loading={(busy || nativeRunning) && !messageQueue.fallback}
             onStop={chatBusy ? () => void stop() : undefined}
             aria-label={t("messageThisAgent")}
-            placeholder={t("messageThisAgent")}
+            placeholder={
+              nativeRunning && !messageQueue.fallback
+                ? `${queueT("steerHint")} · ${queueT("followUpHint")}`
+                : t("messageThisAgent")
+            }
             minRows={1}
             maxRows={12}
             leadingAction={
@@ -1253,16 +1285,6 @@ export function AgentConversation({
                     disabled={blocked}
                     onChange={setReasoningEffort}
                   />
-                ) : null}
-                {!composerText.trim() && attachments.length ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={blocked}
-                    onClick={() => void submitDraft()}
-                  >
-                    {t("send")}
-                  </Button>
                 ) : null}
                 {modelPicker}
               </div>

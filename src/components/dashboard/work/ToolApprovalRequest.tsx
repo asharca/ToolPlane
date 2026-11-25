@@ -1,13 +1,59 @@
 "use client";
 
-import { useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import { useFormatter, useTranslations } from "next-intl";
 import { z } from "zod";
-import { ToolApproval } from "@/components/agents/tool-approval";
+import {
+  ToolApproval,
+  ToolApprovalCode,
+  type ToolApprovalParameter,
+} from "@/components/agents/tool-approval";
+import { displayToolName } from "@/lib/conversation/content-blocks";
 import {
   FEEDBACK_TOOL_NAME,
   ModelFeedbackToolInputSchema,
 } from "@/lib/feedback/types";
+
+const CODE_PARAM_KEYS = new Set([
+  "command",
+  "cmd",
+  "script",
+  "code",
+  "query",
+  "patch",
+  "content",
+]);
+
+function parseStructuredParameters(
+  summary: string,
+): ToolApprovalParameter[] | null {
+  try {
+    const parsed: unknown = JSON.parse(summary);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return null;
+    const entries = Object.entries(parsed as Record<string, unknown>);
+    if (!entries.length || entries.length > 12) return null;
+    return entries.map(([name, val]) => {
+      const text =
+        typeof val === "string" ? val : (JSON.stringify(val, null, 2) ?? "");
+      const isCode =
+        CODE_PARAM_KEYS.has(name) || text.includes("\n") || text.length > 100;
+      return {
+        id: name,
+        label: name,
+        value: isCode ? (
+          <ToolApprovalCode code={text} className="max-h-40 overflow-auto" />
+        ) : (
+          <span className="block max-h-32 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">
+            {text}
+          </span>
+        ),
+      };
+    });
+  } catch {
+    return null;
+  }
+}
 
 function parseModelFeedbackSummary(summary: string) {
   try {
@@ -58,11 +104,16 @@ export function ToolApprovalRequest({
   const [expired, setExpired] = useState(
     () => Date.parse(card.expiresAt) <= Date.now(),
   );
+  const [remainingSeconds, setRemainingSeconds] = useState(() =>
+    Math.max(0, Math.ceil((Date.parse(card.expiresAt) - Date.now()) / 1000)),
+  );
   const expire = useEffectEvent(() => onExpire?.(card.id));
   useEffect(() => {
-    const remaining = Date.parse(card.expiresAt) - Date.now();
+    const targetMs = Date.parse(card.expiresAt);
+    const remaining = targetMs - Date.now();
     const finish = () => {
       setExpired(true);
+      setRemainingSeconds(0);
       expire();
     };
     if (remaining <= 0) {
@@ -70,21 +121,50 @@ export function ToolApprovalRequest({
       return;
     }
     const timer = window.setTimeout(finish, remaining);
-    return () => window.clearTimeout(timer);
+    const interval = window.setInterval(() => {
+      const next = Math.max(0, Math.ceil((targetMs - Date.now()) / 1000));
+      setRemainingSeconds(next);
+    }, 1000);
+    return () => {
+      window.clearTimeout(timer);
+      window.clearInterval(interval);
+    };
   }, [card.expiresAt]);
   const channel = card.entryKind === "channel";
   const feedbackPreview =
     card.toolName === FEEDBACK_TOOL_NAME
       ? parseModelFeedbackSummary(card.argumentSummary)
       : null;
+  const structuredParameters = useMemo(
+    () =>
+      feedbackPreview ? null : parseStructuredParameters(card.argumentSummary),
+    [card.argumentSummary, feedbackPreview],
+  );
+  const countdownText =
+    !expired && remainingSeconds > 0
+      ? ` (${Math.floor(remainingSeconds / 60)}:${String(remainingSeconds % 60).padStart(2, "0")})`
+      : "";
   return (
     <ToolApproval
       tool={
-        <span className="whitespace-normal break-all">{card.toolName}</span>
+        <span className="whitespace-normal break-all" title={card.toolName}>
+          {displayToolName(card.toolName)}
+        </span>
       }
       title={feedbackPreview ? t("feedbackTitle") : t("title")}
       status={expired ? "expired" : busy ? "approving" : "pending"}
       statusLabel={t(expired ? "expired" : busy ? "submitting" : "pending")}
+      labels={{
+        approved: t("approved"),
+        denied: t("denied"),
+        running: t("running"),
+        complete: t("completed"),
+        error: t("failed"),
+        viewDetails: t("viewDetails"),
+        alwaysAllow: t("alwaysAllow"),
+        expiresIn: (time) => t("expiresIn", { time }),
+      }}
+      parameters={structuredParameters ?? undefined}
       description={
         <>
           {feedbackPreview ? (
@@ -104,12 +184,12 @@ export function ToolApprovalRequest({
                 {t("feedbackAdminNotice")}
               </p>
             </div>
-          ) : (
-            <span className="block whitespace-pre-wrap break-all font-mono text-xs">
+          ) : structuredParameters ? null : (
+            <span className="block max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">
               {card.argumentSummary}
             </span>
           )}
-          <span className="mt-2 block text-xs">
+          <span className="mt-2 block text-xs tabular-nums">
             {t("expiresAt", {
               time: format.dateTime(new Date(card.expiresAt), {
                 hour: "2-digit",
@@ -117,6 +197,7 @@ export function ToolApprovalRequest({
                 second: "2-digit",
               }),
             })}
+            {countdownText}
           </span>
           {channel ? (
             <span className="mt-2 block">

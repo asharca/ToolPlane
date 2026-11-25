@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Menu } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { DashboardSidebar } from "./DashboardSidebar";
@@ -17,11 +17,18 @@ import {
   lastWorkspaceCookieName,
 } from "@/lib/workspace/navigation";
 import { AnimatedSidebarTrigger } from "@/components/motion/animated-sidebar";
-import { hasOpenDialog } from "@/components/dashboard/ConversationUxPrimitives";
+import {
+  ConfirmActionDialog,
+  hasOpenDialog,
+} from "@/components/dashboard/ConversationUxPrimitives";
 import { Tooltip } from "@/components/motion/tooltip";
 import { WorkspaceShell } from "@/components/workspace/workspace-shell";
 
 type Workspace = { id: string; slug: string; name: string };
+
+type PendingNavigation =
+  | { kind: "href"; href: string }
+  | { kind: "form"; form: HTMLFormElement };
 
 export function DashboardChrome({
   slug,
@@ -54,13 +61,43 @@ export function DashboardChrome({
     initialSidebarCollapsed,
     dashboardSidebarCookieName(workspaceId),
   );
+  const [isMediumViewport, setIsMediumViewport] = useState(false);
+  const [mdExpanded, setMdExpanded] = useState(false);
+  const [pendingNav, setPendingNav] = useState<PendingNavigation | null>(null);
+  const bypassFormRef = useRef<HTMLFormElement | null>(null);
+  const router = useRouter();
   const t = useTranslations("console.sidebar");
   const workspaceT = useTranslations("console.workspaces");
+  const commonT = useTranslations("common");
   const pathname = usePathname() ?? "";
   const workspaceBase = `/app/${slug}/`;
   const activeSegment = pathname.startsWith(workspaceBase)
     ? pathname.slice(workspaceBase.length).split("/")[0]
     : "";
+  const isDualSidebarRoute =
+    activeSegment === "chat" ||
+    activeSegment === "work" ||
+    activeSegment === "agents";
+  const useMdAutoCollapse = isMediumViewport && isDualSidebarRoute;
+  const effectiveOpen = useMdAutoCollapse ? mdExpanded : !collapsed;
+  const setEffectiveCollapsed = (nextCollapsed: boolean) => {
+    if (useMdAutoCollapse) setMdExpanded(!nextCollapsed);
+    else setCollapsed(nextCollapsed);
+  };
+
+  useEffect(() => {
+    const media = window.matchMedia(
+      "(min-width: 768px) and (max-width: 1023px)",
+    );
+    const sync = () => {
+      setIsMediumViewport(media.matches);
+      if (!media.matches) setMdExpanded(false);
+    };
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
   const mobilePageTitle = (() => {
     switch (activeSegment) {
       case "chat":
@@ -98,7 +135,6 @@ export function DashboardChrome({
   })();
 
   useEffect(() => {
-    const confirm = () => window.confirm(workspaceT("unsavedChanges"));
     const click = (event: MouseEvent) => {
       if (
         event.defaultPrevented ||
@@ -119,9 +155,16 @@ export function DashboardChrome({
         target.pathname.startsWith(`/app/${slug}/`)
       )
         return;
-      if (hasUnsavedWorkspaceChanges() && !confirm()) {
+      if (hasUnsavedWorkspaceChanges()) {
         event.preventDefault();
         event.stopPropagation();
+        setPendingNav({
+          kind: "href",
+          href:
+            target.origin === location.origin
+              ? `${target.pathname}${target.search}${target.hash}`
+              : target.href,
+        });
       }
     };
     const submit = (event: SubmitEvent) => {
@@ -130,9 +173,14 @@ export function DashboardChrome({
         !event.target.hasAttribute("data-workspace-navigation")
       )
         return;
-      if (hasUnsavedWorkspaceChanges(document, event.target) && !confirm()) {
+      if (bypassFormRef.current === event.target) {
+        bypassFormRef.current = null;
+        return;
+      }
+      if (hasUnsavedWorkspaceChanges(document, event.target)) {
         event.preventDefault();
         event.stopPropagation();
+        setPendingNav({ kind: "form", form: event.target });
       }
     };
     const unload = (event: BeforeUnloadEvent) => {
@@ -149,7 +197,7 @@ export function DashboardChrome({
       document.removeEventListener("submit", submit, true);
       window.removeEventListener("beforeunload", unload);
     };
-  }, [slug, workspaceT]);
+  }, [slug]);
 
   useEffect(() => {
     if (!userId) return;
@@ -170,18 +218,19 @@ export function DashboardChrome({
       }
       if (hasOpenDialog()) return;
       event.preventDefault();
-      setCollapsed(!collapsed);
+      if (useMdAutoCollapse) setMdExpanded((prev) => !prev);
+      else setCollapsed(!collapsed);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [collapsed, setCollapsed]);
+  }, [collapsed, setCollapsed, useMdAutoCollapse]);
 
   return (
     <DashboardRuntimeConfigProvider supportEmail={supportEmail}>
       <WorkspaceShell
         className="h-dvh [--dashboard-page-header-height:2.75rem]"
-        open={!collapsed}
-        onOpenChange={(expanded) => setCollapsed(!expanded)}
+        open={effectiveOpen}
+        onOpenChange={(expanded) => setEffectiveCollapsed(!expanded)}
         openMobile={open}
         onOpenMobileChange={setOpen}
         scroll="none"
@@ -203,6 +252,12 @@ export function DashboardChrome({
               </AnimatedSidebarTrigger>
             </Tooltip>
             <DashboardLogo />
+            <span aria-hidden="true" className="text-border">
+              /
+            </span>
+            <span className="max-w-28 truncate text-xs font-medium text-muted-foreground">
+              {workspaceName}
+            </span>
             {mobilePageTitle ? (
               <>
                 <span aria-hidden="true" className="text-border">
@@ -220,6 +275,27 @@ export function DashboardChrome({
           {children}
         </main>
       </WorkspaceShell>
+      <ConfirmActionDialog
+        open={pendingNav !== null}
+        title={commonT("unsavedChanges")}
+        description={workspaceT("unsavedChanges")}
+        confirmLabel={commonT("confirm")}
+        cancelLabel={commonT("cancel")}
+        destructive
+        onClose={() => setPendingNav(null)}
+        onConfirm={() => {
+          const target = pendingNav;
+          setPendingNav(null);
+          if (!target) return;
+          if (target.kind === "href") {
+            if (target.href.startsWith("/")) router.push(target.href);
+            else window.location.assign(target.href);
+          } else {
+            bypassFormRef.current = target.form;
+            target.form.requestSubmit();
+          }
+        }}
+      />
       <Toaster />
     </DashboardRuntimeConfigProvider>
   );

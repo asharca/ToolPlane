@@ -175,7 +175,7 @@ export function WorkTurnTrace({
           />
         ) : toolTime ? (
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-6 pt-14 text-sm">
-            <dl className="grid grid-cols-3 gap-4">
+            <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               {[
                 [t("total"), durationMs],
                 [t("tools", { count: toolTime.count }), toolTime.total],

@@ -1,11 +1,25 @@
 "use client";
 
+import "@xterm/xterm/css/xterm.css";
 import { apiRequest } from "@/lib/client/api";
 import {
   DisplayError,
   displayErrorText,
 } from "@/components/dashboard/display-error";
+import {
+  AnimatedBadge,
+  type AnimatedBadgeStatus,
+} from "@/components/motion/animated-badge";
 import { Button } from "@/components/motion/button";
+import {
+  CenterMorphModal,
+  CenterMorphModalContent,
+} from "@/components/motion/center-morph-modal";
+import {
+  DialogCancel,
+  DialogFooter,
+  DialogHeader,
+} from "@/components/dashboard/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { useTheme } from "next-themes";
 
@@ -249,6 +263,7 @@ export function SandboxConsole({
 }) {
   const running = sandboxRunning || readOnly;
   const t = useTranslations("console.sandboxes");
+  const common = useTranslations("common");
   const { resolvedTheme } = useTheme();
   const terminalBase =
     terminalApiBase ?? `/api/v1/mcp/${deploymentId}/terminal`;
@@ -293,6 +308,11 @@ export function SandboxConsole({
     "terminal",
   );
   const [fileError, setFileError] = useState("");
+  const [confirmState, setConfirmState] = useState<
+    | { type: "delete"; path: string }
+    | { type: "overwrite"; files: File[] }
+    | null
+  >(null);
 
   const loadDirectory = useCallback(
     async (nextPath: string) => {
@@ -643,9 +663,13 @@ export function SandboxConsole({
     }
   }
 
-  async function deleteFile(path: string) {
+  function deleteFile(path: string) {
     if (readOnly) return;
-    if (!window.confirm(t("deleteThisFile"))) return;
+    setConfirmState({ type: "delete", path });
+  }
+
+  async function performDeleteFile(path: string) {
+    if (readOnly) return;
     setLoadingPath(path);
     setFileError("");
     try {
@@ -676,11 +700,15 @@ export function SandboxConsole({
     if (readOnly || !files.length || uploading) return;
     const directoryEntries = entriesByPath[selectedDirectory] ?? [];
     const existingNames = new Set(directoryEntries.map((entry) => entry.name));
-    if (
-      files.some((file) => existingNames.has(file.name)) &&
-      !window.confirm(t("replaceExistingFiles"))
-    )
+    if (files.some((file) => existingNames.has(file.name))) {
+      setConfirmState({ type: "overwrite", files });
       return;
+    }
+    await performUploadFiles(files);
+  }
+
+  async function performUploadFiles(files: File[]) {
+    if (readOnly || !files.length || uploading) return;
 
     setUploading(true);
     setFileError("");
@@ -800,12 +828,27 @@ export function SandboxConsole({
     });
   }
 
+  const terminalBadgeStatus: AnimatedBadgeStatus =
+    terminalStatus === t("terminalConnected")
+      ? "success"
+      : terminalStatus === t("terminalConnecting")
+        ? "loading"
+        : terminalStatus === t("terminalError") ||
+            terminalStatus === t("terminalDisconnected")
+          ? "danger"
+          : "neutral";
+  const terminalNeedsReconnect =
+    running &&
+    (terminalStatus === t("terminalError") ||
+      terminalStatus === t("terminalDisconnected") ||
+      terminalStatus === t("terminalExitedStatus"));
+
   const terminalPanel = (
     <section
       className={
         terminalOnly || compact
           ? "flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background"
-          : "rounded-3xl border border-border bg-card flex min-h-[34rem] min-w-0 flex-col overflow-hidden bg-background"
+          : "rounded-3xl border border-border bg-background flex min-h-[34rem] min-w-0 flex-col overflow-hidden"
       }
     >
       <div
@@ -816,7 +859,9 @@ export function SandboxConsole({
           {terminalLabel ?? t("terminal")}
         </div>
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-          <span>{terminalStatus}</span>
+          <AnimatedBadge status={terminalBadgeStatus} size="sm">
+            {terminalStatus}
+          </AnimatedBadge>
           <span className="hidden max-w-80 truncate font-mono sm:inline">
             {terminalSubtitle ?? deploymentId}
           </span>
@@ -826,13 +871,14 @@ export function SandboxConsole({
               setTerminalStatus(t("terminalConnecting"));
               setTerminalGeneration((value) => value + 1);
             }}
-            variant="ghost"
-            size="icon"
+            variant={terminalNeedsReconnect ? "secondary" : "ghost"}
+            size={terminalNeedsReconnect ? "sm" : "icon"}
             className="shrink-0"
             title={t("reconnectTerminal")}
             aria-label={t("reconnectTerminal")}
           >
             <RefreshCw className="size-3.5" />
+            {terminalNeedsReconnect ? t("reconnectTerminal") : null}
           </Button>
         </div>
       </div>
@@ -869,9 +915,17 @@ export function SandboxConsole({
             : "flex items-center justify-between gap-2 border-b border-border px-3 py-3"
         }
       >
-        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          <Folder className="size-4 text-muted-foreground" />
-          {t("files")}
+        <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground">
+          <Folder className="size-4 shrink-0 text-muted-foreground" />
+          <span className="shrink-0">{t("files")}</span>
+          <code
+            className="truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] font-normal text-muted-foreground"
+            title={t("uploadFilesTo", {
+              path: displayWorkspacePath(selectedDirectory, workspaceRoot),
+            })}
+          >
+            {displayWorkspacePath(selectedDirectory, workspaceRoot)}
+          </code>
         </div>
         <div className="flex items-center gap-1">
           <input
@@ -1004,28 +1058,97 @@ export function SandboxConsole({
   );
 
   const previewPanel = (
-    <FilePreviewDialog
-      open={previewOpen}
-      onOpenChange={setPreviewOpen}
-      name={selectedPath.split("/").pop() || selectedPath}
-      size={formatSize(selectedEntry?.size ?? null)}
-      load={loadPreview}
-      onDownload={() => downloadFile(selectedPath)}
-      error={fileError}
-      actions={
-        <Button
-          type="button"
-          onClick={() => void deleteFile(selectedPath)}
-          disabled={readOnly || !running || loadingPath !== null || uploading}
-          variant="ghost"
-          size="icon"
-          title={t("deleteFile")}
-          aria-label={t("deleteFile")}
+    <>
+      <FilePreviewDialog
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        name={selectedPath.split("/").pop() || selectedPath}
+        size={formatSize(selectedEntry?.size ?? null)}
+        load={loadPreview}
+        onDownload={() => downloadFile(selectedPath)}
+        error={fileError}
+        actions={
+          <Button
+            type="button"
+            onClick={() => deleteFile(selectedPath)}
+            disabled={readOnly || !running || loadingPath !== null || uploading}
+            variant="ghost"
+            size="icon"
+            title={t("deleteFile")}
+            aria-label={t("deleteFile")}
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        }
+      />
+      <CenterMorphModal
+        open={confirmState !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmState(null);
+        }}
+      >
+        <CenterMorphModalContent
+          ariaLabel={
+            confirmState?.type === "delete" ? t("deleteFile") : t("uploadFiles")
+          }
+          closeButtonLabel={common("close")}
+          className="max-w-md"
         >
-          <Trash2 className="size-4" />
-        </Button>
-      }
-    />
+          <DialogHeader
+            title={
+              confirmState?.type === "delete"
+                ? t("deleteFile")
+                : t("uploadFiles")
+            }
+            description={
+              confirmState?.type === "delete"
+                ? t("deleteThisFile")
+                : t("replaceExistingFiles")
+            }
+          />
+          <DialogFooter
+            cancel={
+              <DialogCancel
+                onClick={() => {
+                  if (
+                    confirmState?.type === "overwrite" &&
+                    uploadInputRef.current
+                  ) {
+                    uploadInputRef.current.value = "";
+                  }
+                  setConfirmState(null);
+                }}
+              />
+            }
+          >
+            <Button
+              type="button"
+              variant="primary"
+              size="md"
+              className={
+                confirmState?.type === "delete"
+                  ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  : undefined
+              }
+              onClick={() => {
+                const action = confirmState;
+                setConfirmState(null);
+                if (!action) return;
+                if (action.type === "delete") {
+                  void performDeleteFile(action.path);
+                } else {
+                  void performUploadFiles(action.files);
+                }
+              }}
+            >
+              {confirmState?.type === "delete"
+                ? common("delete")
+                : common("confirm")}
+            </Button>
+          </DialogFooter>
+        </CenterMorphModalContent>
+      </CenterMorphModal>
+    </>
   );
 
   if (terminalOnly && !readOnly) return terminalPanel;

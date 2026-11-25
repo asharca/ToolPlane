@@ -1,17 +1,21 @@
 "use client";
 
+import { useAgentUiLabels } from "../agent-ui-labels";
 import { z } from "zod";
 import { useTranslations } from "next-intl";
 import { createContext, useContext } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Wrench } from "lucide-react";
 import {
   ConversationActivity,
   ToolPayload,
   toolOutputText,
+  toolResultUnboundedHeight,
 } from "../ConversationMessage";
 import { ToolResult } from "@/components/agents/tool-result";
+import { displayToolName } from "@/lib/conversation/content-blocks";
+import { toolInputSummary } from "../ConversationContentBlocks";
 import { ConversationToolDiff } from "../ConversationToolDiff";
 import { ConversationToolOutput } from "../ConversationToolOutput";
 
@@ -116,6 +120,7 @@ export const SubagentActivitySchema = z.object({
 
 /** Child activities never become parent reasoning, answers or tool results. */
 export function SubagentActivity({ value }: { value: unknown }) {
+  const agentUi = useAgentUiLabels();
   const t = useTranslations("console.work");
   const parsed = SubagentActivitySchema.safeParse(value);
   if (!parsed.success) return null;
@@ -160,16 +165,11 @@ export function SubagentActivity({ value }: { value: unknown }) {
         />
       ) : (
         <ToolResult
-          tool={activity.toolName ?? t("nativeUi.childExecution")}
-          title={t(
-            activity.status === "running"
-              ? "toolRunning"
-              : activity.status === "cancelled"
-                ? "toolCancelled"
-                : failed
-                  ? "toolFailed"
-                  : "toolCompleted",
+          tool={toolInputSummary(activity.input)}
+          title={displayToolName(
+            activity.toolName ?? t("nativeUi.childExecution"),
           )}
+          icon={<Wrench className="size-4" />}
           status={
             activity.status === "running"
               ? "running"
@@ -180,6 +180,9 @@ export function SubagentActivity({ value }: { value: unknown }) {
                   : "success"
           }
           defaultOpen={activity.status === "running" || failed}
+          collapseOnComplete={false}
+          maxHeight={toolResultUnboundedHeight}
+          labels={agentUi.toolResult}
         >
           {activity.input !== undefined ? (
             <ToolPayload label={t("nativeUi.childExecution")} language="json">

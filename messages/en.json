@@ -127,92 +127,10 @@
     "themeLight": "Light",
     "themeDark": "Dark",
     "en": "EN",
-    "zh": "中"
-  },
-  "home": {
-    "openSourceEyebrow": "Open source. Open possibilities.",
-    "heroTitle": "Your AI.",
-    "heroAccent": "Connected.",
-    "heroDescription": "Bring tools, skills, and agents together. Discover what your AI can do — and give it a place to work.",
-    "openWorkspace": "Open workspace",
-    "exploreCatalog": "Explore the catalog",
-    "heroNote": "Browse without an account. Build on your own terms.",
-    "ecosystem": "The ecosystem",
-    "oneWorkspace": "One workspace. Every possibility.",
-    "connectTools": "Connect your tools and data.",
-    "teachSkills": "Give your AI a new capability.",
-    "agents": "AI Agents",
-    "launchAgents": "Turn capabilities into action.",
-    "discoveryEyebrow": "Discover / Connect / Create",
-    "discoveryTitle": "Find your next superpower.",
-    "catalogCount": "MCP servers. One place to start.",
-    "tabOfficial": "Official",
-    "tabFeatured": "Featured",
-    "tabPopular": "Popular",
-    "tabLatest": "Latest",
-    "viewResource": "Explore",
-    "emptyCollection": "Nothing here yet. Explore another collection or check back soon.",
-    "closingTitle": "Your tools. Your rules.",
-    "closingDescription": "Open source and self-hostable. Make ToolPlane your own.",
-    "viewSource": "View on GitHub",
-    "searchPlaceholder": "Search for MCP servers...",
-    "searchAriaLabel": "Search for MCP servers",
-    "allCategories": "All",
-    "officialServers": "Official MCP Servers",
-    "viewAllOfficialServers": "View all official servers",
-    "featuredServers": "Featured MCP Servers",
-    "viewAllFeaturedServers": "View all featured servers",
-    "topServers": "Top MCP Servers",
-    "viewLeaderboard": "View leaderboard",
-    "latestServers": "Latest MCP Servers",
-    "viewAllNewServers": "View all new servers",
-    "mcpClients": "MCP Clients",
-    "viewAllClients": "View all clients",
-    "topAgentSkills": "Top Agent Skills",
-    "viewAllSkills": "View all skills",
-    "whatAreAgentSkills": "What are Agent Skills?",
-    "servers": "Servers",
-    "frequentlyAskedQuestions": "Frequently Asked Questions",
-    "updatedJustNow": "Updated just now",
-    "headlineMcpServers": "MCP Servers",
-    "headlineAgentSkills": "Agent Skills",
-    "headlineMcpClients": "MCP Clients",
-    "headlineAgentTools": "Agent Tools",
-    "findTheBestMcpServersAgentSkillsMcpClientsAgentTools": "Find The Best MCP Servers - Agent Skills - MCP Clients - Agent Tools",
-    "findTheBest": "Find The Best",
-    "directoryOfAwesomeMcpServersAndClientsToConnectAiAgentsWithYourFavoriteTools": "Directory of awesome MCP servers and clients to connect AI agents with\n            your favorite tools.",
-    "faq1": {
-      "q": "What is MCP (Model Context Protocol)?",
-      "a": "MCP is an open protocol that standardizes how AI applications connect to external tools and data sources, letting models discover and call tools through a single consistent interface."
-    },
-    "faq2": {
-      "q": "How does MCP work?",
-      "a": "An MCP client inside an AI app connects to MCP servers over a transport such as stdio or streamable HTTP. Servers expose tools, resources, and prompts that the model can discover and invoke at runtime."
-    },
-    "faq3": {
-      "q": "What can MCP servers do?",
-      "a": "Servers expose capabilities like querying databases, calling APIs, reading files, browsing the web, or running domain-specific actions, turning external systems into tools an AI agent can use."
-    },
-    "faq4": {
-      "q": "Who uses MCP?",
-      "a": "Developers building AI agents and assistants, plus clients like Claude, Cursor, and other MCP-compatible tools that let users plug in servers to extend what their AI can do."
-    },
-    "faq5": {
-      "q": "How do I install an MCP server?",
-      "a": "Add the server to your client's MCP configuration with its command or URL and any required credentials. The client then launches or connects to it and exposes its tools to the model."
-    },
-    "faq6": {
-      "q": "Is MCP secure?",
-      "a": "Security depends on which servers you trust and the permissions you grant. Run only servers you trust, scope credentials narrowly, and review the tools a server exposes before connecting."
-    },
-    "faq7": {
-      "q": "What's the difference between MCP and regular APIs?",
-      "a": "A regular API is a bespoke integration per service. MCP is a standard layer on top, so any compliant client can discover and use any compliant server without custom glue code."
-    },
-    "faq8": {
-      "q": "Can I build my own MCP server?",
-      "a": "Yes. Using the official SDKs you can wrap any data source or tool as an MCP server, define its tools and resources, and connect it to any MCP-compatible client."
-    }
+    "zh": "中",
+    "saving": "Saving…",
+    "saved": "Saved",
+    "sections": "Sections"
   },
   "auth": {
     "loginTitle": "Welcome back",
@@ -280,14 +198,11 @@
   },
   "metadata": {
     "siteTitle": "ToolPlane | Self-hosted agent control plane",
-    "siteDescription": "Operate MCP runtimes, reusable skills, agents, toolkits, and observability from one self-hosted workspace.",
-    "sellSkillsToolplane": "Sell Skills | ToolPlane",
+    "siteDescription": "Operate MCP runtimes, GitHub-pinned Pi plugins, Pi SDK agents, persistent sandboxes, and observability from one self-hosted workspace.",
     "privacyToolplane": "Privacy | ToolPlane",
     "privacyDescription": "How a ToolPlane instance processes account, workspace, runtime, and observability data.",
-    "submitToolplane": "Submit | ToolPlane",
     "termsToolplane": "Terms | ToolPlane",
     "termsDescription": "Terms for accessing and operating a ToolPlane instance and its agent runtimes.",
-    "newsToolplane": "News | ToolPlane",
     "whatIsAnMcpServerToolplane": "What is an MCP Server? | ToolPlane"
   },
   "console": {
@@ -348,7 +263,14 @@
         "failure": "Failure",
         "suggestion": "Suggestion",
         "other": "Other"
-      }
+      },
+      "approved": "Approved",
+      "denied": "Denied",
+      "running": "Running",
+      "completed": "Completed",
+      "viewDetails": "View details",
+      "alwaysAllow": "Always allow",
+      "expiresIn": "Expires in {time}"
     },
     "liveOutput": {
       "truncated": "Live preview truncated. See the saved record for the full reply.",
@@ -1995,7 +1917,7 @@
           "replaceKey": "Replace remote key",
           "failed": "Remote operation failed. Refresh to verify the outcome before retrying; do not duplicate the submission.",
           "confirm": "Connecting verifies the Agent Card, enables the remote service and authorizes this Agent in one step. Tasks may send text and explicitly selected files to that service. Later access changes invalidate active grants. Continue?",
-          "workflow": "Connect once to enable the remote service and authorize this Agent. External calls also require External A2A & channel access; internal delegation only requires selecting sub-agents. Pi tasks use a2a_peers and a2a_call. A2A 1.0 JSON-RPC supports text and negotiated files, with received files available from the task tree."
+          "workflow": "Connect once to enable the remote service and authorize this Agent. External calls also require External A2A & channel access; internal delegation only requires selecting sub-agents. A2A 1.0 JSON-RPC supports text and negotiated files, with received files available from the task tree."
         },
         "phase_remote-waiting": "Waiting for remote Agent",
         "taskHistory": "Task message history",
@@ -2781,8 +2703,8 @@
       "noContainerLogsYet": "No container output is available yet.",
       "containerLogsFallbackNotice": "The container is no longer available; showing the runtime output captured before it exited.",
       "thisDeploymentIs": "This deployment is",
-      "startItToInspectAndRunItsTools": ". Start it to inspect and run its\n                  tools.",
-      "noRequestsLoggedYetRunAToolInTheToolsTabOrConnectAClientToSeeCallRecordsHere": "No requests logged yet. Run a tool in the Tools tab, or connect a\n                client, to see call records here.",
+      "startItToInspectAndRunItsTools": ". Start it to inspect and run its tools.",
+      "noRequestsLoggedYetRunAToolInTheToolsTabOrConnectAClientToSeeCallRecordsHere": "No requests logged yet. Run a tool in the Tools tab, or connect a client, to see call records here.",
       "toolsCount": "{count} tools",
       "catalog": "Catalog",
       "aboutThisMcp": "About this MCP",
@@ -3029,7 +2951,7 @@
       "previewingZip": "Inspecting ZIP…",
       "importSelectRoots": "Select skills to import",
       "importSourceChanged": "The source changed after preview. Preview it again before importing.",
-      "instructionsAndAssetsYourAgentLoadsOnDemandAuthorOrSyncFromGithub": "Instructions and assets your agent loads on demand. Author or sync\n            from GitHub.",
+      "instructionsAndAssetsYourAgentLoadsOnDemandAuthorOrSyncFromGithub": "Instructions and assets your agent loads on demand. Author or sync from GitHub.",
       "createRefineSync": "Create. Refine. Sync.",
       "skillsAddFocusedCapabilitiesToYourAgent": "Skills add focused capabilities to your agent.",
       "step": "Step",
@@ -4566,7 +4488,7 @@
       "save": "Save",
       "runsTheServerWith": "Runs the server with",
       "networkNone": "--network none",
-      "fullIsolationNoInternetLeaveOffForServersThatCallExternalApis": "— full\n            isolation, no internet. Leave off for servers that call external APIs.",
+      "fullIsolationNoInternetLeaveOffForServersThatCallExternalApis": "— full isolation, no internet. Leave off for servers that call external APIs.",
       "addVariable": "Add variable",
       "demoOnly": "Demo only",
       "copy": "Copy",
@@ -5028,12 +4950,35 @@
           "summary": "Ubuntu Noble base with a newer package baseline.",
           "bestFor": "Modern Ubuntu packages and testing"
         }
-      }
+      },
+      "statusUnknown": "Unknown"
     },
     "modelProviderNotice": {
       "title": "Add a model provider first",
       "description": "Assistants and Agents need a model before they can reply.",
       "action": "Add model provider"
+    },
+    "agentUi": {
+      "codeWriting": "Writing",
+      "codeReady": "Ready",
+      "approvalPending": "Input required",
+      "approvalSubmitting": "Submitting",
+      "approvalApproved": "Approved",
+      "approvalRejected": "Rejected",
+      "approvalChanges": "Changes requested",
+      "previousQuestion": "Previous question",
+      "nextQuestion": "Next question",
+      "tasksLabel": "Task list",
+      "tasksEmpty": "No tasks yet",
+      "tasksCompleted": "{completed} of {total} tasks completed",
+      "copyResult": "Copy result",
+      "runAgain": "Run again",
+      "messageLabel": "Message",
+      "goToMessage": "Go to {sender} message {index} of {total}",
+      "senderUser": "your",
+      "senderAssistant": "assistant",
+      "sendPrompt": "Send prompt",
+      "stopGenerating": "Stop generating"
     }
   },
   "privacy": {
@@ -5090,9 +5035,9 @@
   },
   "aboutMcp": {
     "whatIsMcp": "What is an MCP server?",
-    "anMcpModelContextProtocolServerIsASmallProgramThatExposesToolsDataAndPromptsToAiApplicationsThroughASingleStandardInterfaceInsteadOfBuildingACustomIntegrationForEveryServiceAnAiAppCanConnectToAnyMcpServerAndImmediatelyUseWhatItOffers": "An MCP (Model Context Protocol) server is a small program that exposes\n        tools, data, and prompts to AI applications through a single standard\n        interface. Instead of building a custom integration for every service,\n        an AI app can connect to any MCP server and immediately use what it\n        offers.",
-    "aClientInsideTheAiAppConnectsToTheServerOverATransportSuchAsStdioOrStreamableHttpTheServerAdvertisesItsCapabilitiesForExampleQueryingADatabaseCallingAnApiOrReadingFilesAndTheModelCanDiscoverAndInvokeThemAtRuntime": "A client inside the AI app connects to the server over a transport such\n        as stdio or streamable HTTP. The server advertises its capabilities —\n        for example querying a database, calling an API, or reading files — and\n        the model can discover and invoke them at runtime.",
-    "becauseTheProtocolIsStandardizedTheSameServerWorksAcrossAnyMcpcompatibleClientAndDevelopersCanExtendWhatTheirAiCanDoSimplyByAddingMoreServers": "Because the protocol is standardized, the same server works across any\n        MCP-compatible client, and developers can extend what their AI can do\n        simply by adding more servers."
+    "anMcpModelContextProtocolServerIsASmallProgramThatExposesToolsDataAndPromptsToAiApplicationsThroughASingleStandardInterfaceInsteadOfBuildingACustomIntegrationForEveryServiceAnAiAppCanConnectToAnyMcpServerAndImmediatelyUseWhatItOffers": "An MCP (Model Context Protocol) server is a small program that exposes tools, data, and prompts to AI applications through a single standard interface. Instead of building a custom integration for every service, an AI app can connect to any MCP server and immediately use what it offers.",
+    "aClientInsideTheAiAppConnectsToTheServerOverATransportSuchAsStdioOrStreamableHttpTheServerAdvertisesItsCapabilitiesForExampleQueryingADatabaseCallingAnApiOrReadingFilesAndTheModelCanDiscoverAndInvokeThemAtRuntime": "A client inside the AI app connects to the server over a transport such as stdio or streamable HTTP. The server advertises its capabilities — for example querying a database, calling an API, or reading files — and the model can discover and invoke them at runtime.",
+    "becauseTheProtocolIsStandardizedTheSameServerWorksAcrossAnyMcpcompatibleClientAndDevelopersCanExtendWhatTheirAiCanDoSimplyByAddingMoreServers": "Because the protocol is standardized, the same server works across any MCP-compatible client, and developers can extend what their AI can do simply by adding more servers."
   },
   "admin": {
     "adminNavPerformance": "Performance",

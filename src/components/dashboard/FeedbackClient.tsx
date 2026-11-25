@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useFormatter, useTranslations } from "next-intl";
 import { Flag, Info, Send } from "lucide-react";
 import { apiRequest } from "@/lib/client/api";
+import { displayErrorText } from "@/components/dashboard/display-error";
 import { notify } from "@/components/dashboard/Toaster";
 import {
   FEEDBACK_CATEGORIES,
@@ -11,9 +12,13 @@ import {
   type FeedbackStatus,
   type FeedbackSummaryItem,
 } from "@/lib/feedback/types";
+import {
+  AnimatedBadge,
+  type AnimatedBadgeStatus,
+} from "@/components/motion/animated-badge";
 import { Button } from "@/components/motion/button";
+import { Input } from "@/components/motion/input";
 import { FormSelect } from "@/components/ui/FormSelect";
-import { AdminBadge, type AdminBadgeTone } from "@/components/admin/AdminUI";
 
 type FeedbackPrefill = {
   category: FeedbackCategory;
@@ -24,7 +29,7 @@ type FeedbackPrefill = {
   agentId?: string;
 };
 
-function statusTone(status: FeedbackStatus): AdminBadgeTone {
+function statusTone(status: FeedbackStatus): AnimatedBadgeStatus {
   switch (status) {
     case "open":
       return "warning";
@@ -136,7 +141,7 @@ export function FeedbackClient({
       setBody("");
       await loadFeedback();
     } catch (error) {
-      notify(error instanceof Error ? error.message : t("submitFailed"), {
+      notify(displayErrorText(error, t("submitFailed")), {
         severity: "error",
       });
     } finally {
@@ -146,7 +151,7 @@ export function FeedbackClient({
 
   return (
     <div className="space-y-8">
-      <section className="rounded-2xl border border-border bg-card p-6 shadow-xs">
+      <section className="rounded-xl border border-border bg-card p-6">
         <div className="mb-5 space-y-1">
           <h2 className="text-base font-semibold text-foreground">
             {t("submitTitle")}
@@ -187,15 +192,15 @@ export function FeedbackClient({
               >
                 {t("titleLabel")}
               </label>
-              <input
+              <Input
                 id="feedback-title"
                 type="text"
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                onChange={setTitle}
                 maxLength={200}
                 required
                 placeholder={t("titlePlaceholder")}
-                className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-full"
               />
             </div>
           </div>
@@ -215,7 +220,7 @@ export function FeedbackClient({
               rows={5}
               required
               placeholder={t("bodyPlaceholder")}
-              className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
 
@@ -235,20 +240,19 @@ export function FeedbackClient({
                   <label htmlFor="snippet-count">
                     {t("snippetCountLabel")}
                   </label>
-                  <select
+                  <FormSelect
                     id="snippet-count"
-                    value={snippetMessageCount}
-                    onChange={(e) =>
-                      setSnippetMessageCount(Number(e.target.value))
+                    label={t("snippetCountLabel")}
+                    value={String(snippetMessageCount)}
+                    onValueChange={(value) =>
+                      setSnippetMessageCount(Number(value))
                     }
-                    className="rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground"
-                  >
-                    {[2, 4, 6, 8, 10].map((count) => (
-                      <option key={count} value={count}>
-                        {count}
-                      </option>
-                    ))}
-                  </select>
+                    className="w-20"
+                    options={[2, 4, 6, 8, 10].map((count) => ({
+                      value: String(count),
+                      label: String(count),
+                    }))}
+                  />
                 </div>
               ) : null}
             </div>
@@ -279,11 +283,11 @@ export function FeedbackClient({
         </div>
 
         {loading ? (
-          <div className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground">
+          <div className="rounded-xl border border-border bg-card p-6 text-sm text-muted-foreground">
             {t("loading")}
           </div>
         ) : items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-card/50 px-6 py-12 text-center">
+          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/50 px-6 py-12 text-center">
             <Flag className="mb-3 size-8 text-muted-foreground/60" />
             <p className="text-sm font-medium text-foreground">
               {t("emptyTitle")}
@@ -297,7 +301,7 @@ export function FeedbackClient({
             {items.map((item) => (
               <article
                 key={item.id}
-                className="rounded-2xl border border-border bg-card p-5 shadow-xs"
+                className="rounded-xl border border-border bg-card p-5"
               >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 space-y-1">
@@ -305,15 +309,19 @@ export function FeedbackClient({
                       {item.title}
                     </h3>
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      <AdminBadge tone={statusTone(item.status)} dot>
+                      <AnimatedBadge
+                        status={statusTone(item.status)}
+                        size="sm"
+                        showIcon
+                      >
                         {t(`statuses.${item.status}`)}
-                      </AdminBadge>
-                      <AdminBadge tone="neutral">
+                      </AnimatedBadge>
+                      <AnimatedBadge status="neutral" size="sm">
                         {t(`categories.${item.category}`)}
-                      </AdminBadge>
-                      <AdminBadge tone="neutral">
+                      </AnimatedBadge>
+                      <AnimatedBadge status="neutral" size="sm">
                         {t(`sources.${item.source}`)}
-                      </AdminBadge>
+                      </AnimatedBadge>
                       <span>
                         {format.dateTime(new Date(item.createdAt), {
                           year: "numeric",

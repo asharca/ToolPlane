@@ -81,6 +81,7 @@ export function DashboardSearchForm({
         aria-label={placeholder}
         leftIcon={<Search />}
         className={cx("w-full", width)}
+        classNames={{ field: "h-10", input: "text-sm" }}
       />
       <Button type="submit" variant="secondary">
         {submitLabel}
@@ -113,6 +114,7 @@ export function DashboardFilterInput({
       aria-label={placeholder}
       leftIcon={<Search />}
       className={cx("w-full", width)}
+      classNames={{ field: "h-10", input: "text-sm" }}
     />
   );
 }
@@ -134,7 +136,9 @@ export function DashboardSection({
         <h2 className="text-sm font-semibold">
           {title}
           {count !== undefined ? (
-            <span className="ml-2 text-muted-foreground">{count}</span>
+            <span className="ml-2 tabular-nums text-muted-foreground">
+              {count}
+            </span>
           ) : null}
         </h2>
         {actions}
@@ -164,11 +168,17 @@ export function DashboardPanel({
   return (
     <section
       className={cx(
-        "min-w-0 rounded-xl border border-border bg-card",
+        "min-w-0 rounded-xl border bg-card",
+        tone === "danger" ? "border-destructive/30" : "border-border",
         className,
       )}
     >
-      <header className="border-b border-border px-5 py-4">
+      <header
+        className={cx(
+          "border-b px-5 py-4",
+          tone === "danger" ? "border-destructive/20" : "border-border",
+        )}
+      >
         <h2
           className={cx(
             "text-sm font-semibold",

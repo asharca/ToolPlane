@@ -236,7 +236,7 @@ export function RuntimeFileDraftsInput({
                   }
                   disabled={disabled}
                   spellCheck={false}
-                  className="min-h-44 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="min-h-44 w-full resize-y rounded-lg bg-muted/35 p-3 font-mono text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </label>
             </div>

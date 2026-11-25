@@ -3,13 +3,14 @@ import { Input } from "@/components/motion/input";
 import { Button } from "@/components/motion/button";
 
 import { useActionState } from "react";
-import { HardDriveUpload, RotateCcw, Save } from "lucide-react";
+import { RotateCcw, Save } from "lucide-react";
 import { useTranslations } from "next-intl";
 import {
   updateAgentAttachmentLimitAction,
   type AdminSettingsActionState,
 } from "@/lib/admin/settings-actions";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { notify } from "@/components/dashboard/Toaster";
 import { AdminBadge, AdminPanel } from "@/components/admin/AdminUI";
 
 export function RuntimeSettingsForm({
@@ -29,7 +30,12 @@ export function RuntimeSettingsForm({
   const [state, action, isPending] = useActionState<
     AdminSettingsActionState,
     FormData
-  >(updateAgentAttachmentLimitAction, {});
+  >(async (prev, form) => {
+    const result = await updateAgentAttachmentLimitAction(prev, form);
+    if (result.error) notify(result.error, { severity: "error" });
+    else if (result.ok) notify(t("runtimeSettingsSaved"));
+    return result;
+  }, {});
   const megabytes = Math.max(1, Math.round(bytes / 1_000_000));
   const sourceLabel =
     source === "database"
@@ -54,20 +60,6 @@ export function RuntimeSettingsForm({
             {t("attachmentLimitCached")}
           </p>
         )}
-        <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/25 p-4">
-          <HardDriveUpload
-            className="mt-0.5 size-5 shrink-0 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <div className="min-w-0 text-sm">
-            <p className="font-medium text-foreground">
-              {t("attachmentStorageBehavior")}
-            </p>
-            <p className="mt-1 text-muted-foreground">
-              {t("attachmentStorageBehaviorDescription")}
-            </p>
-          </div>
-        </div>
 
         <div className="max-w-md space-y-1.5">
           <label
@@ -132,11 +124,6 @@ export function RuntimeSettingsForm({
         {state.error ? (
           <p className="text-sm text-destructive" role="alert">
             {state.error}
-          </p>
-        ) : null}
-        {state.ok ? (
-          <p className="text-sm text-accent-foreground" aria-live="polite">
-            {t("runtimeSettingsSaved")}
           </p>
         ) : null}
       </form>

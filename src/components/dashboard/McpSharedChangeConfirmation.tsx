@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
+import { FormCheckbox } from "@/components/ui/FormCheckbox";
 import {
   getMcpConnectionImpactAction,
   type McpConnectionImpact,
@@ -92,16 +93,12 @@ function Confirmation({
           </li>
         ))}
       </ul>
-      <label className="flex items-start gap-3 text-sm">
-        <input
-          type="checkbox"
-          required
-          checked={confirmed}
-          onChange={(event) => setConfirmed(event.target.checked)}
-          className="mt-1 size-4 shrink-0"
-        />
-        <span>{t("confirmSharedConnectionChange")}</span>
-      </label>
+      <FormCheckbox
+        required
+        checked={confirmed}
+        onCheckedChange={setConfirmed}
+        label={t("confirmSharedConnectionChange")}
+      />
       {confirmed ? (
         <input
           type="hidden"

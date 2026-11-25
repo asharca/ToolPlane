@@ -21,6 +21,7 @@ import {
   FileText,
   FileVideo,
   FolderOpen,
+  Search,
   Trash2,
 } from "lucide-react";
 import { Button, ButtonLink } from "@/components/motion/button";
@@ -28,6 +29,7 @@ import {
   CenterMorphModal,
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
+import { Input } from "@/components/motion/input";
 import { Loader } from "@/components/motion/loader";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { Tooltip } from "@/components/motion/tooltip";
@@ -324,13 +326,22 @@ export function WorkspaceFilesManager({
   }
 
   const files = page?.files ?? [];
+  const [searchQuery, setSearchQuery] = useState("");
+  const visibleFiles = files.filter((file) => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return true;
+    const sourceLabel = file.source.label ?? t(`sources.${file.source.type}`);
+    return `${file.name} ${sourceLabel} ${file.uploader?.name ?? ""}`
+      .toLowerCase()
+      .includes(q);
+  });
   const deletable = new Set(
-    files
+    visibleFiles
       .filter((file) => file.canDelete && !pendingIds.has(rowId(file)))
       .map((file) => rowId(file)),
   );
   const visibleSelection = selectedIds.filter((id) => deletable.has(id));
-  const selectable = files.some((file) => file.canDelete);
+  const selectable = visibleFiles.some((file) => file.canDelete);
   const compact = areaWidth > 0 && areaWidth < COMPACT_BELOW;
   const flexibleWidth = Math.max(
     160,
@@ -364,8 +375,9 @@ export function WorkspaceFilesManager({
   function row(file: WorkspaceFile) {
     const pending = pendingIds.has(rowId(file));
     const dim = pending ? "opacity-50" : undefined;
+    const sourceLabel = file.source.label ?? t(`sources.${file.source.type}`);
     const secondary = compact
-      ? `${formatBytes(file.size)} · ${date(file.createdAt)}`
+      ? `${formatBytes(file.size)} · ${sourceLabel} · ${date(file.createdAt)}`
       : file.uploader?.name
         ? t("uploadedBy", { name: file.uploader.name })
         : null;
@@ -530,26 +542,36 @@ export function WorkspaceFilesManager({
         )}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Tabs
-          variant="segment"
-          value={kind}
-          onValueChange={(value) => {
-            setKind(value as KindFilter);
-            setSelectedIds([]);
-          }}
-        >
-          <TabsList aria-label={t("kind")} className="bg-muted/60">
-            {(["all", "attachment", "a2a"] as const).map((value) => (
-              <TabsTrigger
-                key={value}
-                value={value}
-                className="px-3 py-1 text-xs"
-              >
-                {t(`kinds.${value}`)}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+        <div className="flex flex-wrap items-center gap-3">
+          <Input
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder={common("search")}
+            aria-label={common("search")}
+            leftIcon={<Search className="size-4" />}
+            className="w-full sm:w-64"
+          />
+          <Tabs
+            variant="segment"
+            value={kind}
+            onValueChange={(value) => {
+              setKind(value as KindFilter);
+              setSelectedIds([]);
+            }}
+          >
+            <TabsList aria-label={t("kind")} className="bg-muted/60">
+              {(["all", "attachment", "a2a"] as const).map((value) => (
+                <TabsTrigger
+                  key={value}
+                  value={value}
+                  className="px-3 py-1 text-xs"
+                >
+                  {t(`kinds.${value}`)}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        </div>
         <Tabs
           variant="segment"
           value={sort}
@@ -599,7 +621,7 @@ export function WorkspaceFilesManager({
             />
             <span role="status">{common("loading")}</span>
           </div>
-        ) : files.length === 0 ? (
+        ) : visibleFiles.length === 0 ? (
           <div className="rounded-xl border border-border bg-card">
             <DashboardEmptyState icon={FolderOpen} title={t("empty")} />
           </div>
@@ -623,7 +645,7 @@ export function WorkspaceFilesManager({
                 onClick={(event) => {
                   const selected = new Set(selectedRowIds);
                   openConfirm(
-                    files.filter((file) => selected.has(rowId(file))),
+                    visibleFiles.filter((file) => selected.has(rowId(file))),
                     event.currentTarget,
                   );
                 }}
@@ -646,7 +668,7 @@ export function WorkspaceFilesManager({
                     actionsHeader,
                   ]
             }
-            rows={files.map(row)}
+            rows={visibleFiles.map(row)}
           />
         )}
         {!loadError && page?.nextCursor ? (

@@ -40,7 +40,7 @@ export function SandboxWorkspace({
     <Tabs
       value={view}
       onValueChange={(next) => setView(next as View)}
-      className="flex h-[calc(100vh-13rem)] min-h-[34rem] flex-col overflow-hidden"
+      className="flex h-[calc(100dvh-13rem)] min-h-[34rem] flex-col overflow-hidden"
     >
       <nav aria-label={t("sandboxViews")} className="shrink-0">
         <TabsList>
@@ -62,12 +62,12 @@ export function SandboxWorkspace({
         aria-label={tabs.find((tab) => tab.id === view)?.label}
         className="min-h-0 flex-1 overflow-hidden"
       >
-        {view === "terminal" ? (
+        <div className={view === "terminal" ? "h-full" : "hidden h-full"}>
           <SandboxConsole {...consoleProps} terminalOnly compact />
-        ) : null}
-        {view === "files" ? (
+        </div>
+        <div className={view === "files" ? "h-full" : "hidden h-full"}>
           <SandboxConsole {...consoleProps} filesOnly compact />
-        ) : null}
+        </div>
         {view === "channels" ? (
           <AgentMessagingPanel
             slug={workspace}

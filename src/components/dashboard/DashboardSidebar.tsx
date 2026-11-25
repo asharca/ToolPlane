@@ -45,8 +45,8 @@ export function DashboardSidebar({
   const activeSegment = activePath.split("/")[0];
   const activeId = activePath.startsWith("settings/account")
     ? ""
-    : activeSegment === "work"
-      ? "agents"
+    : activeSegment === "agents"
+      ? "work"
       : activeSegment;
   const compact = !open && !isMobile;
   const [updateCount, setUpdateCount] = useState(0);
@@ -134,7 +134,16 @@ export function DashboardSidebar({
             id: WORKSPACE_NAV_GROUPS[0].id,
             title: t(WORKSPACE_NAV_GROUPS[0].labelKey),
             items: [
-              { id: "search", label: t("search"), icon: <Search /> },
+              {
+                id: "search",
+                label: t("search"),
+                icon: <Search />,
+                badge: (
+                  <kbd className="rounded border border-border bg-background/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                    ⌘K
+                  </kbd>
+                ),
+              },
               ...WORKSPACE_NAV_GROUPS[0].items.map(mapNavItem),
             ],
           },
@@ -158,22 +167,26 @@ export function DashboardSidebar({
                   activeId === FEEDBACK_NAV_ITEM.segment ? "page" : undefined
                 }
                 aria-label={compact ? t("feedback") : undefined}
-                className={`flex h-9 w-full items-center gap-[9px] overflow-hidden rounded-lg px-[9px] text-sm text-foreground transition-colors [&_svg]:size-[18px] ${
+                className={`flex h-9 w-full items-center gap-2 overflow-hidden rounded-lg px-2 text-sm text-foreground transition-colors [&_svg]:size-[18px] ${
                   activeId === FEEDBACK_NAV_ITEM.segment
                     ? "bg-foreground/[0.08] font-medium"
                     : "hover:bg-foreground/5"
                 }`}
               >
-                <FeedbackIcon
+                <span
                   aria-hidden="true"
-                  className="size-[18px] shrink-0"
-                />
+                  className="grid size-5 shrink-0 place-items-center"
+                >
+                  <FeedbackIcon className="size-[18px] shrink-0" />
+                </span>
                 <span className="truncate group-data-[state=collapsed]/sidebar:hidden">
                   {t("feedback")}
                 </span>
               </Link>
             </Tooltip>
-            <SystemUpdateButton canInstall={isAdmin} compact={compact} />
+            {isAdmin ? (
+              <SystemUpdateButton canInstall compact={compact} />
+            ) : null}
             <NotificationBell workspaceSlug={slug} compact={compact} />
             <WorkspaceSwitcher
               slug={slug}

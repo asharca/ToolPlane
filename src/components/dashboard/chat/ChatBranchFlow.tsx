@@ -5,7 +5,7 @@ import { Button } from "@/components/motion/button";
 import "@xyflow/react/dist/style.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useReducedMotion } from "motion/react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { graphlib, layout } from "@dagrejs/dagre";
 import {
   Background,
@@ -76,15 +76,16 @@ function statusClass(status: string, awaitingInput: boolean) {
 
 function BranchNode({ data }: NodeProps<BranchFlowNode>) {
   const t = useTranslations("console.chatAssistants");
+  const locale = useLocale();
   const date = new Date(data.createdAt);
   const time = Number.isNaN(date.getTime())
     ? ""
-    : date.toLocaleString([], {
+    : new Intl.DateTimeFormat(locale, {
         month: "2-digit",
         day: "2-digit",
         hour: "2-digit",
         minute: "2-digit",
-      });
+      }).format(date);
   const status = data.awaitingInput
     ? t("branchAwaitingInput")
     : data.status === "pending"
