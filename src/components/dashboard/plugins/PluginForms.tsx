@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
+import Link from "next/link";
 import { Plus } from "lucide-react";
 import { Button, type ButtonVariant } from "@/components/motion/button";
 import {
@@ -10,8 +11,21 @@ import {
   CenterMorphModalContent,
   CenterMorphModalTrigger,
 } from "@/components/motion/center-morph-modal";
-import { DialogBody, DialogHeader } from "@/components/dashboard/dialog";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/motion/collapsible";
+import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
+import { CopyButton } from "@/components/dashboard/CopyButton";
+import {
+  DialogBody,
+  DialogCancel,
+  DialogFooter,
+  DialogHeader,
+} from "@/components/dashboard/dialog";
 import { notify } from "@/components/dashboard/Toaster";
+import { FormCheckbox } from "@/components/ui/FormCheckbox";
 import { FormSelect } from "@/components/ui/FormSelect";
 import { pluginAction, type PluginActionState } from "@/lib/plugins/actions";
 import type { PluginBindingDeployment } from "@/lib/plugins/binding-deployments";
@@ -259,23 +273,19 @@ export function PluginEnvFields({
                   </p>
                 ) : null}
                 {allowClearKeys && configured ? (
-                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={markedClear}
-                      disabled={disabled}
-                      onChange={(event) => {
-                        const checked = event.target.checked;
-                        onChange({
-                          ...draft,
-                          clearKeys: checked
-                            ? [...draft.clearKeys, item.name]
-                            : draft.clearKeys.filter((k) => k !== item.name),
-                        });
-                      }}
-                    />
-                    {t("env.clearKey")}
-                  </label>
+                  <FormCheckbox
+                    checked={markedClear}
+                    disabled={disabled}
+                    onCheckedChange={(checked) => {
+                      onChange({
+                        ...draft,
+                        clearKeys: checked
+                          ? [...draft.clearKeys, item.name]
+                          : draft.clearKeys.filter((k) => k !== item.name),
+                      });
+                    }}
+                    label={t("env.clearKey")}
+                  />
                 ) : null}
               </div>
             );
@@ -316,6 +326,7 @@ export function PluginActionForm({
   onSuccess?: () => void;
 }) {
   const t = useTranslations("console.plugins");
+  const common = useTranslations("common");
   const resetAllowed = useRef(false);
   const [state, action, pending] = useActionState<PluginActionState, FormData>(
     async (previous, form) => {
@@ -340,25 +351,41 @@ export function PluginActionForm({
           event.stopPropagation();
         }
       }}
-      onSubmit={(event) => {
-        if (confirm && !window.confirm(t("confirmRemove")))
-          event.preventDefault();
-      }}
       className="space-y-3"
     >
       <input type="hidden" name="workspace" value={workspace} />
       <input type="hidden" name="operation" value={operation} />
       <input type="hidden" name="id" value={id ?? ""} />
       {children}
-      <Button
-        type="submit"
-        variant={variant}
-        className={destructive ? "text-destructive" : undefined}
-        size="sm"
-        disabled={pending}
-      >
-        {pending ? t("working") : label}
-      </Button>
+      {confirm ? (
+        <ConfirmSubmitButton
+          triggerLabel={pending ? t("working") : label}
+          triggerVariant={variant}
+          triggerSize="sm"
+          triggerClassName={destructive ? "text-destructive" : undefined}
+          confirmLabel={common("confirm")}
+          cancelLabel={common("cancel")}
+          prompt={t("confirmRemove")}
+          pendingLabel={t("working")}
+          disabled={pending}
+          confirmClassName={
+            destructive
+              ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              : undefined
+          }
+          promptClassName="text-xs text-muted-foreground"
+        />
+      ) : (
+        <Button
+          type="submit"
+          variant={variant}
+          className={destructive ? "text-destructive" : undefined}
+          size="sm"
+          disabled={pending}
+        >
+          {pending ? t("working") : label}
+        </Button>
+      )}
       <PluginResult state={state} />
     </form>
   );
@@ -510,6 +537,7 @@ export function pluginBindingState(
 
 /** One select per MCP requirement, offering only deployments that expose all its tools. */
 export function PluginMcpBindingFields({
+  workspace,
   requirements,
   deployments,
   bindings,
@@ -517,6 +545,7 @@ export function PluginMcpBindingFields({
   disabled,
   required = false,
 }: {
+  workspace?: string;
   requirements: PluginMcpRequirement[];
   deployments: PluginBindingDeployment[];
   bindings: PluginBindingDraft;
@@ -570,7 +599,20 @@ export function PluginMcpBindingFields({
               ]}
             />
             {!eligible.length ? (
-              <span className="text-destructive">{t("noMcp")}</span>
+              <span className="text-xs text-destructive">
+                {t("noMcp")}
+                {workspace ? (
+                  <>
+                    {" "}
+                    <Link
+                      href={`/app/${encodeURIComponent(workspace)}/mcp`}
+                      className="text-primary hover:underline"
+                    >
+                      MCP →
+                    </Link>
+                  </>
+                ) : null}
+              </span>
             ) : null}
           </div>
         );
@@ -661,11 +703,11 @@ export function PluginInstallForm({
             {t("upToDate", { version: install.version })}
           </p>
           {releases.length > 1 ? (
-            <details className="rounded-lg border border-border px-3 py-2">
-              <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
+            <Collapsible className="rounded-lg border border-border px-3 py-2">
+              <CollapsibleTrigger className="px-0 py-1 text-sm text-muted-foreground hover:text-foreground">
                 {t("switchVersion")}
-              </summary>
-              <div className="mt-3">
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-3">
                 <PluginReleaseForm
                   workspace={workspace}
                   operation="update"
@@ -678,8 +720,8 @@ export function PluginInstallForm({
                   customNonSecretValues={customNonSecretValues}
                   submitLabel={() => t("switchToVersion")}
                 />
-              </div>
-            </details>
+              </CollapsibleContent>
+            </Collapsible>
           ) : null}
         </>
       )}
@@ -810,6 +852,7 @@ function PluginReleaseForm({
       ) : null}
       {release.requirements.length ? (
         <PluginMcpBindingFields
+          workspace={workspace}
           requirements={release.requirements}
           deployments={deployments}
           bindings={bindings}
@@ -1030,6 +1073,7 @@ export function PluginSourceCreateDialog({ workspace }: { workspace: string }) {
             }}
           />
         </DialogBody>
+        <DialogFooter cancel={<DialogCancel />} />
       </CenterMorphModalContent>
     </CenterMorphModal>
   );
@@ -1048,17 +1092,21 @@ export function PluginWebhook({
   useEffect(() => {
     setOrigin(window.location.origin);
   }, []);
+  const fullUrl = `${origin}${path}`;
   return (
     <div className="space-y-3 text-sm">
-      <label className="grid gap-1">
-        {t("webhookUrl")}
-        <input
-          readOnly
-          className={pluginFieldClass}
-          value={`${origin}${path}`}
-          onFocus={(event) => event.currentTarget.select()}
-        />
-      </label>
+      <div className="flex items-end gap-2">
+        <label className="grid min-w-0 flex-1 gap-1">
+          {t("webhookUrl")}
+          <input
+            readOnly
+            className={pluginFieldClass}
+            value={fullUrl}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+        </label>
+        <CopyButton text={fullUrl} />
+      </div>
       <div className="flex items-end gap-2">
         <label className="grid min-w-0 flex-1 gap-1">
           {t("webhookSecret")}
@@ -1078,6 +1126,7 @@ export function PluginWebhook({
         >
           {t(shown ? "hide" : "show")}
         </Button>
+        <CopyButton text={secret} />
       </div>
     </div>
   );

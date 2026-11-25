@@ -5,11 +5,17 @@ import {
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
 import { Button } from "@/components/motion/button";
-import { DialogBody, DialogHeader } from "@/components/dashboard/dialog";
+import {
+  DialogBody,
+  DialogCancel,
+  DialogFooter,
+  DialogHeader,
+} from "@/components/dashboard/dialog";
+import { CopyButton } from "./CopyButton";
 
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { ArrowRight, ArrowLeft, Copy, Check } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
 type Client = {
   id: string;
@@ -151,46 +157,20 @@ export function ConnectDialog({
 }) {
   const t = useTranslations("console.common");
   const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<Client | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [selected, setSelected] = useState<Client>(CLIENTS[0]);
 
   const key =
     name
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "mcp";
-  const selectedLabel = selected
-    ? selected.labelKey
-      ? t(selected.labelKey)
-      : selected.label
-    : null;
-
-  function close() {
-    setOpen(false);
-    setSelected(null);
-    setCopied(false);
-  }
-
-  function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen) {
-      setOpen(true);
-    } else {
-      close();
-    }
-  }
-
-  async function copy(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // clipboard unavailable; ignore
-    }
-  }
+  const selectedLabel = selected.labelKey
+    ? t(selected.labelKey)
+    : selected.label;
+  const snippetText = selected.snippet(key, endpoint);
 
   return (
-    <CenterMorphModal open={open} onOpenChange={handleOpenChange}>
+    <CenterMorphModal open={open} onOpenChange={setOpen}>
       <CenterMorphModalTrigger>
         <Button
           type="button"
@@ -203,72 +183,53 @@ export function ConnectDialog({
       </CenterMorphModalTrigger>
 
       <CenterMorphModalContent
-        ariaLabel={selectedLabel ?? t("installServer")}
+        ariaLabel={t("installServer")}
         closeButtonLabel={t("close")}
-        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col"
+        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col"
       >
-        <DialogHeader title={selectedLabel ?? t("installServer")} />
+        <DialogHeader title={t("installServer")} />
         <DialogBody className="pt-0">
-          {selected ? (
-            <Button
-              type="button"
-              onClick={() => setSelected(null)}
-              variant="ghost"
-              size="md"
-              className="-ml-3 inline-flex items-center"
+          <div className="grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
+            <nav
+              aria-label={t("connectWith")}
+              className="flex flex-wrap gap-1.5 sm:flex-col sm:gap-1"
             >
-              <ArrowLeft className="size-3.5" />
-              {t("changeClient")}
-            </Button>
-          ) : null}
-          {selected ? (
-            <div className="space-y-3">
-              <p className="text-sm font-medium text-foreground">
-                {t("howToInstall")}
-              </p>
-              <p className="text-sm text-muted-foreground">
-                {t(selected.howToKey)}
-              </p>
-              <div className="relative">
-                <pre className="overflow-x-auto rounded-xl border border-border bg-muted/50 p-3 pr-12 font-mono text-xs text-foreground">
-                  {selected.snippet(key, endpoint)}
-                </pre>
-                <Button
-                  type="button"
-                  onClick={() => copy(selected.snippet(key, endpoint))}
-                  aria-label={t("copySnippet")}
-                  variant="secondary"
-                  size="icon"
-                  className="absolute right-2 top-2"
-                >
-                  {copied ? (
-                    <Check className="size-4" />
-                  ) : (
-                    <Copy className="size-4" />
-                  )}
-                </Button>
+              {CLIENTS.map((c) => {
+                const active = selected.id === c.id;
+                return (
+                  <Button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setSelected(c)}
+                    aria-pressed={active}
+                    variant={active ? "secondary" : "ghost"}
+                    size="sm"
+                    className="justify-start text-left"
+                  >
+                    {c.labelKey ? t(c.labelKey) : c.label}
+                  </Button>
+                );
+              })}
+            </nav>
+            <div className="min-w-0 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    {selectedLabel}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {t(selected.howToKey)}
+                  </p>
+                </div>
+                <CopyButton text={snippetText} label={t("copySnippet")} />
               </div>
+              <pre className="overflow-x-auto rounded-xl border border-border bg-muted/50 p-3 font-mono text-xs leading-5 text-foreground">
+                {snippetText}
+              </pre>
             </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {CLIENTS.map((c) => (
-                <Button
-                  key={c.id}
-                  type="button"
-                  onClick={() => {
-                    setSelected(c);
-                    setCopied(false);
-                  }}
-                  variant="secondary"
-                  size="md"
-                  className="text-left"
-                >
-                  {c.labelKey ? t(c.labelKey) : c.label}
-                </Button>
-              ))}
-            </div>
-          )}
+          </div>
         </DialogBody>
+        <DialogFooter cancel={<DialogCancel />} />
       </CenterMorphModalContent>
     </CenterMorphModal>
   );

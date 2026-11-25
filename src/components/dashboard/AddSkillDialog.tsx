@@ -1,11 +1,13 @@
 "use client";
 import { Input } from "@/components/motion/input";
 import { Button } from "@/components/motion/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import {
   CenterMorphModal,
   CenterMorphModalTrigger,
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
+import { FormCheckbox } from "@/components/ui/FormCheckbox";
 import {
   DialogBody,
   DialogCancel,
@@ -187,7 +189,7 @@ function GithubImportForm({ slug, cancel, onBack }: FormProps) {
       <DialogBody>
         <input type="hidden" name="workspace" value={slug} />
         <DialogField label={t("importFromGithub")} htmlFor={repoId}>
-          <input
+          <Input
             id={repoId}
             name="repo"
             required
@@ -198,7 +200,7 @@ function GithubImportForm({ slug, cancel, onBack }: FormProps) {
               setPreview(null);
               setSelectedRoots([]);
             }}
-            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            className="w-full"
           />
         </DialogField>
         <Button
@@ -239,35 +241,32 @@ function GithubImportForm({ slug, cancel, onBack }: FormProps) {
             {preview.preview.map((entry) => {
               const rootPath = entry.rootPath ?? "";
               return (
-                <label
+                <FormCheckbox
                   key={rootPath}
-                  className="flex items-start gap-2 text-sm"
-                >
-                  <input
-                    type="checkbox"
-                    name="roots"
-                    value={rootPath}
-                    checked={selectedRoots.includes(rootPath)}
-                    onChange={(event) =>
-                      setSelectedRoots((current) =>
-                        event.target.checked
-                          ? [...current, rootPath]
-                          : current.filter((root) => root !== rootPath),
-                      )
-                    }
-                  />
-                  <span>
-                    <span className="font-medium">{entry.name}</span>
-                    {entry.description ? (
+                  name="roots"
+                  value={rootPath}
+                  checked={selectedRoots.includes(rootPath)}
+                  onCheckedChange={(checked) =>
+                    setSelectedRoots((current) =>
+                      checked
+                        ? [...current, rootPath]
+                        : current.filter((root) => root !== rootPath),
+                    )
+                  }
+                  label={
+                    <span>
+                      <span className="font-medium">{entry.name}</span>
+                      {entry.description ? (
+                        <span className="block text-xs text-muted-foreground">
+                          {entry.description}
+                        </span>
+                      ) : null}
                       <span className="block text-xs text-muted-foreground">
-                        {entry.description}
+                        {entry.fileCount} {t("filesSelected")}
                       </span>
-                    ) : null}
-                    <span className="block text-xs text-muted-foreground">
-                      {entry.fileCount} {t("filesSelected")}
                     </span>
-                  </span>
-                </label>
+                  }
+                />
               );
             })}
           </fieldset>
@@ -391,6 +390,7 @@ function UploadSkillForm({
   const [zipPreview, setZipPreview] = useState<SkillActionState | null>(null);
   const [selectedZipRoots, setSelectedZipRoots] = useState<string[]>([]);
   const [previewPending, startPreview] = useTransition();
+  const [uploadTab, setUploadTab] = useState<"folder" | "zip">("folder");
   const previewZip = () => {
     const form = uploadForm.current;
     if (!form) return;
@@ -422,13 +422,13 @@ function UploadSkillForm({
     setFolder(emptySelection);
     setZipPreview(null);
     setSelectedZipRoots([]);
+    window.setTimeout(() => previewZip(), 0);
   }
-  function onPickFolder(e: React.ChangeEvent<HTMLInputElement>) {
+  function processFolderFiles(list: File[]) {
     previewRevision.current += 1;
     if (archiveInput.current) archiveInput.current.value = "";
     setZipPreview(null);
     setSelectedZipRoots([]);
-    const list = Array.from(e.target.files ?? []);
     const paths = list.map(
       (file) =>
         (file as File & { webkitRelativePath?: string }).webkitRelativePath ||
@@ -449,6 +449,9 @@ function UploadSkillForm({
     }
     setFolder({ paths, skillRoots, count: list.length, bytes, error });
   }
+  function onPickFolder(e: React.ChangeEvent<HTMLInputElement>) {
+    processFolderFiles(Array.from(e.target.files ?? []));
+  }
 
   const displayedSkillRoots = displaySkillRoots(folder.skillRoots);
   const multipleRoots =
@@ -462,89 +465,111 @@ function UploadSkillForm({
     >
       <DialogBody>
         <input type="hidden" name="workspace" value={slug} />
-        <DialogField label={t("zipArchive")} htmlFor={archiveId}>
-          <input
-            id={archiveId}
-            ref={archiveInput}
-            name="archive"
-            type="file"
-            accept=".zip,application/zip"
-            disabled={isPending || previewPending}
-            onChange={onPickZip}
-            className="block w-full text-sm"
-          />
-        </DialogField>
-        <Button
-          type="button"
-          variant="secondary"
-          size="md"
-          disabled={isPending || previewPending}
-          onClick={previewZip}
-        >
-          {previewPending ? t("previewingZip") : t("previewZip")}
-        </Button>
-        {zipPreview?.error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {zipPreview.error}
-          </p>
-        ) : null}
-        {zipPreview?.preview ? (
-          <fieldset
-            data-dirty={
-              selectedZipRoots.length !== zipPreview.preview.length
-                ? "true"
-                : undefined
+        <Tabs
+          value={uploadTab}
+          onValueChange={(next) => {
+            const tab = next as "folder" | "zip";
+            setUploadTab(tab);
+            if (tab === "folder") {
+              if (archiveInput.current) archiveInput.current.value = "";
+              setZipPreview(null);
+              setSelectedZipRoots([]);
+            } else {
+              if (folderInput.current) folderInput.current.value = "";
+              setFolder(emptySelection);
             }
-            className={rootsFieldsetClass}
-          >
-            <legend className="flex items-center gap-2 text-sm font-medium">
-              {t("importSelectRoots")}
-              {selectedZipRoots.length !== zipPreview.preview.length ? (
-                <ModifiedBadge />
-              ) : null}
-            </legend>
-            <input type="hidden" name="selectionMode" value="explicit" />
+          }}
+          variant="segment"
+        >
+          <TabsList>
+            <TabsTrigger value="folder">{t("uploadAFolder")}</TabsTrigger>
+            <TabsTrigger value="zip">{t("zipArchive")}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        <div className={uploadTab === "zip" ? "space-y-4" : "hidden"}>
+          <DialogField label={t("zipArchive")} htmlFor={archiveId}>
             <input
-              type="hidden"
-              name="sourceDigest"
-              value={zipPreview.sourceDigest ?? ""}
+              id={archiveId}
+              ref={archiveInput}
+              name="archive"
+              type="file"
+              accept=".zip,application/zip"
+              disabled={isPending || previewPending}
+              onChange={onPickZip}
+              className="block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-foreground hover:file:bg-muted/80"
             />
-            {zipPreview.preview.map((entry) => {
-              const rootPath = entry.rootPath ?? "";
-              return (
-                <label
-                  key={rootPath}
-                  className="flex items-start gap-2 text-sm"
-                >
-                  <input
-                    type="checkbox"
+          </DialogField>
+          <Button
+            type="button"
+            variant="secondary"
+            size="md"
+            disabled={isPending || previewPending}
+            onClick={previewZip}
+          >
+            {previewPending ? t("previewingZip") : t("previewZip")}
+          </Button>
+          {zipPreview?.error ? (
+            <p role="alert" className="text-sm text-destructive">
+              {zipPreview.error}
+            </p>
+          ) : null}
+          {zipPreview?.preview ? (
+            <fieldset
+              data-dirty={
+                selectedZipRoots.length !== zipPreview.preview.length
+                  ? "true"
+                  : undefined
+              }
+              className={rootsFieldsetClass}
+            >
+              <legend className="flex items-center gap-2 text-sm font-medium">
+                {t("importSelectRoots")}
+                {selectedZipRoots.length !== zipPreview.preview.length ? (
+                  <ModifiedBadge />
+                ) : null}
+              </legend>
+              <input type="hidden" name="selectionMode" value="explicit" />
+              <input
+                type="hidden"
+                name="sourceDigest"
+                value={zipPreview.sourceDigest ?? ""}
+              />
+              {zipPreview.preview.map((entry) => {
+                const rootPath = entry.rootPath ?? "";
+                return (
+                  <FormCheckbox
+                    key={rootPath}
                     name="roots"
                     value={rootPath}
                     checked={selectedZipRoots.includes(rootPath)}
-                    onChange={(event) =>
+                    onCheckedChange={(checked) =>
                       setSelectedZipRoots((current) =>
-                        event.target.checked
+                        checked
                           ? [...current, rootPath]
                           : current.filter((root) => root !== rootPath),
                       )
                     }
-                  />
-                  <span>
-                    <span className="font-medium">{entry.name}</span>
-                    {entry.description ? (
-                      <span className="block text-xs text-muted-foreground">
-                        {entry.description}
+                    label={
+                      <span>
+                        <span className="font-medium">{entry.name}</span>
+                        {entry.description ? (
+                          <span className="block text-xs text-muted-foreground">
+                            {entry.description}
+                          </span>
+                        ) : null}
+                        <span className="block text-xs text-muted-foreground">
+                          {entry.fileCount} {t("filesSelected")}
+                        </span>
                       </span>
-                    ) : null}
-                    <span className="block text-xs text-muted-foreground">
-                      {entry.fileCount} {t("filesSelected")}
-                    </span>
-                  </span>
-                </label>
-              );
-            })}
-          </fieldset>
-        ) : null}
+                    }
+                  />
+                );
+              })}
+            </fieldset>
+          ) : null}
+        </div>
+
         <input
           type="hidden"
           name="filePaths"
@@ -567,70 +592,100 @@ function UploadSkillForm({
             className="w-full"
           />
         </DialogField>
-        <label
-          data-dirty={folder.count > 0 ? "true" : undefined}
-          className="relative flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/50 px-4 py-5 text-center transition-colors hover:bg-muted data-[dirty=true]:border-primary/60 data-[dirty=true]:ring-1 data-[dirty=true]:ring-primary/50"
-        >
-          {folder.count > 0 ? (
-            <span className="absolute right-2 top-2">
-              <ModifiedBadge />
-            </span>
-          ) : null}
-          <Upload className="size-5 text-muted-foreground" />
-          <span className="text-sm font-medium text-foreground">
-            {t("uploadAFolder")}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            {t("dragInASkillFolder")}
-          </span>
-          <input
-            {...directoryInputProps}
-            ref={folderInput}
-            name="folderFiles"
-            type="file"
-            disabled={isPending || previewPending}
-            multiple
-            onChange={onPickFolder}
-            className="sr-only"
-          />
-        </label>
-        <p
-          className={`text-xs ${folder.error ? "text-destructive dark:text-destructive" : "text-muted-foreground"}`}
-        >
-          {folder.error ??
-            `${folder.count} ${t("filesSelected")} · ${formatBytes(folder.bytes)}`}
-        </p>
-        {folder.paths.length ? (
-          <div className="max-h-64 overflow-auto rounded-lg border border-border p-2">
-            <FilePathTree
-              files={folder.paths.map((path) => ({ path, value: path }))}
-              ariaLabel={t("bundleFiles")}
-              disabled={isPending}
-            />
-          </div>
-        ) : null}
-        {displayedSkillRoots.length > 0 ? (
-          <div className="rounded-lg border border-border bg-muted/50 p-3">
-            <p className="text-xs font-medium text-foreground">
-              {t("willImportSkills", { count: displayedSkillRoots.length })}
-            </p>
-            <ul className="mt-2 max-h-36 space-y-1 overflow-auto">
-              {displayedSkillRoots.slice(0, 8).map((root) => (
-                <li
-                  key={root}
-                  className="truncate font-mono text-xs text-muted-foreground"
-                >
-                  {root}
-                </li>
-              ))}
-            </ul>
-            {displayedSkillRoots.length > 8 ? (
-              <p className="mt-2 text-xs text-muted-foreground">
-                {t("moreSkills", { count: displayedSkillRoots.length - 8 })}
-              </p>
+        <div className={uploadTab === "folder" ? "space-y-4" : "hidden"}>
+          <label
+            data-dirty={folder.count > 0 ? "true" : undefined}
+            onDragOver={(event) => {
+              event.preventDefault();
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              if (isPending || previewPending) return;
+              const dropped = Array.from(event.dataTransfer.files ?? []);
+              if (dropped.length === 0) return;
+              if (
+                dropped.length === 1 &&
+                dropped[0].name.toLowerCase().endsWith(".zip")
+              ) {
+                if (archiveInput.current) {
+                  const dt = new DataTransfer();
+                  dt.items.add(dropped[0]);
+                  archiveInput.current.files = dt.files;
+                }
+                setUploadTab("zip");
+                onPickZip();
+                return;
+              }
+              if (folderInput.current) {
+                const dt = new DataTransfer();
+                for (const file of dropped) dt.items.add(file);
+                folderInput.current.files = dt.files;
+              }
+              processFolderFiles(dropped);
+            }}
+            className="relative flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/50 px-4 py-5 text-center transition-colors hover:bg-muted data-[dirty=true]:border-primary/60 data-[dirty=true]:ring-1 data-[dirty=true]:ring-primary/50"
+          >
+            {folder.count > 0 ? (
+              <span className="absolute right-2 top-2">
+                <ModifiedBadge />
+              </span>
             ) : null}
-          </div>
-        ) : null}
+            <Upload className="size-5 text-muted-foreground" />
+            <span className="text-sm font-medium text-foreground">
+              {t("uploadAFolder")}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {t("dragInASkillFolder")}
+            </span>
+            <input
+              {...directoryInputProps}
+              ref={folderInput}
+              name="folderFiles"
+              type="file"
+              disabled={isPending || previewPending}
+              multiple
+              onChange={onPickFolder}
+              className="sr-only"
+            />
+          </label>
+          <p
+            className={`text-xs ${folder.error ? "text-destructive dark:text-destructive" : "text-muted-foreground"}`}
+          >
+            {folder.error ??
+              `${folder.count} ${t("filesSelected")} · ${formatBytes(folder.bytes)}`}
+          </p>
+          {folder.paths.length ? (
+            <div className="max-h-64 overflow-auto rounded-lg border border-border p-2">
+              <FilePathTree
+                files={folder.paths.map((path) => ({ path, value: path }))}
+                ariaLabel={t("bundleFiles")}
+                disabled={isPending}
+              />
+            </div>
+          ) : null}
+          {displayedSkillRoots.length > 0 ? (
+            <div className="rounded-lg border border-border bg-muted/50 p-3">
+              <p className="text-xs font-medium text-foreground">
+                {t("willImportSkills", { count: displayedSkillRoots.length })}
+              </p>
+              <ul className="mt-2 max-h-36 space-y-1 overflow-auto">
+                {displayedSkillRoots.slice(0, 8).map((root) => (
+                  <li
+                    key={root}
+                    className="truncate font-mono text-xs text-muted-foreground"
+                  >
+                    {root}
+                  </li>
+                ))}
+              </ul>
+              {displayedSkillRoots.length > 8 ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t("moreSkills", { count: displayedSkillRoots.length - 8 })}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
         {state.error ? (
           <p role="alert" className="text-sm text-destructive">
             {state.error}

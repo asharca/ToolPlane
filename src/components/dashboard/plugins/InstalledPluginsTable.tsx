@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Button, ButtonLink } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
+import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import {
   Popover,
   PopoverContent,
@@ -263,26 +264,24 @@ export function InstalledPluginsTable({
     <>
       {toolbar}
       <div className="flex flex-wrap items-center gap-3">
-        <fieldset
-          aria-label={t("installed.filterLabel")}
-          className="flex flex-wrap items-center gap-1 rounded-lg border border-border p-1"
+        <Tabs
+          value={activeFilter}
+          onValueChange={(next) => setFilter(next as InstalledPluginFilter)}
+          variant="segment"
         >
-          {filters.map((item) => (
-            <Button
-              key={item.key}
-              type="button"
-              variant={activeFilter === item.key ? "secondary" : "ghost"}
-              size="sm"
-              aria-pressed={activeFilter === item.key}
-              onClick={() => setFilter(item.key)}
-            >
-              {item.label}
-              <span className="text-xs text-muted-foreground tabular-nums">
-                {item.count}
-              </span>
-            </Button>
-          ))}
-        </fieldset>
+          <TabsList aria-label={t("installed.filterLabel")}>
+            {filters.map((item) => (
+              <TabsTrigger key={item.key} value={item.key}>
+                <span className="inline-flex items-center gap-1.5">
+                  {item.label}
+                  <span className="text-xs opacity-75 tabular-nums">
+                    {item.count}
+                  </span>
+                </span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
         <Input
           ref={searchInputRef}
           value={query}
@@ -291,14 +290,23 @@ export function InstalledPluginsTable({
           aria-label={t("searchPlaceholder")}
           leftIcon={<Search className="size-4" />}
           rightIcon={
-            !query ? (
+            query ? (
+              <button
+                type="button"
+                aria-label={common("close")}
+                onClick={() => setQuery("")}
+                className="mr-2 inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X className="size-3.5" />
+              </button>
+            ) : (
               <span
                 aria-hidden="true"
                 className="pointer-events-none mr-3 hidden h-5 items-center rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex"
               >
                 /
               </span>
-            ) : undefined
+            )
           }
           className="w-full sm:w-72"
         />
@@ -384,331 +392,398 @@ export function InstalledPluginsTable({
       ) : (
         <fieldset disabled={pending} aria-busy={pending} className="min-w-0">
           <legend className="sr-only">{t("installed.title")}</legend>
-          <DashboardTable
-            ariaLabel={t("installed.title")}
-            minWidth="58rem"
-            adjustableColumns={false}
-            selectable={canManage}
-            selectedRowIds={canManage ? selection : undefined}
-            onSelectionChange={
-              canManage
-                ? (ids) => {
-                    if (!pending) setSelectedIds(ids);
-                  }
-                : undefined
-            }
-            selectionActions={
-              canManage
-                ? ({ selectedRowIds }) => {
-                    const updateIds = selectedRowIds.filter(
-                      (id) => byId.get(id)?.updateAvailable,
-                    );
-                    const agents = selectedRowIds.reduce(
-                      (total, id) => total + (byId.get(id)?.agents ?? 0),
-                      0,
-                    );
-                    return (
-                      <>
-                        <form
-                          action={async () => {
-                            await run("update", updateIds);
-                          }}
-                        >
-                          <ConfirmSubmitButton
-                            triggerLabel={
-                              <>
-                                <ArrowUpCircle className="size-3.5" />
-                                {t("installed.updateSelected", {
-                                  count: updateIds.length,
-                                })}
-                              </>
-                            }
-                            confirmLabel={common("confirm")}
-                            cancelLabel={common("cancel")}
-                            prompt={t("installed.updatePrompt", {
-                              count: updateIds.length,
-                            })}
-                            pendingLabel={t("working")}
-                            disabled={pending || updateIds.length === 0}
-                            triggerSize="sm"
-                            promptClassName="text-xs text-muted-foreground"
-                          />
-                        </form>
-                        <form
-                          action={async () => {
-                            await run("remove", selectedRowIds);
-                          }}
-                        >
-                          <ConfirmSubmitButton
-                            triggerLabel={
-                              <>
-                                <Trash2 className="size-3.5" />
-                                {t("installed.removeSelected", {
-                                  count: selectedRowIds.length,
-                                })}
-                              </>
-                            }
-                            confirmLabel={common("confirm")}
-                            cancelLabel={common("cancel")}
-                            prompt={t("installed.removePrompt", {
-                              count: selectedRowIds.length,
-                              agents,
-                            })}
-                            pendingLabel={t("working")}
-                            disabled={pending}
-                            triggerSize="sm"
-                            promptClassName="text-xs text-muted-foreground"
-                          />
-                        </form>
-                      </>
-                    );
-                  }
-                : undefined
-            }
-            headers={[
-              { label: t("installed.plugin") },
-              { label: t("version"), width: "9rem" },
-              { label: t("contents"), width: "9.5rem" },
-              {
-                label: t("installed.agents"),
-                align: "right",
-                width: "4.75rem",
-              },
-              { label: t("installed.addedAt"), width: "7.75rem" },
-              ...(canManage
-                ? [
-                    {
-                      label: t("installed.actions"),
-                      align: "right" as const,
-                      width: "8.5rem",
-                    },
-                  ]
-                : []),
-            ]}
-            rows={visible.map((plugin) => {
-              const published = plugin.status === "published";
+          <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card md:hidden">
+            {visible.map((plugin) => {
               const detail = detailHref(plugin.listingId);
               const versionLabel = `v${plugin.currentVersion}${
                 plugin.updateAvailable && plugin.latestVersion
                   ? ` → v${plugin.latestVersion}`
                   : ""
               }`;
-              return {
-                id: plugin.installId,
-                cells: [
-                  <div
-                    key="plugin"
-                    className="flex min-w-0 items-center gap-3 py-2 whitespace-normal"
-                  >
-                    <Puzzle className="size-5 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0 flex-1">
-                      <Link
-                        href={detail}
-                        title={plugin.name}
-                        className="block truncate font-medium hover:underline"
-                      >
-                        {plugin.name}
-                      </Link>
-                      <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
-                        <span className="truncate text-xs text-muted-foreground">
-                          {plugin.source}
+              return (
+                <li key={plugin.installId} className="space-y-2.5 p-3.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <Puzzle className="size-4 shrink-0 text-muted-foreground" />
+                      <div className="min-w-0">
+                        <Link
+                          href={detail}
+                          className="block truncate font-medium hover:underline"
+                        >
+                          {plugin.name}
+                        </Link>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {plugin.source} · {plugin.addedAt}
                         </span>
-                        {!published ? (
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
-                            <CircleSlash className="size-3" />
-                            {t(
-                              plugin.status === "withdrawn"
-                                ? "withdrawn"
-                                : "removed",
-                            )}
-                          </span>
-                        ) : plugin.updateAvailable ? (
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] leading-none text-primary">
-                            <ArrowUpCircle className="size-3" />
-                            {t("updateAvailable")}
-                          </span>
-                        ) : null}
-                        {plugin.omp ? (
-                          <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[11px] leading-none text-amber-700 dark:text-amber-400">
-                            {t("ompRetired")}
-                          </span>
-                        ) : null}
-                        {plugin.envStatus.requiresEnv ? (
-                          plugin.envStatus.complete ? (
-                            <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
-                              {t(
-                                plugin.envStatus.mode === "platform_preset"
-                                  ? "env.platformPreset"
-                                  : "env.custom",
-                              )}
-                            </span>
-                          ) : (
-                            <span className="shrink-0 rounded-full bg-destructive/10 px-1.5 py-0.5 text-[11px] leading-none text-destructive">
-                              {t("env.incomplete")}
-                            </span>
-                          )
-                        ) : null}
                       </div>
-                      {plugin.envStatus.requiresEnv &&
-                      !plugin.envStatus.complete &&
-                      plugin.envStatus.missingRequiredKeys.length ? (
-                        <span className="mt-1 block break-all font-mono text-xs text-destructive">
-                          {t("env.missingKeys", {
-                            keys: plugin.envStatus.missingRequiredKeys.join(
-                              ", ",
-                            ),
-                          })}{" "}
-                          <Link
-                            href={detailHref(
-                              plugin.listingId,
-                              "#plugin-install",
-                            )}
-                            className="font-sans text-primary hover:underline"
-                          >
-                            {t("env.configureAction")}
-                          </Link>
-                        </span>
-                      ) : null}
                     </div>
-                  </div>,
-                  <span
-                    key="version"
-                    title={versionLabel}
-                    className="block truncate font-mono text-xs"
-                  >
-                    {versionLabel}
-                  </span>,
-                  plugin.contents.length || plugin.mcp ? (
-                    <span
-                      key="contents"
-                      className="flex flex-wrap gap-1 py-1 whitespace-normal text-xs"
-                    >
+                    <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                      {versionLabel}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap gap-1 text-xs">
                       {plugin.contents.map(({ kind, count }) => (
                         <span
                           key={kind}
-                          className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-muted-foreground"
+                          className="rounded-md bg-muted px-2 py-0.5 text-muted-foreground"
                         >
                           {t(kind)} {count}
                         </span>
                       ))}
                       {plugin.mcp ? (
-                        <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-muted-foreground">
+                        <span className="rounded-md bg-muted px-2 py-0.5 text-muted-foreground">
                           MCP {plugin.mcp}
                         </span>
                       ) : null}
-                    </span>
-                  ) : (
-                    <span key="contents" className="text-muted-foreground">
-                      —
-                    </span>
-                  ),
-                  <span
-                    key="agents"
-                    className={
-                      plugin.agents
-                        ? "tabular-nums"
-                        : "tabular-nums text-muted-foreground"
+                    </div>
+                    {canManage && plugin.updateAvailable ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={pending}
+                        onClick={() =>
+                          startRefresh(async () => {
+                            await run("update", [plugin.installId]);
+                          })
+                        }
+                      >
+                        {t("update")}
+                      </Button>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="hidden md:block">
+            <DashboardTable
+              ariaLabel={t("installed.title")}
+              minWidth="58rem"
+              adjustableColumns={false}
+              selectable={canManage}
+              selectedRowIds={canManage ? selection : undefined}
+              onSelectionChange={
+                canManage
+                  ? (ids) => {
+                      if (!pending) setSelectedIds(ids);
                     }
-                  >
-                    {plugin.agents || "—"}
-                  </span>,
-                  <span key="added" className="text-xs text-muted-foreground">
-                    {plugin.addedAt}
-                  </span>,
-                  ...(canManage
-                    ? [
-                        <div
-                          key="actions"
-                          className="flex items-center justify-end gap-1"
-                        >
-                          {plugin.updateAvailable ? (
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              size="sm"
-                              disabled={pending}
-                              aria-label={`${t("update")}: ${plugin.name}`}
-                              onClick={() =>
-                                startRefresh(async () => {
-                                  await run("update", [plugin.installId]);
-                                })
+                  : undefined
+              }
+              selectionActions={
+                canManage
+                  ? ({ selectedRowIds }) => {
+                      const updateIds = selectedRowIds.filter(
+                        (id) => byId.get(id)?.updateAvailable,
+                      );
+                      const agents = selectedRowIds.reduce(
+                        (total, id) => total + (byId.get(id)?.agents ?? 0),
+                        0,
+                      );
+                      return (
+                        <>
+                          <form
+                            action={async () => {
+                              await run("update", updateIds);
+                            }}
+                          >
+                            <ConfirmSubmitButton
+                              triggerLabel={
+                                <>
+                                  <ArrowUpCircle className="size-3.5" />
+                                  {t("installed.updateSelected", {
+                                    count: updateIds.length,
+                                  })}
+                                </>
                               }
-                            >
-                              {t("update")}
-                            </Button>
+                              confirmLabel={common("confirm")}
+                              cancelLabel={common("cancel")}
+                              prompt={t("installed.updatePrompt", {
+                                count: updateIds.length,
+                              })}
+                              pendingLabel={t("working")}
+                              disabled={pending || updateIds.length === 0}
+                              triggerSize="sm"
+                              promptClassName="text-xs text-muted-foreground"
+                            />
+                          </form>
+                          <form
+                            action={async () => {
+                              await run("remove", selectedRowIds);
+                            }}
+                          >
+                            <ConfirmSubmitButton
+                              triggerLabel={
+                                <>
+                                  <Trash2 className="size-3.5" />
+                                  {t("installed.removeSelected", {
+                                    count: selectedRowIds.length,
+                                  })}
+                                </>
+                              }
+                              confirmLabel={common("confirm")}
+                              cancelLabel={common("cancel")}
+                              prompt={t("installed.removePrompt", {
+                                count: selectedRowIds.length,
+                                agents,
+                              })}
+                              pendingLabel={t("working")}
+                              disabled={pending}
+                              triggerSize="sm"
+                              promptClassName="text-xs text-muted-foreground"
+                            />
+                          </form>
+                        </>
+                      );
+                    }
+                  : undefined
+              }
+              headers={[
+                { label: t("installed.plugin") },
+                { label: t("version"), width: "9rem" },
+                { label: t("contents"), width: "9.5rem" },
+                {
+                  label: t("installed.agents"),
+                  align: "right",
+                  width: "4.75rem",
+                },
+                { label: t("installed.addedAt"), width: "7.75rem" },
+                ...(canManage
+                  ? [
+                      {
+                        label: t("installed.actions"),
+                        align: "right" as const,
+                        width: "8.5rem",
+                      },
+                    ]
+                  : []),
+              ]}
+              rows={visible.map((plugin) => {
+                const published = plugin.status === "published";
+                const detail = detailHref(plugin.listingId);
+                const versionLabel = `v${plugin.currentVersion}${
+                  plugin.updateAvailable && plugin.latestVersion
+                    ? ` → v${plugin.latestVersion}`
+                    : ""
+                }`;
+                return {
+                  id: plugin.installId,
+                  cells: [
+                    <div
+                      key="plugin"
+                      className="flex min-w-0 items-center gap-3 py-2 whitespace-normal"
+                    >
+                      <Puzzle className="size-5 shrink-0 text-muted-foreground" />
+                      <div className="min-w-0 flex-1">
+                        <Link
+                          href={detail}
+                          title={plugin.name}
+                          className="block truncate font-medium hover:underline"
+                        >
+                          {plugin.name}
+                        </Link>
+                        <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+                          <span className="truncate text-xs text-muted-foreground">
+                            {plugin.source}
+                          </span>
+                          {!published ? (
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
+                              <CircleSlash className="size-3" />
+                              {t(
+                                plugin.status === "withdrawn"
+                                  ? "withdrawn"
+                                  : "removed",
+                              )}
+                            </span>
+                          ) : plugin.updateAvailable ? (
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] leading-none text-primary">
+                              <ArrowUpCircle className="size-3" />
+                              {t("updateAvailable")}
+                            </span>
                           ) : null}
-                          <Popover align="end">
-                            <PopoverTrigger>
+                          {plugin.omp ? (
+                            <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[11px] leading-none text-amber-700 dark:text-amber-400">
+                              {t("ompRetired")}
+                            </span>
+                          ) : null}
+                          {plugin.envStatus.requiresEnv ? (
+                            plugin.envStatus.complete ? (
+                              <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground">
+                                {t(
+                                  plugin.envStatus.mode === "platform_preset"
+                                    ? "env.platformPreset"
+                                    : "env.custom",
+                                )}
+                              </span>
+                            ) : (
+                              <span className="shrink-0 rounded-full bg-destructive/10 px-1.5 py-0.5 text-[11px] leading-none text-destructive">
+                                {t("env.incomplete")}
+                              </span>
+                            )
+                          ) : null}
+                        </div>
+                        {plugin.envStatus.requiresEnv &&
+                        !plugin.envStatus.complete &&
+                        plugin.envStatus.missingRequiredKeys.length ? (
+                          <span className="mt-1 block break-all font-mono text-xs text-destructive">
+                            {t("env.missingKeys", {
+                              keys: plugin.envStatus.missingRequiredKeys.join(
+                                ", ",
+                              ),
+                            })}{" "}
+                            <Link
+                              href={detailHref(
+                                plugin.listingId,
+                                "#plugin-install",
+                              )}
+                              className="font-sans text-primary hover:underline"
+                            >
+                              {t("env.configureAction")}
+                            </Link>
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>,
+                    <span
+                      key="version"
+                      title={versionLabel}
+                      className="block truncate font-mono text-xs"
+                    >
+                      {versionLabel}
+                    </span>,
+                    plugin.contents.length || plugin.mcp ? (
+                      <span
+                        key="contents"
+                        className="flex flex-wrap gap-1 py-1 whitespace-normal text-xs"
+                      >
+                        {plugin.contents.map(({ kind, count }) => (
+                          <span
+                            key={kind}
+                            className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-muted-foreground"
+                          >
+                            {t(kind)} {count}
+                          </span>
+                        ))}
+                        {plugin.mcp ? (
+                          <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-muted-foreground">
+                            MCP {plugin.mcp}
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      <span key="contents" className="text-muted-foreground">
+                        —
+                      </span>
+                    ),
+                    <span
+                      key="agents"
+                      className={
+                        plugin.agents
+                          ? "tabular-nums"
+                          : "tabular-nums text-muted-foreground"
+                      }
+                    >
+                      {plugin.agents || "—"}
+                    </span>,
+                    <span key="added" className="text-xs text-muted-foreground">
+                      {plugin.addedAt}
+                    </span>,
+                    ...(canManage
+                      ? [
+                          <div
+                            key="actions"
+                            className="flex items-center justify-end gap-1"
+                          >
+                            {plugin.updateAvailable ? (
                               <Button
                                 type="button"
-                                variant="ghost"
-                                size="icon"
-                                aria-label={`${t("installed.actions")}: ${plugin.name}`}
+                                variant="secondary"
+                                size="sm"
+                                disabled={pending}
+                                aria-label={`${t("update")}: ${plugin.name}`}
+                                onClick={() =>
+                                  startRefresh(async () => {
+                                    await run("update", [plugin.installId]);
+                                  })
+                                }
                               >
-                                <MoreHorizontal className="size-4" />
+                                {t("update")}
                               </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-64 max-w-[calc(100vw-2rem)] p-2">
-                              <div className="flex flex-col items-stretch gap-1">
-                                <ButtonLink
-                                  href={detail}
+                            ) : null}
+                            <Popover align="end">
+                              <PopoverTrigger>
+                                <Button
+                                  type="button"
                                   variant="ghost"
-                                  size="sm"
-                                  className="justify-start"
+                                  size="icon"
+                                  aria-label={`${t("installed.actions")}: ${plugin.name}`}
                                 >
-                                  {t("installed.viewDetails")}
-                                </ButtonLink>
-                                {published ? (
+                                  <MoreHorizontal className="size-4" />
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-64 max-w-[calc(100vw-2rem)] p-2">
+                                <div className="flex flex-col items-stretch gap-1">
                                   <ButtonLink
-                                    href={detailHref(
-                                      plugin.listingId,
-                                      "#plugin-install",
-                                    )}
+                                    href={detail}
                                     variant="ghost"
                                     size="sm"
                                     className="justify-start"
                                   >
-                                    {t("switchVersion")}
+                                    {t("installed.viewDetails")}
                                   </ButtonLink>
-                                ) : null}
-                                <form
-                                  action={async () => {
-                                    await run("remove", [plugin.installId]);
-                                  }}
-                                >
-                                  <ConfirmSubmitButton
-                                    triggerLabel={
-                                      <>
-                                        <Trash2 className="size-3.5" />
-                                        {common("remove")}
-                                      </>
-                                    }
-                                    triggerAriaLabel={`${common("remove")}: ${plugin.name}`}
-                                    confirmLabel={common("confirm")}
-                                    cancelLabel={common("cancel")}
-                                    prompt={t("installed.removeOnePrompt", {
-                                      name: plugin.name,
-                                      agents: plugin.agents,
-                                    })}
-                                    pendingLabel={t("working")}
-                                    disabled={pending}
-                                    promptClassName="break-words text-xs text-muted-foreground"
-                                    className="flex-wrap"
-                                    triggerClassName="w-full justify-start"
-                                    triggerVariant="ghost"
-                                    triggerSize="sm"
-                                  />
-                                </form>
-                              </div>
-                            </PopoverContent>
-                          </Popover>
-                        </div>,
-                      ]
-                    : []),
-                ],
-              };
-            })}
-          />
+                                  {published ? (
+                                    <ButtonLink
+                                      href={detailHref(
+                                        plugin.listingId,
+                                        "#plugin-install",
+                                      )}
+                                      variant="ghost"
+                                      size="sm"
+                                      className="justify-start"
+                                    >
+                                      {t("switchVersion")}
+                                    </ButtonLink>
+                                  ) : null}
+                                  <form
+                                    action={async () => {
+                                      await run("remove", [plugin.installId]);
+                                    }}
+                                  >
+                                    <ConfirmSubmitButton
+                                      triggerLabel={
+                                        <>
+                                          <Trash2 className="size-3.5" />
+                                          {common("remove")}
+                                        </>
+                                      }
+                                      triggerAriaLabel={`${common("remove")}: ${plugin.name}`}
+                                      confirmLabel={common("confirm")}
+                                      cancelLabel={common("cancel")}
+                                      prompt={t("installed.removeOnePrompt", {
+                                        name: plugin.name,
+                                        agents: plugin.agents,
+                                      })}
+                                      pendingLabel={t("working")}
+                                      disabled={pending}
+                                      promptClassName="break-words text-xs text-muted-foreground"
+                                      className="flex-wrap"
+                                      triggerClassName="w-full justify-start"
+                                      triggerVariant="ghost"
+                                      triggerSize="sm"
+                                    />
+                                  </form>
+                                </div>
+                              </PopoverContent>
+                            </Popover>
+                          </div>,
+                        ]
+                      : []),
+                  ],
+                };
+              })}
+            />
+          </div>
         </fieldset>
       )}
     </>

@@ -15,6 +15,7 @@ import {
   CircleAlert,
   Circle,
   Folder,
+  MessageSquare,
   MessageSquarePlus,
   Pin,
 } from "lucide-react";
@@ -778,14 +779,7 @@ export function WorkSidebar({
       router.push(workHref(slug, issue.sessionId));
       return;
     }
-    router.push(
-      agentSettingsHref(
-        slug,
-        item.id,
-        workReturnTo,
-        issue.kind === "notConfigured" ? "agent" : "sandboxes",
-      ),
-    );
+    router.push(agentSettingsHref(slug, item.id, workReturnTo, "general"));
   }
 
   function sessionStatusLabel(status: string): string {
@@ -1306,16 +1300,28 @@ export function WorkSidebar({
                             <Bot className="size-3.5" />
                           )}
                           {tone ? (
-                            <span
-                              className={cx(
-                                "absolute -right-0.5 -top-0.5 size-1.5 rounded-full ring-2 ring-background",
-                                tone === "error"
-                                  ? "bg-destructive"
-                                  : tone === "warning"
-                                    ? "bg-warning"
-                                    : "bg-primary",
-                              )}
-                            />
+                            <>
+                              <span
+                                aria-hidden="true"
+                                className={cx(
+                                  "absolute -right-0.5 -top-0.5 size-1.5 rounded-full ring-2 ring-background",
+                                  tone === "error"
+                                    ? "bg-destructive"
+                                    : tone === "warning"
+                                      ? "bg-warning"
+                                      : "bg-primary",
+                                )}
+                              />
+                              <span className="sr-only">
+                                {status.issues[0]
+                                  ? agentIssueLabel(status.issues[0])
+                                  : status.running
+                                    ? t("agentRunningCount", {
+                                        count: status.running,
+                                      })
+                                    : ""}
+                              </span>
+                            </>
                           ) : null}
                         </span>
                       );
@@ -1339,24 +1345,35 @@ export function WorkSidebar({
                           content={sessionStatusLabel(status)}
                           side="right"
                         >
-                          <Circle
-                            data-sidebar-dot=""
-                            className={cx(
-                              "size-2 fill-current",
-                              tone === "error"
-                                ? "text-destructive"
-                                : tone === "warning"
-                                  ? "text-warning"
-                                  : "text-primary",
-                            )}
-                          />
+                          <span className="inline-flex items-center">
+                            <Circle
+                              data-sidebar-dot=""
+                              aria-hidden="true"
+                              className={cx(
+                                "size-2 fill-current",
+                                tone === "error"
+                                  ? "text-destructive"
+                                  : tone === "warning"
+                                    ? "text-warning"
+                                    : "text-primary",
+                              )}
+                            />
+                            <span className="sr-only">
+                              {sessionStatusLabel(status)}
+                            </span>
+                          </span>
                         </Tooltip>
                       ) : (
                         false
                       );
                     }
-                    // Conversations show no icon; `false` suppresses the sidebar default.
-                    if (kind === "conversation") return false;
+                    if (kind === "conversation")
+                      return (
+                        <MessageSquare
+                          aria-hidden="true"
+                          className="size-3.5 text-muted-foreground/70"
+                        />
+                      );
                     return <Folder className="size-4" />;
                   }}
                   renderMenu={(resource, controls) => {

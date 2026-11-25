@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import {
   Bot,
   Clock3,
@@ -39,7 +39,6 @@ import {
   MessageFooter,
   MessageGroup,
 } from "@/components/agents/message";
-import { StreamingResponse } from "@/components/agents/streaming-response";
 import {
   CenterMorphModal,
   CenterMorphModalContent,
@@ -236,18 +235,26 @@ function WorkElapsed({
 
 function formatWorkMessageTime(
   value: string | undefined,
+  locale: string,
 ): { label: string; title: string } | null {
   if (!value) return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return {
-    label: date.toLocaleString([], {
+    label: new Intl.DateTimeFormat(locale, {
       month: "2-digit",
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
-    }),
-    title: date.toLocaleString(),
+    }).format(date),
+    title: new Intl.DateTimeFormat(locale, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).format(date),
   };
 }
 
@@ -326,6 +333,7 @@ export function WorkTranscript({
   const agentsT = useTranslations("console.agents");
   const composerT = useTranslations("console.workComposer");
   const common = useTranslations("common");
+  const locale = useLocale();
   const [treeAction, setTreeAction] = useState<WorkTreeAction | null>(null);
   const [editText, setEditText] = useState("");
   const lastUserMessage = messages.findLast(
@@ -447,7 +455,7 @@ export function WorkTranscript({
             messageIndex === transcript.length - 1
               ? ""
               : "opacity-0 pointer-events-none transition-opacity group-hover/message:opacity-100 group-hover/message:pointer-events-auto group-focus-within/message:opacity-100 group-focus-within/message:pointer-events-auto [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto motion-reduce:transition-none";
-          const messageTime = formatWorkMessageTime(message.createdAt);
+          const messageTime = formatWorkMessageTime(message.createdAt, locale);
           const persistedTiming = messageWorkTiming(message);
           const sessionStart = Date.parse(sessionStartedAt ?? "");
           const sessionEnd = Date.parse(sessionCompletedAt ?? "");
@@ -611,9 +619,7 @@ export function WorkTranscript({
           const messageDuration = workTimingDuration(messageTiming);
           const replyMetadata =
             message.role !== "user" ? (
-              <div
-                className={`flex min-w-0 flex-wrap items-center gap-2 text-[11px] font-normal text-muted-foreground ${actionVisibility}`}
-              >
+              <div className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] font-normal text-muted-foreground/80">
                 {messageModelName ? (
                   <span
                     data-ui="assistant-reply-model"
@@ -752,19 +758,7 @@ export function WorkTranscript({
                   <MessageBubbleContent>{messageBody}</MessageBubbleContent>
                 </MessageBubble>
               ) : (
-                <StreamingResponse
-                  status={
-                    isStreamingMessage
-                      ? "streaming"
-                      : processFailed
-                        ? "error"
-                        : "complete"
-                  }
-                  showActions={false}
-                  announce={false}
-                >
-                  {messageBody}
-                </StreamingResponse>
+                messageBody
               )}
               {message.role === "assistant" ? (
                 <ConversationBudgetWarnings

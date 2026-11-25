@@ -41,8 +41,19 @@ export function Drawer({
 
   useEffect(() => {
     if (!open) return;
+    const previousActive =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onOpenChange(false);
+      if (e.key !== "Escape") return;
+      // Defer to a dialog opened on top of the drawer.
+      const dialogs = document.querySelectorAll(
+        '[role="dialog"][aria-modal="true"]',
+      );
+      const topmost = dialogs[dialogs.length - 1];
+      if (topmost && !topmost.closest("[data-drawer-panel]")) return;
+      onOpenChange(false);
     };
     window.addEventListener("keydown", onKey);
     const prevBodyOverflow = document.body.style.overflow;
@@ -53,6 +64,8 @@ export function Drawer({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevBodyOverflow;
       document.documentElement.style.overflow = prevHtmlOverflow;
+      if (previousActive?.isConnected)
+        previousActive.focus({ preventScroll: true });
     };
   }, [open, onOpenChange]);
 
@@ -79,7 +92,7 @@ export function Drawer({
               transition={{ duration: 0.25, ease: EASE_OUT }}
               {...gate}
               className={cn(
-                "fixed inset-0 z-50 h-full w-full cursor-default bg-black/40 backdrop-blur-sm",
+                "fixed inset-0 z-(--z-drawer) h-full w-full cursor-default bg-black/40 backdrop-blur-sm",
                 backdropClassName,
               )}
             />
@@ -92,6 +105,7 @@ export function Drawer({
             <motion.aside
               role="dialog"
               aria-modal="true"
+              data-drawer-panel=""
               aria-label={ariaLabel}
               onKeyDown={onKeyDown}
               initial={reduce ? { opacity: 0 } : { x: offscreen }}
@@ -102,7 +116,7 @@ export function Drawer({
               }
               {...gate}
               className={cn(
-                "fixed inset-y-0 z-50 flex w-80 max-w-[85vw] flex-col bg-background shadow-2xl",
+                "fixed inset-y-0 z-(--z-drawer) flex w-80 max-w-[85vw] flex-col bg-popover shadow-2xl",
                 side === "right"
                   ? "right-0 border-l border-border"
                   : "left-0 border-r border-border",

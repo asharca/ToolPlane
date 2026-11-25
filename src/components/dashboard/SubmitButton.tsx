@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { useTranslations } from "next-intl";
 import {
   StatefulButton,
   type StatefulButtonProps,
@@ -17,14 +18,15 @@ export type SubmitButtonProps = Omit<StatefulButtonProps, "state" | "type"> & {
 
 export function SubmitButton({
   children,
-  pendingLabel = "Saving…",
-  savedLabel = "Saved",
+  pendingLabel,
+  savedLabel,
   flash = true,
   error,
   disabled,
   ariaLabel,
   ...props
 }: SubmitButtonProps) {
+  const common = useTranslations("common");
   const { pending } = useFormStatus();
   const [saved, setSaved] = useState(false);
   const wasPending = useRef(false);
@@ -51,8 +53,8 @@ export function SubmitButton({
       aria-busy={pending || undefined}
       aria-label={ariaLabel ?? props["aria-label"]}
       state={pending ? "loading" : saved ? "success" : "idle"}
-      loadingText={pendingLabel}
-      successText={savedLabel}
+      loadingText={pendingLabel ?? common("saving")}
+      successText={savedLabel ?? common("saved")}
     >
       {children}
     </StatefulButton>

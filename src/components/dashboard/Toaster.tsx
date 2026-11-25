@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import {
   AnimatedToastStack,
@@ -10,12 +10,24 @@ import {
 } from "@/components/motion/animated-toast-stack";
 
 type ToastSeverity = "info" | "warning" | "error";
-type PendingToast = { title: string; severity?: ToastSeverity };
+type NotifyOptions = {
+  afterReload?: boolean;
+  severity?: ToastSeverity;
+  description?: ReactNode;
+  duration?: number;
+};
+type PendingToast = {
+  title: string;
+  severity?: ToastSeverity;
+  description?: string;
+  duration?: number;
+};
 
 const STORAGE_KEY = "toolplane:pending-toasts";
 const listeners = new Set<(toast: ToastInput) => void>();
 
-function toToastInput(title: string, severity?: ToastSeverity): ToastInput {
+function toToastInput(title: string, options?: NotifyOptions): ToastInput {
+  const severity = options?.severity;
   const status: ToastStatus =
     severity === "error"
       ? "error"
@@ -28,7 +40,12 @@ function toToastInput(title: string, severity?: ToastSeverity): ToastInput {
     id: `${status}:${title}`,
     status,
     title,
-    duration: severity === "error" || severity === "warning" ? 6000 : 4200,
+    ...(options?.description !== undefined
+      ? { description: options.description }
+      : {}),
+    duration:
+      options?.duration ??
+      (severity === "error" || severity === "warning" ? 6000 : 4200),
   };
 }
 
@@ -36,24 +53,29 @@ function toToastInput(title: string, severity?: ToastSeverity): ToastInput {
  * Shows a transient console notification. With `afterReload`, the toast is
  * queued in sessionStorage and shown after a full navigation.
  */
-export function notify(
-  title: string,
-  options?: {
-    afterReload?: boolean;
-    severity?: ToastSeverity;
-  },
-) {
+export function notify(title: string, options?: NotifyOptions) {
   if (options?.afterReload) {
-    const pending: PendingToast = options.severity
-      ? { title, severity: options.severity }
-      : { title };
-    sessionStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify([...readPending(), pending]),
-    );
+    const pending: PendingToast = {
+      title,
+      ...(options.severity ? { severity: options.severity } : {}),
+      ...(typeof options.description === "string" && options.description
+        ? { description: options.description }
+        : {}),
+      ...(typeof options.duration === "number"
+        ? { duration: options.duration }
+        : {}),
+    };
+    try {
+      sessionStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify([...readPending(), pending]),
+      );
+    } catch {
+      /* Ignore storage quota or restricted sessionStorage errors. */
+    }
     return;
   }
-  const toast = toToastInput(title, options?.severity);
+  const toast = toToastInput(title, options);
   for (const listener of listeners) listener(toast);
 }
 
@@ -111,7 +133,13 @@ export function Toaster() {
     const pending = readPending();
     sessionStorage.removeItem(STORAGE_KEY);
     for (const item of pending) {
-      add(toToastInput(item.title, item.severity));
+      add(
+        toToastInput(item.title, {
+          severity: item.severity,
+          description: item.description,
+          duration: item.duration,
+        }),
+      );
     }
     return () => {
       listeners.delete(add);

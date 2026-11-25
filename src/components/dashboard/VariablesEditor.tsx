@@ -23,6 +23,7 @@ import {
 } from "@/lib/workspace/actions";
 import { SubmitButton } from "./SubmitButton";
 import { McpSharedChangeConfirmation } from "./McpSharedChangeConfirmation";
+import { notify } from "./Toaster";
 
 type InitialVariable = {
   key: string;
@@ -84,7 +85,13 @@ function VariablesEditorForm({
   const [state, formAction] = useActionState<
     DeploymentEnvActionState,
     FormData
-  >(async (_previous, form) => setDeploymentEnvAction(form), {});
+  >(async (_previous, form) => {
+    const result = await setDeploymentEnvAction(form);
+    if (result.savedAt && !result.error) {
+      notify(t("variablesSaved"));
+    }
+    return result;
+  }, {});
 
   const changes = useMemo(() => {
     const set: Record<string, string> = {};
@@ -289,14 +296,13 @@ function VariablesEditorForm({
                       disabled={row.removed || !row.isNew}
                       required={row.isNew && Boolean(row.key.trim())}
                       pattern="[A-Za-z_][A-Za-z0-9_]*"
-                      title={t("validEnvironmentVariableName")}
+                      title={
+                        row.isNew
+                          ? t("validEnvironmentVariableName")
+                          : t("variableNameCannotBeChanged")
+                      }
                       error={rowInvalid || undefined}
                     />
-                    {!row.isNew ? (
-                      <p className="text-[11px] text-muted-foreground">
-                        {t("variableNameCannotBeChanged")}
-                      </p>
-                    ) : null}
                   </label>
 
                   <div className="min-w-0 space-y-1.5">

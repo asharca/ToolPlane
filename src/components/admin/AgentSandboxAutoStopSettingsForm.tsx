@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/motion/button";
 import { Switch } from "@/components/motion/switch";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { notify } from "@/components/dashboard/Toaster";
 import { AdminBadge, AdminPanel } from "@/components/admin/AdminUI";
 import {
   updateAgentSandboxAutoStopSettingsAction,
@@ -24,7 +25,12 @@ export function AgentSandboxAutoStopSettingsForm({
   const [state, action, pending] = useActionState<
     AdminSettingsActionState,
     FormData
-  >(updateAgentSandboxAutoStopSettingsAction, {});
+  >(async (prev, form) => {
+    const result = await updateAgentSandboxAutoStopSettingsAction(prev, form);
+    if (result.error) notify(result.error, { severity: "error" });
+    else if (result.ok) notify(t("saved"));
+    return result;
+  }, {});
 
   return (
     <AdminPanel
@@ -61,9 +67,6 @@ export function AgentSandboxAutoStopSettingsForm({
           disabled={pending}
           label={t("agentSandboxAutoStop")}
         />
-        <p className="text-sm text-muted-foreground">
-          {t("agentSandboxAutoStopBehavior")}
-        </p>
         <div className="flex flex-wrap gap-2">
           <SubmitButton
             pendingLabel={t("saving")}
@@ -91,11 +94,6 @@ export function AgentSandboxAutoStopSettingsForm({
         {state.error ? (
           <p role="alert" className="text-sm text-destructive">
             {state.error}
-          </p>
-        ) : null}
-        {state.ok ? (
-          <p aria-live="polite" className="text-sm text-accent-foreground">
-            {t("saved")}
           </p>
         ) : null}
       </form>

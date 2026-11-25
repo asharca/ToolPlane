@@ -7,6 +7,8 @@ import {
   DashboardPage,
   DashboardPanel,
 } from "@/components/dashboard/DashboardUI";
+import { FilePathLinks } from "@/components/dashboard/FilePathTree";
+import { TabBar } from "@/components/dashboard/TabBar";
 import {
   PluginEnvConfigPanel,
   PluginInstallForm,
@@ -34,24 +36,12 @@ import { previewPluginResource } from "@/lib/plugins/resource-preview";
 import { ORDINARY_AGENT_FILTER } from "@/lib/agents/queries";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import { PluginReadme } from "@/components/dashboard/plugins/PluginReadme";
-import {
-  pluginResourceKinds,
-  type PluginResourceKind,
-} from "@/lib/plugins/release-contents";
+import { pluginResourceKinds } from "@/lib/plugins/release-contents";
 
 export const dynamic = "force-dynamic";
 
 const views = ["overview", "contents", "versions"] as const;
 type View = (typeof views)[number];
-
-/** Skills are named by their folder; other resources by file name. */
-function resourceName(kind: PluginResourceKind, path: string) {
-  const parts = path.replace(/\/+$/, "").split("/");
-  const file = parts.at(-1) ?? path;
-  if (kind === "skills" && /^skill\.md$/i.test(file) && parts.length > 1)
-    return parts.at(-2) ?? file;
-  return file.replace(/\.[^.]+$/, "") || file;
-}
 
 export default async function PluginDetailPage({
   params,
@@ -507,26 +497,26 @@ export default async function PluginDetailPage({
               </Link>
             </p>
           ) : null}
-          <nav
-            aria-label={t("detailNavigation")}
-            className="flex gap-1 overflow-x-auto border-b border-border"
-          >
-            {views.map((item) => (
-              <Link
-                key={item}
-                href={`${detail}?view=${item}${viewingOlder && selected ? `&version=${encodeURIComponent(selected.id)}` : ""}${linkSuffix}`}
-                aria-current={view === item ? "page" : undefined}
-                className={`shrink-0 border-b-2 px-4 py-3 text-sm ${view === item ? "border-primary font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-              >
-                {t(item === "versions" ? "versionHistory" : item)}
-                {item === "contents" || item === "versions" ? (
-                  <span className="ml-1.5 text-xs text-muted-foreground">
-                    {item === "contents" ? contentCount : releases.length}
-                  </span>
-                ) : null}
-              </Link>
-            ))}
-          </nav>
+          <TabBar
+            ariaLabel={t("detailNavigation")}
+            param="view"
+            current={view}
+            basePath={detail}
+            query={{
+              ...(viewingOlder && selected ? { version: selected.id } : {}),
+              ...(query.from === "installed" ? { from: "installed" } : {}),
+            }}
+            tabs={views.map((item) => ({
+              key: item,
+              label: t(item === "versions" ? "versionHistory" : item),
+              count:
+                item === "contents"
+                  ? contentCount
+                  : item === "versions"
+                    ? releases.length
+                    : undefined,
+            }))}
+          />
           {view === "overview" ? (
             <>
               <DashboardPanel title="README">
@@ -663,26 +653,17 @@ export default async function PluginDetailPage({
                           {paths.length}
                         </span>
                       </h3>
-                      <ul className="divide-y divide-border rounded-lg border border-border">
-                        {paths.map((path) => (
-                          <li key={path} className="min-w-0">
-                            <Link
-                              href={resourceHref(path)}
-                              aria-current={
-                                query.resource === path ? "page" : undefined
-                              }
-                              className={`block px-3 py-2 hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-primary ${query.resource === path ? "bg-muted/50" : ""}`}
-                            >
-                              <span className="block truncate text-sm text-primary">
-                                {resourceName(kind, path)}
-                              </span>
-                              <span className="block break-all font-mono text-xs text-muted-foreground">
-                                {path}
-                              </span>
-                            </Link>
-                          </li>
-                        ))}
-                      </ul>
+                      <div className="rounded-lg border border-border p-2">
+                        <FilePathLinks
+                          ariaLabel={t(kind)}
+                          value={query.resource ?? null}
+                          files={paths.map((path) => ({
+                            path,
+                            value: path,
+                            href: resourceHref(path),
+                          }))}
+                        />
+                      </div>
                     </section>
                   ))}
                   <section className="min-w-0">
@@ -750,7 +731,7 @@ export default async function PluginDetailPage({
                               </span>
                               {isEnvSecret(item) ? (
                                 <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                                  secret
+                                  {t("env.secret")}
                                 </span>
                               ) : null}
                             </p>

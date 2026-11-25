@@ -2,6 +2,12 @@ import { resolveWorkspaceScope } from "@/lib/workspace/scope";
 import { McpHttpApprovalForm } from "@/components/dashboard/McpHttpConsent";
 import { RemoteMcpTransportNotice } from "@/components/dashboard/RemoteMcpTransportNotice";
 import { getTransportSettings } from "@/lib/admin/transport-settings";
+import {
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+} from "@/components/motion/alert";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { ButtonLink } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
@@ -539,44 +545,48 @@ export default async function DeploymentInspectorPage({
         </header>
 
         {showStatusNotice ? (
-          <div
-            role="status"
-            className={`rounded-xl border px-4 py-3 text-sm ${
+          <Alert
+            variant={
               status === "error"
-                ? "border-destructive/30 bg-destructive/10 text-destructive"
+                ? "destructive"
                 : setupRequired
-                  ? "border-amber-500/30 bg-amber-500/[0.07] text-foreground"
-                  : "border-border bg-muted/40 text-muted-foreground"
-            }`}
+                  ? "warning"
+                  : "default"
+            }
           >
-            <span>
-              {setupRequired
-                ? oauthSummary
-                  ? oauthSummary.status === "reauth_required"
-                    ? t("oauth.reauthRequiredBanner")
-                    : t("oauth.signInRequiredBanner")
-                  : t("variablesNeedAttention", {
-                      count: missingRequiredVariables.length,
-                    })
-                : transitioning
-                  ? t("runtimeStartingDescription")
-                  : t("runtimeErrorDescription")}
-            </span>
-            {setupRequired &&
-            !oauthSummary &&
-            missingRequiredVariables.length ? (
-              <span className="mt-1.5 flex flex-wrap gap-1.5">
-                {missingRequiredVariables.map((row) => (
-                  <code
-                    key={row.key}
-                    className="rounded bg-background/80 px-1.5 py-0.5 font-mono text-xs text-foreground"
-                  >
-                    {row.key}
-                  </code>
-                ))}
-              </span>
-            ) : null}
-          </div>
+            <AlertIcon />
+            <AlertContent>
+              <AlertDescription className="text-sm text-foreground">
+                <span>
+                  {setupRequired
+                    ? oauthSummary
+                      ? oauthSummary.status === "reauth_required"
+                        ? t("oauth.reauthRequiredBanner")
+                        : t("oauth.signInRequiredBanner")
+                      : t("variablesNeedAttention", {
+                          count: missingRequiredVariables.length,
+                        })
+                    : transitioning
+                      ? t("runtimeStartingDescription")
+                      : t("runtimeErrorDescription")}
+                </span>
+                {setupRequired &&
+                !oauthSummary &&
+                missingRequiredVariables.length ? (
+                  <span className="mt-1.5 flex flex-wrap gap-1.5">
+                    {missingRequiredVariables.map((row) => (
+                      <code
+                        key={row.key}
+                        className="rounded bg-background/80 px-1.5 py-0.5 font-mono text-xs text-foreground"
+                      >
+                        {row.key}
+                      </code>
+                    ))}
+                  </span>
+                ) : null}
+              </AlertDescription>
+            </AlertContent>
+          </Alert>
         ) : null}
 
         <div className="-mx-4 overflow-hidden px-4 sm:mx-0 sm:px-0">
@@ -987,25 +997,25 @@ export default async function DeploymentInspectorPage({
                   {t("cloneSensitiveDataHint")}
                 </p>
                 <div className="space-y-2.5">
-                  <div className="flex items-start gap-2.5 rounded-lg border border-border p-3">
+                  <div className="space-y-1 rounded-lg border border-border p-3">
                     <FormCheckbox
                       name="copyEnvironmentVariables"
                       value="true"
                       defaultChecked
                       label={t("copyEnvironmentVariables")}
                     />
-                    <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                    <span className="block pl-7 text-xs leading-5 text-muted-foreground">
                       {t("copyEnvironmentVariablesDescription")}
                     </span>
                   </div>
-                  <div className="flex items-start gap-2.5 rounded-lg border border-border p-3">
+                  <div className="space-y-1 rounded-lg border border-border p-3">
                     <FormCheckbox
                       name="copyRuntimeFiles"
                       value="true"
                       defaultChecked
                       label={t("copyRuntimeFiles")}
                     />
-                    <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                    <span className="block pl-7 text-xs leading-5 text-muted-foreground">
                       {t("copyRuntimeFilesDescription")}
                     </span>
                   </div>

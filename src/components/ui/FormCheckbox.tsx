@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Checkbox } from "@/components/motion/checkbox";
+import { cn } from "@/lib/utils";
 
 export type FormCheckboxProps = {
   name?: string;
@@ -9,7 +10,8 @@ export type FormCheckboxProps = {
   checked?: boolean;
   defaultChecked?: boolean;
   onCheckedChange?: (checked: boolean) => void;
-  label: string;
+  label?: ReactNode;
+  ariaLabel?: string;
   disabled?: boolean;
   required?: boolean;
   id?: string;
@@ -24,6 +26,7 @@ export function FormCheckbox({
   defaultChecked = false,
   onCheckedChange,
   label,
+  ariaLabel,
   disabled,
   required,
   id,
@@ -50,8 +53,13 @@ export function FormCheckbox({
     return () => form?.removeEventListener("reset", reset);
   }, [checked, defaultChecked]);
 
+  const stringLabel = typeof label === "string" ? label : undefined;
+  const customLabel = label !== undefined && typeof label !== "string";
+
   return (
-    <span className={className}>
+    <span
+      className={cn(customLabel && "inline-flex items-start gap-3", className)}
+    >
       <input
         ref={native}
         type="checkbox"
@@ -72,9 +80,21 @@ export function FormCheckbox({
         checked={current}
         onCheckedChange={update}
         disabled={disabled}
-        label={label}
+        label={stringLabel}
+        aria-label={ariaLabel}
         aria-required={required || undefined}
       />
+      {customLabel ? (
+        <label
+          htmlFor={controlId}
+          className={cn(
+            "select-none text-sm text-foreground",
+            disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
+          )}
+        >
+          {label}
+        </label>
+      ) : null}
     </span>
   );
 }

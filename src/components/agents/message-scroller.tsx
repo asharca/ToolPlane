@@ -39,10 +39,11 @@ function getMessageText(message: HTMLElement) {
 function getMessagePreview(
   message: HTMLElement,
   assistantResponse?: HTMLElement,
+  emptyLabel = "Message",
 ) {
   const text = getMessageText(message);
   if (!text) {
-    return { label: "Message", description: undefined };
+    return { label: emptyLabel, description: undefined };
   }
 
   if (text.length <= PREVIEW_TITLE_LENGTH) {
@@ -92,6 +93,11 @@ export interface MessageScrollerProps extends ComponentPropsWithRef<"div"> {
   navigation?: "rail";
   /** Accessible label for the optional message navigation rail. */
   navigationLabel?: string;
+  /** Localized copy for the optional navigation rail. */
+  labels?: {
+    emptyMessage?: string;
+    goToMessage?: (sender: string, index: number, total: number) => string;
+  };
   viewportClassName?: string;
   contentClassName?: string;
   railClassName?: string;
@@ -115,6 +121,7 @@ export function MessageScroller({
   busy,
   navigation,
   navigationLabel = "Message navigation",
+  labels,
   viewportClassName,
   contentClassName,
   railClassName,
@@ -135,6 +142,8 @@ export function MessageScroller({
   const railFrameRef = useRef<number | undefined>(undefined);
   const railIdRef = useRef(new WeakMap<HTMLElement, string>());
   const railIdCounterRef = useRef(0);
+  const labelsRef = useRef(labels);
+  labelsRef.current = labels;
   const railTargetsRef = useRef(new Map<string, HTMLElement>());
   const [railItems, setRailItems] = useState<PreviewRailItem[]>([]);
   const [activeRailId, setActiveRailId] = useState("");
@@ -232,13 +241,22 @@ export function MessageScroller({
               .slice(index + 1)
               .find((candidate) => candidate.dataset.from === "assistant")
           : undefined;
-      const preview = getMessagePreview(message, assistantResponse);
+      const preview = getMessagePreview(
+        message,
+        assistantResponse,
+        labelsRef.current?.emptyMessage,
+      );
 
       return {
         id,
         label: preview.label,
         description: preview.description,
-        ariaLabel: `Go to ${sender} message ${index + 1} of ${messages.length}`,
+        ariaLabel:
+          labelsRef.current?.goToMessage?.(
+            sender,
+            index + 1,
+            messages.length,
+          ) ?? `Go to ${sender} message ${index + 1} of ${messages.length}`,
       };
     });
 

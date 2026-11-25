@@ -4,6 +4,12 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Box, Container, Loader2, Save } from "lucide-react";
+import {
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+} from "@/components/motion/alert";
 import { Button } from "@/components/motion/button";
 import { RadioGroup, RadioGroupItem } from "@/components/motion/radio";
 import { FormSelect } from "@/components/ui/FormSelect";
@@ -183,12 +189,14 @@ export function McpRuntimeTargetControl({
                     }))}
                   />
                 ) : (
-                  <p
-                    role="status"
-                    className="rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-3 py-2 text-xs text-foreground"
-                  >
-                    {t("config.noSandboxesAvailable")}
-                  </p>
+                  <Alert variant="warning" className="p-2.5">
+                    <AlertIcon />
+                    <AlertContent>
+                      <AlertDescription className="text-xs text-foreground">
+                        {t("config.noSandboxesAvailable")}
+                      </AlertDescription>
+                    </AlertContent>
+                  </Alert>
                 )}
               </div>
             ) : null}

@@ -139,12 +139,7 @@ export function ConfirmDialog({
                 error={state.error}
                 flash={false}
                 pendingLabel={pendingLabel ?? t("saving")}
-                variant="primary"
-                className={
-                  danger
-                    ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    : undefined
-                }
+                variant={danger ? "destructive" : "primary"}
                 size="md"
               >
                 <Check className="size-4" aria-hidden="true" />

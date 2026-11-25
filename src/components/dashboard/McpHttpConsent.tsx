@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { useTranslations } from "next-intl";
+import { FormCheckbox } from "@/components/ui/FormCheckbox";
 import {
   approveUnsafeRemoteMcpHttpAction,
   type McpJsonConfigActionState,
@@ -19,22 +20,22 @@ export function McpHttpConsent({
 }) {
   const t = useTranslations("console.mcp");
   return (
-    <label className="flex items-start gap-3 rounded-lg border border-border p-3 text-sm">
-      <input
-        type="checkbox"
+    <div className="rounded-lg border border-border p-3 text-sm">
+      <FormCheckbox
         name="allowUnsafeHttp"
         value="true"
         required={required}
-        onChange={(event) => onChange?.(event.target.checked)}
-        className="mt-1 size-4 shrink-0"
+        onCheckedChange={(checked) => onChange?.(checked)}
+        label={
+          <span>
+            {t("unsafeHttpConsent")}
+            <span className="mt-1 block text-xs text-muted-foreground">
+              {t("unsafeHttpConsentDescription")}
+            </span>
+          </span>
+        }
       />
-      <span>
-        {t("unsafeHttpConsent")}
-        <span className="mt-1 block text-xs text-muted-foreground">
-          {t("unsafeHttpConsentDescription")}
-        </span>
-      </span>
-    </label>
+    </div>
   );
 }
 

@@ -64,14 +64,14 @@ export function DialogFooter({
   return (
     <footer
       className={cn(
-        "sticky bottom-0 z-10 flex shrink-0 items-center gap-3 border-t border-border bg-background px-6 py-4 [&_button]:h-10 [&_button]:text-sm",
+        "sticky bottom-0 z-10 flex shrink-0 flex-wrap items-center gap-3 border-t border-border bg-background px-6 py-4 [&_button]:h-10 [&_button]:text-sm",
         className,
       )}
     >
       {start ? (
         <div className="flex min-w-0 flex-wrap items-center gap-2">{start}</div>
       ) : null}
-      <div className="ml-auto flex shrink-0 items-center gap-2">
+      <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
         {cancel}
         {children}
       </div>

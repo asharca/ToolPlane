@@ -40,7 +40,7 @@ export const WORKSPACE_NAV_GROUPS: WorkspaceNavGroup[] = [
     labelKey: "run",
     items: [
       { labelKey: "chat", segment: "chat", icon: MessageSquare },
-      { labelKey: "agents", segment: "agents", icon: Bot },
+      { labelKey: "agents", segment: "work", icon: Bot },
     ],
   },
   {

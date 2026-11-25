@@ -2,19 +2,31 @@
 import { Input } from "@/components/motion/input";
 
 import { useActionState } from "react";
-import { Save, Upload } from "lucide-react";
+import { Save } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { notify } from "@/components/dashboard/Toaster";
 import { AdminPanel } from "@/components/admin/AdminUI";
-import { updateSkillImportLimitAction } from "@/lib/admin/settings-actions";
+import {
+  updateSkillImportLimitAction,
+  type AdminSettingsActionState,
+} from "@/lib/admin/settings-actions";
 import {
   MAX_SKILL_IMPORT_SKILLS,
   MIN_SKILL_IMPORT_SKILLS,
 } from "@/lib/skills/limits";
 
 export function SkillImportSettingsForm({ maxSkills }: { maxSkills: number }) {
-  const [state, action] = useActionState(updateSkillImportLimitAction, {});
   const t = useTranslations("admin");
+  const [state, action] = useActionState<AdminSettingsActionState, FormData>(
+    async (prev, form) => {
+      const result = await updateSkillImportLimitAction(prev, form);
+      if (result.error) notify(result.error, { severity: "error" });
+      else if (result.ok) notify(t("saved"));
+      return result;
+    },
+    {},
+  );
 
   return (
     <AdminPanel
@@ -22,16 +34,6 @@ export function SkillImportSettingsForm({ maxSkills }: { maxSkills: number }) {
       description={t("skillImportsDescription")}
     >
       <form action={action} className="max-w-2xl space-y-5">
-        <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/25 p-4">
-          <Upload
-            className="mt-0.5 size-5 shrink-0 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <p className="text-sm leading-6 text-muted-foreground">
-            {t("skillImportsSafetyLimits")}
-          </p>
-        </div>
-
         <div className="max-w-sm space-y-1.5 text-sm font-medium text-foreground">
           <label htmlFor="skill-import-max-skills">
             {t("skillImportMaxSkills")}
@@ -60,7 +62,7 @@ export function SkillImportSettingsForm({ maxSkills }: { maxSkills: number }) {
           </p>
         </div>
 
-        <div className="flex flex-col items-start gap-3 border-t border-border pt-5 sm:flex-row sm:items-center">
+        <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
           <SubmitButton
             error={state.error}
             pendingLabel={t("saving")}

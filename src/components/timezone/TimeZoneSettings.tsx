@@ -87,6 +87,7 @@ export function TimeZoneSettings({
     <form
       action={formAction}
       onReset={() => setSelected(savedTimeZone)}
+      data-unsaved-changes={selected !== savedTimeZone ? "true" : undefined}
       className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
     >
       <input

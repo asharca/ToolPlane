@@ -37,19 +37,29 @@ function Stat({
   value,
   unit,
   sub,
+  tone = "default",
 }: {
   label: string;
   value: string | number;
   unit?: string;
   sub: string;
+  tone?: "default" | "danger";
 }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-5">
+    <div
+      className={`rounded-xl border bg-card p-5 ${
+        tone === "danger" ? "border-destructive/30" : "border-border"
+      }`}
+    >
       <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
       </div>
       <div className="mt-1.5 flex items-baseline gap-1">
-        <span className="text-3xl font-bold tracking-tight text-foreground">
+        <span
+          className={`text-3xl font-bold tracking-tight tabular-nums ${
+            tone === "danger" ? "text-destructive" : "text-foreground"
+          }`}
+        >
           {value}
         </span>
         {unit ? (
@@ -76,7 +86,7 @@ export default async function ObservabilityPage({
   const query = await searchParams;
   const { tab, deploymentId, q, cursor, until } = query;
   const selectedDeploymentId = deploymentId?.trim() || undefined;
-  const tabs = [
+  const allTabs = [
     { key: "runs", label: viewerT("runs") },
     { key: "tools", label: viewerT("tools") },
     { key: "mcp", label: viewerT("mcp") },
@@ -86,7 +96,40 @@ export default async function ObservabilityPage({
     { key: "usage", label: t("usage") },
     { key: "agent-usage", label: t("agentUsage") },
   ];
-  const current = tabs.find((item) => item.key === tab)?.key ?? "runs";
+  const current = allTabs.find((item) => item.key === tab)?.key ?? "runs";
+  const primaryTabs = [
+    {
+      key: current === "a2a" ? "a2a" : "runs",
+      label: `${viewerT("runs")} / ${viewerT("a2a")}`,
+    },
+    {
+      key: current === "tools" || current === "internal" ? current : "mcp",
+      label: `${viewerT("mcp")} / ${viewerT("tools")}`,
+    },
+    { key: "channels", label: t("channels.title") },
+    {
+      key: current === "agent-usage" ? "agent-usage" : "usage",
+      label: t("usage"),
+    },
+  ];
+  const subTabs =
+    current === "runs" || current === "a2a"
+      ? [
+          { key: "runs", label: viewerT("runs") },
+          { key: "a2a", label: viewerT("a2a") },
+        ]
+      : current === "mcp" || current === "tools" || current === "internal"
+        ? [
+            { key: "mcp", label: viewerT("mcp") },
+            { key: "tools", label: viewerT("tools") },
+            { key: "internal", label: viewerT("internal") },
+          ]
+        : current === "usage" || current === "agent-usage"
+          ? [
+              { key: "usage", label: t("usage") },
+              { key: "agent-usage", label: t("agentUsage") },
+            ]
+          : [];
 
   const user = await getCurrentUser();
   if (!user) redirect("/app/login");
@@ -94,20 +137,43 @@ export default async function ObservabilityPage({
   const ws = await resolveWorkspaceScope({ slug }, user.id);
   if (!ws) redirect("/app");
   const base = `/app/${slug}/observability`;
+  const subTabNav =
+    subTabs.length > 1 ? (
+      <nav
+        aria-label={t("observability")}
+        className="inline-flex flex-wrap items-center gap-0.5 rounded-lg bg-card p-0.5 border border-border"
+      >
+        {subTabs.map((item) => {
+          const active = item.key === current;
+          return (
+            <Link
+              key={item.key}
+              href={`${base}?tab=${item.key}`}
+              aria-current={active ? "page" : undefined}
+              className={
+                active
+                  ? "rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"
+                  : "rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+              }
+            >
+              {item.label}
+            </Link>
+          );
+        })}
+      </nav>
+    ) : null;
   if (current === "channels") {
     return (
-      <>
-        <DashboardPage>
-          <DashboardHeader title={t("observability")} />
-          <TabBar tabs={tabs} current={current} basePath={base} />
-          <ChannelObservability
-            key={`${ws.id}:${query.agentId ?? ""}:${query.channelId ?? ""}`}
-            slug={slug}
-            agentId={query.agentId}
-            channelId={query.channelId}
-          />
-        </DashboardPage>
-      </>
+      <DashboardPage>
+        <DashboardHeader title={t("observability")} />
+        <TabBar tabs={primaryTabs} current={current} basePath={base} />
+        <ChannelObservability
+          key={`${ws.id}:${query.agentId ?? ""}:${query.channelId ?? ""}`}
+          slug={slug}
+          agentId={query.agentId}
+          channelId={query.channelId}
+        />
+      </DashboardPage>
     );
   }
   if (
@@ -130,39 +196,35 @@ export default async function ObservabilityPage({
       }),
     ]);
     return (
-      <>
-        <DashboardPage>
-          <DashboardHeader title={t("observability")} />
-          <TabBar tabs={tabs} current={current} basePath={base} />
-          <LogExplorer
-            key={`${ws.id}:${current}`}
-            kind={current === "a2a" || current === "runs" ? current : "mcp"}
-            source={
-              current === "internal" || current === "tools"
-                ? current
-                : undefined
-            }
-            workspaceSlug={slug}
-            params={query}
-            deployments={deployments.map((item) => ({
-              id: item.id,
-              name: item.name || item.server?.name || item.id.slice(0, 8),
-            }))}
-            agents={agents}
-          />
-        </DashboardPage>
-      </>
+      <DashboardPage>
+        <DashboardHeader title={t("observability")} />
+        <TabBar tabs={primaryTabs} current={current} basePath={base} />
+        {subTabNav}
+        <LogExplorer
+          key={`${ws.id}:${current}`}
+          kind={current === "a2a" || current === "runs" ? current : "mcp"}
+          source={
+            current === "internal" || current === "tools" ? current : undefined
+          }
+          workspaceSlug={slug}
+          params={query}
+          deployments={deployments.map((item) => ({
+            id: item.id,
+            name: item.name || item.server?.name || item.id.slice(0, 8),
+          }))}
+          agents={agents}
+        />
+      </DashboardPage>
     );
   }
   if (current === "agent-usage") {
     return (
-      <>
-        <DashboardPage>
-          <DashboardHeader title={t("observability")} />
-          <TabBar tabs={tabs} current={current} basePath={base} />
-          <WorkspaceAgentUsage key={`${ws.id}:agent-usage`} slug={slug} />
-        </DashboardPage>
-      </>
+      <DashboardPage>
+        <DashboardHeader title={t("observability")} />
+        <TabBar tabs={primaryTabs} current={current} basePath={base} />
+        {subTabNav}
+        <WorkspaceAgentUsage key={`${ws.id}:agent-usage`} slug={slug} />
+      </DashboardPage>
     );
   }
   if (
@@ -230,178 +292,178 @@ export default async function ObservabilityPage({
   );
 
   return (
-    <>
-      <DashboardPage>
-        <DashboardHeader title={t("observability")} />
-        <TabBar
-          tabs={tabs}
-          current={current}
-          basePath={base}
-          query={filterQuery}
-        />
+    <DashboardPage>
+      <DashboardHeader title={t("observability")} />
+      <TabBar
+        tabs={primaryTabs}
+        current={current}
+        basePath={base}
+        query={filterQuery}
+      />
+      {subTabNav}
 
-        {current === "usage" ? (
-          <DashboardToolbar actions={searchControls}>
-            {o.selectedDeployment ? (
-              <p className="text-xs font-medium text-foreground">
-                {t("filteredTo", { name: o.selectedDeployment })}
-              </p>
-            ) : null}
-          </DashboardToolbar>
-        ) : null}
+      {current === "usage" ? (
+        <DashboardToolbar actions={searchControls}>
+          {o.selectedDeployment ? (
+            <p className="text-xs font-medium text-foreground">
+              {t("filteredTo", { name: o.selectedDeployment })}
+            </p>
+          ) : null}
+        </DashboardToolbar>
+      ) : null}
 
-        {current === "usage" ? (
-          <>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <Stat
-                label={t("totalRequests24h")}
-                value={compact(o.total)}
-                sub={t("requestsReceived")}
-              />
-              <Stat
-                label={t("errorRate")}
-                value={errorRate}
-                unit="%"
-                sub={t("errorCount", { count: o.errors })}
-              />
-              <Stat
-                label={t("avgLatency")}
-                value={o.avgMs}
-                unit="ms"
-                sub={t("averageResponse")}
-              />
-              <Stat
-                label={t("p95Latency")}
-                value={o.p95Ms}
-                unit="ms"
-                sub={t("ninetyFifthPercentile")}
-              />
-            </div>
+      {current === "usage" ? (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat
+              label={t("totalRequests24h")}
+              value={compact(o.total)}
+              sub={t("requestsReceived")}
+            />
+            <Stat
+              label={t("errorRate")}
+              value={errorRate}
+              unit="%"
+              sub={t("errorCount", { count: o.errors })}
+              tone={errorRate > 0 ? "danger" : "default"}
+            />
+            <Stat
+              label={t("avgLatency")}
+              value={o.avgMs}
+              unit="ms"
+              sub={t("averageResponse")}
+            />
+            <Stat
+              label={t("p95Latency")}
+              value={o.p95Ms}
+              unit="ms"
+              sub={t("ninetyFifthPercentile")}
+            />
+          </div>
 
-            <DashboardPanel title={t("requestsPerHour")}>
-              <div className="mb-4 flex items-center justify-between">
-                <div />
-                <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1.5">
-                    <span className="size-2.5 rounded-full bg-primary" />
-                    {t("requests")}
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="size-2.5 rounded-full bg-destructive" />
-                    {t("errors")}
-                  </span>
-                </div>
+          <DashboardPanel title={t("requestsPerHour")}>
+            <div className="mb-4 flex items-center justify-between">
+              <div />
+              <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2.5 rounded-full bg-primary" />
+                  {t("requests")}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2.5 rounded-full bg-destructive" />
+                  {t("errors")}
+                </span>
               </div>
-              {o.total === 0 ? (
-                <DashboardEmptyState
-                  description={t(
-                    "noTrafficYetCallADeploymentsGatewayEndpointToSeeActivityHere",
-                  )}
-                  className="min-h-48"
-                />
-              ) : (
-                <div className="relative flex h-48 items-end gap-1 border-b border-border/70 pt-2">
-                  {o.series.map((s) => {
-                    const ok = s.total - s.errors;
-                    const barHeight = s.total
-                      ? Math.max(4, (s.total / max) * 82)
-                      : 0;
-                    return (
+            </div>
+            {o.total === 0 ? (
+              <DashboardEmptyState
+                description={t(
+                  "noTrafficYetCallADeploymentsGatewayEndpointToSeeActivityHere",
+                )}
+                className="min-h-48"
+              />
+            ) : (
+              <div className="relative flex h-48 items-end gap-1 border-b border-border/70 pt-2">
+                {o.series.map((s) => {
+                  const ok = s.total - s.errors;
+                  const barHeight = s.total
+                    ? Math.max(4, (s.total / max) * 82)
+                    : 0;
+                  return (
+                    <div
+                      key={s.timestamp}
+                      className="relative h-full flex-1"
+                      title={t("chartTooltip", {
+                        hour: s.hour,
+                        total: s.total,
+                        errors: s.errors,
+                      })}
+                    >
                       <div
-                        key={s.timestamp}
-                        className="relative h-full flex-1"
-                        title={t("chartTooltip", {
-                          hour: s.hour,
-                          total: s.total,
-                          errors: s.errors,
-                        })}
+                        className="absolute inset-x-0 bottom-5 flex flex-col justify-end"
+                        style={{ height: `${barHeight}%` }}
                       >
                         <div
-                          className="absolute inset-x-0 bottom-5 flex flex-col justify-end"
-                          style={{ height: `${barHeight}%` }}
-                        >
-                          <div
-                            className="w-full rounded-t-sm bg-primary"
-                            style={{
-                              height: `${(ok / Math.max(1, s.total)) * 100}%`,
-                            }}
-                          />
-                          <div
-                            className="w-full bg-destructive"
-                            style={{
-                              height: `${(s.errors / Math.max(1, s.total)) * 100}%`,
-                            }}
-                          />
-                        </div>
-                        <span className="absolute inset-x-0 bottom-0 truncate text-center text-[9px] text-muted-foreground">
-                          {s.hour}
-                        </span>
+                          className="w-full rounded-t-sm bg-primary"
+                          style={{
+                            height: `${(ok / Math.max(1, s.total)) * 100}%`,
+                          }}
+                        />
+                        <div
+                          className="w-full bg-destructive"
+                          style={{
+                            height: `${(s.errors / Math.max(1, s.total)) * 100}%`,
+                          }}
+                        />
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </DashboardPanel>
+                      <span className="absolute inset-x-0 bottom-0 truncate text-center text-[9px] text-muted-foreground">
+                        {s.hour}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </DashboardPanel>
 
-            <DashboardPanel
-              title={t("requestsByServer")}
-              description={t("requestsByServerDescription")}
-              padded={false}
-            >
-              {o.deploymentUsage.length === 0 ? (
-                <DashboardEmptyState
-                  description={t("noServersYet")}
-                  className="min-h-32 rounded-none border-0"
-                />
-              ) : (
-                <DashboardTable
-                  minWidth="42rem"
-                  headers={[
-                    { label: t("server") },
-                    { label: t("requests"), align: "right" },
-                    { label: t("errors"), align: "right" },
-                    { label: t("errorRate"), align: "right" },
-                    { label: t("avgLatency"), align: "right" },
-                  ]}
-                  rows={o.deploymentUsage.map((row) => {
-                    const rowErrorRate = row.total
-                      ? `${Math.round((row.errors / row.total) * 1000) / 10}%`
-                      : "—";
-                    return {
-                      id: row.id ?? "workspace-api",
-                      cells: [
-                        row.id ? (
-                          <Link
-                            key="deployment"
-                            href={`/app/${slug}/mcp/${row.id}`}
-                            className="font-medium text-foreground hover:underline"
-                          >
-                            {row.name}
-                          </Link>
-                        ) : (
-                          <span
-                            key="deployment"
-                            className="font-medium text-foreground"
-                          >
-                            {row.name}
-                          </span>
-                        ),
-                        row.total,
-                        row.errors,
-                        rowErrorRate,
-                        <span key="latency">
-                          {row.avgMs}
-                          {t("ms")}
-                        </span>,
-                      ],
-                    };
-                  })}
-                />
-              )}
-            </DashboardPanel>
-          </>
-        ) : null}
-      </DashboardPage>
-    </>
+          <DashboardPanel
+            title={t("requestsByServer")}
+            description={t("requestsByServerDescription")}
+            padded={false}
+          >
+            {o.deploymentUsage.length === 0 ? (
+              <DashboardEmptyState
+                description={t("noServersYet")}
+                className="min-h-32 rounded-none border-0"
+              />
+            ) : (
+              <DashboardTable
+                minWidth="42rem"
+                headers={[
+                  { label: t("server") },
+                  { label: t("requests"), align: "right" },
+                  { label: t("errors"), align: "right" },
+                  { label: t("errorRate"), align: "right" },
+                  { label: t("avgLatency"), align: "right" },
+                ]}
+                rows={o.deploymentUsage.map((row) => {
+                  const rowErrorRate = row.total
+                    ? `${Math.round((row.errors / row.total) * 1000) / 10}%`
+                    : "—";
+                  return {
+                    id: row.id ?? "workspace-api",
+                    cells: [
+                      row.id ? (
+                        <Link
+                          key="deployment"
+                          href={`/app/${slug}/mcp/${row.id}`}
+                          className="font-medium text-foreground hover:underline"
+                        >
+                          {row.name}
+                        </Link>
+                      ) : (
+                        <span
+                          key="deployment"
+                          className="font-medium text-foreground"
+                        >
+                          {row.name}
+                        </span>
+                      ),
+                      row.total,
+                      row.errors,
+                      rowErrorRate,
+                      <span key="latency">
+                        {row.avgMs}
+                        {t("ms")}
+                      </span>,
+                    ],
+                  };
+                })}
+              />
+            )}
+          </DashboardPanel>
+        </>
+      ) : null}
+    </DashboardPage>
   );
 }

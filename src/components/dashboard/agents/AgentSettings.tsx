@@ -1,5 +1,13 @@
 "use client";
 import { DialogNav } from "../dialog";
+import {
+  Alert,
+  AlertAction,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+} from "@/components/motion/alert";
+import { Button } from "@/components/motion/button";
 
 import dynamic from "next/dynamic";
 import { useState } from "react";
@@ -157,6 +165,7 @@ export function AgentSettings({
   initialA2ATaskId?: string;
 }) {
   const t = useTranslations("console.agents");
+  const workT = useTranslations("console.work");
   const automationT = useTranslations("console.agentAutomation");
   const usageT = useTranslations("console.agentUsage");
   const approvalT = useTranslations("console.toolApproval");
@@ -229,11 +238,37 @@ export function AgentSettings({
             active={settingsTab}
             onSelect={(id) => setSettingsTab(id as SettingsTab)}
           />
-          <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            {!formSection &&
+            (dirtySections.length > 0 || (!ready && executable)) ? (
+              <div className="shrink-0 border-b border-border/60 bg-muted/30 px-6 py-2.5">
+                <Alert variant="warning">
+                  <AlertIcon />
+                  <AlertContent>
+                    <AlertDescription>
+                      {workT("agentDraftUnapplied")}
+                    </AlertDescription>
+                  </AlertContent>
+                  <AlertAction>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="rounded-full"
+                      onClick={() =>
+                        setSettingsTab(dirtySections[0] ?? "general")
+                      }
+                    >
+                      {workT("agentDraftReview")}
+                    </Button>
+                  </AlertAction>
+                </Alert>
+              </div>
+            ) : null}
             {/* The form stays mounted so every section's fields are saved together. */}
             <div
               hidden={!formSection}
-              className={formSection ? "h-full min-h-0" : "hidden"}
+              className={formSection ? "min-h-0 flex-1" : "hidden"}
             >
               <AgentSettingsForm
                 // Only saved bindings reset the draft; a workspace install from the panel must not.

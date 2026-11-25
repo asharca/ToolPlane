@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { updateAdminFeedbackAction } from "@/lib/admin/feedback-actions";
 import { FEEDBACK_STATUSES, type FeedbackStatus } from "@/lib/feedback/types";
+import { displayErrorText } from "@/components/dashboard/display-error";
 import { notify } from "@/components/dashboard/Toaster";
 import { FormSelect } from "@/components/ui/FormSelect";
 import { Button } from "@/components/motion/button";
@@ -45,7 +46,7 @@ export function AdminFeedbackStatusForm({
       notify(t("updateSuccess"), { severity: "info" });
       router.refresh();
     } catch (error) {
-      notify(error instanceof Error ? error.message : t("updateFailed"), {
+      notify(displayErrorText(error, t("updateFailed")), {
         severity: "error",
       });
     } finally {

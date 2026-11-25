@@ -3,7 +3,13 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { AlertTriangle, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
+import {
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+} from "@/components/motion/alert";
 import { Switch } from "@/components/motion/switch";
 import { setMcpSamplingAction } from "@/lib/workspace/mcp-config-actions";
 import type { McpConfigFailure } from "@/lib/workspace/mcp-config-types";
@@ -95,13 +101,14 @@ export function McpSamplingToggle({
           />
         </div>
 
-        <div
-          role="note"
-          className="flex gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/[0.08] px-3 py-2.5 text-xs leading-5 text-foreground"
-        >
-          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
-          <p>{t("config.samplingQuotaWarning")}</p>
-        </div>
+        <Alert variant="warning" className="p-3">
+          <AlertIcon />
+          <AlertContent>
+            <AlertDescription className="text-xs text-foreground">
+              {t("config.samplingQuotaWarning")}
+            </AlertDescription>
+          </AlertContent>
+        </Alert>
 
         {!canManage ? (
           <p className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">

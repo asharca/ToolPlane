@@ -87,17 +87,17 @@ export function SelectContent({
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: reduce ? 0 : 0.14, ease: EASE_OUT }}
           className={cn(
-            "z-[9999] max-h-[min(20rem,var(--radix-select-content-available-height))] min-w-(--radix-select-trigger-width) max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-border bg-background text-foreground shadow-lg outline-none",
+            "z-(--z-popover) max-h-[min(20rem,var(--radix-select-content-available-height))] min-w-(--radix-select-trigger-width) max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-border bg-popover text-foreground shadow-lg outline-none",
             className,
           )}
         >
-          <SelectPrimitive.ScrollUpButton className="flex h-6 items-center justify-center bg-background text-muted-foreground">
+          <SelectPrimitive.ScrollUpButton className="flex h-6 items-center justify-center bg-popover text-muted-foreground">
             <ChevronUp aria-hidden="true" className="size-4" />
           </SelectPrimitive.ScrollUpButton>
           <SelectPrimitive.Viewport className="p-1">
             {children}
           </SelectPrimitive.Viewport>
-          <SelectPrimitive.ScrollDownButton className="flex h-6 items-center justify-center bg-background text-muted-foreground">
+          <SelectPrimitive.ScrollDownButton className="flex h-6 items-center justify-center bg-popover text-muted-foreground">
             <ChevronDown aria-hidden="true" className="size-4" />
           </SelectPrimitive.ScrollDownButton>
         </motion.div>

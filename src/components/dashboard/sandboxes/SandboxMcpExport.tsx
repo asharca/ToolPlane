@@ -28,9 +28,11 @@ export function SandboxMcpExport({
   exportable: boolean;
 }) {
   const t = useTranslations("console.sandboxes");
+  const common = useTranslations("common");
   const [grants, setGrants] = useState<Grant[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   async function refresh() {
     setBusy(true);
     setError("");
@@ -143,16 +145,43 @@ export function SandboxMcpExport({
                   </p>
                 </div>
                 {!grant.revokedAt ? (
-                  <Button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => revoke(grant.id)}
-                    variant="secondary"
-                    size="sm"
-                    className="shrink-0"
-                  >
-                    {t("mcpRevoke")}
-                  </Button>
+                  confirmingId === grant.id ? (
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <Button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => setConfirmingId(null)}
+                        variant="ghost"
+                        size="sm"
+                      >
+                        {common("cancel")}
+                      </Button>
+                      <Button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          setConfirmingId(null);
+                          void revoke(grant.id);
+                        }}
+                        variant="primary"
+                        size="sm"
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      >
+                        {common("confirm")}
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setConfirmingId(grant.id)}
+                      variant="secondary"
+                      size="sm"
+                      className="shrink-0"
+                    >
+                      {t("mcpRevoke")}
+                    </Button>
+                  )
                 ) : null}
               </div>
             ))

@@ -3,7 +3,9 @@ import { Button, ButtonLink } from "@/components/motion/button/base";
 
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { BouncyAccordion } from "@/components/motion/bouncy-accordion";
+import { Loader } from "@/components/motion/loader";
 import { Switch } from "@/components/motion/switch";
+import { ConfirmActionDialog } from "@/components/dashboard/ConversationUxPrimitives";
 
 import {
   useCallback,
@@ -43,10 +45,12 @@ export function AgentA2APanel({
   initialTaskId?: string;
 }) {
   const t = useTranslations("console.agents.a2a");
+  const common = useTranslations("common");
   const [view, setView] = useState<A2AConsoleView | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<"local" | "public">("local");
+  const [revokeKeyId, setRevokeKeyId] = useState<string | null>(null);
   const flight = useRef(false);
   const mounted = useRef(true);
   const base = `/api/v1/workspaces/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentId)}/a2a/console`;
@@ -141,7 +145,13 @@ export function AgentA2APanel({
         </div>
       ) : null}
       {!view ? (
-        <p role="status">{t("loading")}</p>
+        <div
+          role="status"
+          className="flex items-center gap-2 text-sm text-muted-foreground"
+        >
+          <Loader size={18} label={t("loading")} />
+          <span>{t("loading")}</span>
+        </div>
       ) : (
         <>
           {!view.canManage ? (
@@ -368,13 +378,7 @@ export function AgentA2APanel({
                         </div>
                         <Button
                           disabled={locked || !!key.revokedAt}
-                          onClick={() => {
-                            if (window.confirm(t("revokeConfirm")))
-                              void mutate({
-                                action: "revoke-key",
-                                keyId: key.id,
-                              });
-                          }}
+                          onClick={() => setRevokeKeyId(key.id)}
                           variant={"secondary"}
                           size={"sm"}
                         >
@@ -385,6 +389,24 @@ export function AgentA2APanel({
                   </div>
                 ))
               )}
+              <ConfirmActionDialog
+                open={revokeKeyId !== null}
+                title={t("revoke")}
+                description={t("revokeConfirm")}
+                confirmLabel={t("revoke")}
+                cancelLabel={common("cancel")}
+                busy={busy}
+                onClose={() => setRevokeKeyId(null)}
+                onConfirm={() => {
+                  const targetId = revokeKeyId;
+                  setRevokeKeyId(null);
+                  if (targetId)
+                    void mutate({
+                      action: "revoke-key",
+                      keyId: targetId,
+                    });
+                }}
+              />
             </section>
           ) : null}
           {view.local.supported ? (

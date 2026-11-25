@@ -334,11 +334,15 @@ export function ConversationTools({
                 onError(displayErrorText(cause, agentsT("clearContextFailed"))),
               );
             }}
-            variant={item.pressed ? "primary" : "ghost"}
+            variant="ghost"
             size="icon"
-            className="flex shrink-0 items-center justify-center"
+            className={`flex size-8 shrink-0 items-center justify-center rounded-full ${
+              item.pressed
+                ? "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
+                : ""
+            }`}
           >
-            <Icon className="size-[17px]" />
+            <Icon className="size-4" />
           </Button>
         );
       })}

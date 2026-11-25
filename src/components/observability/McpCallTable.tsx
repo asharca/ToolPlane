@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { PanelRightOpen } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { Button } from "@/components/motion/button";
 import { DashboardTable } from "@/components/dashboard/DashboardUI";
 import type { McpCallSummary } from "@/lib/observability/views/types";
 import {
@@ -18,6 +20,7 @@ export function McpCallTable({
   a2aDetailBase,
   showWorkspace = false,
   returnTo,
+  onInspect,
 }: {
   items: McpCallSummary[];
   detailBase: string;
@@ -25,8 +28,10 @@ export function McpCallTable({
   a2aDetailBase: string;
   showWorkspace?: boolean;
   returnTo?: string;
+  onInspect?: (id: string) => void;
 }) {
   const t = useTranslations("console.observability.viewer");
+  const common = useTranslations("common");
   if (!items.length) return <EmptyState />;
   return (
     <DashboardTable
@@ -46,26 +51,43 @@ export function McpCallTable({
         id: item.id,
         cells: [
           ...(showWorkspace ? [item.workspace?.name ?? "—"] : []),
-          <Link
+          <div
             key="operation"
-            className="font-medium text-primary hover:underline"
-            href={`${detailBase}/${encodeURIComponent(item.id)}${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`}
+            className="flex items-start justify-between gap-2"
           >
-            <span>{item.tool ?? item.method ?? t("unknownOperation")}</span>
-            {item.tool && (
-              <span className="block text-xs text-muted-foreground">
-                {item.method}
-              </span>
-            )}
-            {item.error && (
-              <span
-                className="block max-w-72 truncate text-xs text-destructive"
-                title={item.error}
+            <Link
+              className="min-w-0 font-medium text-primary hover:underline"
+              href={`${detailBase}/${encodeURIComponent(item.id)}${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`}
+            >
+              <span>{item.tool ?? item.method ?? t("unknownOperation")}</span>
+              {item.tool && (
+                <span className="block text-xs text-muted-foreground">
+                  {item.method}
+                </span>
+              )}
+              {item.error && (
+                <span
+                  className="block max-w-72 truncate text-xs text-destructive"
+                  title={item.error}
+                >
+                  {item.error}
+                </span>
+              )}
+            </Link>
+            {onInspect ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
+                title={common("preview")}
+                aria-label={common("preview")}
+                onClick={() => onInspect(item.id)}
               >
-                {item.error}
-              </span>
-            )}
-          </Link>,
+                <PanelRightOpen className="size-3.5" />
+              </Button>
+            ) : null}
+          </div>,
           <span key="server" title={item.deployment?.id}>
             {item.deployment?.name ?? item.server?.name ?? "—"}
           </span>,

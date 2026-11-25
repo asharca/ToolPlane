@@ -17,6 +17,7 @@ import { Input } from "@/components/motion/input";
 import { createTokenAction, revokeTokenAction } from "@/lib/auth/actions";
 import type { TokenState } from "@/lib/auth/actions";
 import { copyText } from "./CopyButton";
+import { ConfirmSubmitButton } from "./ConfirmSubmitButton";
 import { DashboardEmptyState, DashboardPanel } from "./DashboardUI";
 import { SubmitButton } from "./SubmitButton";
 import { DialogField } from "./dialog";
@@ -140,6 +141,7 @@ export function TokenManager({
   workspaceSlug?: string;
 }) {
   const t = useTranslations("console.tokens");
+  const commonT = useTranslations("console.common");
   const [state, formAction] = useActionState<TokenState, FormData>(
     createTokenAction,
     {},
@@ -216,10 +218,7 @@ export function TokenManager({
                       {token.name || t("untitledToken")}
                     </p>
                     <p className="truncate font-mono text-xs text-muted-foreground">
-                      {token.prefix}… ·{" "}
-                      {token.lastUsedAt
-                        ? `last used ${token.lastUsedAt}`
-                        : t("neverUsed")}{" "}
+                      {token.prefix}… · {token.lastUsedAt ?? t("neverUsed")} ·{" "}
                       {t("created")} {token.createdAt}
                     </p>
                   </div>
@@ -227,14 +226,18 @@ export function TokenManager({
                 <form action={revokeTokenAction}>
                   <input type="hidden" name="id" value={token.id} />
                   <input type="hidden" name="workspace" value={workspaceSlug} />
-                  <Button
-                    type="submit"
-                    variant="secondary"
-                    size="sm"
-                    className="inline-flex items-center"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" /> {t("revoke")}
-                  </Button>
+                  <ConfirmSubmitButton
+                    triggerLabel={
+                      <>
+                        <Trash2 className="h-3.5 w-3.5" /> {t("revoke")}
+                      </>
+                    }
+                    confirmLabel={t("revoke")}
+                    cancelLabel={commonT("close")}
+                    prompt={`${t("revoke")}?`}
+                    triggerSize="sm"
+                    confirmClassName="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  />
                 </form>
               </li>
             ))}

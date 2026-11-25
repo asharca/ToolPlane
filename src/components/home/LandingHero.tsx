@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { useMemo, useState } from "react";
-import { GithubIcon } from "@/components/ui/GithubIcon";
 import {
   type AgentTraceRun,
   TraceWaterfall,
@@ -41,7 +40,6 @@ import {
 } from "@/components/motion/tabs";
 import { EASE_OUT } from "@/lib/ease";
 import type { MarketingContent } from "@/lib/marketing/content";
-import { SITE } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
 type HeroTab = "trace" | "sandbox" | "gateway";
@@ -57,8 +55,23 @@ const ROUTE_ICONS: Record<string, typeof Server> = {
   "device-bridge": Cpu,
 };
 
+function BrandHubMark() {
+  return (
+    <svg
+      viewBox="0 0 64 64"
+      fill="currentColor"
+      aria-hidden="true"
+      className="size-7 text-primary"
+    >
+      <path d="M12 14h30v9H31v27H21V23h-9z" />
+      <path d="m34 27 20 9-20 9 4-7H29v-4h9z" />
+    </svg>
+  );
+}
+
 export function LandingHero({ home, locale }: LandingHeroProps) {
   const reduce = useReducedMotion();
+  const isZh = locale.toLowerCase().startsWith("zh");
   const { heroPreview } = home;
   const [activeTab, setActiveTab] = useState<HeroTab>("trace");
   const [selectedNodeId, setSelectedNodeId] = useState<string>("revision-lock");
@@ -80,7 +93,6 @@ export function LandingHero({ home, locale }: LandingHeroProps) {
 
   const traceLabels = useMemo<Partial<TraceWaterfallLabels>>(() => {
     const l = heroPreview.traceLabels;
-    const isZh = locale.toLowerCase().startsWith("zh");
     return {
       trace: (name) => `${name} ${l.traceSuffix}`,
       status: {
@@ -144,7 +156,7 @@ export function LandingHero({ home, locale }: LandingHeroProps) {
           timeZone: "UTC",
         }),
     };
-  }, [heroPreview.traceLabels, locale]);
+  }, [heroPreview.traceLabels, isZh]);
 
   const resolvedSandboxNodeId =
     selectedNodeId === "code-review-dir"
@@ -168,6 +180,7 @@ export function LandingHero({ home, locale }: LandingHeroProps) {
           label: route.label,
           description: route.description,
           icon: <Icon aria-hidden="true" className="size-6" />,
+          branch: route.id === "device-bridge" ? "api" : "mcp",
         };
       }),
     [heroPreview.gatewayRoutes],
@@ -208,7 +221,12 @@ export function LandingHero({ home, locale }: LandingHeroProps) {
             <span>{home.eyebrow}</span>
           </div>
 
-          <h1 className="mt-5 text-balance text-3xl font-semibold tracking-tight text-foreground sm:text-5xl lg:text-[3.4rem] lg:leading-[1.08]">
+          <h1
+            className={cn(
+              "mt-5 text-balance text-3xl font-semibold tracking-tight text-foreground sm:text-5xl lg:text-[3.4rem]",
+              isZh ? "sm:leading-[1.2] lg:leading-[1.22]" : "lg:leading-[1.08]",
+            )}
+          >
             {home.headline}
           </h1>
 
@@ -224,16 +242,6 @@ export function LandingHero({ home, locale }: LandingHeroProps) {
             <ButtonLink href="#quickstart" variant="secondary" size="md">
               <Terminal aria-hidden="true" className="size-4" />
               {home.secondaryCta}
-            </ButtonLink>
-            <ButtonLink
-              href={SITE.sourceUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              variant="ghost"
-              size="md"
-            >
-              <GithubIcon aria-hidden="true" className="size-4" />
-              {home.tertiaryCta}
             </ButtonLink>
           </div>
         </motion.div>
@@ -290,11 +298,10 @@ export function LandingHero({ home, locale }: LandingHeroProps) {
               </TabsList>
             </div>
 
-            {/* Tab 1: Trace Waterfall */}
+            {/* Tab 1: Trace Waterfall (detail drawer remains collapsed initially so <xl viewports stay roomy) */}
             <TabsContent value="trace" className="mt-0 bg-background">
               <TraceWaterfall
                 run={traceRun}
-                defaultSelectedSpanId="span-mcp"
                 labels={traceLabels}
                 className="max-w-none rounded-none border-0"
               />
@@ -407,6 +414,7 @@ export function LandingHero({ home, locale }: LandingHeroProps) {
                 <ConnectedHub
                   variant={4}
                   hubLabel={heroPreview.gatewayHubLabel}
+                  hubIcon={<BrandHubMark />}
                   label={heroPreview.gatewayAriaLabel}
                   nodes={hubNodes}
                   value={selectedRouteId}
@@ -487,18 +495,13 @@ export function LandingHero({ home, locale }: LandingHeroProps) {
               </div>
             </TabsContent>
 
-            {/* Subtle illustrative caption footer */}
-            <div className="flex flex-col gap-1.5 border-t border-border bg-card/80 px-4 py-2.5 text-[11px] text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:px-5">
-              <div className="flex items-center gap-2">
-                <span
-                  aria-hidden="true"
-                  className="size-1.5 shrink-0 rounded-full bg-muted-foreground/60"
-                />
-                <span>{heroPreview.illustrativeNote}</span>
-              </div>
-              <span className="font-mono text-[11px] text-muted-foreground">
-                {heroPreview.stackLabel}
-              </span>
+            {/* Honest illustrative caption footer */}
+            <div className="flex items-center gap-2 border-t border-border bg-card/80 px-4 py-2.5 text-[11px] text-muted-foreground sm:px-5">
+              <span
+                aria-hidden="true"
+                className="size-1.5 shrink-0 rounded-full bg-muted-foreground/60"
+              />
+              <span>{heroPreview.illustrativeNote}</span>
             </div>
           </Tabs>
         </motion.div>

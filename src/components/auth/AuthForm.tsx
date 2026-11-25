@@ -10,7 +10,14 @@ import {
 } from "@/lib/auth/password-policy";
 import { useDetectedClientTimeZone } from "@/components/timezone/UserTimeZoneContext";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import {
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+} from "@/components/motion/alert";
 import { Input } from "@/components/motion/input";
+import { PasswordInput } from "./PasswordInput";
 
 type Action = (prev: AuthState, formData: FormData) => Promise<AuthState>;
 
@@ -30,7 +37,7 @@ export function AuthForm({
   const detectedTimeZone = useDetectedClientTimeZone();
 
   return (
-    <div className="mx-auto w-full max-w-sm px-4 py-10">
+    <div className="mx-auto w-full max-w-sm px-4 py-12">
       <div className="rounded-xl border border-border bg-card p-6 sm:p-7">
         <h1 className="mb-1 text-2xl font-semibold tracking-tight text-foreground">
           {isSignup ? t("signupTitle") : t("loginTitle")}
@@ -66,11 +73,10 @@ export function AuthForm({
           />
 
           <div className="space-y-1.5">
-            <Input
+            <PasswordInput
               label={t("password")}
               id="password"
               name="password"
-              type="password"
               required
               minLength={isSignup ? PASSWORD_MIN_LENGTH : undefined}
               maxLength={PASSWORD_MAX_LENGTH}
@@ -79,7 +85,7 @@ export function AuthForm({
             {!isSignup ? (
               <div className="flex justify-end">
                 <Link
-                  href="/app/forgot-password"
+                  href={`/app/forgot-password${crossLinkQuery}`}
                   className="text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                 >
                   {t("forgotPasswordLink")}
@@ -94,9 +100,12 @@ export function AuthForm({
           </div>
 
           {state.error ? (
-            <p role="alert" className="text-sm text-destructive">
-              {state.error}
-            </p>
+            <Alert variant="destructive">
+              <AlertIcon />
+              <AlertContent>
+                <AlertDescription>{state.error}</AlertDescription>
+              </AlertContent>
+            </Alert>
           ) : null}
 
           <SubmitButton

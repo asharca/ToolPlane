@@ -39,6 +39,8 @@ export interface ConnectedHubNode {
   label: string;
   description: string;
   icon?: ReactNode;
+  /** Which labelled output a node feeds in the routing composition (variant 4). */
+  branch?: "api" | "mcp";
 }
 export interface ConnectedHubProps {
   variant?: 1 | 2 | 3 | 4;
@@ -106,7 +108,16 @@ export function ConnectedHub({
     if (variant === 1) return `M${point.x} ${point.y}Q${point.x} 213 200 225`;
     if (variant === 2) return `M${point.x} 65V174H200`;
     if (variant === 3) return `M200 156V194Q200 228 ${point.x} 228`;
-    return `M72 150H145V${point.y > 150 ? 190 : 110}H245V${point.y}H328`;
+    const branch = nodes[index].branch;
+    const branchY =
+      branch === "mcp"
+        ? 110
+        : branch === "api"
+          ? 190
+          : point.y > 150
+            ? 190
+            : 110;
+    return `M72 150H145V${branchY}H245V${point.y}H328`;
   };
   return (
     <section
@@ -214,7 +225,7 @@ export function ConnectedHub({
               ? "size-20 rounded-full ring-1 ring-border ring-offset-[6px] ring-offset-muted"
               : variant === 3
                 ? "size-16 rounded-2xl text-sky-500 ring-1 ring-sky-500/10 ring-offset-2 ring-offset-muted"
-                : "size-[88px] rounded-3xl",
+                : "size-[clamp(56px,20cqw,88px)] rounded-3xl",
         )}
         style={{ left: `${hub.x / 4}%`, top: `${hub.y / 3}%` }}
       >
@@ -253,8 +264,8 @@ export function ConnectedHub({
       )}
       {variant === 4 &&
         [
-          { label: "API", y: 36.7, Icon: Network },
-          { label: "MCP", y: 63.3, Icon: Cable },
+          { label: "MCP", y: 36.7, Icon: Cable },
+          { label: "API", y: 63.3, Icon: Network },
         ].map(({ label, y, Icon }) => (
           <span
             key={label}
@@ -288,7 +299,8 @@ export function ConnectedHub({
                 ? "size-14 rounded-full"
                 : variant === 3
                   ? "size-12 rounded-xl border-0 bg-muted"
-                  : "size-[88px] rounded-3xl",
+                  : "size-[clamp(56px,20cqw,88px)] rounded-3xl",
+            active?.id === node.id && "border-primary ring-2 ring-primary/20",
           )}
           style={{
             left: `${points[index].x / 4}%`,
@@ -299,7 +311,7 @@ export function ConnectedHub({
             aria-hidden
             className={cn(
               variant === 4 &&
-                "grid size-[68px] place-items-center rounded-2xl bg-muted",
+                "grid size-[clamp(42px,15.5cqw,68px)] place-items-center rounded-2xl bg-muted",
             )}
           >
             {node.icon ?? <Plug />}
@@ -308,7 +320,7 @@ export function ConnectedHub({
       ))}
       <p
         aria-live="polite"
-        className="absolute inset-x-3 bottom-2 rounded-full bg-background/90 px-3 py-2 text-center text-[1.8cqw] text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+        className="absolute inset-x-3 bottom-2 rounded-full bg-background/90 px-3 py-2 text-center text-[max(11px,1.8cqw)] text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
       >
         {active
           ? `${active.label} → ${hubLabel}: ${active.description}`

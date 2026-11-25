@@ -31,6 +31,8 @@ export type DashboardTableProps = {
   selectionActions?: TableProps<DashboardTableRow>["selectionActions"];
   /** "above" keeps the selection toolbar out of the sticky header; it requires controlled selection. */
   selectionPlacement?: "header" | "above";
+  loading?: boolean;
+  skeletonRows?: number;
 };
 
 /** Server pages provide serializable cell content; beUI owns the table rendering. */
@@ -47,6 +49,8 @@ export function DashboardTable({
   onSelectionChange,
   selectionActions,
   selectionPlacement = "header",
+  loading,
+  skeletonRows,
 }: DashboardTableProps) {
   const t = useTranslations("console.agents");
   const columns = useMemo<TableColumn<DashboardTableRow>[]>(
@@ -132,6 +136,8 @@ export function DashboardTable({
           selectionActions={
             selectionPlacement === "header" ? toolbar : undefined
           }
+          loading={loading}
+          skeletonRows={skeletonRows}
           height={height ?? 640}
         />
       </div>

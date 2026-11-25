@@ -1,5 +1,14 @@
 "use client";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
+import {
+  CenterMorphModal,
+  CenterMorphModalContent,
+} from "@/components/motion/center-morph-modal";
+import {
+  DialogCancel,
+  DialogFooter,
+  DialogHeader,
+} from "@/components/dashboard/dialog";
 
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
@@ -117,8 +126,11 @@ export function RuntimeFilesEditor({
   relativePathArgumentsWork?: boolean;
 }) {
   const t = useTranslations("console.mcp");
+  const common = useTranslations("common");
   const pathId = useId();
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [confirmRemoveFile, setConfirmRemoveFile] =
+    useState<RuntimeFileMetadata | null>(null);
   const [savedFiles, setSavedFiles] = useState<RuntimeFileMetadata[]>([]);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [removedFileIds, setRemovedFileIds] = useState<Set<string>>(
@@ -274,9 +286,10 @@ export function RuntimeFilesEditor({
   };
 
   const removeFile = (file: RuntimeFileMetadata) => {
-    if (!window.confirm(t("removeRuntimeFileConfirm", { path: file.path })))
-      return;
+    setConfirmRemoveFile(file);
+  };
 
+  const performRemoveFile = (file: RuntimeFileMetadata) => {
     const formData = new FormData();
     formData.set("workspace", workspace);
     formData.set("deploymentId", deploymentId);
@@ -540,7 +553,7 @@ export function RuntimeFilesEditor({
             )}
 
             {currentPathAlreadyExists ? (
-              <p className="rounded-xl border border-border bg-muted px-3 py-2 text-xs text-foreground text-foreground">
+              <p className="rounded-xl border border-border bg-muted px-3 py-2 text-xs text-foreground">
                 {t("runtimeFileReplaceWarning", { path: draft.path.trim() })}
               </p>
             ) : null}
@@ -563,7 +576,7 @@ export function RuntimeFilesEditor({
                 spellCheck={false}
                 aria-invalid={Boolean(error)}
                 aria-describedby={error ? "runtime-file-error" : undefined}
-                className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring h-[min(24rem,50dvh)] min-h-32 max-h-[60dvh]"
+                className="h-[min(24rem,50dvh)] max-h-[60dvh] min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 font-mono text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
           </div>
@@ -606,6 +619,44 @@ export function RuntimeFilesEditor({
           </p>
         </div>
       ) : null}
+      <CenterMorphModal
+        open={confirmRemoveFile !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmRemoveFile(null);
+        }}
+      >
+        <CenterMorphModalContent
+          ariaLabel={t("remove")}
+          closeButtonLabel={common("close")}
+          className="max-w-md"
+        >
+          <DialogHeader
+            title={t("remove")}
+            description={
+              confirmRemoveFile
+                ? t("removeRuntimeFileConfirm", {
+                    path: confirmRemoveFile.path,
+                  })
+                : undefined
+            }
+          />
+          <DialogFooter cancel={<DialogCancel />}>
+            <Button
+              type="button"
+              variant="primary"
+              size="md"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                const target = confirmRemoveFile;
+                setConfirmRemoveFile(null);
+                if (target) performRemoveFile(target);
+              }}
+            >
+              {t("remove")}
+            </Button>
+          </DialogFooter>
+        </CenterMorphModalContent>
+      </CenterMorphModal>
     </section>
   );
 }

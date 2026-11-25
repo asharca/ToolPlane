@@ -50,8 +50,19 @@ export interface ApprovalCardProps {
   onReject?: () => void;
   onRequestChanges?: () => void;
   onDismiss?: () => void;
+  /** Cancels the whole request; rendered inside the card next to the other actions. */
+  onCancel?: () => void;
   approveLabel?: ReactNode;
+  rejectLabel?: ReactNode;
+  requestChangesLabel?: ReactNode;
+  cancelLabel?: ReactNode;
   submitLabel?: ReactNode;
+  /** Localized copy for the status badge and fixed controls. */
+  labels?: Partial<Record<ApprovalCardStatus, ReactNode>> & {
+    dismiss?: string;
+    previousQuestion?: string;
+    nextQuestion?: string;
+  };
   result?: ReactNode;
   className?: string;
 }

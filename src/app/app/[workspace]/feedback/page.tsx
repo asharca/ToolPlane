@@ -54,22 +54,20 @@ export default async function WorkspaceFeedbackPage({
   if (!ws) redirect("/app");
 
   return (
-    <>
-      <DashboardHeader title={t("title")} />
-      <DashboardPage className="max-w-4xl py-8">
-        <FeedbackClient
-          workspaceId={ws.id}
-          workspaceSlug={ws.slug}
-          initialPrefill={{
-            category: normalizeCategory(query.category),
-            failureCode: cleanParam(query.failureCode),
-            workSessionId: cleanParam(query.workSessionId),
-            taskId: cleanParam(query.taskId),
-            conversationId: cleanParam(query.conversationId),
-            agentId: cleanParam(query.agentId),
-          }}
-        />
-      </DashboardPage>
-    </>
+    <DashboardPage className="max-w-4xl py-8">
+      <DashboardHeader title={t("title")} visible />
+      <FeedbackClient
+        workspaceId={ws.id}
+        workspaceSlug={ws.slug}
+        initialPrefill={{
+          category: normalizeCategory(query.category),
+          failureCode: cleanParam(query.failureCode),
+          workSessionId: cleanParam(query.workSessionId),
+          taskId: cleanParam(query.taskId),
+          conversationId: cleanParam(query.conversationId),
+          agentId: cleanParam(query.agentId),
+        }}
+      />
+    </DashboardPage>
   );
 }

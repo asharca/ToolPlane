@@ -4,6 +4,8 @@ import { useActionState, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/motion/button";
+import { Input } from "@/components/motion/input";
+import { FormCheckbox } from "@/components/ui/FormCheckbox";
 import { notify } from "@/components/dashboard/Toaster";
 import {
   clearOfficialPluginEnvPresetAction,
@@ -17,9 +19,6 @@ import {
   type PluginEnvStatus,
 } from "@/lib/plugins/env-schema";
 import { AdminBadge } from "./AdminUI";
-
-const fieldClass =
-  "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono";
 
 export function AdminPluginPresetForm({
   listingId,
@@ -153,18 +152,17 @@ export function AdminPluginPresetForm({
                   ) : null}
                 </div>
                 {secret ? (
-                  <input
+                  <Input
                     id={inputId}
                     type="password"
                     autoComplete="new-password"
-                    className={fieldClass}
+                    className="w-full font-mono"
                     disabled={pending || markedClear}
                     value={secretValues[item.name] ?? ""}
                     placeholder={
                       configured ? t("pluginPresetSecretPlaceholder") : ""
                     }
-                    onChange={(event) => {
-                      const val = event.target.value;
+                    onChange={(val) => {
                       setSecretValues((prev) => ({
                         ...prev,
                         [item.name]: val,
@@ -172,15 +170,14 @@ export function AdminPluginPresetForm({
                     }}
                   />
                 ) : (
-                  <input
+                  <Input
                     id={inputId}
                     type={envValueKind(item) === "url" ? "url" : "text"}
-                    className={fieldClass}
+                    className="w-full font-mono"
                     disabled={pending || markedClear}
                     value={nonSecretValues[item.name] ?? ""}
                     placeholder={defaultUpstreamUrl ?? ""}
-                    onChange={(event) => {
-                      const val = event.target.value;
+                    onChange={(val) => {
                       setNonSecretValues((prev) => ({
                         ...prev,
                         [item.name]: val,
@@ -194,22 +191,19 @@ export function AdminPluginPresetForm({
                   </p>
                 ) : null}
                 {configured ? (
-                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={markedClear}
-                      disabled={pending}
-                      onChange={(event) => {
-                        const checked = event.target.checked;
-                        setClearKeys((prev) =>
-                          checked
-                            ? [...prev, item.name]
-                            : prev.filter((k) => k !== item.name),
-                        );
-                      }}
-                    />
-                    {t("pluginPresetClearKey")}
-                  </label>
+                  <FormCheckbox
+                    checked={markedClear}
+                    disabled={pending}
+                    label={t("pluginPresetClearKey")}
+                    className="text-xs text-muted-foreground"
+                    onCheckedChange={(checked) => {
+                      setClearKeys((prev) =>
+                        checked
+                          ? [...prev, item.name]
+                          : prev.filter((k) => k !== item.name),
+                      );
+                    }}
+                  />
                 ) : null}
               </div>
             );

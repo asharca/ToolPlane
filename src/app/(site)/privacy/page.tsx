@@ -1,4 +1,4 @@
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import type { Metadata } from "next";
 import { ContentPage } from "@/components/theme/ContentPage";
 import { mailto } from "@/lib/site";
@@ -15,7 +15,11 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function Page() {
-  const t = await getTranslations("privacy");
+  const [t, locale] = await Promise.all([
+    getTranslations("privacy"),
+    getLocale(),
+  ]);
+  const isZh = locale.toLowerCase().startsWith("zh");
   const supportEmail = runtimeSupportEmail();
   return (
     <ContentPage title={t("privacyPolicy")}>
@@ -80,14 +84,15 @@ export default async function Page() {
           {t("contactTitle")}
         </h2>
         <p>
-          {t("contactBody")}{" "}
+          {t("contactBody")}
+          {isZh ? "" : " "}
           <a
             className="font-medium text-foreground underline underline-offset-4"
             href={mailto(supportEmail)}
           >
             {supportEmail}
           </a>
-          .
+          {isZh ? "。" : "."}
         </p>
       </section>
     </ContentPage>

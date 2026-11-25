@@ -16,7 +16,8 @@ import { CodeBlock } from "@/components/agents/code-block";
 import type { AgentCodeLanguage } from "@/components/agents/agent-code";
 import { Bot } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
-import { CopyButton } from "@/components/dashboard/CopyButton";
+import { copyText } from "@/components/dashboard/CopyButton";
+import { useAgentUiLabels } from "./agent-ui-labels";
 import {
   Message,
   MessageAvatar,
@@ -322,14 +323,57 @@ const MermaidAssistantMarkdown = lazy(
 const codeLanguages: Record<string, AgentCodeLanguage> = {
   bash: "bash",
   sh: "bash",
+  shell: "bash",
+  zsh: "bash",
   diff: "diff",
+  patch: "diff",
   json: "json",
+  jsonc: "json",
   text: "text",
   txt: "text",
   plaintext: "text",
+  js: "tsx",
+  javascript: "tsx",
+  jsx: "tsx",
+  mjs: "tsx",
+  cjs: "tsx",
   tsx: "tsx",
   ts: "typescript",
+  mts: "typescript",
+  cts: "typescript",
   typescript: "typescript",
+  py: "python",
+  python: "python",
+  go: "go",
+  golang: "go",
+  rs: "rust",
+  rust: "rust",
+  sql: "sql",
+  yaml: "yaml",
+  yml: "yaml",
+  css: "css",
+  html: "html",
+  htm: "html",
+  xml: "xml",
+  svg: "xml",
+  md: "markdown",
+  markdown: "markdown",
+  dockerfile: "dockerfile",
+  rb: "ruby",
+  ruby: "ruby",
+  kt: "kotlin",
+  kotlin: "kotlin",
+  c: "c",
+  cpp: "cpp",
+  "c++": "cpp",
+  cc: "cpp",
+  cxx: "cpp",
+  hpp: "cpp",
+  java: "java",
+  swift: "swift",
+  toml: "toml",
+  graphql: "graphql",
+  gql: "graphql",
 };
 
 function AssistantCodeBlock({
@@ -337,22 +381,21 @@ function AssistantCodeBlock({
   language,
   isIncomplete,
 }: CustomRendererProps) {
-  const t = useTranslations("common");
+  const agentUi = useAgentUiLabels();
+  const normalized = language?.trim().toLowerCase() ?? "";
+  const mappedLanguage = codeLanguages[normalized];
   return (
-    <div className="relative">
-      <CodeBlock
-        code={code}
-        language={codeLanguages[language] ?? "text"}
-        status={isIncomplete ? "streaming" : "complete"}
-        copyable={false}
-      />
-      <CopyButton
-        text={code}
-        label={t("copy")}
-        iconOnly
-        className="absolute top-1 right-2"
-      />
-    </div>
+    <CodeBlock
+      code={code}
+      language={mappedLanguage ?? "text"}
+      displayLanguage={normalized || undefined}
+      status={isIncomplete ? "streaming" : undefined}
+      maxHeight={560}
+      labels={agentUi.codeBlock}
+      onCopy={async () => {
+        await copyText(code);
+      }}
+    />
   );
 }
 

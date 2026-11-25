@@ -3,9 +3,10 @@
 import { useActionState, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
-import { ChevronRight, Save, Wrench } from "lucide-react";
+import { ChevronRight, Save, Search, Wrench } from "lucide-react";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button } from "@/components/motion/button";
+import { Input } from "@/components/motion/input";
 import { Switch } from "@/components/motion/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { FormCheckbox } from "@/components/ui/FormCheckbox";
@@ -65,6 +66,8 @@ export function McpToolExposureEditor({
   toolBasePath: string;
 }) {
   const t = useTranslations("console.mcp");
+  const common = useTranslations("common");
+  const [toolFilter, setToolFilter] = useState("");
   const [saved, setSaved] = useState(() =>
     signature(initialMode, initialAllowedTools, initialPublicInvocable),
   );
@@ -109,6 +112,16 @@ export function McpToolExposureEditor({
     }
     return [...byName.values()];
   }, [mode, selected, tools]);
+
+  const filteredEntries = useMemo(() => {
+    const q = toolFilter.trim().toLowerCase();
+    if (!q) return entries;
+    return entries.filter((tool) =>
+      `${tool.name} ${tool.title ?? ""} ${tool.description ?? ""}`
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [entries, toolFilter]);
 
   const enabledCount =
     mode === "all"
@@ -246,9 +259,22 @@ export function McpToolExposureEditor({
         </div>
       ) : null}
 
-      {entries.length ? (
+      {entries.length > 5 ? (
+        <div className="border-b border-border px-5 py-2.5">
+          <Input
+            value={toolFilter}
+            onChange={setToolFilter}
+            placeholder={common("search")}
+            aria-label={common("search")}
+            leftIcon={<Search className="size-4" />}
+            className="w-full sm:max-w-xs"
+          />
+        </div>
+      ) : null}
+
+      {filteredEntries.length ? (
         <ul className="divide-y divide-border">
-          {entries.map((tool) => {
+          {filteredEntries.map((tool) => {
             const enabled = mode === "all" || selected.has(tool.name);
             const description = tool.description?.trim();
             const title =

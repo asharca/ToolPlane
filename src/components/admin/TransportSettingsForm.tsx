@@ -4,6 +4,7 @@ import { useActionState, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { AdminBadge, AdminPanel } from "@/components/admin/AdminUI";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
+import { notify } from "@/components/dashboard/Toaster";
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import { Switch } from "@/components/motion/switch";
@@ -36,7 +37,12 @@ export function TransportSettingsForm({
   const [state, action, pending] = useActionState<
     AdminSettingsActionState,
     FormData
-  >(updateTransportSettingsAction, {});
+  >(async (prev, form) => {
+    const result = await updateTransportSettingsAction(prev, form);
+    if (result.error) notify(result.error, { severity: "error" });
+    else if (result.ok) notify(t("transportSettingsSaved"));
+    return result;
+  }, {});
 
   return (
     <AdminPanel
@@ -52,7 +58,7 @@ export function TransportSettingsForm({
       }
     >
       <form action={action} className="space-y-5">
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <input type="hidden" name="allowHttp" value={String(allowHttp)} />
           {/* Native change events include the switch in SettingsChanges tracking. */}
           <input
@@ -69,61 +75,66 @@ export function TransportSettingsForm({
             disabled={pending}
             label={t("allowHttpDebug")}
           />
-          <p className="text-sm text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {t("allowHttpDebugDescription")}
           </p>
-          <p className="text-sm text-muted-foreground">
-            {t("allowHttpDebugWarning")}
-          </p>
         </div>
-        <div className="space-y-1.5">
-          <label htmlFor="a2a-inline-kib" className="block text-sm font-medium">
-            {t("a2aInlineKiB")}
-          </label>
-          <Input
-            id="a2a-inline-kib"
-            name="a2aInlineKiB"
-            type="number"
-            min={MIN_A2A_INLINE_BYTES / 1024}
-            max={MAX_A2A_INLINE_BYTES / 1024}
-            step={1}
-            required
-            defaultValue={String(a2aInlineBytes / 1024)}
-            disabled={pending}
-            aria-describedby="a2a-inline-kib-hint"
-          />
-          <p id="a2a-inline-kib-hint" className="text-sm text-muted-foreground">
-            {t("a2aInlineKiBHint", {
-              min: MIN_A2A_INLINE_BYTES / 1024,
-              max: MAX_A2A_INLINE_BYTES / 1024,
-              default: DEFAULT_A2A_INLINE_BYTES / 1024,
-            })}
-          </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <label
+              htmlFor="a2a-inline-kib"
+              className="block text-sm font-medium"
+            >
+              {t("a2aInlineKiB")}
+            </label>
+            <Input
+              id="a2a-inline-kib"
+              name="a2aInlineKiB"
+              type="number"
+              min={MIN_A2A_INLINE_BYTES / 1024}
+              max={MAX_A2A_INLINE_BYTES / 1024}
+              step={1}
+              required
+              defaultValue={String(a2aInlineBytes / 1024)}
+              disabled={pending}
+              aria-describedby="a2a-inline-kib-hint"
+            />
+            <p
+              id="a2a-inline-kib-hint"
+              className="text-xs text-muted-foreground"
+            >
+              {t("a2aInlineKiBHint", {
+                min: MIN_A2A_INLINE_BYTES / 1024,
+                max: MAX_A2A_INLINE_BYTES / 1024,
+                default: DEFAULT_A2A_INLINE_BYTES / 1024,
+              })}
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Input
+              name="a2aTaskFiles"
+              label={t("a2aTaskFiles")}
+              type="number"
+              min={minTaskFiles}
+              max={maxTaskFiles}
+              step={1}
+              required
+              defaultValue={String(a2aTaskFiles)}
+              disabled={pending}
+              aria-describedby="a2a-task-files-hint"
+            />
+            <p
+              id="a2a-task-files-hint"
+              className="text-xs text-muted-foreground"
+            >
+              {t("a2aTaskFilesHint", {
+                min: minTaskFiles,
+                max: maxTaskFiles,
+                default: DEFAULT_A2A_FILE_LIMITS.a2aTaskFiles,
+              })}
+            </p>
+          </div>
         </div>
-        <div className="space-y-1.5">
-          <Input
-            name="a2aTaskFiles"
-            label={t("a2aTaskFiles")}
-            type="number"
-            min={minTaskFiles}
-            max={maxTaskFiles}
-            step={1}
-            required
-            defaultValue={String(a2aTaskFiles)}
-            disabled={pending}
-            aria-describedby="a2a-task-files-hint"
-          />
-          <p id="a2a-task-files-hint" className="text-sm text-muted-foreground">
-            {t("a2aTaskFilesHint", {
-              min: minTaskFiles,
-              max: maxTaskFiles,
-              default: DEFAULT_A2A_FILE_LIMITS.a2aTaskFiles,
-            })}
-          </p>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          {t("transportSettingsSafety")}
-        </p>
         <div className="flex flex-wrap gap-2">
           <SubmitButton
             pendingLabel={t("saving")}
@@ -151,11 +162,6 @@ export function TransportSettingsForm({
         {state.error ? (
           <p role="alert" className="text-sm text-destructive">
             {state.error}
-          </p>
-        ) : null}
-        {state.ok ? (
-          <p aria-live="polite" className="text-sm text-accent-foreground">
-            {t("transportSettingsSaved")}
           </p>
         ) : null}
       </form>

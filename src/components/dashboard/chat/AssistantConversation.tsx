@@ -1,5 +1,6 @@
 "use client";
 
+import { useAgentUiLabels } from "../agent-ui-labels";
 import { apiRequest } from "@/lib/client/api";
 import {
   DisplayError,
@@ -38,9 +39,15 @@ import {
   ScrollText,
   SlidersHorizontal,
   type LucideIcon,
-  X,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
+import {
+  Alert,
+  AlertAction,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+} from "@/components/motion/alert";
 import { Button } from "@/components/motion/button";
 import {
   ConversationMessageShell,
@@ -55,10 +62,12 @@ import type {
   ToolBlockStatus,
 } from "@/lib/conversation/content-blocks";
 import {
+  ConversationContextUsage,
   ConversationFilePreview,
   conversationComposerDockClassName,
   conversationComposerSurfaceClassName,
 } from "@/components/dashboard/ConversationComposer";
+import { resolveContextUsage } from "@/lib/context-usage";
 import {
   ComposerModelSelect,
   type ModelSelection,
@@ -237,6 +246,8 @@ export function AssistantConversation({
   attachmentUploadUrl,
   assistantName,
   assistantDescription,
+  contextWindow,
+  contextWindowEstimated,
   mcpToolChanges,
   providers,
   defaultModelSelection,
@@ -262,6 +273,8 @@ export function AssistantConversation({
   attachmentUploadUrl?: string;
   assistantName: string;
   assistantDescription?: string | null;
+  contextWindow?: number | null;
+  contextWindowEstimated?: boolean;
   mcpToolChanges?: {
     added: RevisionMcpToolChange[];
     removed: RevisionMcpToolChange[];
@@ -277,6 +290,7 @@ export function AssistantConversation({
   onAutoSubmitConsumed?: (key: string) => void;
 }) {
   const t = useTranslations("console.chatAssistants");
+  const agentUi = useAgentUiLabels();
   const composerT = useTranslations("console.agents");
   const common = useTranslations("common");
   const workT = useTranslations("console.work");
@@ -862,6 +876,21 @@ export function AssistantConversation({
           },
         ]
       : messages;
+  const activeModelSelection = modelSelection ?? defaultModelSelection;
+  const contextUsage = useMemo(
+    () =>
+      resolveContextUsage(displayMessages, {
+        maxTokens: contextWindow ?? undefined,
+        modelName: activeModelSelection?.model,
+        estimated: contextWindowEstimated,
+      }),
+    [
+      activeModelSelection?.model,
+      contextWindow,
+      contextWindowEstimated,
+      displayMessages,
+    ],
+  );
   const confirmationOverrides = new Map<string, ContentToolOverride>();
   const receiptSteps: ContentStep[] = [];
   for (const receipt of snapshot?.confirmations ?? []) {
@@ -1116,6 +1145,7 @@ export function AssistantConversation({
         label={assistantName}
         busy={running}
         navigation="rail"
+        labels={agentUi.scroller}
         followOutput={followingOutput}
         onFollowChange={setFollowingOutput}
         contentClassName={cn(
@@ -1214,12 +1244,7 @@ export function AssistantConversation({
           )?.name;
           const replyMetadata =
             assistant && modelName ? (
-              <div
-                className={cn(
-                  "flex min-w-0 flex-wrap items-center gap-2 text-[11px] font-normal text-muted-foreground",
-                  actionVisibility,
-                )}
-              >
+              <div className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] font-normal text-muted-foreground/80">
                 <span
                   data-ui="assistant-reply-model"
                   className="truncate"
@@ -1328,16 +1353,16 @@ export function AssistantConversation({
                   {editingMessage.files.length ? (
                     <div className="mb-2 flex flex-wrap gap-2">
                       {editingMessage.files.map((item) => (
-                        <Button
+                        <ConversationFilePreview
                           key={item.key}
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 gap-1.5 rounded-full bg-muted/60 px-2.5 text-xs"
-                          aria-label={composerT("removeAttachment", {
+                          display="chip"
+                          name={item.part.filename ?? item.part.mediaType}
+                          url={item.part.url}
+                          mimeType={item.part.mediaType}
+                          removeLabel={composerT("removeAttachment", {
                             name: item.part.filename ?? item.part.mediaType,
                           })}
-                          onClick={() =>
+                          onRemove={() =>
                             setEditingMessage((current) =>
                               current
                                 ? {
@@ -1349,12 +1374,7 @@ export function AssistantConversation({
                                 : null,
                             )
                           }
-                        >
-                          <span className="max-w-44 truncate">
-                            {item.part.filename ?? item.part.mediaType}
-                          </span>
-                          <X className="size-3 shrink-0" aria-hidden="true" />
-                        </Button>
+                        />
                       ))}
                     </div>
                   ) : null}
@@ -1464,62 +1484,77 @@ export function AssistantConversation({
         })}
       </MessageScroller>
       {error && (
-        <p
-          role="alert"
-          className="mx-auto my-2 w-[calc(100%-2rem)] max-w-3xl rounded-xl border border-destructive/15 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+        <Alert
+          variant="destructive"
+          className="mx-auto my-2 w-[calc(100%-2rem)] max-w-3xl"
         >
-          {error === "runtime_not_ready"
-            ? t("runtimeNotReady")
-            : error === STORAGE_QUOTA_EXCEEDED
-              ? composerT("attachmentStorageQuotaExceeded")
-              : t.has(`modelErrors.${error}`)
-                ? t(`modelErrors.${error}`)
-                : error}
+          <AlertIcon />
+          <AlertContent>
+            <AlertDescription>
+              {error === "runtime_not_ready"
+                ? t("runtimeNotReady")
+                : error === STORAGE_QUOTA_EXCEEDED
+                  ? composerT("attachmentStorageQuotaExceeded")
+                  : t.has(`modelErrors.${error}`)
+                    ? t(`modelErrors.${error}`)
+                    : error}
+            </AlertDescription>
+          </AlertContent>
           {error === STORAGE_QUOTA_EXCEEDED ? (
-            <ManageFilesButton className="ml-3" />
+            <AlertAction>
+              <ManageFilesButton />
+            </AlertAction>
           ) : null}
-        </p>
+        </Alert>
       )}
       {snapshot?.error && (
-        <div
-          role="alert"
-          className="mx-auto my-2 flex w-[calc(100%-2rem)] max-w-3xl flex-wrap items-center justify-between gap-2 rounded-xl border border-destructive/15 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+        <Alert
+          variant="destructive"
+          className="mx-auto my-2 w-[calc(100%-2rem)] max-w-3xl"
         >
-          <span>
-            {(() => {
-              const code =
-                CHAT_RUN_FAILURE_BY_TEXT[snapshot.error] ?? snapshot.error;
-              return t.has(`runFailures.${code}`)
-                ? t(`runFailures.${code}`)
-                : snapshot.error;
-            })()}
-          </span>
+          <AlertIcon />
+          <AlertContent>
+            <AlertDescription>
+              {(() => {
+                const code =
+                  CHAT_RUN_FAILURE_BY_TEXT[snapshot.error] ?? snapshot.error;
+                return t.has(`runFailures.${code}`)
+                  ? t(`runFailures.${code}`)
+                  : snapshot.error;
+              })()}
+            </AlertDescription>
+          </AlertContent>
           {!readOnly &&
           !running &&
           snapshot.phase !== "execution_unknown" &&
           lastReceiptMessageId ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 rounded-lg text-xs"
-              onClick={() => void regenerate(lastReceiptMessageId)}
-            >
-              {composerT("retryResponse")}
-            </Button>
+            <AlertAction>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 rounded-lg text-xs"
+                onClick={() => void regenerate(lastReceiptMessageId)}
+              >
+                {composerT("retryResponse")}
+              </Button>
+            </AlertAction>
           ) : null}
-        </div>
+        </Alert>
       )}
       {snapshot?.phase === "execution_unknown" &&
         !snapshot.confirmations.some(
           (item) => item.status === "execution_unknown",
         ) && (
-          <p
-            role="alert"
-            className="mx-auto my-2 w-[calc(100%-2rem)] max-w-3xl rounded-xl border border-destructive/15 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+          <Alert
+            variant="destructive"
+            className="mx-auto my-2 w-[calc(100%-2rem)] max-w-3xl"
           >
-            {t("unknownOutcome")}
-          </p>
+            <AlertIcon />
+            <AlertContent>
+              <AlertDescription>{t("unknownOutcome")}</AlertDescription>
+            </AlertContent>
+          </Alert>
         )}
       <div
         ref={composerRef}
@@ -1568,27 +1603,27 @@ export function AssistantConversation({
               </span>
             ))}
           </div>
-          {files.map((file) => (
-            <Button
-              key={file.url}
-              size="sm"
-              variant="ghost"
-              className="order-1 col-span-full mx-4 mt-3 max-w-[calc(100%-2rem)] justify-self-start gap-2 rounded-full bg-muted/50 text-xs"
-              aria-label={composerT("removeAttachment", {
-                name: file.filename ?? file.mediaType,
-              })}
-              onClick={() =>
-                setFiles((previous) =>
-                  previous.filter((item) => item.url !== file.url),
-                )
-              }
-            >
-              <span className="truncate">
-                {file.filename ?? file.mediaType}
-              </span>
-              <X className="size-3 shrink-0" aria-hidden="true" />
-            </Button>
-          ))}
+          {files.length > 0 ? (
+            <div className="order-1 col-span-full mx-4 mt-3 flex flex-wrap items-center gap-2">
+              {files.map((file) => (
+                <ConversationFilePreview
+                  key={file.url}
+                  display="chip"
+                  name={file.filename ?? file.mediaType}
+                  url={file.url}
+                  mimeType={file.mediaType}
+                  removeLabel={composerT("removeAttachment", {
+                    name: file.filename ?? file.mediaType,
+                  })}
+                  onRemove={() =>
+                    setFiles((previous) =>
+                      previous.filter((item) => item.url !== file.url),
+                    )
+                  }
+                />
+              ))}
+            </div>
+          ) : null}
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -1635,6 +1670,7 @@ export function AssistantConversation({
               className="scrollbar-hide order-2 col-span-full block max-h-[40vh] min-h-12 w-full resize-none overflow-y-auto bg-transparent px-4 pb-2 pt-3.5 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/55 disabled:opacity-60"
             />
             <div className="order-4 flex min-h-9 flex-wrap items-center justify-end gap-1 self-end px-2.5 pb-2.5 pt-1 sm:order-3 sm:col-start-2 sm:pl-1">
+              <ConversationContextUsage busy={running} usage={contextUsage} />
               <ComposerModelSelect
                 providers={providers}
                 defaultSelection={defaultModelSelection}

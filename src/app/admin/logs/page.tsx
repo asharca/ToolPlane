@@ -73,8 +73,9 @@ export default async function AdminLogsPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const admin = await requireAdmin();
-  const [t, locale] = await Promise.all([
+  const [t, common, locale] = await Promise.all([
     getTranslations("admin"),
+    getTranslations("common"),
     getLocale(),
   ]);
   const raw = Object.fromEntries(
@@ -261,7 +262,7 @@ export default async function AdminLogsPage({
         backHref={
           raw.returnTo ? adminReturnHref(raw.returnTo, "/admin") : undefined
         }
-        backLabel={t("viewDetails")}
+        backLabel={common("back")}
         meta={<AdminBadge>{t(`logsTab_${tab}`)}</AdminBadge>}
         actions={
           <>

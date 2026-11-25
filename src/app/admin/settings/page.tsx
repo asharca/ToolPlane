@@ -126,96 +126,135 @@ export default async function AdminSettingsPage() {
   };
   const observedAt = Date.now();
 
+  const navSections = [
+    { id: "user-limits", label: t("userLimitDefaults") },
+    { id: "agent-execution", label: t("settingsAgentExecution") },
+    { id: "mcp-runtime", label: t("settingsMcpRuntime") },
+    { id: "transport", label: t("settingsTransport") },
+    { id: "log-settings", label: t("logsSettings") },
+    { id: "mcp-oauth", label: t("mcpOAuthClients") },
+  ];
+
   return (
-    <AdminPage className="max-w-5xl">
+    <AdminPage className="max-w-6xl">
       <AdminPageHeader title={t("systemSettings")} />
-      <SettingsChanges>
-        {section(
-          "user.limits",
-          <UserLimitsSettingsForm defaults={userLimitDefaults} />,
-        )}
-        <fieldset className="min-w-0 space-y-6">
-          <legend className="mb-1 text-base font-semibold">
-            {t("settingsAgentExecution")}
-          </legend>
-          {section(
-            AGENT_CONCURRENCY_SETTING_KEY,
-            <AgentConcurrencySettingsForm
-              {...agentConcurrency}
-              perAgentLimit={MAX_AGENT_CONCURRENCY}
-              totalLimit={MAX_TOTAL_AGENT_CONCURRENCY}
-            />,
-          )}
-          {section(
-            AGENT_SANDBOX_AUTO_STOP_SETTING_KEY,
-            <AgentSandboxAutoStopSettingsForm {...agentSandboxAutoStop} />,
-          )}
-          {section(
-            AGENT_ATTACHMENT_LIMIT_SETTING_KEY,
-            <RuntimeSettingsForm
-              bytes={attachmentLimit.bytes}
-              source={attachmentLimit.source}
-              cached={attachmentLimit.cached}
-              minMegabytes={MIN_ADMIN_ATTACHMENT_MEGABYTES}
-              maxMegabytes={MAX_ADMIN_ATTACHMENT_MEGABYTES}
-            />,
-          )}
-        </fieldset>
-        <fieldset className="min-w-0 space-y-6">
-          <legend className="mb-1 text-base font-semibold">
-            {t("settingsMcpRuntime")}
-          </legend>
-          {section(
-            MCP_STARTUP_TIMEOUTS_SETTING_KEY,
-            <McpRuntimeSettingsForm
-              idleTimeoutMs={mcpStartupTimeouts.idleTimeoutMs}
-              maxTimeoutMs={mcpStartupTimeouts.maxTimeoutMs}
-              source={mcpStartupTimeouts.source}
-              minTimeoutSeconds={MIN_MCP_STARTUP_TIMEOUT_MS / 1_000}
-              maxTimeoutSeconds={MAX_MCP_STARTUP_TIMEOUT_MS / 1_000}
-            />,
-          )}
-          {section(
-            PRIVATE_HOSTS_SETTING_KEY,
-            <PrivateHostsSettingsForm
-              value={privateHosts.value}
-              source={privateHosts.source}
-            />,
-          )}
-        </fieldset>
-        <fieldset className="min-w-0 space-y-6">
-          <legend className="mb-1 text-base font-semibold">
-            {t("settingsTransport")}
-          </legend>
-          {section(
-            TRANSPORT_SETTINGS_KEY,
-            <TransportSettingsForm
-              allowHttp={transportSettings.allowHttp}
-              a2aInlineBytes={transportSettings.a2aInlineBytes}
-              a2aTaskFiles={transportSettings.a2aTaskFiles}
-              source={transportSettings.source}
-            />,
-          )}
-        </fieldset>
-        {section(
-          SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
-          <SkillImportSettingsForm maxSkills={skillImportSettings.maxSkills} />,
-        )}
-        <div id="log-settings" className="scroll-mt-6">
-          {section(
-            LOG_SETTINGS_KEY,
-            <LogSettings
-              settings={{
-                ...logSettings,
-                captures: logSettings.captures.filter(
-                  (item) => new Date(item.expiresAt).getTime() > observedAt,
-                ),
-              }}
-            />,
-          )}
+      <div className="grid items-start gap-8 lg:grid-cols-[13rem_minmax(0,1fr)]">
+        <nav
+          aria-label={t("systemSettings")}
+          className="flex gap-1 overflow-x-auto border-b border-border pb-2 lg:sticky lg:top-4 lg:flex-col lg:overflow-visible lg:border-b-0 lg:pb-0"
+        >
+          {navSections.map((item) => (
+            <a
+              key={item.id}
+              href={`#${item.id}`}
+              className="shrink-0 rounded-lg px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:text-sm"
+            >
+              {item.label}
+            </a>
+          ))}
+        </nav>
+        <div className="min-w-0 space-y-6">
+          <SettingsChanges>
+            <div id="user-limits" className="scroll-mt-6">
+              {section(
+                "user.limits",
+                <UserLimitsSettingsForm defaults={userLimitDefaults} />,
+              )}
+            </div>
+            <fieldset
+              id="agent-execution"
+              className="min-w-0 scroll-mt-6 space-y-6"
+            >
+              <legend className="mb-1 text-base font-semibold">
+                {t("settingsAgentExecution")}
+              </legend>
+              {section(
+                AGENT_CONCURRENCY_SETTING_KEY,
+                <AgentConcurrencySettingsForm
+                  {...agentConcurrency}
+                  perAgentLimit={MAX_AGENT_CONCURRENCY}
+                  totalLimit={MAX_TOTAL_AGENT_CONCURRENCY}
+                />,
+              )}
+              {section(
+                AGENT_SANDBOX_AUTO_STOP_SETTING_KEY,
+                <AgentSandboxAutoStopSettingsForm {...agentSandboxAutoStop} />,
+              )}
+              {section(
+                AGENT_ATTACHMENT_LIMIT_SETTING_KEY,
+                <RuntimeSettingsForm
+                  bytes={attachmentLimit.bytes}
+                  source={attachmentLimit.source}
+                  cached={attachmentLimit.cached}
+                  minMegabytes={MIN_ADMIN_ATTACHMENT_MEGABYTES}
+                  maxMegabytes={MAX_ADMIN_ATTACHMENT_MEGABYTES}
+                />,
+              )}
+            </fieldset>
+            <fieldset
+              id="mcp-runtime"
+              className="min-w-0 scroll-mt-6 space-y-6"
+            >
+              <legend className="mb-1 text-base font-semibold">
+                {t("settingsMcpRuntime")}
+              </legend>
+              {section(
+                MCP_STARTUP_TIMEOUTS_SETTING_KEY,
+                <McpRuntimeSettingsForm
+                  idleTimeoutMs={mcpStartupTimeouts.idleTimeoutMs}
+                  maxTimeoutMs={mcpStartupTimeouts.maxTimeoutMs}
+                  source={mcpStartupTimeouts.source}
+                  minTimeoutSeconds={MIN_MCP_STARTUP_TIMEOUT_MS / 1_000}
+                  maxTimeoutSeconds={MAX_MCP_STARTUP_TIMEOUT_MS / 1_000}
+                />,
+              )}
+              {section(
+                PRIVATE_HOSTS_SETTING_KEY,
+                <PrivateHostsSettingsForm
+                  value={privateHosts.value}
+                  source={privateHosts.source}
+                />,
+              )}
+            </fieldset>
+            <fieldset id="transport" className="min-w-0 scroll-mt-6 space-y-6">
+              <legend className="mb-1 text-base font-semibold">
+                {t("settingsTransport")}
+              </legend>
+              {section(
+                TRANSPORT_SETTINGS_KEY,
+                <TransportSettingsForm
+                  allowHttp={transportSettings.allowHttp}
+                  a2aInlineBytes={transportSettings.a2aInlineBytes}
+                  a2aTaskFiles={transportSettings.a2aTaskFiles}
+                  source={transportSettings.source}
+                />,
+              )}
+              {section(
+                SKILL_IMPORT_MAX_SKILLS_SETTING_KEY,
+                <SkillImportSettingsForm
+                  maxSkills={skillImportSettings.maxSkills}
+                />,
+              )}
+            </fieldset>
+            <div id="log-settings" className="scroll-mt-6">
+              {section(
+                LOG_SETTINGS_KEY,
+                <LogSettings
+                  settings={{
+                    ...logSettings,
+                    captures: logSettings.captures.filter(
+                      (item) => new Date(item.expiresAt).getTime() > observedAt,
+                    ),
+                  }}
+                />,
+              )}
+            </div>
+          </SettingsChanges>
+          <div id="mcp-oauth" className="scroll-mt-6">
+            <McpOAuthClientsSettings overview={mcpOAuthOverview} />
+          </div>
         </div>
-      </SettingsChanges>
-      <McpOAuthClientsSettings overview={mcpOAuthOverview} />
+      </div>
     </AdminPage>
   );
 }

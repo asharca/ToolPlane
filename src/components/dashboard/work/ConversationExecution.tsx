@@ -10,6 +10,13 @@ import {
   type NativeResponse,
 } from "./NativeSessionUi";
 import { ThinkingShimmer } from "@/components/agents/loading-states";
+import {
+  Alert,
+  AlertAction,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+} from "@/components/motion/alert";
 import { Button } from "@/components/motion/button";
 import { notify } from "@/components/dashboard/Toaster";
 import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
@@ -405,25 +412,27 @@ export function ConversationExecution({
 
     if (failed)
       return (
-        <div
-          role="alert"
-          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
-        >
-          <span>{t("executionUnavailable")}</span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="rounded-full"
-            disabled={paused}
-            onClick={() => {
-              setFailed(false);
-              setReload((value) => value + 1);
-            }}
-          >
-            {t("executionRefresh")}
-          </Button>
-        </div>
+        <Alert variant="destructive">
+          <AlertIcon />
+          <AlertContent>
+            <AlertDescription>{t("executionUnavailable")}</AlertDescription>
+          </AlertContent>
+          <AlertAction>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="rounded-full"
+              disabled={paused}
+              onClick={() => {
+                setFailed(false);
+                setReload((value) => value + 1);
+              }}
+            >
+              {t("executionRefresh")}
+            </Button>
+          </AlertAction>
+        </Alert>
       );
 
     if (!execution || !ACTIVE_STATUSES.has(execution.status)) {
@@ -457,33 +466,37 @@ export function ConversationExecution({
           })()
         : null;
       return (
-        <div
-          role="alert"
-          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
-        >
-          <span className="min-w-0 break-words">
-            {runtimeError?.text ?? t("executionFailed")}
-          </span>
-          <div className="flex flex-wrap items-center gap-2">
-            {runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE" &&
-            settingsHref ? (
-              <Link
-                href={settingsHref}
-                className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-              >
-                {tAgents("configureAgent")}
-              </Link>
-            ) : null}
-            {reportHref ? (
-              <Link
-                href={reportHref}
-                className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                {t("reportThisIssue")}
-              </Link>
-            ) : null}
-          </div>
-        </div>
+        <Alert variant="destructive">
+          <AlertIcon />
+          <AlertContent>
+            <AlertDescription className="min-w-0 break-words">
+              {runtimeError?.text ?? t("executionFailed")}
+            </AlertDescription>
+          </AlertContent>
+          {(runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE" &&
+            settingsHref) ||
+          reportHref ? (
+            <AlertAction>
+              {runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE" &&
+              settingsHref ? (
+                <Link
+                  href={settingsHref}
+                  className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                >
+                  {tAgents("configureAgent")}
+                </Link>
+              ) : null}
+              {reportHref ? (
+                <Link
+                  href={reportHref}
+                  className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  {t("reportThisIssue")}
+                </Link>
+              ) : null}
+            </AlertAction>
+          ) : null}
+        </Alert>
       );
     }
 

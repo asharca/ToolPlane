@@ -38,7 +38,7 @@ export function SidebarGroupDialog(props: SidebarGroupDialogProps) {
       <CenterMorphModalContent
         ariaLabel={props.title}
         closeButtonLabel={props.cancelLabel}
-        className="flex max-h-[calc(100dvh-4rem)] w-full max-w-xl flex-col"
+        className="flex max-h-[calc(100dvh-4rem)] w-full max-w-md flex-col"
       >
         <SidebarGroupForm
           key={`${props.open}:${props.initialName}`}

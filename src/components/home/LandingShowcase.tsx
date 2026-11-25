@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Activity,
   AlertCircle,
   ArrowRight,
   BookOpen,
@@ -14,6 +15,7 @@ import {
   Info,
   Laptop,
   Layers,
+  MessageSquare,
   Radio,
   Server,
   ShieldAlert,
@@ -22,6 +24,7 @@ import {
   Terminal,
   Workflow,
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GithubIcon } from "@/components/ui/GithubIcon";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
@@ -37,10 +40,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/motion/card";
-import {
-  type IsometricSceneNode,
-  IsometricScenes,
-} from "@/components/motion/illustration-isometric-scenes";
+import { IsometricScenes } from "@/components/motion/illustration-isometric-scenes";
 import { ScrollReveal } from "@/components/motion/scroll-reveal";
 import {
   Tabs,
@@ -86,6 +86,13 @@ const SANDBOX_TARGET_ICONS: Record<string, typeof Box> = {
   adb: Smartphone,
 };
 
+const CLIENT_LAYER_ICONS: Record<string, typeof Server> = {
+  mcp: Server,
+  api: FileCode2,
+  im: MessageSquare,
+  trace: Activity,
+};
+
 export function LandingShowcase({ content }: LandingShowcaseProps) {
   const { home, capabilities, navigation } = content;
 
@@ -105,7 +112,7 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
   // Interactive Revision Diff / Sessions tab state
   const [revisionTab, setRevisionTab] = useState<"diff" | "sessions">("diff");
 
-  // Interactive Clients IsometricScenes layer state
+  // Interactive Clients surface layer state
   const [selectedClientLayer, setSelectedClientLayer] = useState(
     home.clientsPreview.nodes[0]?.id ?? "mcp",
   );
@@ -132,16 +139,6 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
   const activePlugin =
     home.skillsPreview.plugins.find((p) => p.id === selectedPluginId) ??
     home.skillsPreview.plugins[0];
-
-  const isometricNodes = useMemo<IsometricSceneNode[]>(
-    () =>
-      home.clientsPreview.nodes.map((node) => ({
-        id: node.id,
-        label: node.label,
-        detail: node.detail,
-      })),
-    [home.clientsPreview.nodes],
-  );
 
   const activeClientNode =
     home.clientsPreview.nodes.find((n) => n.id === selectedClientLayer) ??
@@ -208,7 +205,7 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
     <div className="divide-y divide-border">
       {/* Section A — Architecture Pipeline */}
       <section className="py-16 sm:py-20">
-        <ScrollReveal amount="some" once>
+        <ScrollReveal blur={0} y={12} duration={0.4} amount="some" once>
           <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
             <div className="max-w-2xl">
               <h2 className="text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
@@ -249,7 +246,7 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
 
       {/* Section B — #mcp Managed MCP Runtime & Explicit Tool Authorization */}
       <section id="mcp" className="scroll-mt-24 py-16 sm:py-24">
-        <ScrollReveal amount="some" once>
+        <ScrollReveal blur={0} y={12} duration={0.4} amount="some" once>
           <div className="mx-auto grid max-w-6xl grid-cols-1 items-start gap-10 px-4 sm:px-6 lg:grid-cols-12 lg:gap-12 lg:px-8">
             <div className="min-w-0 lg:col-span-5">
               <h2 className="text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
@@ -369,10 +366,6 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
                         );
                       })}
                     </div>
-
-                    <p className="mt-3 text-[11px] text-muted-foreground">
-                      {home.mcpPreview.caption}
-                    </p>
                   </div>
                 )}
               </div>
@@ -383,13 +376,16 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
 
       {/* Section C — #skills GitHub Plugin Center */}
       <section id="skills" className="scroll-mt-24 py-16 sm:py-24">
-        <ScrollReveal amount="some" once>
+        <ScrollReveal blur={0} y={12} duration={0.4} amount="some" once>
           <div className="mx-auto grid max-w-6xl grid-cols-1 items-start gap-10 px-4 sm:px-6 lg:grid-cols-12 lg:gap-12 lg:px-8">
             {/* Interactive GitHub Plugin Commit Pin Card */}
             <div className="order-2 min-w-0 lg:order-1 lg:col-span-7">
               <div className="overflow-hidden rounded-2xl border border-border-strong bg-card shadow-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 sm:px-5">
-                  <div className="flex flex-wrap gap-1.5">
+                  <fieldset
+                    aria-label={capabilities.skills.eyebrow}
+                    className="m-0 flex min-w-0 flex-wrap gap-1.5 border-0 p-0"
+                  >
                     {home.skillsPreview.plugins.map((plugin) => {
                       const active = plugin.id === activePlugin?.id;
                       return (
@@ -409,7 +405,7 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
                         </button>
                       );
                     })}
-                  </div>
+                  </fieldset>
                   {activePlugin && (
                     <span className="rounded-full border border-border bg-background px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                       {activePlugin.schema}
@@ -485,10 +481,6 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
                       />
                       <span>{home.skillsPreview.reviewBanner}</span>
                     </div>
-
-                    <p className="mt-3 text-[11px] text-muted-foreground">
-                      {home.skillsPreview.caption}
-                    </p>
                   </div>
                 )}
               </div>
@@ -530,7 +522,7 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
 
       {/* Section D — #agents Pi SDK Revisions, Sandboxes & Native A2A Bento */}
       <section id="agents" className="scroll-mt-24 py-16 sm:py-24">
-        <ScrollReveal amount="some" once>
+        <ScrollReveal blur={0} y={12} duration={0.4} amount="some" once>
           <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
             <div className="max-w-3xl">
               <h2 className="text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
@@ -726,7 +718,7 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
 
       {/* Section E — #clients Integrations & Observability */}
       <section id="clients" className="scroll-mt-24 py-16 sm:py-24">
-        <ScrollReveal amount="some" once>
+        <ScrollReveal blur={0} y={12} duration={0.4} amount="some" once>
           <div className="mx-auto grid max-w-6xl grid-cols-1 items-start gap-10 px-4 sm:px-6 lg:grid-cols-12 lg:gap-12 lg:px-8">
             <div className="min-w-0 lg:col-span-5">
               <h2 className="text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
@@ -771,57 +763,96 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
             </div>
 
             <div className="min-w-0 lg:col-span-7">
-              <div className="overflow-hidden rounded-2xl border border-border-strong bg-card p-4 shadow-xs sm:p-5">
-                <IsometricScenes
-                  variant={4}
-                  nodes={isometricNodes}
-                  value={selectedClientLayer}
-                  onValueChange={setSelectedClientLayer}
-                  label={home.clientsPreview.sceneLabel}
-                  className="mx-auto max-w-none border border-border"
-                />
-
-                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {home.clientsPreview.nodes.map((node) => {
-                    const active = node.id === activeClientNode?.id;
-                    return (
-                      <button
-                        key={node.id}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => setSelectedClientLayer(node.id)}
-                        className={cn(
-                          "rounded-xl border px-3 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-ring",
-                          active
-                            ? "border-primary/50 bg-background text-foreground shadow-xs"
-                            : "border-border bg-background/40 text-muted-foreground hover:bg-background hover:text-foreground",
-                        )}
-                      >
-                        <div className="font-mono text-[11px] font-semibold text-primary">
-                          {node.label}
-                        </div>
-                        <div className="mt-0.5 truncate text-xs font-medium">
-                          {node.title}
-                        </div>
-                      </button>
-                    );
-                  })}
+              <div className="overflow-hidden rounded-2xl border border-border-strong bg-card shadow-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 sm:px-5">
+                  <span className="font-mono text-xs font-medium text-muted-foreground">
+                    {home.clientsPreview.protocolLabel}
+                  </span>
+                  <Link
+                    href="/docs-api"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border-strong bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
+                  >
+                    <FileCode2
+                      aria-hidden="true"
+                      className="size-3.5 text-primary"
+                    />
+                    <span>{home.clientsPreview.exploreApiLabel}</span>
+                    <ArrowRight aria-hidden="true" className="size-3" />
+                  </Link>
                 </div>
 
-                {activeClientNode && (
-                  <div className="mt-3 rounded-xl border border-border bg-background p-3.5">
-                    <div className="text-sm font-semibold text-foreground">
-                      {activeClientNode.title}
-                    </div>
-                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                      {activeClientNode.detail}
-                    </p>
-                  </div>
-                )}
+                <div className="bg-background/60 p-4 sm:p-5">
+                  <IsometricScenes
+                    variant={4}
+                    nodes={home.clientsPreview.nodes}
+                    value={selectedClientLayer}
+                    onValueChange={setSelectedClientLayer}
+                    label={home.clientsPreview.sceneLabel}
+                    autoPlay={false}
+                    showControls={false}
+                    className="mb-4 aspect-[16/7] max-w-none border border-border bg-card/50"
+                  />
+                  <fieldset
+                    aria-label={home.clientsPreview.sceneLabel}
+                    className="m-0 grid min-w-0 grid-cols-2 gap-2 border-0 p-0 sm:grid-cols-4"
+                  >
+                    {home.clientsPreview.nodes.map((node) => {
+                      const active = node.id === activeClientNode?.id;
+                      const Icon = CLIENT_LAYER_ICONS[node.id] ?? Server;
+                      return (
+                        <button
+                          key={node.id}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => setSelectedClientLayer(node.id)}
+                          className={cn(
+                            "rounded-xl border px-3 py-2.5 text-left transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+                            active
+                              ? "border-primary/50 bg-card text-foreground shadow-xs"
+                              : "border-border bg-card/40 text-muted-foreground hover:border-border-strong hover:bg-card/80 hover:text-foreground",
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span className="font-mono text-[11px] font-semibold text-primary">
+                              {node.label}
+                            </span>
+                            <Icon
+                              aria-hidden="true"
+                              className={cn(
+                                "size-3.5 shrink-0",
+                                active
+                                  ? "text-primary"
+                                  : "text-muted-foreground",
+                              )}
+                            />
+                          </div>
+                          <div className="mt-1 truncate text-xs font-medium">
+                            {node.title}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </fieldset>
 
-                <p className="mt-3 text-[11px] text-muted-foreground">
-                  {home.clientsPreview.caption}
-                </p>
+                  {activeClientNode && (
+                    <div className="mt-4 rounded-xl border border-border bg-card p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
+                        <div className="text-sm font-semibold text-foreground">
+                          {activeClientNode.title}
+                        </div>
+                        <span className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
+                          {activeClientNode.endpoint}
+                        </span>
+                      </div>
+                      <p className="mt-3 text-xs leading-relaxed text-muted-foreground sm:text-sm">
+                        {activeClientNode.detail}
+                      </p>
+                      <pre className="mt-3.5 overflow-x-auto rounded-lg border border-border bg-background p-3.5 font-mono text-xs leading-6 text-foreground">
+                        <code>{activeClientNode.snippet}</code>
+                      </pre>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -830,7 +861,7 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
 
       {/* Section F — Security & Isolation Boundaries */}
       <section className="py-16 sm:py-24">
-        <ScrollReveal amount="some" once>
+        <ScrollReveal blur={0} y={12} duration={0.4} amount="some" once>
           <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
             <div className="rounded-2xl border border-border-strong bg-card/60 p-6 sm:p-10">
               <div className="max-w-2xl">
@@ -873,7 +904,7 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
 
       {/* Section G — #quickstart Self-Host Quick Start */}
       <section id="quickstart" className="scroll-mt-24 py-16 sm:py-24">
-        <ScrollReveal amount="some" once>
+        <ScrollReveal blur={0} y={12} duration={0.4} amount="some" once>
           <div className="mx-auto grid max-w-6xl grid-cols-1 items-start gap-8 px-4 sm:px-6 lg:grid-cols-12 lg:gap-12 lg:px-8">
             <div className="min-w-0 lg:col-span-5">
               <h2 className="text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
@@ -993,7 +1024,7 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
 
       {/* Section H — FAQ */}
       <section className="py-16 sm:py-24">
-        <ScrollReveal amount="some" once>
+        <ScrollReveal blur={0} y={12} duration={0.4} amount="some" once>
           <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
             <div className="max-w-2xl">
               <h2 className="text-balance text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
@@ -1008,6 +1039,11 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
               items={faqItems}
               defaultValue={faqItems[0]?.id ?? null}
               className="mt-8"
+              classNames={{
+                trigger: "py-3.5",
+                title:
+                  "whitespace-normal overflow-visible text-clip leading-snug",
+              }}
             />
           </div>
         </ScrollReveal>
@@ -1015,7 +1051,7 @@ export function LandingShowcase({ content }: LandingShowcaseProps) {
 
       {/* Section I — Closing CTA Banner */}
       <section className="py-16 sm:py-20">
-        <ScrollReveal amount="some" once>
+        <ScrollReveal blur={0} y={12} duration={0.4} amount="some" once>
           <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
             <div className="relative overflow-hidden rounded-2xl border border-border-strong bg-card p-8 sm:p-12">
               <div

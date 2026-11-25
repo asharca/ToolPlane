@@ -29,10 +29,10 @@ const STATUS: Record<
 
 export function StatusBadge({ status }: { status: string }) {
   const t = useTranslations("console.sandboxes");
-  const state = STATUS[status] ?? STATUS.provisioning;
+  const state = STATUS[status];
   return (
-    <AnimatedBadge status={state.status} size="sm">
-      {t(state.labelKey)}
+    <AnimatedBadge status={state?.status ?? "neutral"} size="sm">
+      {state ? t(state.labelKey) : t("statusUnknown")}
     </AnimatedBadge>
   );
 }

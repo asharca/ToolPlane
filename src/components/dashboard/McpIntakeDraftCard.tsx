@@ -13,6 +13,8 @@ import {
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
+import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
+import { FormCheckbox } from "@/components/ui/FormCheckbox";
 import { FormSelect } from "@/components/ui/FormSelect";
 import type {
   McpIntakeCreateErrorCode,
@@ -328,15 +330,14 @@ export function McpIntakeDraftCard({
     >
       <div className="flex items-start gap-3">
         {multi ? (
-          <input
-            type="checkbox"
+          <FormCheckbox
             checked={state.selected}
             disabled={disabled}
-            aria-label={t("intake.selectServer", {
+            ariaLabel={t("intake.selectServer", {
               name: state.name.trim() || draft.name,
             })}
-            onChange={(event) => onChange({ selected: event.target.checked })}
-            className="mt-1 size-4 shrink-0"
+            onCheckedChange={(checked) => onChange({ selected: checked })}
+            className="mt-0.5 shrink-0"
           />
         ) : null}
         <div className="min-w-0 flex-1 space-y-1">
@@ -440,20 +441,30 @@ export function McpIntakeDraftCard({
               ) : null}
 
               {oauthClientAvailable && hasTokenFields ? (
-                <div>
-                  <button
-                    type="button"
-                    disabled={disabled}
-                    onClick={() =>
-                      onChange({ authMode: usingOAuth ? "token" : "oauth" })
-                    }
-                    className="text-xs font-medium text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-                  >
-                    {usingOAuth
-                      ? t("intake.useTokenInstead")
-                      : t("intake.useOAuthInstead")}
-                  </button>
-                </div>
+                <Tabs
+                  variant="segment"
+                  value={usingOAuth ? "oauth" : "token"}
+                  onValueChange={(val) =>
+                    onChange({ authMode: val === "oauth" ? "oauth" : "token" })
+                  }
+                >
+                  <TabsList>
+                    <TabsTrigger
+                      value="oauth"
+                      disabled={disabled}
+                      className="px-3 py-1 text-xs"
+                    >
+                      {t("intake.useOAuthInstead")}
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="token"
+                      disabled={disabled}
+                      className="px-3 py-1 text-xs"
+                    >
+                      {t("intake.useTokenInstead")}
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
               ) : null}
 
               {draft.insecureHttp && !allowHttp ? (

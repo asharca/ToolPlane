@@ -377,7 +377,7 @@ export function ModelPicker({
     detailTimer.current = window.setTimeout(() => {
       detailAnchor.current = anchor;
       setDetailId(model.id);
-    }, 1500);
+    }, 350);
   };
   useLayoutEffect(() => {
     if (!open) return;

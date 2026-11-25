@@ -1,23 +1,31 @@
 "use client";
 
-import { useOptimistic, useRef, useState, useTransition } from "react";
+import { useMemo, useOptimistic, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/motion/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
 import {
   DashboardTable,
   type DashboardTableProps,
   type DashboardTableRow,
 } from "@/components/dashboard/DashboardTable";
+import { DashboardFilterInput } from "@/components/dashboard/DashboardUI";
 import {
   batchSandboxLifecycleAction,
   type SandboxLifecycleBatchResult,
 } from "@/lib/sandboxes/actions";
 
 type Operation = "start" | "stop" | "restart";
+type StatusFilter = "all" | "running" | "stopped";
 type BatchResult = SandboxLifecycleBatchResult & { name: string };
-type SandboxRow = DashboardTableRow & { name: string; batchEligible: boolean };
+type SandboxRow = DashboardTableRow & {
+  name: string;
+  batchEligible: boolean;
+  status?: string;
+  searchText?: string;
+};
 
 export function SandboxBatchTable({
   workspace,
@@ -36,6 +44,8 @@ export function SandboxBatchTable({
   const common = useTranslations("common");
   const router = useRouter();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [operation, setOperation] = useOptimistic<Operation | null>(null);
   const [lastOperation, setLastOperation] = useState<Operation>("start");
   const [results, setResults] = useState<BatchResult[]>([]);
@@ -43,7 +53,24 @@ export function SandboxBatchTable({
   const [refreshing, startRefresh] = useTransition();
   const submitting = useRef(false);
   const pending = operation !== null || refreshing;
-  const eligibleIds = rows
+  const filteredRows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (statusFilter === "running") {
+        if (row.status !== "running" && row.status !== "provisioning") {
+          return false;
+        }
+      } else if (statusFilter === "stopped") {
+        if (row.status === "running" || row.status === "provisioning") {
+          return false;
+        }
+      }
+      if (!q) return true;
+      const haystack = `${row.name} ${row.searchText ?? ""}`.toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [query, rows, statusFilter]);
+  const eligibleIds = filteredRows
     .filter((row) => row.batchEligible)
     .map((row) => row.id);
   const eligible = new Set(eligibleIds);
@@ -84,19 +111,46 @@ export function SandboxBatchTable({
       startRefresh(() => router.refresh());
     }
   }
+  const filterBar =
+    rows.length > 1 ? (
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <DashboardFilterInput
+          value={query}
+          onChange={setQuery}
+          placeholder={common("search")}
+          width="sm:w-72"
+        />
+        <Tabs
+          value={statusFilter}
+          onValueChange={(value) => setStatusFilter(value as StatusFilter)}
+          variant="segment"
+        >
+          <TabsList>
+            <TabsTrigger value="all">{common("all")}</TabsTrigger>
+            <TabsTrigger value="running">{t("statusRunning")}</TabsTrigger>
+            <TabsTrigger value="stopped">{t("statusStopped")}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+    ) : null;
+
   if (!batchEnabled) {
     return (
-      <DashboardTable
-        {...tableProps}
-        adjustableColumns={false}
-        rows={rows}
-        selectable={false}
-      />
+      <div className="space-y-3">
+        {filterBar}
+        <DashboardTable
+          {...tableProps}
+          adjustableColumns={false}
+          rows={filteredRows}
+          selectable={false}
+        />
+      </div>
     );
   }
 
   return (
     <div className="space-y-3">
+      {filterBar}
       <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
@@ -112,7 +166,7 @@ export function SandboxBatchTable({
         >
           {t("batchSelectAllEligible", { count: eligibleIds.length })}
         </Button>
-        {eligibleIds.length < rows.length ? (
+        {eligibleIds.length < filteredRows.length ? (
           <p className="text-xs text-muted-foreground">
             {t("batchIneligibleHint")}
           </p>
@@ -129,7 +183,7 @@ export function SandboxBatchTable({
           {...tableProps}
           adjustableColumns={false}
           selectionPlacement="above"
-          rows={rows}
+          rows={filteredRows}
           selectedRowIds={visibleSelection}
           onSelectionChange={(ids) => {
             if (pending) return;

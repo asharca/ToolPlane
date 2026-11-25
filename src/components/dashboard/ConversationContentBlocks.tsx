@@ -1,5 +1,6 @@
 "use client";
 
+import { useAgentUiLabels } from "./agent-ui-labels";
 import { useId, useMemo, useState, type ReactNode } from "react";
 import {
   Bot,
@@ -169,7 +170,7 @@ function summaryText(value: string, path: boolean): string | undefined {
 }
 
 /** One-line argument hint so consecutive calls of the same tool stay distinguishable. */
-function toolInputSummary(value: unknown): string | undefined {
+export function toolInputSummary(value: unknown): string | undefined {
   let input = value;
   if (typeof value === "string") {
     try {
@@ -258,25 +259,38 @@ function ConversationThinkingStep({
   const heading =
     title ??
     (expanded || duration ? t(streaming ? "thinking" : "thought") : undefined);
+  const previewText = body
+    .replace(/^[ \t]*#{1,6}[ \t]+/gm, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1");
   return (
     <div className="min-w-0 text-xs leading-relaxed text-muted-foreground">
       <button
         type="button"
         aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
-        className="block w-full rounded-md py-1 text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        className="group flex w-full items-start justify-between gap-2 rounded-md py-1 text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
       >
-        {heading ? (
-          <span className="flex items-baseline gap-2 font-medium">
-            <span className="min-w-0">{heading}</span>
-            {durationLabel}
-          </span>
-        ) : null}
-        {expanded ? null : (
-          <span className="line-clamp-2 whitespace-pre-wrap break-words">
-            {body.replace(/^\*\*(.+?)\*\*[ \t]*$/gm, "$1")}
-          </span>
-        )}
+        <span className="min-w-0 flex-1">
+          {heading ? (
+            <span className="flex items-baseline gap-2 font-medium">
+              <span className="min-w-0">{heading}</span>
+              {durationLabel}
+            </span>
+          ) : null}
+          {expanded ? null : (
+            <span className="line-clamp-2 whitespace-pre-wrap break-words">
+              {previewText}
+            </span>
+          )}
+        </span>
+        <ChevronDown
+          aria-hidden="true"
+          className={cn(
+            "mt-0.5 size-3.5 shrink-0 opacity-70 transition-transform group-hover:opacity-100 motion-reduce:transition-none",
+            expanded && "rotate-180",
+          )}
+        />
       </button>
       {expanded ? (
         <div className="min-w-0 break-words pb-1 [&_:not(pre)>code]:text-[0.95em] [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p+p]:mt-2 [&_strong]:font-medium [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5">
@@ -296,6 +310,7 @@ function ConversationThinkingStep({
 }
 
 function ConversationToolStep({ step }: { step: ToolStep }) {
+  const agentUi = useAgentUiLabels();
   const t = useTranslations("console.agents");
   const work = useTranslations("console.work");
   const common = useTranslations("common");
@@ -340,6 +355,7 @@ function ConversationToolStep({ step }: { step: ToolStep }) {
         open={open}
         collapseOnComplete={false}
         maxHeight={toolResultUnboundedHeight}
+        labels={agentUi.toolResult}
       >
         {open ? (
           <div className="space-y-3">
@@ -463,6 +479,11 @@ function ConversationProcessBlock({
         <span className="min-w-0 truncate">
           {working ? <ThinkingShimmer>{label}</ThinkingShimmer> : summary}
         </span>
+        {block.steps.length > 1 && (working || !toolCount) ? (
+          <span className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground/70">
+            ({block.steps.length})
+          </span>
+        ) : null}
         <ChevronDown
           aria-hidden="true"
           className={cn(

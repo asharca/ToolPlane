@@ -286,9 +286,12 @@ export function SandboxCreateForm({
           />
         </div>
         {mode === "ssh" ? (
-          <DialogBody>
-            <SshSandboxCreate workspaceId={workspaceId} />
-          </DialogBody>
+          <>
+            <DialogBody>
+              <SshSandboxCreate workspaceId={workspaceId} />
+            </DialogBody>
+            <DialogFooter cancel={<DialogCancel />} />
+          </>
         ) : (
           <SandboxCreateFields
             workspace={workspace}
@@ -399,19 +402,21 @@ function SandboxCreateFields({
                 />
               </DialogField>
 
-              <div className="rounded-xl border border-border bg-background px-3 py-2">
-                <div className="flex items-center gap-2 text-xs font-medium text-foreground">
-                  <Sparkles className="size-3.5 text-muted-foreground" />
-                  {t("recommendedChoices")}
+              {isDocker ? (
+                <div className="rounded-xl border border-border bg-background px-3 py-2">
+                  <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                    <Sparkles className="size-3.5 text-muted-foreground" />
+                    {t("recommendedChoices")}
+                  </div>
+                  <ul className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
+                    <li>{t("frontendJavascriptNodeOrTypescriptNode")}</li>
+                    <li>
+                      {t("lightweightDebianBaseThenInstallOnlyWhatYouNeed")}
+                    </li>
+                    <li>{t("everythingUniversalLargerButBroad")}</li>
+                  </ul>
                 </div>
-                <ul className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground">
-                  <li>{t("frontendJavascriptNodeOrTypescriptNode")}</li>
-                  <li>
-                    {t("lightweightDebianBaseThenInstallOnlyWhatYouNeed")}
-                  </li>
-                  <li>{t("everythingUniversalLargerButBroad")}</li>
-                </ul>
-              </div>
+              ) : null}
             </div>
           </div>
 

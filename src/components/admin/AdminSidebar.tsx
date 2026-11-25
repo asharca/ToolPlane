@@ -17,8 +17,10 @@ import { useTranslations } from "next-intl";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar";
+import { AccountMenu } from "@/components/dashboard/AccountMenu";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { useAnimatedSidebar } from "@/components/motion/animated-sidebar";
+import { Tooltip } from "@/components/motion/tooltip";
 
 type AdminPageLabelKey =
   | "adminNavOverview"
@@ -108,11 +110,12 @@ export function getAdminPageLabelKey(pathname: string): AdminPageLabelKey {
   return "adminNavOverview";
 }
 
-export function AdminSidebar() {
+export function AdminSidebar({ userLabel }: { userLabel?: string } = {}) {
   const pathname = usePathname() ?? "/admin";
   const t = useTranslations("admin");
   const sidebar = useTranslations("console.sidebar");
   const { open, isMobile } = useAnimatedSidebar();
+  const compact = !open && !isMobile;
   const activeHref = NAV_SECTIONS.flatMap((section) => section.items).find(
     (item) => isNavItemActive(item, pathname),
   )?.href;
@@ -138,16 +141,32 @@ export function AdminSidebar() {
       activeId={activeHref}
       footer={
         <div className="flex flex-col gap-0.5">
-          <NotificationBell compact={!open && !isMobile} />
-          <Link
-            href="/app"
-            className="flex h-9 items-center gap-[9px] overflow-hidden rounded-lg px-[9px] text-sm text-foreground transition-colors hover:bg-foreground/5 [&_svg]:size-[18px]"
+          <NotificationBell compact={compact} />
+          <Tooltip
+            content={t("adminBackToConsole")}
+            open={compact ? undefined : false}
+            side="right"
+            wrapperClassName="flex w-full"
           >
-            <ArrowLeft aria-hidden="true" className="size-[18px] shrink-0" />
-            <span className="truncate group-data-[state=collapsed]/sidebar:hidden">
-              {t("adminBackToConsole")}
-            </span>
-          </Link>
+            <Link
+              href="/app"
+              aria-label={compact ? t("adminBackToConsole") : undefined}
+              className="flex h-9 w-full items-center gap-2 overflow-hidden rounded-lg px-2 text-sm text-foreground transition-colors hover:bg-foreground/5 [&_svg]:size-[18px]"
+            >
+              <span
+                aria-hidden="true"
+                className="grid size-5 shrink-0 place-items-center"
+              >
+                <ArrowLeft className="size-[18px] shrink-0" />
+              </span>
+              <span className="truncate group-data-[state=collapsed]/sidebar:hidden">
+                {t("adminBackToConsole")}
+              </span>
+            </Link>
+          </Tooltip>
+          {userLabel ? (
+            <AccountMenu userLabel={userLabel} compact={compact} isAdmin />
+          ) : null}
         </div>
       }
     />

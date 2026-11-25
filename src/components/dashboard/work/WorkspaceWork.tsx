@@ -1,5 +1,13 @@
 "use client";
+import { useAgentUiLabels } from "../agent-ui-labels";
 import { ModelProviderNotice } from "@/components/dashboard/ModelProviderNotice";
+import {
+  Alert,
+  AlertAction,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+} from "@/components/motion/alert";
 import { Button } from "@/components/motion/button";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -151,6 +159,7 @@ export function WorkspaceWork({
   initialSidebarOpen?: boolean;
 }) {
   const t = useTranslations("console.work");
+  const agentUi = useAgentUiLabels();
   const tAgents = useTranslations("console.agents");
   const composerT = useTranslations("console.workComposer");
   const tChannels = useTranslations("console.agentMessaging");
@@ -787,7 +796,10 @@ export function WorkspaceWork({
           />
 
           <AnimatedSidebarInset className="h-full min-h-0 min-w-0 flex-1 overflow-hidden">
-            <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">
+            <section
+              aria-label={t("title")}
+              className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background"
+            >
               <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border/50 bg-background px-3 sm:px-5">
                 <div className="flex min-w-0 flex-1 items-center gap-1.5">
                   <ChatAppSidebarTrigger
@@ -841,6 +853,11 @@ export function WorkspaceWork({
                                 : "bg-amber-500",
                             )}
                           />
+                          <span className="sr-only">
+                            {switcherAgent.ready
+                              ? t("agentReady")
+                              : t("agentNeedsSetup")}
+                          </span>
                           <span className="max-w-32 truncate text-sm font-medium sm:max-w-48">
                             {switcherAgent.name}
                           </span>
@@ -878,6 +895,11 @@ export function WorkspaceWork({
                                       : "bg-amber-500",
                                   )}
                                 />
+                                <span className="sr-only">
+                                  {item.ready
+                                    ? t("agentReady")
+                                    : t("agentNeedsSetup")}
+                                </span>
                                 <div className="min-w-0 flex-1">
                                   <div className="truncate text-foreground">
                                     {item.name}
@@ -968,7 +990,28 @@ export function WorkspaceWork({
                     </div>
                   ) : null}
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {(controlSandbox ?? activeSandbox) ? (
+                    <span
+                      data-ui="work-header-sandbox"
+                      className="hidden max-w-40 items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground md:inline-flex"
+                      title={(controlSandbox ?? activeSandbox)?.name}
+                    >
+                      <Boxes aria-hidden="true" className="size-3.5 shrink-0" />
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "size-1.5 shrink-0 rounded-full",
+                          (controlSandbox ?? activeSandbox)?.running
+                            ? "bg-emerald-500"
+                            : "bg-muted-foreground/50",
+                        )}
+                      />
+                      <span className="truncate">
+                        {(controlSandbox ?? activeSandbox)?.name}
+                      </span>
+                    </span>
+                  ) : null}
                   {completionNotificationControl}
                   {controlSandbox || conversationWorkspace ? (
                     <WorkspacePanelToggles
@@ -1145,6 +1188,7 @@ export function WorkspaceWork({
                   followOutput={followingOutput}
                   onFollowChange={setFollowingOutput}
                   navigation="rail"
+                  labels={agentUi.scroller}
                   className={
                     selected || conversation
                       ? "min-h-0 flex-1"
@@ -1286,6 +1330,7 @@ export function WorkspaceWork({
                                       )}
                                     >
                                       <span
+                                        aria-hidden="true"
                                         className={cn(
                                           "size-1.5 shrink-0 rounded-full",
                                           sb.running
@@ -1293,6 +1338,13 @@ export function WorkspaceWork({
                                             : "bg-muted-foreground/50",
                                         )}
                                       />
+                                      <span className="sr-only">
+                                        {t(
+                                          sb.running
+                                            ? "statusRunning"
+                                            : "statusWaiting",
+                                        )}
+                                      </span>
                                       <span className="min-w-0 flex-1 truncate text-foreground">
                                         {sb.name}
                                       </span>
@@ -1333,78 +1385,83 @@ export function WorkspaceWork({
                     </div>
                   )}
                   {visibleError && !configurationError ? (
-                    <div
-                      role="alert"
-                      className="mx-auto my-4 w-[calc(100%_-_2rem)] max-w-[736px] rounded-2xl border border-border bg-muted/40 p-4 text-sm text-muted-foreground"
+                    <Alert
+                      variant="destructive"
+                      className="mx-auto my-4 w-[calc(100%_-_2rem)] max-w-[736px]"
                     >
-                      {runtimeError ? runtimeError.text : visibleError}
-                      {runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE" &&
-                      controlAgent ? (
+                      <AlertIcon />
+                      <AlertContent>
+                        <AlertDescription>
+                          {runtimeError ? runtimeError.text : visibleError}
+                        </AlertDescription>
+                      </AlertContent>
+                      <AlertAction>
+                        {runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE" &&
+                        controlAgent ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-full"
+                            onClick={() =>
+                              router.push(
+                                agentSettingsHref(
+                                  slug,
+                                  controlAgent.id,
+                                  workReturnTo,
+                                  "mcp",
+                                ),
+                              )
+                            }
+                          >
+                            {tAgents("configureAgent")}
+                          </Button>
+                        ) : null}
+                        {storageQuotaExceeded ? <ManageFilesButton /> : null}
+                        {retryableMessageId ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-full"
+                            onClick={() =>
+                              void composer.mutateConversationTree({
+                                kind: "retry",
+                                messageId: retryableMessageId,
+                              })
+                            }
+                          >
+                            {t("tree.retry")}
+                          </Button>
+                        ) : null}
                         <Button
                           variant="outline"
                           size="sm"
-                          className="ml-3 rounded-full"
-                          onClick={() =>
+                          className="rounded-full"
+                          onClick={() => {
+                            const params = new URLSearchParams({
+                              category: "failure",
+                            });
+                            if (runtimeError?.code) {
+                              params.set("failureCode", runtimeError.code);
+                            }
+                            if (selected?.id) {
+                              params.set("workSessionId", selected.id);
+                            }
+                            if (conversation?.id) {
+                              params.set("conversationId", conversation.id);
+                            }
+                            const targetAgentId = controlAgent?.id ?? agent?.id;
+                            if (targetAgentId) {
+                              params.set("agentId", targetAgentId);
+                            }
                             router.push(
-                              agentSettingsHref(
-                                slug,
-                                controlAgent.id,
-                                workReturnTo,
-                                "mcp",
-                              ),
-                            )
-                          }
+                              `/app/${encodeURIComponent(slug)}/feedback?${params.toString()}`,
+                            );
+                          }}
                         >
-                          {tAgents("configureAgent")}
+                          {t("reportThisIssue")}
                         </Button>
-                      ) : null}
-                      {storageQuotaExceeded ? (
-                        <ManageFilesButton className="ml-3" />
-                      ) : null}
-                      {retryableMessageId ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="ml-3 rounded-full"
-                          onClick={() =>
-                            void composer.mutateConversationTree({
-                              kind: "retry",
-                              messageId: retryableMessageId,
-                            })
-                          }
-                        >
-                          {t("tree.retry")}
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="ml-3 rounded-full"
-                        onClick={() => {
-                          const params = new URLSearchParams({
-                            category: "failure",
-                          });
-                          if (runtimeError?.code) {
-                            params.set("failureCode", runtimeError.code);
-                          }
-                          if (selected?.id) {
-                            params.set("workSessionId", selected.id);
-                          }
-                          if (conversation?.id) {
-                            params.set("conversationId", conversation.id);
-                          }
-                          const targetAgentId = controlAgent?.id ?? agent?.id;
-                          if (targetAgentId) {
-                            params.set("agentId", targetAgentId);
-                          }
-                          router.push(
-                            `/app/${encodeURIComponent(slug)}/feedback?${params.toString()}`,
-                          );
-                        }}
-                      >
-                        {t("reportThisIssue")}
-                      </Button>
-                    </div>
+                      </AlertAction>
+                    </Alert>
                   ) : null}
                 </MessageScroller>
               )}
@@ -1468,26 +1525,33 @@ export function WorkspaceWork({
                   className="mx-auto mb-2 w-[calc(100%_-_2rem)] max-w-[736px]"
                 />
               ) : showConfigurationNotice && controlAgent ? (
-                <div
-                  role="alert"
-                  className="mx-auto mb-2 flex w-[calc(100%_-_2rem)] max-w-[736px] flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm"
+                <Alert
+                  variant="warning"
+                  className="mx-auto mb-2 w-[calc(100%_-_2rem)] max-w-[736px]"
                 >
-                  <span className="text-muted-foreground">
-                    {t("configureAgent")}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="rounded-full"
-                    onClick={() =>
-                      router.push(
-                        agentSettingsHref(slug, controlAgent.id, workReturnTo),
-                      )
-                    }
-                  >
-                    {tAgents("configureAgent")}
-                  </Button>
-                </div>
+                  <AlertIcon />
+                  <AlertContent>
+                    <AlertDescription>{t("configureAgent")}</AlertDescription>
+                  </AlertContent>
+                  <AlertAction>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-full"
+                      onClick={() =>
+                        router.push(
+                          agentSettingsHref(
+                            slug,
+                            controlAgent.id,
+                            workReturnTo,
+                          ),
+                        )
+                      }
+                    >
+                      {tAgents("configureAgent")}
+                    </Button>
+                  </AlertAction>
+                </Alert>
               ) : null}
 
               {!viewingA2A &&
@@ -1504,36 +1568,38 @@ export function WorkspaceWork({
                       label={t("scrollToBottom")}
                     />
                     <div>
-                      {selected && !sessionReadOnly ? (
-                        <ConversationExecution
-                          key={selected.id}
-                          endpoint={`/api/v1/workspaces/${encodeURIComponent(slug)}/work-sessions/${encodeURIComponent(selected.id)}/ui`}
-                          toolApprovalEndpoint={approvalEndpoint}
-                          toolApprovalParts={approvalParts}
-                          showStatus={false}
-                          showActivities={false}
-                          active={selectedActive}
-                          onSetEditorText={composer.setDraft}
-                          belowEditorElement={belowEditorElement}
-                          renderedActivityIds={renderedHookIds}
-                          onChange={() => void refreshSelected()}
-                          onOpenScreen={
-                            panels.hasScreen ? panels.openScreen : undefined
+                      <div className="mb-2 max-h-[42dvh] space-y-2 overflow-y-auto overscroll-contain empty:hidden">
+                        {selected && !sessionReadOnly ? (
+                          <ConversationExecution
+                            key={selected.id}
+                            endpoint={`/api/v1/workspaces/${encodeURIComponent(slug)}/work-sessions/${encodeURIComponent(selected.id)}/ui`}
+                            toolApprovalEndpoint={approvalEndpoint}
+                            toolApprovalParts={approvalParts}
+                            showStatus={false}
+                            showActivities={false}
+                            active={selectedActive}
+                            onSetEditorText={composer.setDraft}
+                            belowEditorElement={belowEditorElement}
+                            renderedActivityIds={renderedHookIds}
+                            onChange={() => void refreshSelected()}
+                            onOpenScreen={
+                              panels.hasScreen ? panels.openScreen : undefined
+                            }
+                            onTakeoverRequest={panels.openTakeoverScreen}
+                            onTakeoverAnswered={panels.releaseScreenControl}
+                            className="mb-3"
+                          />
+                        ) : null}
+                        <AgentMessageQueueView
+                          queue={messageQueue.queue}
+                          onClear={() => void messageQueue.clear()}
+                          disabled={
+                            messageQueue.pending ||
+                            messageQueue.forbidden ||
+                            sessionReadOnly
                           }
-                          onTakeoverRequest={panels.openTakeoverScreen}
-                          onTakeoverAnswered={panels.releaseScreenControl}
-                          className="mb-3"
                         />
-                      ) : null}
-                      <AgentMessageQueueView
-                        queue={messageQueue.queue}
-                        onClear={() => void messageQueue.clear()}
-                        disabled={
-                          messageQueue.pending ||
-                          messageQueue.forbidden ||
-                          sessionReadOnly
-                        }
-                      />
+                      </div>
                       <WorkComposer
                         key={composerScope}
                         agentId={controlAgent?.id}
@@ -1621,7 +1687,7 @@ export function WorkspaceWork({
                     </div>
                   </div>
                 )}
-            </main>
+            </section>
           </AnimatedSidebarInset>
           <WorkspacePanels
             panels={panels}

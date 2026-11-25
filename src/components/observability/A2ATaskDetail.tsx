@@ -1,7 +1,18 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useTranslations } from "next-intl";
+import { useMemo, type ReactNode } from "react";
+import { useFormatter, useTranslations } from "next-intl";
+import {
+  TraceWaterfall,
+  type AgentTraceRun,
+  type AgentTraceSpan,
+  type TraceWaterfallLabels,
+} from "@/components/agents/agent-traces";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/motion/collapsible";
 import { A2AArtifactParts } from "@/components/dashboard/agents/A2AArtifactParts";
 import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
 import type { A2AWirePart } from "@/lib/conversation/a2a-parts";
@@ -199,8 +210,128 @@ export function A2ATaskConversation({
 
 export function A2ATaskDetail({ detail }: { detail: A2ATaskDetailView }) {
   const t = useTranslations("console.observability.viewer");
+  const traceT = useTranslations("console.work.trace");
+  const format = useFormatter();
   const describeRuntimeError = useRuntimeErrorText();
   const { summary } = detail;
+  const traceLabels = useMemo<Partial<TraceWaterfallLabels>>(
+    () => ({
+      trace: (name) => traceT("trace", { name }),
+      status: {
+        completed: traceT("completed"),
+        failed: traceT("failed"),
+        running: traceT("running"),
+        cancelled: traceT("cancelled"),
+      },
+      retries: (count) => traceT("retries", { count }),
+      duration: traceT("duration"),
+      spans: traceT("spans"),
+      tokens: traceT("tokens"),
+      cost: traceT("cost"),
+      showKinds: traceT("showKinds"),
+      kinds: {
+        agent: traceT("kindAgent"),
+        llm: traceT("kindLlm"),
+        tool: traceT("kindTool"),
+        runtime: traceT("kindRuntime"),
+      },
+      span: traceT("span"),
+      expand: (name) => traceT("expand", { name }),
+      collapse: (name) => traceT("collapse", { name }),
+      expandAll: traceT("expandAll"),
+      collapseAll: traceT("collapseAll"),
+      search: traceT("search"),
+      clearSearch: traceT("clearSearch"),
+      errorsOnly: traceT("errorsOnly"),
+      zoomIn: traceT("zoomIn"),
+      zoomOut: traceT("zoomOut"),
+      zoomReset: traceT("zoomReset"),
+      previousSpan: traceT("previousSpan"),
+      nextSpan: traceT("nextSpan"),
+      shareOfTotal: traceT("shareOfTotal"),
+      copy: traceT("copy"),
+      copied: traceT("copied"),
+      expandText: traceT("expandText"),
+      collapseText: traceT("collapseText"),
+      noSpans: traceT("noSpans"),
+      noMatches: traceT("noMatches"),
+      resetFilters: traceT("resetFilters"),
+      clearSelection: traceT("clearSelection"),
+      timing: traceT("timing"),
+      start: traceT("start"),
+      end: traceT("end"),
+      model: traceT("model"),
+      inputTokens: traceT("inputTokens"),
+      outputTokens: traceT("outputTokens"),
+      input: traceT("input"),
+      output: traceT("output"),
+      notRecorded: traceT("notRecorded"),
+      attributes: traceT("attributes"),
+      startedAt: (value) =>
+        format.dateTime(new Date(value), {
+          dateStyle: "medium",
+          timeStyle: "medium",
+        }),
+    }),
+    [format, traceT],
+  );
+  const traceRun = useMemo<AgentTraceRun | null>(() => {
+    if (detail.tree.length <= 1) return null;
+    const toStatus = (state: string): AgentTraceSpan["status"] => {
+      if (state === "completed") return "completed";
+      if (state === "failed" || state === "rejected") return "failed";
+      if (state === "canceled") return "cancelled";
+      return "running";
+    };
+    const starts = detail.tree
+      .map((node) => Date.parse(node.startedAt))
+      .filter((ms) => Number.isFinite(ms));
+    const rootStartMs = starts.length
+      ? Math.min(...starts)
+      : Date.parse(summary.startedAt);
+    if (!Number.isFinite(rootStartMs)) return null;
+    const nodeIds = new Set(detail.tree.map((node) => node.taskId));
+    const spans: AgentTraceSpan[] = detail.tree.map((node) => {
+      const nodeStart = Date.parse(node.startedAt);
+      const startMs = Math.max(
+        0,
+        (Number.isFinite(nodeStart) ? nodeStart : rootStartMs) - rootStartMs,
+      );
+      const nodeEnd = node.settledAt ? Date.parse(node.settledAt) : Number.NaN;
+      const durationMs = Math.max(
+        1,
+        Number.isFinite(nodeEnd) && Number.isFinite(nodeStart)
+          ? nodeEnd - nodeStart
+          : node.taskId === summary.taskId
+            ? (summary.durationMs ?? 1)
+            : 1,
+      );
+      return {
+        id: node.taskId,
+        parentId:
+          node.parentTaskId && nodeIds.has(node.parentTaskId)
+            ? node.parentTaskId
+            : undefined,
+        name: `${node.from.name} → ${node.to.name}`,
+        kind: "agent",
+        startMs,
+        durationMs,
+        status: toStatus(node.state),
+      };
+    });
+    const totalDuration = Math.max(
+      summary.durationMs ?? 1,
+      ...spans.map((span) => span.startMs + span.durationMs),
+    );
+    return {
+      id: summary.taskId,
+      name: `${summary.from.name} → ${summary.to.name}`,
+      status: toStatus(summary.state),
+      startedAt: summary.startedAt,
+      durationMs: totalDuration,
+      spans,
+    };
+  }, [detail.tree, summary]);
   const participantsByTask = new Map<
     string,
     { user?: string; agent?: string }
@@ -251,6 +382,9 @@ export function A2ATaskDetail({ detail }: { detail: A2ATaskDetailView }) {
       </header>
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">{t("taskTree")}</h2>
+        {traceRun ? (
+          <TraceWaterfall run={traceRun} labels={traceLabels} />
+        ) : null}
         <A2ATaskTree nodes={detail.tree} />
       </section>
       <A2ATaskConversation
@@ -267,11 +401,11 @@ export function A2ATaskDetail({ detail }: { detail: A2ATaskDetailView }) {
         )}
       />
       <Timeline entries={detail.timeline} />
-      <details className="space-y-3 rounded-lg border border-border p-4">
-        <summary className="cursor-pointer text-sm font-medium">
+      <Collapsible className="rounded-lg border border-border px-4 py-3">
+        <CollapsibleTrigger className="px-0 py-1 text-sm font-medium">
           {t("rawProtocol")}
-        </summary>
-        <div className="mt-3 space-y-4">
+        </CollapsibleTrigger>
+        <CollapsibleContent className="space-y-4 pt-3">
           {detail.protocol.map((event) => (
             <section key={event.eventId} className="space-y-3">
               <p className="break-all font-mono text-xs text-muted-foreground">
@@ -300,8 +434,8 @@ export function A2ATaskDetail({ detail }: { detail: A2ATaskDetailView }) {
               </div>
             </section>
           ))}
-        </div>
-      </details>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }

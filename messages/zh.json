@@ -127,92 +127,10 @@
     "themeLight": "浅色",
     "themeDark": "深色",
     "en": "EN",
-    "zh": "中"
-  },
-  "home": {
-    "openSourceEyebrow": "开源，让可能性自由生长",
-    "heroTitle": "你的 AI，",
-    "heroAccent": "不止于对话。",
-    "heroDescription": "连接工具，装载技能，启动智能体。让灵感走出对话框，在一个工作空间里变成行动。",
-    "openWorkspace": "打开工作空间",
-    "exploreCatalog": "探索工具目录",
-    "heroNote": "无需登录即可探索，自由构建你的 AI 工作流。",
-    "ecosystem": "能力生态",
-    "oneWorkspace": "一个工作空间，无限可能。",
-    "connectTools": "连接你常用的工具与数据。",
-    "teachSkills": "为 AI 装载新的专业能力。",
-    "agents": "AI 智能体",
-    "launchAgents": "让能力真正付诸行动。",
-    "discoveryEyebrow": "发现 / 连接 / 创造",
-    "discoveryTitle": "发现下一项超能力。",
-    "catalogCount": "个 MCP 服务器，从这里开始连接。",
-    "tabOfficial": "官方",
-    "tabFeatured": "精选",
-    "tabPopular": "热门",
-    "tabLatest": "最新",
-    "viewResource": "探索详情",
-    "emptyCollection": "这里还没有内容，试试其他分类，或稍后再来。",
-    "closingTitle": "你的工具，你来定义。",
-    "closingDescription": "开源，可自行部署。打造属于你的 ToolPlane。",
-    "viewSource": "在 GitHub 查看",
-    "searchPlaceholder": "搜索 MCP 服务器...",
-    "searchAriaLabel": "搜索 MCP 服务器",
-    "allCategories": "全部",
-    "officialServers": "官方 MCP 服务器",
-    "viewAllOfficialServers": "查看全部官方服务器",
-    "featuredServers": "精选 MCP 服务器",
-    "viewAllFeaturedServers": "查看全部精选服务器",
-    "topServers": "热门 MCP 服务器",
-    "viewLeaderboard": "查看排行榜",
-    "latestServers": "最新 MCP 服务器",
-    "viewAllNewServers": "查看全部新服务器",
-    "mcpClients": "MCP 客户端",
-    "viewAllClients": "查看全部客户端",
-    "topAgentSkills": "热门技能",
-    "viewAllSkills": "查看全部技能",
-    "whatAreAgentSkills": "什么是智能体技能？",
-    "servers": "服务器",
-    "frequentlyAskedQuestions": "常见问题",
-    "updatedJustNow": "刚刚更新",
-    "headlineMcpServers": "MCP 服务器",
-    "headlineAgentSkills": "智能体技能",
-    "headlineMcpClients": "MCP 客户端",
-    "headlineAgentTools": "智能体工具",
-    "findTheBestMcpServersAgentSkillsMcpClientsAgentTools": "发现最佳 MCP 服务器、智能体技能、MCP 客户端和智能体工具",
-    "findTheBest": "发现最佳",
-    "directoryOfAwesomeMcpServersAndClientsToConnectAiAgentsWithYourFavoriteTools": "精选 MCP 服务器和客户端目录，将 AI 智能体与您常用的工具连接起来。",
-    "faq1": {
-      "q": "什么是 MCP（Model Context Protocol）？",
-      "a": "MCP 是一个开放协议，用统一接口规范 AI 应用如何连接外部工具和数据源，让模型可以发现并调用工具。"
-    },
-    "faq2": {
-      "q": "MCP 是如何工作的？",
-      "a": "AI 应用中的 MCP 客户端会通过 stdio 或可流式 HTTP 等传输方式连接 MCP 服务器。服务器会暴露工具、资源和提示词，模型可在运行时发现并调用。"
-    },
-    "faq3": {
-      "q": "MCP 服务器能做什么？",
-      "a": "MCP 服务器可以查询数据库、调用 API、读取文件、浏览网页，或执行领域特定动作，把外部系统变成 AI 智能体可调用的工具。"
-    },
-    "faq4": {
-      "q": "谁在使用 MCP？",
-      "a": "构建 AI 智能体和助手的开发者，以及 Claude、Cursor 等兼容 MCP 的客户端，都在使用 MCP 来扩展 AI 的能力。"
-    },
-    "faq5": {
-      "q": "如何安装一个 MCP 服务器？",
-      "a": "把服务器的命令或 URL 以及所需凭据加入客户端的 MCP 配置中，客户端就会启动或连接它，并把它的工具暴露给模型。"
-    },
-    "faq6": {
-      "q": "MCP 安全吗？",
-      "a": "安全性取决于你信任哪些服务器，以及你授予了哪些权限。只运行可信来源的服务器，最小化凭据权限，并在连接前审查它暴露的工具。"
-    },
-    "faq7": {
-      "q": "MCP 和普通 API 有什么区别？",
-      "a": "普通 API 往往需要为每个服务单独集成；MCP 则是在其之上的标准层，让任何兼容客户端都能发现并使用任何兼容服务器。"
-    },
-    "faq8": {
-      "q": "我能自己构建 MCP 服务器吗？",
-      "a": "可以。使用官方 SDK，你可以把任意数据源或工具封装成 MCP 服务器，定义其工具和资源，并接入任何兼容 MCP 的客户端。"
-    }
+    "zh": "中",
+    "saving": "保存中…",
+    "saved": "已保存",
+    "sections": "分区导航"
   },
   "auth": {
     "loginTitle": "欢迎回来",
@@ -280,14 +198,11 @@
   },
   "metadata": {
     "siteTitle": "ToolPlane｜自托管智能体控制平面",
-    "siteDescription": "在一个自托管工作空间中统一运营 MCP 运行时、可复用技能、智能体、工具包与日志。",
-    "sellSkillsToolplane": "出售技能 | ToolPlane",
+    "siteDescription": "在一个自托管工作空间中统一运营 MCP 运行时、GitHub 固定提交插件、Pi SDK 智能体、持久沙箱与全链路观测。",
     "privacyToolplane": "隐私 | ToolPlane",
     "privacyDescription": "说明 ToolPlane 实例如何处理账号、工作区、运行时和日志数据。",
-    "submitToolplane": "提交 | ToolPlane",
     "termsToolplane": "条款 | ToolPlane",
     "termsDescription": "使用和运营 ToolPlane 实例及其智能体运行时的条款。",
-    "newsToolplane": "资讯 | ToolPlane",
     "whatIsAnMcpServerToolplane": "什么是 MCP 服务器？ | ToolPlane"
   },
   "console": {
@@ -348,7 +263,14 @@
         "failure": "执行失败",
         "suggestion": "建议",
         "other": "其他"
-      }
+      },
+      "approved": "已批准",
+      "denied": "已拒绝",
+      "running": "执行中",
+      "completed": "已完成",
+      "viewDetails": "查看详情",
+      "alwaysAllow": "始终允许",
+      "expiresIn": "{time} 后过期"
     },
     "liveOutput": {
       "truncated": "实时预览已截断，完整回复请查看保存后的记录。",
@@ -1995,7 +1917,7 @@
           "replaceKey": "更换远程密钥",
           "failed": "远程操作失败。请刷新列表确认结果后再重试，不要重复提交。",
           "confirm": "连接会一次完成 Agent Card 验证、启用远程服务和授权当前智能体；任务可能向该服务发送文本及明确选定的文件。后续访问权限变更会使正在运行的旧授权失效。确认继续？",
-          "workflow": "连接一次即可启用远程服务并授权当前智能体。外部调用还需启用「外部 A2A 与渠道访问」；内部委派只需选择子智能体。Pi 任务通过 a2a_peers 和 a2a_call 调用；A2A 1.0 JSON-RPC 支持文本与协商后的文件，接收的文件在任务树中下载。"
+          "workflow": "连接一次即可启用远程服务并授权当前智能体。外部调用还需启用「外部 A2A 与渠道访问」；内部委派只需选择子智能体。A2A 1.0 JSON-RPC 支持文本与协商后的文件，接收的文件在任务树中下载。"
         },
         "phase_remote-waiting": "等待远程智能体",
         "taskHistory": "任务消息历史",
@@ -5028,12 +4950,35 @@
           "summary": "具备更新软件包基线的 Ubuntu Noble 基础镜像。",
           "bestFor": "适用：现代 Ubuntu 软件包与测试验证"
         }
-      }
+      },
+      "statusUnknown": "未知"
     },
     "modelProviderNotice": {
       "title": "先添加模型提供商",
       "description": "助手和智能体都需要模型才能回复。",
       "action": "添加模型提供商"
+    },
+    "agentUi": {
+      "codeWriting": "生成中",
+      "codeReady": "已完成",
+      "approvalPending": "等待处理",
+      "approvalSubmitting": "提交中",
+      "approvalApproved": "已批准",
+      "approvalRejected": "已拒绝",
+      "approvalChanges": "需要修改",
+      "previousQuestion": "上一题",
+      "nextQuestion": "下一题",
+      "tasksLabel": "任务清单",
+      "tasksEmpty": "暂无任务",
+      "tasksCompleted": "已完成 {completed}/{total} 项任务",
+      "copyResult": "复制结果",
+      "runAgain": "重新运行",
+      "messageLabel": "消息",
+      "goToMessage": "跳转到第 {index}/{total} 条{sender}消息",
+      "senderUser": "用户",
+      "senderAssistant": "助手",
+      "sendPrompt": "发送",
+      "stopGenerating": "停止生成"
     }
   },
   "privacy": {

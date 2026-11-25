@@ -1,31 +1,41 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
+import { ExternalLink, X } from "lucide-react";
 import { Button, ButtonLink } from "@/components/motion/button";
+import { Drawer } from "@/components/motion/drawer";
 import { Input } from "@/components/motion/input";
+import { Loader } from "@/components/motion/loader";
+import { FormCheckbox } from "@/components/ui/FormCheckbox";
 import { FormSelect } from "@/components/ui/FormSelect";
 import { ENTRY_KINDS } from "@/lib/agents/entry-kinds";
 import { apiRequest } from "@/lib/client/api";
 import type {
+  A2ATaskDetail as A2ATaskDetailView,
   A2ATaskSummary,
+  AgentRunDetail as AgentRunDetailView,
   AgentRunSummary,
+  McpCallDetail as McpCallDetailView,
   McpCallSummary,
   NamedEntity,
   TimeFilter,
   ViewPage,
 } from "@/lib/observability/views/types";
+import { A2ATaskDetail } from "./A2ATaskDetail";
 import { A2ATaskTable } from "./A2ATaskTable";
+import { AgentRunDetail } from "./AgentRunDetail";
 import { AgentRunTable } from "./AgentRunTable";
+import { McpCallDetail } from "./McpCallDetail";
 import { McpCallTable } from "./McpCallTable";
 import { EmptyState } from "./LogPrimitives";
 import { TimeRangePicker } from "./TimeRangePicker";
 import { LiveToggle } from "./LiveToggle";
 
 type LogItem = McpCallSummary | A2ATaskSummary | AgentRunSummary;
+type LogDetail = McpCallDetailView | A2ATaskDetailView | AgentRunDetailView;
 const commonKeys = ["range", "since", "until", "q"];
-const fieldClass =
-  "h-9 rounded-md border border-input bg-background px-3 text-sm";
 
 /** Fetches only metadata. Bodies are fetched by the authorized detail pages. */
 export function LogExplorer({
@@ -51,12 +61,20 @@ export function LogExplorer({
   agents?: NamedEntity[];
 }) {
   const t = useTranslations("console.observability.viewer");
+  const common = useTranslations("common");
+  const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
   const fieldId = useId();
   const [page, setPage] = useState<ViewPage<LogItem> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const [loading, setLoading] = useState(true);
   const [liveAfter, setLiveAfter] = useState("");
+  const [slowChecked, setSlowChecked] = useState(params.slow === "true");
+  const [inspectId, setInspectId] = useState<string | null>(null);
+  const [inspectDetail, setInspectDetail] = useState<LogDetail | null>(null);
+  const [inspectLoading, setInspectLoading] = useState(false);
+  const [inspectError, setInspectError] = useState<string | null>(null);
   const keys =
     kind === "mcp"
       ? [
@@ -99,6 +117,46 @@ export function LogExplorer({
     () => Object.fromEntries(new URLSearchParams(filterString)) as TimeFilter,
     [filterString],
   );
+
+  useEffect(() => {
+    setSlowChecked(params.slow === "true");
+  }, [params.slow]);
+
+  useEffect(() => {
+    if (!inspectId) {
+      setInspectDetail(null);
+      setInspectError(null);
+      return;
+    }
+    const controller = new AbortController();
+    setInspectLoading(true);
+    setInspectError(null);
+    setInspectDetail(null);
+    void apiRequest<LogDetail>(
+      `${apiBase}/${path}/${encodeURIComponent(inspectId)}`,
+      {
+        signal: controller.signal,
+        cache: "no-store",
+      },
+    ).then((res) => {
+      if (controller.signal.aborted) return;
+      if (res.ok) setInspectDetail(res.data);
+      else setInspectError(res.message ?? t("loadError"));
+      setInspectLoading(false);
+    });
+    return () => controller.abort();
+  }, [apiBase, inspectId, path, t]);
+
+  function applyFormFilters(form: HTMLFormElement | null) {
+    if (!form) return;
+    const data = new FormData(form);
+    const nextParams = new URLSearchParams();
+    for (const [key, val] of data.entries()) {
+      const str = String(val).trim();
+      if (str) nextParams.set(key, str);
+    }
+    router.replace(`${base}?${nextParams.toString()}`, { scroll: false });
+  }
 
   useEffect(() => {
     void retry;
@@ -149,12 +207,23 @@ export function LogExplorer({
   const nextQuery = new URLSearchParams(filterString);
   nextQuery.set("tab", tab);
   if (page?.nextCursor) nextQuery.set("cursor", page.nextCursor);
+  const returnToHref = `${base}?tab=${tab}&${queryString}`;
+  const detailSubpath =
+    kind === "mcp" ? "mcp" : kind === "runs" ? "runs" : "a2a";
+  const inspectFullHref = inspectId
+    ? `${base}/${detailSubpath}/${encodeURIComponent(inspectId)}?returnTo=${encodeURIComponent(returnToHref)}`
+    : null;
   return (
     <div className="min-w-0 space-y-4">
       <form
+        ref={formRef}
         key={filterString}
         action={base}
         method="get"
+        onSubmit={(event) => {
+          event.preventDefault();
+          applyFormFilters(event.currentTarget);
+        }}
         className="flex flex-wrap items-end gap-3"
       >
         <input type="hidden" name="tab" value={tab} />
@@ -286,25 +355,34 @@ export function LogExplorer({
                 ]}
               />
             </div>
-            <label className="flex h-9 items-center gap-2 text-sm">
-              <input
-                type="checkbox"
+            <div className="flex h-10 items-center pb-0.5">
+              <FormCheckbox
                 name="slow"
                 value="true"
-                defaultChecked={params.slow === "true"}
+                checked={slowChecked}
+                onCheckedChange={(checked) => {
+                  setSlowChecked(checked);
+                  window.setTimeout(() => applyFormFilters(formRef.current), 0);
+                }}
+                label={t("slow")}
               />
-              {t("slow")}
-            </label>
-            <label className="grid gap-1 text-xs text-muted-foreground">
-              {t("slowThreshold")}
-              <input
-                type="number"
-                name="slowMs"
-                min="1"
-                defaultValue={params.slowMs ?? "2000"}
-                className={`${fieldClass} w-24`}
-              />
-            </label>
+            </div>
+            {slowChecked ? (
+              <label
+                htmlFor={`${fieldId}-slow-ms`}
+                className="grid gap-1 text-xs text-muted-foreground"
+              >
+                {t("slowThreshold")}
+                <Input
+                  id={`${fieldId}-slow-ms`}
+                  type="number"
+                  name="slowMs"
+                  min={1}
+                  defaultValue={params.slowMs ?? "2000"}
+                  className="w-24"
+                />
+              </label>
+            ) : null}
           </>
         ) : (
           <>
@@ -418,12 +496,13 @@ export function LogExplorer({
         )}
       </div>
       {loading ? (
-        <p
+        <div
           role="status"
-          className="p-8 text-center text-sm text-muted-foreground"
+          className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground"
         >
-          {t("loading")}
-        </p>
+          <Loader variant="spinner" size={16} />
+          <span>{t("loading")}</span>
+        </div>
       ) : error ? (
         <div
           role="alert"
@@ -448,14 +527,16 @@ export function LogExplorer({
               runDetailBase={`${base}/runs`}
               a2aDetailBase={`${base}/a2a`}
               showWorkspace={admin}
-              returnTo={admin ? `${base}?tab=${tab}&${queryString}` : undefined}
+              returnTo={returnToHref}
+              onInspect={setInspectId}
             />
           ) : kind === "runs" ? (
             <AgentRunTable
               items={page.items as AgentRunSummary[]}
               detailBase={`${base}/runs`}
               showWorkspace={admin}
-              returnTo={admin ? `${base}?tab=${tab}&${queryString}` : undefined}
+              returnTo={returnToHref}
+              onInspect={setInspectId}
             />
           ) : (
             <A2ATaskTable
@@ -463,7 +544,8 @@ export function LogExplorer({
               detailBase={`${base}/a2a`}
               runDetailBase={`${base}/runs`}
               showWorkspace={admin}
-              returnTo={admin ? `${base}?tab=${tab}&${queryString}` : undefined}
+              returnTo={returnToHref}
+              onInspect={setInspectId}
             />
           )}
           <div className="flex items-center gap-3">
@@ -490,6 +572,66 @@ export function LogExplorer({
       ) : (
         <EmptyState />
       )}
+      <Drawer
+        open={inspectId !== null}
+        onOpenChange={(open) => {
+          if (!open) setInspectId(null);
+        }}
+        side="right"
+        ariaLabel={common("preview")}
+        closeLabel={common("close")}
+        className="w-full max-w-2xl"
+      >
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-5 py-3.5">
+          <div className="min-w-0 truncate font-mono text-xs text-muted-foreground">
+            {inspectId}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {inspectFullHref ? (
+              <ButtonLink href={inspectFullHref} variant="secondary" size="sm">
+                <ExternalLink className="size-3.5" />
+                {common("viewAll")}
+              </ButtonLink>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={common("close")}
+              onClick={() => setInspectId(null)}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
+          {inspectLoading ? (
+            <div
+              role="status"
+              className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground"
+            >
+              <Loader variant="spinner" size={16} />
+              <span>{t("loading")}</span>
+            </div>
+          ) : inspectError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {inspectError}
+            </p>
+          ) : inspectDetail ? (
+            kind === "mcp" ? (
+              <McpCallDetail detail={inspectDetail as McpCallDetailView} />
+            ) : kind === "runs" ? (
+              <AgentRunDetail
+                detail={inspectDetail as AgentRunDetailView}
+                base={base}
+                workspaceSlug={workspaceSlug}
+              />
+            ) : (
+              <A2ATaskDetail detail={inspectDetail as A2ATaskDetailView} />
+            )
+          ) : null}
+        </div>
+      </Drawer>
     </div>
   );
 }

@@ -1,12 +1,23 @@
 "use client";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { BouncyAccordion } from "@/components/motion/bouncy-accordion";
+import {
+  CenterMorphModal,
+  CenterMorphModalContent,
+} from "@/components/motion/center-morph-modal";
+import { Input } from "@/components/motion/input";
+import {
+  DialogCancel,
+  DialogFooter,
+  DialogHeader,
+} from "@/components/dashboard/dialog";
+import { CopyButton } from "./CopyButton";
 
 import { FormSelect } from "@/components/ui/FormSelect";
 
 import { ButtonLink, Button } from "@/components/motion/button";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 
 import { useRouter } from "next/navigation";
@@ -20,6 +31,7 @@ import {
   Play,
   PlugZap,
   Power,
+  Search,
 } from "lucide-react";
 import {
   connectMcpInspectorAction,
@@ -96,9 +108,12 @@ export function ToolPlayground({
   defaultRuntime?: boolean;
 }) {
   const t = useTranslations("console.mcp");
+  const common = useTranslations("common");
   const router = useRouter();
   const argumentsId = useId();
   const sandboxSelectId = useId();
+  const [toolFilter, setToolFilter] = useState("");
+  const [confirmDestructiveOpen, setConfirmDestructiveOpen] = useState(false);
   const initialSandboxId =
     sandboxes.find((sandbox) => sandbox.id === connectedSandboxId)?.id ??
     sandboxes.find((sandbox) => sandbox.networkEnabled)?.id ??
@@ -209,7 +224,7 @@ export function ToolPlayground({
     }
   }
 
-  async function run() {
+  async function run(confirmedDestructive = false) {
     setLoading(true);
     setResult(null);
     setError(null);
@@ -230,11 +245,10 @@ export function ToolPlayground({
         setError(t("argumentsMustBeJsonObject"));
         return;
       }
-      if (
-        current?.annotations?.destructiveHint &&
-        !window.confirm(t("confirmDestructiveTool"))
-      )
+      if (current?.annotations?.destructiveHint && !confirmedDestructive) {
+        setConfirmDestructiveOpen(true);
         return;
+      }
       const request = {
         method: "tools/call",
         params: { name: selected, arguments: parsedArgs },
@@ -282,6 +296,16 @@ export function ToolPlayground({
       setLoading(false);
     }
   }
+
+  const filteredTools = useMemo(() => {
+    const q = toolFilter.trim().toLowerCase();
+    if (!q) return availableTools;
+    return availableTools.filter((tool) =>
+      `${tool.name} ${tool.title ?? ""} ${tool.description ?? ""}`
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [availableTools, toolFilter]);
 
   const selectedSandbox = sandboxes.find((sandbox) => sandbox.id === sandboxId);
 
@@ -414,35 +438,60 @@ export function ToolPlayground({
       ) : availableTools.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("noToolsAvailable")}</p>
       ) : (
-        <div className="grid min-w-0 gap-5 lg:grid-cols-[15rem_minmax(0,1fr)]">
-          <nav
-            aria-label={t("inspectorTools")}
-            className="max-h-[min(24rem,50dvh)] min-w-0 space-y-1 overflow-y-auto overscroll-contain lg:sticky lg:top-4 lg:self-start"
-          >
-            <p className="mb-2 text-xs font-medium text-muted-foreground">
-              {t("inspectorTools")}
-            </p>
-            {availableTools.map((tool) => (
-              <Button
-                key={tool.name}
-                type="button"
-                onClick={() => onSelect(tool.name)}
-                aria-pressed={selected === tool.name}
-                title={tool.title ? `${tool.title} (${tool.name})` : tool.name}
-                variant={selected === tool.name ? "secondary" : "ghost"}
-                size="sm"
-              >
-                <span className="truncate">{tool.title ?? tool.name}</span>
-              </Button>
-            ))}
-          </nav>
+        <div
+          className={`grid min-w-0 gap-5 ${
+            availableTools.length > 1
+              ? "lg:grid-cols-[15rem_minmax(0,1fr)]"
+              : ""
+          }`}
+        >
+          {availableTools.length > 1 ? (
+            <nav
+              aria-label={t("inspectorTools")}
+              className="max-h-[min(24rem,50dvh)] min-w-0 space-y-1.5 overflow-y-auto overscroll-contain lg:sticky lg:top-4 lg:self-start"
+            >
+              <p className="mb-2 text-xs font-medium text-muted-foreground">
+                {t("inspectorTools")}
+              </p>
+              {availableTools.length > 5 ? (
+                <div className="pb-1">
+                  <Input
+                    value={toolFilter}
+                    onChange={setToolFilter}
+                    placeholder={common("search")}
+                    aria-label={common("search")}
+                    leftIcon={<Search className="size-3.5" />}
+                    className="w-full"
+                  />
+                </div>
+              ) : null}
+              {filteredTools.map((tool) => (
+                <Button
+                  key={tool.name}
+                  type="button"
+                  onClick={() => onSelect(tool.name)}
+                  aria-pressed={selected === tool.name}
+                  title={
+                    tool.title ? `${tool.title} (${tool.name})` : tool.name
+                  }
+                  variant={selected === tool.name ? "secondary" : "ghost"}
+                  size="sm"
+                  className="w-full justify-start"
+                >
+                  <span className="truncate">{tool.title ?? tool.name}</span>
+                </Button>
+              ))}
+            </nav>
+          ) : null}
 
           <div className="min-w-0 space-y-5">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h3 className="break-all font-mono text-sm font-semibold text-foreground">
-                  {current?.name}
-                </h3>
+                {availableTools.length > 1 ? (
+                  <h3 className="break-all font-mono text-sm font-semibold text-foreground">
+                    {current?.name}
+                  </h3>
+                ) : null}
                 {current?.annotations?.readOnlyHint ? (
                   <AnimatedBadge status="neutral" size="sm" showIcon={false}>
                     {t("readOnlyTool")}
@@ -498,15 +547,21 @@ export function ToolPlayground({
                 id={argumentsId}
                 value={args}
                 onChange={(e) => setArgs(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    if (!loading && selected) void run();
+                  }
+                }}
                 spellCheck={false}
                 rows={Math.min(12, Math.max(5, args.split("\n").length))}
-                className="min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring max-h-[50dvh]"
+                className="max-h-[50dvh] min-h-36 w-full resize-y rounded-lg bg-muted/35 p-3 font-mono text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
 
             <Button
               type="button"
-              onClick={run}
+              onClick={() => void run()}
               disabled={loading || !selected}
               variant="primary"
               size="md"
@@ -529,9 +584,12 @@ export function ToolPlayground({
             ) : null}
             {result !== null ? (
               <div>
-                <p className="mb-1.5 text-xs font-medium text-muted-foreground">
-                  {t("toolResult")}
-                </p>
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {t("toolResult")}
+                  </p>
+                  <CopyButton text={result} />
+                </div>
                 <pre
                   role="status"
                   className="max-h-96 overflow-auto rounded-xl bg-muted/55 p-3 font-mono text-xs leading-5 text-foreground"
@@ -580,6 +638,35 @@ export function ToolPlayground({
           </div>
         </div>
       )}
+      <CenterMorphModal
+        open={confirmDestructiveOpen}
+        onOpenChange={setConfirmDestructiveOpen}
+      >
+        <CenterMorphModalContent
+          ariaLabel={t("destructiveTool")}
+          closeButtonLabel={common("close")}
+          className="max-w-md"
+        >
+          <DialogHeader
+            title={t("destructiveTool")}
+            description={t("confirmDestructiveTool")}
+          />
+          <DialogFooter cancel={<DialogCancel />}>
+            <Button
+              type="button"
+              variant="primary"
+              size="md"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                setConfirmDestructiveOpen(false);
+                void run(true);
+              }}
+            >
+              {t("runTool")}
+            </Button>
+          </DialogFooter>
+        </CenterMorphModalContent>
+      </CenterMorphModal>
     </div>
   );
 }

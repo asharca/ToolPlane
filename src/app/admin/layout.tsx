@@ -39,7 +39,9 @@ export default async function AdminLayout({
         detectedTimeZone={admin.detectedTimeZone}
         timeZoneOverride={admin.timeZoneOverride}
       >
-        <AdminChrome>{children}</AdminChrome>
+        <AdminChrome userLabel={admin.name ?? admin.email}>
+          {children}
+        </AdminChrome>
       </UserTimeZoneProvider>
     </NextIntlClientProvider>
   );

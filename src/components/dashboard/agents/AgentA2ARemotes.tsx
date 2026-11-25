@@ -3,6 +3,7 @@ import { Button } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { BouncyAccordion } from "@/components/motion/bouncy-accordion";
+import { ConfirmActionDialog } from "@/components/dashboard/ConversationUxPrimitives";
 import {
   useCallback,
   useEffect,
@@ -26,6 +27,7 @@ export function AgentA2ARemotes({
   readOnly?: boolean;
 }) {
   const t = useTranslations("console.agents.a2a.remote");
+  const common = useTranslations("common");
   const [view, setView] = useState<RemoteAgentView | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,6 +36,9 @@ export function AgentA2ARemotes({
   const [rpcUrl, setRpcUrl] = useState("");
   const [token, setToken] = useState("");
   const [keyTarget, setKeyTarget] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<RemoteAgentAction | null>(
+    null,
+  );
   const mounted = useRef(true),
     flight = useRef(false),
     generation = useRef(0);
@@ -86,8 +91,8 @@ export function AgentA2ARemotes({
       if (timer) clearTimeout(timer);
     };
   }, [token]);
-  async function mutate(action: RemoteAgentAction) {
-    if (readOnly || flight.current || !window.confirm(t("confirm"))) return;
+  async function executeMutate(action: RemoteAgentAction) {
+    if (readOnly || flight.current) return;
     flight.current = true;
     setBusy(true);
     setError("");
@@ -116,6 +121,10 @@ export function AgentA2ARemotes({
     }
     const failure = await load();
     if (failure && mounted.current) setError(failure);
+  }
+  function mutate(action: RemoteAgentAction) {
+    if (readOnly || flight.current) return;
+    setPendingAction(action);
   }
   return (
     <section
@@ -147,9 +156,10 @@ export function AgentA2ARemotes({
             id: "remote-details",
             title: t("details"),
             description: (
-              <p className="pt-3 text-xs text-muted-foreground">
-                {t("allowlist")}
-              </p>
+              <div className="space-y-2 pt-3 text-xs text-muted-foreground">
+                <p>{t("allowlist")}</p>
+                <p>{t("workflow")}</p>
+              </div>
             ),
           },
         ]}
@@ -331,7 +341,26 @@ export function AgentA2ARemotes({
           </div>
         ))}
       </div>
-      <p className="text-xs text-muted-foreground">{t("workflow")}</p>
+      <ConfirmActionDialog
+        open={pendingAction !== null}
+        title={t("title")}
+        description={t("confirm")}
+        confirmLabel={
+          pendingAction?.action === "register"
+            ? t("register")
+            : pendingAction?.action === "replace-key"
+              ? t("saveKey")
+              : common("confirm")
+        }
+        cancelLabel={common("cancel")}
+        busy={busy}
+        onClose={() => setPendingAction(null)}
+        onConfirm={() => {
+          const action = pendingAction;
+          setPendingAction(null);
+          if (action) void executeMutate(action);
+        }}
+      />
     </section>
   );
 }

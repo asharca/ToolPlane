@@ -1,6 +1,11 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/motion/collapsible";
 import type { McpCallDetail as McpCallDetailView } from "@/lib/observability/views/types";
 import { Duration, RelativeTime, StatusBadge } from "./LogPrimitives";
 import {
@@ -98,21 +103,26 @@ export function McpCallDetail({ detail }: { detail: McpCallDetailView }) {
         </div>
       )}
       {detail.upstream && (
-        <details className="space-y-3 rounded-lg border border-border p-4">
-          <summary className="cursor-pointer text-sm font-medium">
+        <Collapsible className="rounded-lg border border-border px-4 py-3">
+          <CollapsibleTrigger className="px-0 py-1 text-sm font-medium">
             {t("upstream")}
-          </summary>
-          <BodyNotice state={detail.upstream.bodyState} />
-          {upstreamVisible && (
-            <div className="mt-3 grid gap-3 xl:grid-cols-2">
-              <JsonPanel title={t("request")} value={detail.upstream.request} />
-              <JsonPanel
-                title={t("response")}
-                value={detail.upstream.response}
-              />
-            </div>
-          )}
-        </details>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-3 pt-3">
+            <BodyNotice state={detail.upstream.bodyState} />
+            {upstreamVisible && (
+              <div className="grid gap-3 xl:grid-cols-2">
+                <JsonPanel
+                  title={t("request")}
+                  value={detail.upstream.request}
+                />
+                <JsonPanel
+                  title={t("response")}
+                  value={detail.upstream.response}
+                />
+              </div>
+            )}
+          </CollapsibleContent>
+        </Collapsible>
       )}
       <Timeline entries={detail.trace} />
     </div>

@@ -86,6 +86,7 @@ export type MarketingContent = {
     menu: string;
     docs: string;
     docsUrl: string;
+    apiReference: string;
     sourceCode: string;
     openConsole: string;
     links: MarketingLink[];
@@ -96,6 +97,7 @@ export type MarketingContent = {
     resources: string;
     access: string;
     docs: string;
+    apiReference: string;
     sourceCode: string;
     mcpProtocol: string;
     mcpGuide: string;
@@ -104,6 +106,17 @@ export type MarketingContent = {
     privacy: string;
     terms: string;
     rights: string;
+  };
+  mcpGuide: {
+    metaDescription: string;
+    sections: Array<{
+      title: string;
+      body: string;
+    }>;
+    ctaTitle: string;
+    ctaDescription: string;
+    exploreGatewayCta: string;
+    openConsoleCta: string;
   };
   home: {
     metaTitle: string;
@@ -259,12 +272,15 @@ export type MarketingContent = {
     clientsPreview: {
       surfaces: string[];
       sceneLabel: string;
-      caption: string;
+      protocolLabel: string;
+      exploreApiLabel: string;
       nodes: Array<{
         id: string;
         label: string;
         title: string;
+        endpoint: string;
         detail: string;
+        snippet: string;
       }>;
     };
     security: {
@@ -325,6 +341,7 @@ const CONTENT: Record<"en" | "zh", MarketingContent> = {
       menu: "导航菜单",
       docs: "开发文档",
       docsUrl: "https://asharca.github.io/toolplane-docs/docs/zh",
+      apiReference: "API 参考",
       sourceCode: "GitHub",
       openConsole: "打开控制台",
       links: [
@@ -342,6 +359,7 @@ const CONTENT: Record<"en" | "zh", MarketingContent> = {
       resources: "文档与源码",
       access: "控制台",
       docs: "开发文档",
+      apiReference: "API 参考 (/docs-api)",
       sourceCode: "GitHub 仓库",
       mcpProtocol: "MCP 协议规范",
       mcpGuide: "什么是 MCP 服务",
@@ -350,6 +368,25 @@ const CONTENT: Record<"en" | "zh", MarketingContent> = {
       privacy: "隐私说明",
       terms: "使用条款",
       rights: "保留所有权利。",
+    },
+    mcpGuide: {
+      metaDescription:
+        "了解 Model Context Protocol（MCP）服务器的工作机制，以及 ToolPlane 如何通过托管进程、工具级显式授权与统一 JSON-RPC 网关治理 MCP 服务。",
+      sections: [
+        {
+          title: "在 ToolPlane 中托管与治理 MCP 服务",
+          body: "在生产环境中直接运行第三方 MCP 脚本往往面临凭据散落、权限过宽与缺乏审计的问题。ToolPlane 按工作区统一托管来自 npm、PyPI、GitHub、Docker 容器或远端 HTTP 的 MCP 服务，把连接凭据收敛在受控服务端，并对每个公开工具实施 allow / approve / deny 显式策略。",
+        },
+        {
+          title: "统一 JSON-RPC 网关与全链路追踪",
+          body: "无论是工作区内的 Pi SDK Agent、助手会话，还是外部通过授权接入的客户端，所有 MCP 调用都经过同一鉴权网关，自动记录耗时、状态与有界脱敏后的输入输出，可在调用瀑布图中随时复盘。",
+        },
+      ],
+      ctaTitle: "在自己的控制平面中运行受控 MCP 服务",
+      ctaDescription:
+        "立即打开控制台管理工作区 MCP 部署，或返回首页查看按工具粒度的交互式授权演示。",
+      exploreGatewayCta: "查看 MCP 网关演示",
+      openConsoleCta: "打开控制台",
     },
     home: {
       metaTitle: "自托管控制平面 · MCP、插件与 Agent 运行时",
@@ -938,36 +975,46 @@ const CONTENT: Record<"en" | "zh", MarketingContent> = {
           "Telegram · 飞书 · Discord · 微信",
           "LogEvent & 调用瀑布图",
         ],
-        sceneLabel: "ToolPlane 接入层与观测栈示意图",
-        caption: "点击下方层级切换查看各接入与观测面说明（示例）",
+        sceneLabel: "ToolPlane 接入层与观测栈",
+        protocolLabel: "接入表面 · 协议契约",
+        exploreApiLabel: "浏览交互式 API 参考 (/docs-api)",
         nodes: [
           {
             id: "mcp",
             label: "MCP",
-            title: "Control MCP",
+            title: "Agent Control MCP",
+            endpoint:
+              "POST /api/v1/agents/control/mcp · Bearer <personal_token>",
             detail:
-              "外部 AI 客户端使用账户级个人 API Token 接入受治理的工作区能力。",
+              "外部 AI 客户端使用账户级个人 API Token 接入受治理的工作区能力；新建草案默认不带执行权，须显式审阅修订。",
+            snippet: `{\n  "mcpServers": {\n    "toolplane-control": {\n      "type": "streamable-http",\n      "url": "https://tp.example.com/api/v1/agents/control/mcp",\n      "headers": { "Authorization": "Bearer tp_pat_***" }\n    }\n  }\n}`,
           },
           {
             id: "api",
             label: "API",
-            title: "OpenAPI 参考",
+            title: "OpenAPI 与交互式文档",
+            endpoint: "GET /docs-api · GET /api/v1/openapi.json",
             detail:
-              "运行实例自带 /docs-api 与 /api/v1/openapi.json，提供交互式接口参考与模式定义。",
+              "每个运行实例直接提供与当前版本同步的 OpenAPI 3.1 模式定义及 Scalar 交互式接口参考。",
+            snippet: `curl -sS https://tp.example.com/api/v1/readiness\n# => {"status":"ok","runtime":"ready"}\n\n# 交互式文档: /docs-api\n# OpenAPI 模式: /api/v1/openapi.json`,
           },
           {
             id: "im",
             label: "IM",
             title: "多平台消息渠道",
+            endpoint: "Telegram · 飞书 · Discord · 微信",
             detail:
-              "将 Agent 直接接入 Telegram、飞书、Discord 与微信会话，独立归组可追溯。",
+              "将工作区 Agent 接入团队日常聊天工具，按频道会话独立归组，同工作区成员可按权限只读协查。",
+            snippet: `channel: feishu / telegram / discord / wechat\nthreadScope: per-channel-conversation\nrevisionPin: rev.4 (immutable)\nhistoryVisibility: workspace-member-readonly`,
           },
           {
             id: "trace",
             label: "TRACE",
-            title: "LogEvent 追踪",
+            title: "LogEvent 与调用瀑布图",
+            endpoint: "LogEvent · TraceWaterfall · 有界脱敏记录",
             detail:
-              "统一查看工具调用、延迟、失败原因与有界脱敏记录，无需另拼监控面板。",
+              "统一记录工具调用、延迟、失败原因码与脱敏载荷，刷新会话后仍可完整展开回放。",
+            snippet: `event: agent.turn.completed (2480ms)\nspans: session.admit -> pi.plan -> mcp.github.get_pr -> sandbox.bash\nredaction: active · bounded payload persisted`,
           },
         ],
       },
@@ -1183,6 +1230,7 @@ pnpm dev`,
       menu: "Navigation menu",
       docs: "Docs",
       docsUrl: "https://asharca.github.io/toolplane-docs/docs/en",
+      apiReference: "API Reference",
       sourceCode: "GitHub",
       openConsole: "Open console",
       links: [
@@ -1200,6 +1248,7 @@ pnpm dev`,
       resources: "Resources",
       access: "Console",
       docs: "Documentation",
+      apiReference: "API Reference (/docs-api)",
       sourceCode: "GitHub repository",
       mcpProtocol: "MCP specification",
       mcpGuide: "What is an MCP server",
@@ -1208,6 +1257,25 @@ pnpm dev`,
       privacy: "Privacy",
       terms: "Terms",
       rights: "All rights reserved.",
+    },
+    mcpGuide: {
+      metaDescription:
+        "Learn how Model Context Protocol (MCP) servers expose tools to AI applications and how ToolPlane governs them with managed runtimes, explicit per-tool grants, and a unified JSON-RPC gateway.",
+      sections: [
+        {
+          title: "Managed MCP runtimes & explicit tool grants in ToolPlane",
+          body: "Running raw third-party MCP scripts in production often scatters credentials and exposes overly broad default tools. ToolPlane supervises MCP servers from npm, PyPI, GitHub, Docker containers, or Remote HTTP inside a workspace, encrypts credentials server-side, and enforces explicit allow, approve, or deny policies per tool.",
+        },
+        {
+          title: "Unified JSON-RPC gateway & trace visibility",
+          body: "Every MCP invocation from Pi SDK agents, assistant chats, or authorized external clients flows through one authenticated gateway—recording latency, status, and bounded redacted payloads for full waterfall replay.",
+        },
+      ],
+      ctaTitle: "Run governed MCP servers in your own control plane",
+      ctaDescription:
+        "Open the console to manage workspace MCP deployments, or inspect the interactive per-tool authorization preview on the home page.",
+      exploreGatewayCta: "Explore MCP gateway preview",
+      openConsoleCta: "Open console",
     },
     home: {
       metaTitle: "Self-hosted control plane for MCP, plugins, and agents",
@@ -1809,36 +1877,45 @@ pnpm dev`,
           "LogEvent & Trace Waterfall",
         ],
         sceneLabel: "ToolPlane integration and observability layers",
-        caption:
-          "Select a layer below to inspect each integration surface (illustrative)",
+        protocolLabel: "Integration surface · Contract",
+        exploreApiLabel: "Explore interactive API Reference (/docs-api)",
         nodes: [
           {
             id: "mcp",
             label: "MCP",
-            title: "Control MCP",
+            title: "Agent Control MCP",
+            endpoint:
+              "POST /api/v1/agents/control/mcp · Bearer <personal_token>",
             detail:
-              "Connect external AI clients via account-scoped personal API tokens to workspace-governed agents.",
+              "Connect external AI clients via account-scoped personal API tokens; newly created drafts stay unauthorized until explicitly reviewed and applied.",
+            snippet: `{\n  "mcpServers": {\n    "toolplane-control": {\n      "type": "streamable-http",\n      "url": "https://tp.example.com/api/v1/agents/control/mcp",\n      "headers": { "Authorization": "Bearer tp_pat_***" }\n    }\n  }\n}`,
           },
           {
             id: "api",
             label: "API",
-            title: "OpenAPI & Docs",
+            title: "OpenAPI & Interactive Reference",
+            endpoint: "GET /docs-api · GET /api/v1/openapi.json",
             detail:
-              "Every running instance serves interactive /docs-api and /api/v1/openapi.json definitions.",
+              "Every running instance serves live OpenAPI 3.1 definitions and an interactive Scalar API reference aligned with your workspace theme.",
+            snippet: `curl -sS https://tp.example.com/api/v1/readiness\n# => {"status":"ok","runtime":"ready"}\n\n# Interactive reference: /docs-api\n# OpenAPI 3.1 schema:    /api/v1/openapi.json`,
           },
           {
             id: "im",
             label: "IM",
-            title: "Chat channels",
+            title: "Messaging channels",
+            endpoint: "Telegram · Feishu · Discord · WeChat",
             detail:
-              "Connect agents to Telegram, Feishu, Discord, and WeChat with separate channel thread grouping.",
+              "Bind workspace agents to team messaging platforms with isolated thread grouping and workspace-scoped read-only collaboration.",
+            snippet: `channel: feishu / telegram / discord / wechat\nthreadScope: per-channel-conversation\nrevisionPin: rev.4 (immutable)\nhistoryVisibility: workspace-member-readonly`,
           },
           {
             id: "trace",
             label: "TRACE",
-            title: "LogEvent Traces",
+            title: "LogEvent & Trace Waterfall",
+            endpoint: "LogEvent · TraceWaterfall · Bounded Redaction",
             detail:
-              "Inspect tool calls, latencies, failures, and bounded redacted records without stitching another stack.",
+              "Inspect tool calls, latencies, allowlisted failure codes, and bounded redacted payloads that persist across page refreshes.",
+            snippet: `event: agent.turn.completed (2480ms)\nspans: session.admit -> pi.plan -> mcp.github.get_pr -> sandbox.bash\nredaction: active · bounded payload persisted`,
           },
         ],
       },

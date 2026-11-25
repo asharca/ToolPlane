@@ -58,37 +58,35 @@ export default async function MembersPage({
   const now = new Date();
 
   return (
-    <>
-      <DashboardPage>
-        <WorkspaceMembers
-          slug={slug}
-          canManage={isOwner}
-          members={members
-            .map((member) => {
-              const role: WorkspaceRole =
-                member.userId === ws.ownerId
-                  ? "owner"
-                  : member.role === "admin"
-                    ? "admin"
-                    : "member";
-              return {
-                userId: member.userId,
-                name: member.user.name ?? member.user.email.split("@")[0],
-                email: member.user.email,
-                role,
-                joined: fmt(member.createdAt, timeZone, locale),
-                isSelf: member.userId === user.id,
-              };
-            })
-            .sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role])}
-          invitations={invitations.map((invitation) => ({
-            id: invitation.id,
-            email: invitation.email,
-            expires: fmt(invitation.expiresAt, timeZone, locale),
-            expired: invitation.expiresAt <= now,
-          }))}
-        />
-      </DashboardPage>
-    </>
+    <DashboardPage>
+      <WorkspaceMembers
+        slug={slug}
+        canManage={isOwner}
+        members={members
+          .map((member) => {
+            const role: WorkspaceRole =
+              member.userId === ws.ownerId
+                ? "owner"
+                : member.role === "admin"
+                  ? "admin"
+                  : "member";
+            return {
+              userId: member.userId,
+              name: member.user.name ?? member.user.email.split("@")[0],
+              email: member.user.email,
+              role,
+              joined: fmt(member.createdAt, timeZone, locale),
+              isSelf: member.userId === user.id,
+            };
+          })
+          .sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role])}
+        invitations={invitations.map((invitation) => ({
+          id: invitation.id,
+          email: invitation.email,
+          expires: fmt(invitation.expiresAt, timeZone, locale),
+          expired: invitation.expiresAt <= now,
+        }))}
+      />
+    </DashboardPage>
   );
 }

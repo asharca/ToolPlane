@@ -41,10 +41,15 @@ export default async function A2ATaskPage({
   const t = await getTranslations("console.observability.viewer");
   const base = `/app/${encodeURIComponent(slug)}/observability`;
   const { returnTo } = await searchParams;
-  const runBack = returnTo?.startsWith(`${base}/runs/`) ? returnTo : null;
+  const safeBack = returnTo?.startsWith(base) ? returnTo : null;
+  const runBack = safeBack?.startsWith(`${base}/runs/`) ? safeBack : null;
   return (
     <DashboardPage>
-      <ButtonLink href={runBack ?? `${base}?tab=a2a`} variant="ghost" size="sm">
+      <ButtonLink
+        href={safeBack ?? `${base}?tab=a2a`}
+        variant="ghost"
+        size="sm"
+      >
         ← {t(runBack ? "run" : "a2a")}
       </ButtonLink>
       <A2ATaskDetail detail={detail} />

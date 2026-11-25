@@ -54,6 +54,12 @@ export interface ToolResultProps {
   onRetry?: () => void;
   className?: string;
   contentClassName?: string;
+  /** Localized status text and action labels. */
+  labels?: Partial<Record<ToolResultStatus, ReactNode>> & {
+    copy?: string;
+    copied?: string;
+    retry?: string;
+  };
 }
 
 export interface ToolResultOutputProps {
@@ -62,7 +68,7 @@ export interface ToolResultOutputProps {
   className?: string;
 }
 
-function getStatusLabel(status: ToolResultStatus) {
+function getStatusLabel(status: ToolResultStatus): ReactNode {
   if (status === "running") return "Running";
   if (status === "success") return "Completed";
   if (status === "error") return "Failed";
@@ -170,6 +176,7 @@ export function ToolResult({
   onRetry,
   className,
   contentClassName,
+  labels,
 }: ToolResultProps) {
   const reduce = useReducedMotion() ?? false;
   const baseId = useId();
@@ -186,7 +193,7 @@ export function ToolResult({
   const titleKey = getSwapKey(title, status);
   const metaKey = getSwapKey(meta, `${status}-meta`);
   const toolKey = getSwapKey(tool, `${status}-tool`);
-  const statusLabel = getStatusLabel(status);
+  const statusLabel = labels?.[status] ?? getStatusLabel(status);
 
   const setOpen = useCallback(
     (next: boolean) => {
@@ -317,7 +324,11 @@ export function ToolResult({
               <div className="flex items-center gap-0.5 px-2 pb-1.5">
                 {canCopy ? (
                   <ToolResultAction
-                    label={copied ? "Copied" : "Copy result"}
+                    label={
+                      copied
+                        ? (labels?.copied ?? "Copied")
+                        : (labels?.copy ?? "Copy result")
+                    }
                     onClick={handleCopy}
                   >
                     {copied ? (
@@ -328,7 +339,10 @@ export function ToolResult({
                   </ToolResultAction>
                 ) : null}
                 {onRetry ? (
-                  <ToolResultAction label="Run again" onClick={onRetry}>
+                  <ToolResultAction
+                    label={labels?.retry ?? "Run again"}
+                    onClick={onRetry}
+                  >
                     <RotateCcw className="size-3.5" />
                   </ToolResultAction>
                 ) : null}

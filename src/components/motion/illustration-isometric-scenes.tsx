@@ -34,6 +34,8 @@ export interface IsometricScenesProps {
   label?: string;
   className?: string;
   autoPlay?: boolean;
+  /** Hover/focus node pills and the playback toggle. Hide them when a caller supplies its own selector. */
+  showControls?: boolean;
 }
 const titles = {
   1: "Compute node",
@@ -52,6 +54,7 @@ export function IsometricScenes({
   label,
   className,
   autoPlay = true,
+  showControls = true,
 }: IsometricScenesProps) {
   const [selected, setSelected] = useState(defaultValue ?? nodes[0]?.id);
   const [engaged, setEngaged] = useState(false);
@@ -336,7 +339,7 @@ export function IsometricScenes({
           <path
             d="m65 250 290-180"
             fill="none"
-            stroke="#b9ddeb"
+            className="stroke-sky-200 dark:stroke-sky-900"
             strokeDasharray="3 7"
           />
           <motion.circle
@@ -365,8 +368,12 @@ export function IsometricScenes({
             return (
               <motion.g
                 key={node.id}
+                onClick={() => select(node.id)}
                 initial={false}
-                animate={{ opacity: 1, y: running ? [0, -4, 0] : 0 }}
+                animate={{
+                  opacity: index === activeIndex ? 1 : 0.6,
+                  y: running ? [0, -4, 0] : 0,
+                }}
                 transition={{
                   duration: running ? 5.6 : 0,
                   delay: running ? index * 1.4 : 0,
@@ -375,8 +382,12 @@ export function IsometricScenes({
                 }}
                 fill="var(--background)"
                 stroke="currentColor"
-                strokeWidth={1.2}
+                strokeWidth={index === activeIndex ? 1.8 : 1.2}
                 strokeLinejoin="round"
+                className={cn(
+                  "cursor-pointer",
+                  index === activeIndex ? "text-primary" : "text-foreground",
+                )}
               >
                 {index === 0 ? (
                   <>
@@ -397,13 +408,12 @@ export function IsometricScenes({
                     ))}
                     <path
                       d={`M${x - 34} ${y - 20}l34-20 34 20-34 20Z`}
-                      fill="#f1f8fc"
-                      stroke="#89b7d2"
+                      className="fill-sky-50 stroke-sky-400 dark:fill-sky-950 dark:stroke-sky-500"
                     />
                     <path
                       d={`M${x - 23} ${y - 20}l23-13 23 13-23 13Z`}
                       fill="none"
-                      stroke="#89b7d2"
+                      className="stroke-sky-400 dark:stroke-sky-500"
                       strokeWidth={0.8}
                     />
                   </>
@@ -418,22 +428,20 @@ export function IsometricScenes({
                     />
                     <path
                       d={`m${x - 25} ${y - 20} 25-14 25 14-25 14Z`}
-                      fill="#edf7fd"
-                      stroke="#91bdd7"
+                      className="fill-sky-50 stroke-sky-400 dark:fill-sky-950 dark:stroke-sky-500"
                       strokeWidth={0.7}
                     />
                     {index === 1 ? (
                       <path
                         d={`M${x - 12.5} ${y - 27}l25 14m-25 0 25-14`}
                         fill="none"
-                        stroke="#91bdd7"
+                        className="stroke-sky-400 dark:stroke-sky-500"
                         strokeWidth={0.8}
                       />
                     ) : (
                       <path
                         d={`M${x - 20} ${y - 20}l8-4.5 8 4.5-8 4.5Zm12-7l8-4.5 8 4.5-8 4.5Zm0 14l8-4.5 8 4.5-8 4.5Zm12-7l8-4.5 8 4.5-8 4.5Z`}
-                        fill="#d9edfb"
-                        stroke="#7fb2d0"
+                        className="fill-sky-100 stroke-sky-500 dark:fill-sky-900 dark:stroke-sky-400"
                         strokeWidth={0.8}
                       />
                     )}
@@ -544,26 +552,28 @@ export function IsometricScenes({
           })}
         </svg>
       )}
-      <fieldset
-        aria-label="Inspect system node"
-        className="absolute inset-x-2 bottom-1 z-20 m-0 flex min-w-0 flex-wrap justify-center gap-1 border-0 p-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-      >
-        {nodes.map((node) => (
-          <button
-            type="button"
-            key={node.id}
-            aria-pressed={active?.id === node.id}
-            onClick={() => select(node.id)}
-            className="rounded-full bg-background/90 px-3 py-1.5 text-[1.8cqw]"
-          >
-            {node.label}
-          </button>
-        ))}
-      </fieldset>
+      {showControls && (
+        <fieldset
+          aria-label="Inspect system node"
+          className="absolute inset-x-2 bottom-1 z-20 m-0 flex min-w-0 flex-wrap justify-center gap-1 border-0 p-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+        >
+          {nodes.map((node) => (
+            <button
+              type="button"
+              key={node.id}
+              aria-pressed={active?.id === node.id}
+              onClick={() => select(node.id)}
+              className="rounded-full bg-background/90 px-3 py-1.5 text-[1.8cqw]"
+            >
+              {node.label}
+            </button>
+          ))}
+        </fieldset>
+      )}
       <p className="sr-only" aria-live="polite">
         {active?.detail ?? "No system nodes supplied."}
       </p>
-      {autoPlay && (
+      {autoPlay && showControls && (
         <IllustrationPlaybackControl
           label="isometric playback"
           playing={!paused}

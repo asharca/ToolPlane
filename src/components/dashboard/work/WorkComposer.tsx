@@ -67,6 +67,8 @@ const referenceIcon = {
 };
 const TOOLBAR_KEY = "toolplane.work.composer.toolbar";
 const TOOLBAR_EVENT = "toolplane:work-composer-toolbar";
+const DEFAULT_TOOLBAR_IDS = ["attachments"];
+const DEFAULT_TOOLBAR_VALUE = JSON.stringify(DEFAULT_TOOLBAR_IDS);
 function subscribeToolbar(listener: () => void) {
   window.addEventListener("storage", listener);
   window.addEventListener(TOOLBAR_EVENT, listener);
@@ -77,9 +79,9 @@ function subscribeToolbar(listener: () => void) {
 }
 function readToolbar() {
   try {
-    return localStorage.getItem(TOOLBAR_KEY) ?? "[]";
+    return localStorage.getItem(TOOLBAR_KEY) ?? DEFAULT_TOOLBAR_VALUE;
   } catch {
-    return "[]";
+    return DEFAULT_TOOLBAR_VALUE;
   }
 }
 
@@ -135,6 +137,7 @@ export function WorkComposer({
   const t = useTranslations("console.workComposer");
   const agentsT = useTranslations("console.agents");
   const workT = useTranslations("console.work");
+  const queueT = useTranslations("console.messageQueue");
   const common = useTranslations("common");
   const commandsT = useTranslations("console.runtimeCommands");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -148,7 +151,7 @@ export function WorkComposer({
   const toolbarValue = useSyncExternalStore(
     subscribeToolbar,
     readToolbar,
-    () => "[]",
+    () => DEFAULT_TOOLBAR_VALUE,
   );
   useEffect(() => {
     inputRef.current = formRef.current?.querySelector("textarea") ?? null;
@@ -585,6 +588,7 @@ export function WorkComposer({
             loading={running}
             onStop={onStop}
             onRunningSubmit={onRunningSubmit}
+            hasAttachments={attachments.length > 0 || references.length > 0}
             queuePending={queuePending}
             maxLength={20_000}
             onFocus={(event) => {
@@ -608,7 +612,13 @@ export function WorkComposer({
                 event.preventDefault();
                 if (!resolving) {
                   if (onRunningSubmit) {
-                    if (!disabled && !queuePending && draft.trim())
+                    if (
+                      !disabled &&
+                      !queuePending &&
+                      !attachments.length &&
+                      !references.length &&
+                      draft.trim()
+                    )
                       onRunningSubmit(event.altKey ? "follow_up" : "steer");
                   } else event.currentTarget.form?.requestSubmit();
                 }
@@ -624,7 +634,11 @@ export function WorkComposer({
             onSubmit={() => {
               if (!resolving) onSubmit();
             }}
-            placeholder={t("hint")}
+            placeholder={
+              onRunningSubmit
+                ? `${queueT("steerHint")} · ${queueT("followUpHint")}`
+                : t("hint")
+            }
             minRows={1}
             maxRows={12}
             leadingAction={
@@ -686,6 +700,7 @@ export function WorkComposer({
         resetLabel={t("resetToolbar")}
         options={toolOptions}
         pinnedIds={pinnedIds}
+        defaultPinnedIds={DEFAULT_TOOLBAR_IDS}
         onChange={saveToolbar}
       />
     </>

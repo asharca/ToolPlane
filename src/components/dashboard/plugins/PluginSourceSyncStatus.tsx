@@ -4,6 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/motion/collapsible";
 import { apiRequest } from "@/lib/client/api";
 import type {
   PluginSourceSyncJob,
@@ -193,14 +198,14 @@ function SyncSummary({ summary }: { summary: PluginSourceSyncSummary }) {
   return (
     <>
       {groups.length ? (
-        <details>
-          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+        <Collapsible>
+          <CollapsibleTrigger className="px-0 py-1 text-xs text-muted-foreground hover:text-foreground">
             {[
               result,
               ...groups.map((group) => `${group.label} ${group.items.length}`),
             ].join(" · ")}
-          </summary>
-          <div className="mt-2 grid gap-3 sm:grid-cols-3">
+          </CollapsibleTrigger>
+          <CollapsibleContent className="grid gap-3 pt-2 sm:grid-cols-3">
             {groups.map((group) => (
               <section key={group.label} className="min-w-0 space-y-1">
                 <h3 className="text-xs font-medium text-muted-foreground">
@@ -220,29 +225,29 @@ function SyncSummary({ summary }: { summary: PluginSourceSyncSummary }) {
                 </ul>
               </section>
             ))}
-          </div>
-        </details>
+          </CollapsibleContent>
+        </Collapsible>
       ) : (
         <p className="text-muted-foreground">
           {result} · {t("syncNoChanges")}
         </p>
       )}
       {summary.unregistered.length ? (
-        <details>
-          <summary className="cursor-pointer text-(--color-warning)">
+        <Collapsible>
+          <CollapsibleTrigger className="px-0 py-1 text-xs text-(--color-warning)">
             {t("syncUnregistered", { count: summary.unregistered.length })}
-          </summary>
-          <p className="mt-2 text-muted-foreground">
-            {t("syncUnregisteredHint")}
-          </p>
-          <ul className="mt-1 space-y-0.5 font-mono text-xs">
-            {summary.unregistered.map((path) => (
-              <li key={path} className="break-all">
-                {path}
-              </li>
-            ))}
-          </ul>
-        </details>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="pt-2">
+            <p className="text-muted-foreground">{t("syncUnregisteredHint")}</p>
+            <ul className="mt-1 space-y-0.5 font-mono text-xs">
+              {summary.unregistered.map((path) => (
+                <li key={path} className="break-all">
+                  {path}
+                </li>
+              ))}
+            </ul>
+          </CollapsibleContent>
+        </Collapsible>
       ) : null}
     </>
   );

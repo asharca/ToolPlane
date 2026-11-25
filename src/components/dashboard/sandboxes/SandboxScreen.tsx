@@ -1,7 +1,7 @@
 "use client";
 
 import { apiRequest } from "@/lib/client/api";
-import { Checkbox } from "@/components/motion/checkbox";
+import { Switch } from "@/components/motion/switch";
 
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
@@ -16,7 +16,14 @@ import {
   useState,
 } from "react";
 import { useTranslations } from "next-intl";
-import { Keyboard, Loader2, Monitor, RefreshCw } from "lucide-react";
+import {
+  Keyboard,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Monitor,
+  RefreshCw,
+} from "lucide-react";
 
 const VIRTUAL_KEYBOARD_PAD = "_".repeat(99);
 const SPECIAL_KEYSYMS: Record<string, number> = {
@@ -83,6 +90,8 @@ export function SandboxScreen({
   const [viewOnly, setViewOnly] = useState(true);
   const [password, setPassword] = useState("");
   const [virtualKeyboardOpen, setVirtualKeyboardOpen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const sectionRef = useRef<HTMLElement>(null);
   const rfbTarget = useRef<HTMLDivElement>(null);
   const rfbClient = useRef<import("@novnc/novnc").default | null>(null);
   const rfbSessionId = useRef<string | null>(null);
@@ -204,6 +213,20 @@ export function SandboxScreen({
   }, [viewOnly]);
 
   useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(
+        Boolean(
+          sectionRef.current &&
+            document.fullscreenElement === sectionRef.current,
+        ),
+      );
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () =>
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  useEffect(() => {
     const sessionId = rfbSessionId.current;
     if (rfbStatus !== "connected" || !rfbConnected.current || !sessionId)
       return;
@@ -286,9 +309,13 @@ export function SandboxScreen({
   if (!display) return null;
   const snapshot = display.transport !== "rfb";
   const frameUrl = `${apiBase}/frame?displayId=${encodeURIComponent(display.id)}&frame=${frame}`;
+  const controlling = display.control && !viewOnly && running;
 
   return (
-    <section className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
+    <section
+      ref={sectionRef}
+      className={`flex h-full min-h-0 flex-col overflow-hidden bg-background ${controlling ? "ring-1 ring-inset ring-primary/40" : ""}`}
+    >
       <header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2">
         <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-muted-foreground">
           <Monitor className="size-4 shrink-0 text-muted-foreground" />
@@ -356,13 +383,35 @@ export function SandboxScreen({
                   <Keyboard className="size-4" />
                 </Button>
               ) : null}
-              <Checkbox
+              <Switch
                 checked={!viewOnly}
                 onCheckedChange={(checked) => setViewOnly(!checked)}
                 label={t("controlScreen")}
               />
             </div>
           ) : null}
+          <Button
+            type="button"
+            onClick={() => {
+              const el = sectionRef.current;
+              if (!el) return;
+              if (document.fullscreenElement === el) {
+                void document.exitFullscreen?.();
+              } else {
+                void el.requestFullscreen?.();
+              }
+            }}
+            variant="ghost"
+            size="icon"
+            title={t("screen")}
+            aria-label={t("screen")}
+          >
+            {isFullscreen ? (
+              <Minimize2 className="size-3.5" />
+            ) : (
+              <Maximize2 className="size-3.5" />
+            )}
+          </Button>
         </div>
       </header>
 
@@ -459,13 +508,13 @@ export function SandboxScreen({
                     autoComplete="new-password"
                   />
                 </div>
-                <Button type="submit" variant="ghost" size="sm">
+                <Button type="submit" variant="primary" size="sm">
                   {t("connectScreen")}
                 </Button>
               </form>
             ) : null}
             {rfbStatus === "error" ? (
-              <div className="absolute flex items-center gap-3 rounded-xl bg-background px-3 py-2 text-sm text-muted-foreground">
+              <div className="absolute flex items-center gap-3 rounded-xl border border-border bg-background px-3 py-2 text-sm text-muted-foreground">
                 <p role="alert">{t("screenUnavailable")}</p>
                 <Button
                   type="button"
@@ -474,7 +523,7 @@ export function SandboxScreen({
                     setRfbStatus("connecting");
                     setRfbAttempt((attempt) => attempt + 1);
                   }}
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                 >
                   <RefreshCw className="size-3.5" />
