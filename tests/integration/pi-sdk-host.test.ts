@@ -3503,6 +3503,46 @@ describe("official Pi SDK headless session host", () => {
     });
     expect(f.requests).toHaveLength(5);
   }, 60000);
+  it("never completes a turn whose final model response has only reasoning, retrying it first", async () => {
+    const f = await setup();
+    f.behavior.tool = "";
+    const leakedToolCall = async (response: ServerResponse) =>
+      completion(
+        response,
+        {
+          reasoning_content:
+            "Probe again.</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>",
+        },
+        "stop",
+      );
+    let empty = 1;
+    f.behavior.streamCompletion = async (response) => {
+      if (empty-- > 0) return leakedToolCall(response);
+      completion(response, { content: "RECOVERED" }, "stop");
+    };
+    const host = await f.launch();
+    expect(
+      await host.request("prompt", "Retry the empty reply", {
+        ...f.context,
+        modelRetries: 1,
+      }),
+    ).toMatchObject({ success: true, result: { text: "RECOVERED" } });
+    expect(f.requests).toHaveLength(2);
+    // The empty attempt is not replayed to the model.
+    expect(f.requests[1].body.messages.at(-1)?.role).toBe("user");
+
+    f.behavior.streamCompletion = leakedToolCall;
+    expect(
+      await host.request("prompt", "Keep replying with reasoning only", {
+        ...f.context,
+        modelRetries: 0,
+      }),
+    ).toMatchObject({
+      success: false,
+      error: { code: "PI_SDK_MODEL_FAILED", reason: "EMPTY_RESPONSE" },
+    });
+    expect(f.requests).toHaveLength(3);
+  }, 60000);
   it("switches gateways on the first failure without duplicating the prompt, then keeps the fallback while the primary cools down", async () => {
     const f = await setup();
     f.behavior.tool = "";

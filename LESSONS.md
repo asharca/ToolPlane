@@ -678,3 +678,12 @@
 - **下次怎么验证**：在打开模态框与弹出层的状态下触发提示，确认 `[data-toast-stack]` 的 `z-[N]` 严格高于所有其他浮层、关闭提示不关闭模态框或 `Popover`/`MorphPopover`、悬停暂停且清空后不残留暂停锁、`warning` + `afterReload` 可无损恢复、同 ID 提示去重；运行 `node scripts/check-invariants.mjs` 确认 `src/` 中不存在 `>=` 提示层级的 `z-[N]` 或 `zIndex`。
 - **约束层（结构＋检查）**：[`animated-toast-stack.tsx`](src/components/motion/animated-toast-stack.tsx)、[`Toaster.tsx`](src/components/dashboard/Toaster.tsx)、[`use-dismiss.ts`](src/lib/hooks/use-dismiss.ts)、[`popover-morph.tsx`](src/components/motion/popover-morph.tsx)、[`context-menu.tsx`](src/components/motion/context-menu.tsx)、[`WorkspaceAccountPage.tsx`](src/components/dashboard/WorkspaceAccountPage.tsx)；静态检查见 [`check-invariants.mjs`](scripts/check-invariants.mjs)；回归见 [`toaster.test.tsx`](tests/unit/toaster.test.tsx)。
 - **确认日期**：2026-11-23（用户反馈）。
+
+### TP-L064：模型正常结束不等于有回复，空回复不能记为完成
+
+**规则**：一轮最后一条模型响应既无可见正文也无工具调用时，按空回复处理：先按工作区重试预算和备用模型重试，仍为空则以 `PI_SDK_MODEL_FAILED: EMPTY_RESPONSE` 失败，不能以 `stopReason` 正常就把任务记为完成。
+
+- **错误与原因（2026-11-25，用户反馈 Work 未做完却显示 `Task completed. Results: …`）**：`deepseek-v4.1-flash` 经 OpenAI 兼容网关时，把下一次工具调用以 DSML 标记写进思考内容，网关未转成 `tool_calls`，响应只有思考、正常结束。Pi 宿主只把 `stopReason` 为 `error` 的响应视为失败，任务被记为 `COMPLETED`，`agentEntryResult` 再用占位句补正文。该实例 14 天内同类情况 3 次，均为此模型。现有空流重试只匹配流错误文本，覆盖不到这种情况。
+- **下次怎么验证**：用可控网关返回只有 `reasoning_content`、`finish_reason: stop` 的响应，确认有重试预算时重试且失败尝试不回放，无预算时以 `EMPTY_RESPONSE` 失败（原实现下返回成功）。
+- **约束层（结构）**：`emptyModelReply` 接入重试判定和回合失败判定，见 [`pi-sdk-session.mjs`](scripts/pi-sdk-session.mjs)；原因码在 [`runtime-failure.ts`](src/lib/agents/runtime-failure.ts) 和 [`native-runtime-session.mjs`](scripts/native-runtime-session.mjs) 登记；回归见 [`pi-sdk-host.test.ts`](tests/integration/pi-sdk-host.test.ts)。
+- **确认日期**：2026-11-25（用户反馈）。

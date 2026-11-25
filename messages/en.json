@@ -2043,6 +2043,7 @@
         "unavailable": "The model service is temporarily unavailable (HTTP {status}); the failure is on the provider's side. Try again later or switch to another model.",
         "rejected": "The model service rejected the request (HTTP {status}). Check the model parameters or switch to another model.",
         "emptyStream": "The model gateway returned an empty response: the upstream model produced no content (often a gateway account or upstream channel problem). Send it again later or switch models or providers.",
+        "emptyResponse": "The model ended this turn without a reply or tool call (for example, a tool call it wrote into its reasoning was not recognized), so the task did not finish. Send it again, or switch models.",
         "streamIncomplete": "The model response was cut off before it finished. Send it again later or switch models.",
         "contentFilter": "The provider's content filter blocked this output. Adjust the task or switch models.",
         "providerError": "The model service returned an error. Check the provider's status or switch to another model.",

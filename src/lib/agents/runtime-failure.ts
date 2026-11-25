@@ -180,6 +180,7 @@ const modelReasons = defineFailures({
   UNREACHABLE: "The provider could not be reached.",
   TIMEOUT: "The model request timed out.",
   EMPTY_STREAM: "The provider returned an empty stream.",
+  EMPTY_RESPONSE: "The model ended without a reply or tool call.",
   STREAM_INCOMPLETE: "The provider stream ended prematurely.",
   CONTENT_FILTER: "The provider blocked the content.",
   PROVIDER_ERROR: "The provider reported an error.",
@@ -248,6 +249,7 @@ function modelFailureKind(reason: string) {
   if (reason === "UNREACHABLE") return "unreachable";
   if (reason === "TIMEOUT") return "timeout";
   if (reason === "EMPTY_STREAM") return "emptyStream";
+  if (reason === "EMPTY_RESPONSE") return "emptyResponse";
   if (reason === "STREAM_INCOMPLETE") return "streamIncomplete";
   if (reason === "CONTENT_FILTER") return "contentFilter";
   if (reason === "PROVIDER_ERROR") return "providerError";
