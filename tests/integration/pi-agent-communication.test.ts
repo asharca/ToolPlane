@@ -35,7 +35,10 @@ import type {
   RemotePeerFixture,
 } from "../fixtures/pi-agent-communication";
 import { db } from "@/lib/db";
-import { publishFixtureAgentRevision } from "./agent-revision-fixture";
+import {
+  isolateRevisionRuntime,
+  publishFixtureAgentRevision,
+} from "./agent-revision-fixture";
 import { requireAgentRevision } from "@/lib/agents/revisions";
 import { createApiToken } from "@/lib/auth/tokens";
 import { createAgentRuntimeToken } from "@/lib/agents/runtime-access";
@@ -334,10 +337,8 @@ beforeAll(async () => {
     throw new Error(
       "DATABASE_URL must name a disposable local PostgreSQL test database.",
     );
-  vi.stubEnv(
-    "AUTH_SECRET",
-    process.env.AUTH_SECRET || "pi-communication-disposable-test-secret",
-  );
+  isolateRevisionRuntime();
+  vi.stubEnv("AUTH_SECRET", "pi-communication-disposable-test-secret");
   vi.stubEnv(
     "TOOLPLANE_A2A_REMOTE_ORIGINS",
     JSON.stringify(["https://agent.example"]),
@@ -586,6 +587,7 @@ afterAll(async () => {
   stopAgentWorker();
   const servers = await Promise.allSettled([platform?.close(), peer?.close()]);
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   if (workspaceId) {
     await db.auditEvent.deleteMany({
       where: {

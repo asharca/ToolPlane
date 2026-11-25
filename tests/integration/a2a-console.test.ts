@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { randomUUID } from "node:crypto";
-import { publishFixtureAgentRevision } from "./agent-revision-fixture";
+import {
+  isolateRevisionRuntime,
+  publishFixtureAgentRevision,
+} from "./agent-revision-fixture";
 import {
   afterAll,
   beforeAll,
@@ -54,8 +57,9 @@ let owner: string,
   publicId: string;
 let local: ConsoleActor, published: ConsoleActor;
 beforeAll(async () => {
-  process.env.AUTH_SECRET = "isolated-console-integration-secret";
-  process.env.NEXT_PUBLIC_APP_URL = "https://toolplane.test";
+  isolateRevisionRuntime();
+  vi.stubEnv("AUTH_SECRET", "isolated-console-integration-secret");
+  vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://toolplane.test");
   const stamp = randomUUID();
   const user = async (name: string) =>
     (
@@ -171,6 +175,8 @@ beforeEach(async () => {
 });
 afterAll(async () => {
   faults.audit = false;
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   if (workspaceId) {
     await db.auditEvent.deleteMany({ where: { workspaceId } });
     await db.workspace.delete({ where: { id: workspaceId } });

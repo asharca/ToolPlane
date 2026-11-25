@@ -133,7 +133,7 @@ describe("generic task runtime artifact publication dispatch", () => {
     const catalog = await rpc("tools/list");
     expect(
       catalog.body.result.tools.map((tool: { name: string }) => tool.name),
-    ).toEqual(["a2a_publish_artifact"]);
+    ).toEqual(["a2a_publish_artifact", "toolplane_feedback"]);
     const result = await rpc("tools/call", {
       name: "a2a_publish_artifact",
       arguments: artifact,
@@ -162,6 +162,7 @@ describe("generic task runtime artifact publication dispatch", () => {
       "pi_a2a_status",
       "pi_a2a_cancel",
       "a2a_publish_artifact",
+      "toolplane_feedback",
     ]);
     const denied = await rpc("tools/call", {
       name: "pi_a2a_peers",
