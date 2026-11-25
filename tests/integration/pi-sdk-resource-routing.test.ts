@@ -1,12 +1,14 @@
 import { resolvePiSessionPackages } from "@/lib/agents/pi-session-packages";
 // @vitest-environment node
 import { createHash, randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getAgentForRun } from "@/lib/agents/queries";
 import { resolveAgentPiPackages } from "@/lib/agents/resolve";
-import { runDedicatedSandboxTurn } from "@/lib/agents/sandbox-turn";
+import { submitAgentEntry } from "@/lib/agents/execution/entries";
+import { executeLocalTask } from "@/lib/agents/execution/pi-executor";
+import { claimTask } from "@/lib/a2a/store";
 import { createConversation } from "@/lib/agents/conversation-mutations";
 import { updateAgent } from "@/lib/agents/agent-draft-mutations";
 import { publishAgentRevision } from "@/lib/agents/revisions";
@@ -345,10 +347,23 @@ describe.sequential("Pi SDK resource consumers", () => {
     async (change) => {
       const { agent, packages } = await fixture();
       const conversation = await createConversation(workspaceId, agent.id);
-      const loaded = await getAgentForRun(agent.id, workspaceId);
-      if (!conversation || !loaded)
+      if (!conversation)
         throw new Error("Missing pinned native session fixture");
       const revisionId = conversation.agentRevisionId;
+      const accepted = await submitAgentEntry(
+        {
+          kind: "chat",
+          sourceId: conversation.id,
+          workspaceId,
+          agentId: agent.id,
+          actorId: userId,
+          messageId: randomUUID(),
+          text: "Must not execute",
+        },
+        vi.fn(),
+      );
+      const task = await claimTask(accepted.row.id);
+      if (!task) throw new Error("Expected a claimed native session task");
       const selected = packages[0];
       expect(
         (await enabled(agent.id)).find(
@@ -387,16 +402,7 @@ describe.sequential("Pi SDK resource consumers", () => {
           : "PI_PACKAGE_UNAVAILABLE",
       );
       await expect(
-        runDedicatedSandboxTurn({
-          agent: loaded,
-          conversationId: conversation.id,
-          messages: [
-            {
-              role: "user",
-              parts: [{ type: "text", text: "Must not execute" }],
-            },
-          ],
-        }),
+        executeLocalTask(task, new AbortController().signal),
       ).rejects.toThrow(
         change !== "bytes-tampered"
           ? "A pinned capability release is unavailable or security-revoked."

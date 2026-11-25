@@ -15,9 +15,28 @@ const MAX_VALUE = 2048;
 const MAX_STAGE_MARKS = 512;
 const REPLAY_MS = 60_000;
 const ACTIVE_TTL_MS = 3_600_000;
+/** A committed redaction cut keeps this much later text, so any match spanning it is already visible. */
+const REDACTION_LAG = 4096;
+/** Redacted `output.text`; text before raw offset `cut` is final and never redacted again. */
+type RedactedText = {
+  cut: number;
+  prefix: string;
+  /** Raw length `text` was computed for; raw text only grows until reset. */
+  raw: number;
+  text: string;
+  /** Raw-length limit below which a failed cut is not retried. */
+  retryAt: number;
+};
 type Capture = {
   output: LiveTaskOutput;
   secrets: readonly string[];
+  /** Longest configured secret, including its JSON-escaped form. */
+  secretSpan: number;
+  redacted?: RedactedText;
+  /** Raw text offset → redacted text offset, fixed once its prefix exists. */
+  offsets: Map<number, number>;
+  /** Activities are replaced, never mutated, so each projection is computed once. */
+  projected: WeakMap<LiveTaskActivity, LiveTaskActivity>;
   reasoningId?: string;
   /** Top-level reply text split at tool calls and consumed interjections; never reset. */
   reply?: { segments: string[]; open: boolean; size: number };
@@ -96,6 +115,9 @@ export function startTaskOutput(
       ...metadata,
     },
     secrets: [],
+    secretSpan: 0,
+    offsets: new Map(),
+    projected: new WeakMap(),
     sequence: 0,
     expires: Date.now() + ACTIVE_TTL_MS,
   });
@@ -110,29 +132,108 @@ export function configureTaskOutput(
   const capture = state.tasks.get(taskId);
   if (!capture) return;
   capture.secrets = secrets.filter(Boolean);
+  capture.secretSpan = Math.max(
+    0,
+    ...capture.secrets.map((secret) => JSON.stringify(secret).length),
+  );
   capture.output.modelName = redactText(modelName, capture.secrets);
+  resetRedaction(capture);
 }
+function resetRedaction(capture: Capture) {
+  capture.redacted = undefined;
+  capture.offsets.clear();
+  capture.projected = new WeakMap();
+}
+/** Equals redactText(output.text) while redacting only the text after the last final cut. */
+function redactedText(capture: Capture) {
+  const raw = capture.output.text;
+  capture.redacted ??= {
+    cut: 0,
+    prefix: "",
+    raw: 0,
+    text: "",
+    retryAt: 0,
+  };
+  const view = capture.redacted;
+  if (view.raw === raw.length) return view.text;
+  const lag = Math.max(REDACTION_LAG, capture.secretSpan);
+  const limit = raw.length - lag;
+  let tail: string | undefined;
+  if (limit - view.cut >= lag && limit >= view.retryAt) {
+    // Cut just after whitespace so ordinary tokens stay whole.
+    let cut = limit;
+    while (cut > view.cut && !/\s/.test(raw[cut - 1] ?? "")) cut--;
+    tail = redactText(raw.slice(view.cut), capture.secrets);
+    // A cut is final only when redacting either side alone matches redacting
+    // both together; with `lag` later characters every spanning match is visible.
+    const head = redactText(raw.slice(view.cut, cut), capture.secrets);
+    const rest = redactText(raw.slice(cut), capture.secrets);
+    if (cut === view.cut || head + rest !== tail) view.retryAt = limit + lag;
+    else {
+      view.prefix += head;
+      view.cut = cut;
+      tail = rest;
+    }
+  }
+  view.raw = raw.length;
+  view.text =
+    view.prefix + (tail ?? redactText(raw.slice(view.cut), capture.secrets));
+  return view.text;
+}
+/** Offsets index the raw text; map them onto the redacted text. */
+function redactedOffset(capture: Capture, offset: number) {
+  let mapped = capture.offsets.get(offset);
+  if (mapped === undefined) {
+    mapped =
+      offset === capture.output.text.length
+        ? redactedText(capture).length
+        : redactText(capture.output.text.slice(0, offset), capture.secrets)
+            .length;
+    capture.offsets.set(offset, mapped);
+  }
+  return mapped;
+}
+function projectActivity(capture: Capture, activity: LiveTaskActivity) {
+  let projected = capture.projected.get(activity);
+  if (!projected) {
+    projected = {
+      ...activity,
+      ...(activity.text
+        ? { text: redactText(activity.text, capture.secrets) }
+        : {}),
+      ...(activity.textOffset === undefined
+        ? {}
+        : { textOffset: redactedOffset(capture, activity.textOffset) }),
+    };
+    capture.projected.set(activity, projected);
+  }
+  return projected;
+}
+/** Appends at the current text end, fixing its redacted offset while the prefix is cached. */
+function pushActivity(capture: Capture, activity: LiveTaskActivity) {
+  const activities = capture.output.activities;
+  if (activities.length >= MAX_ACTIVITIES) {
+    activities.shift();
+    if (capture.offsets.size > MAX_ACTIVITIES * 2) {
+      const kept = new Set(activities.map((item) => item.textOffset));
+      for (const offset of capture.offsets.keys())
+        if (!kept.has(offset)) capture.offsets.delete(offset);
+    }
+  }
+  const textOffset = capture.output.text.length;
+  redactedOffset(capture, textOffset);
+  activities.push({ ...activity, textOffset });
+}
+/** Unchanged text and activities keep their identity, so observers diff cheaply. */
 export function taskOutput(taskId: string): LiveTaskOutput | null {
   const capture = state.tasks.get(taskId);
   if (!capture || capture.expires <= Date.now()) return null;
   return {
     ...capture.output,
-    text: redactText(capture.output.text, capture.secrets),
-    activities: capture.output.activities.map((activity) => ({
-      ...activity,
-      ...(activity.text
-        ? { text: redactText(activity.text, capture.secrets) }
-        : {}),
-      // Offsets index the raw text; map them onto the redacted text.
-      ...(activity.textOffset === undefined
-        ? {}
-        : {
-            textOffset: redactText(
-              capture.output.text.slice(0, activity.textOffset),
-              capture.secrets,
-            ).length,
-          }),
-    })),
+    text: redactedText(capture),
+    activities: capture.output.activities.map((activity) =>
+      projectActivity(capture, activity),
+    ),
   };
 }
 /** Channel delivery: each segment before the last ended at a tool call or interjection. */
@@ -208,6 +309,7 @@ export function resetTaskMessageOutput(taskId: string) {
   capture.output.text = "";
   capture.output.activities = [];
   capture.reasoningId = undefined;
+  resetRedaction(capture);
   if (capture.reply) capture.reply.open = false;
   notify(taskId);
 }
@@ -295,16 +397,20 @@ export function publishTaskActivity(
     : undefined;
   const now = Date.now();
   if (capture.reasoningId) {
-    const reasoning = activities.find(
+    const index = activities.findIndex(
       (item) => item.id === capture.reasoningId,
     );
+    const reasoning = activities[index];
     if (
       reasoning &&
       (activity.type !== "reasoning" ||
         reasoning.source?.subagentId !== source?.subagentId)
     ) {
-      reasoning.status = "completed";
-      reasoning.completedAt ??= now;
+      activities[index] = {
+        ...reasoning,
+        status: "completed",
+        completedAt: reasoning.completedAt ?? now,
+      };
       capture.reasoningId = undefined;
     }
   }
@@ -381,8 +487,7 @@ export function publishTaskActivity(
   }
   const index = activities.findIndex((item) => item.id === next.id);
   if (index < 0) {
-    if (activities.length >= MAX_ACTIVITIES) activities.shift();
-    activities.push({ ...next, textOffset: capture.output.text.length });
+    pushActivity(capture, next);
     if (next.type === "tool" && !source && capture.reply)
       capture.reply.open = false;
   } else activities[index] = next;
@@ -408,20 +513,12 @@ export function finishTaskOutput(
   capture.output.messageQueue = { messages: [], pendingMessageCount: 0 };
   const now = Date.now();
   capture.output.completedAt ??= now;
-  for (const activity of capture.output.activities)
-    if (activity.status === "running") {
-      activity.status = status;
-      activity.completedAt ??= now;
-    }
-  const runtime: LiveTaskActivity = {
-    id: "runtime:final",
-    type: "runtime",
-    status,
-    textOffset: capture.output.text.length,
-  };
-  if (capture.output.activities.length >= MAX_ACTIVITIES)
-    capture.output.activities.shift();
-  capture.output.activities.push(runtime);
+  capture.output.activities = capture.output.activities.map((activity) =>
+    activity.status === "running"
+      ? { ...activity, status, completedAt: activity.completedAt ?? now }
+      : activity,
+  );
+  pushActivity(capture, { id: "runtime:final", type: "runtime", status });
   capture.expires = Date.now() + REPLAY_MS;
   notify(taskId, "persist");
 }

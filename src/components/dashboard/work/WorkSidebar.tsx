@@ -48,7 +48,7 @@ import { SidebarToolbar } from "@/components/dashboard/SidebarToolbar";
 import { sidebarHoverActionsClassName } from "@/components/dashboard/sidebarHoverActions";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { useSidebarScroll } from "@/components/dashboard/useSidebarScroll";
-import { deleteAgentAction, pinAgentAction } from "@/lib/agents/actions";
+import { deleteAgentAction, pinAgentAction } from "@/lib/agents/config-actions";
 import {
   workAgentGroupPreferencesCookieName,
   workAgentGroupsCookieName,

@@ -22,6 +22,11 @@ import {
 } from "@/lib/agents/execution/live-output-stream";
 import { readTaskOutput } from "@/lib/agents/execution/live-output-read";
 import { revokeWorkspaceStreams } from "@/lib/workspace/access-stream";
+import { redactText } from "@/lib/observability/redaction";
+import {
+  liveOutputView,
+  type LiveOutputView,
+} from "../helpers/live-output-frames";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -30,14 +35,23 @@ afterEach(() => {
   vi.useRealTimers();
 });
 const decoder = new TextDecoder();
+const views = new WeakMap<
+  ReadableStreamDefaultReader<Uint8Array>,
+  LiveOutputView
+>();
+/** Reads one frame; `output` is the connection's reconstructed live output. */
 async function frame(reader: ReadableStreamDefaultReader<Uint8Array>) {
   const result = await reader.read();
   if (result.done) return null;
   const text = decoder.decode(result.value);
-  return {
-    event: /^event: (.+)$/m.exec(text)?.[1],
-    data: JSON.parse(/^data: (.+)$/m.exec(text)?.[1] ?? "null"),
-  };
+  const event = /^event: (.+)$/m.exec(text)?.[1];
+  const data = JSON.parse(/^data: (.+)$/m.exec(text)?.[1] ?? "null");
+  let view = views.get(reader);
+  if (!view) {
+    view = liveOutputView();
+    views.set(reader, view);
+  }
+  return { event, data, output: view.apply(event, data) };
 }
 function observation(taskId: string, settled = false): Observation {
   return {
@@ -182,6 +196,50 @@ describe("task-scoped native live capture", () => {
       executionStage: "queued",
     });
   });
+  it("keeps incremental redaction identical to redacting the whole text across chunk boundaries", () => {
+    const id = randomUUID();
+    const secret = "fixture-private-runtime-token";
+    startTaskOutput(id);
+    configureTaskOutput(id, [secret], "fixture");
+    const pieces = [
+      ...Array.from({ length: 400 }, (_, index) => `line ${index} `.repeat(4)),
+      "\nauth: Bearer ",
+      "abc",
+      "def\n",
+      "x ".repeat(3000),
+      "-----BEGIN RSA PRIVATE KEY-----\n",
+      "k".repeat(6000),
+      "\n-----END RSA PRIVATE KEY-----\n",
+      "y ".repeat(3000),
+      "fixture-private-",
+      "runtime-token\n",
+      'token: "multi word ',
+      'value"\n',
+      "z ".repeat(5000),
+    ];
+    let raw = "";
+    let toolOffset: number | undefined;
+    for (const [index, piece] of pieces.entries()) {
+      publishTaskText(id, piece);
+      raw += piece;
+      if (index === 402) {
+        publishTaskActivity(id, {
+          type: "tool",
+          status: "running",
+          toolCallId: "mid",
+          toolName: "bash",
+        });
+        toolOffset = redactText(raw, [secret]).length;
+      }
+      expect(taskOutput(id)?.text).toBe(redactText(raw, [secret]));
+    }
+    const output = assertDefined(taskOutput(id));
+    expect(output.text).not.toContain(secret);
+    expect(output.text).not.toContain("abcdef");
+    expect(output.text).not.toContain("kkkk");
+    expect(output.activities[0]?.textOffset).toBe(toolOffset);
+    finishTaskOutput(id, "completed");
+  });
 });
 describe("bounded observation SSE", () => {
   it("streams callback snapshots before completion without token-driven persistence reads, then waits for durable history", async () => {
@@ -197,7 +255,7 @@ describe("bounded observation SSE", () => {
     );
     const reader = assertDefined(response.body).getReader();
     try {
-      expect((await frame(reader))?.data.output.active).toBe(true);
+      expect((await frame(reader))?.output?.active).toBe(true);
       await vi.advanceTimersByTimeAsync(50);
       await frame(reader); // authoritative lookup/subscription race recovery
       for (let index = 0; index < 1000; index++) publishTaskText(id, "a");
@@ -209,7 +267,7 @@ describe("bounded observation SSE", () => {
         input: { command: "sleep 1" },
       });
       await vi.advanceTimersByTimeAsync(50);
-      expect((await frame(reader))?.data.output).toMatchObject({
+      expect((await frame(reader))?.output).toMatchObject({
         text: "a".repeat(1000),
         active: true,
         activities: [
@@ -219,7 +277,7 @@ describe("bounded observation SSE", () => {
       expect(load).toHaveBeenCalledTimes(1);
       finishTaskOutput(id, "completed");
       await vi.advanceTimersByTimeAsync(50);
-      expect((await frame(reader))?.data.output).toMatchObject({
+      expect((await frame(reader))?.output).toMatchObject({
         active: false,
         done: true,
       });
@@ -227,13 +285,67 @@ describe("bounded observation SSE", () => {
       persisted = true;
       notifyTaskOutput(id);
       await vi.advanceTimersByTimeAsync(50);
-      expect((await frame(reader))?.event).toBe("snapshot");
-      expect(await frame(reader)).toEqual({
+      expect((await frame(reader))?.event).toBe("delta");
+      expect(await frame(reader)).toMatchObject({
         event: "settled",
         data: { taskId: id },
       });
     } finally {
       abort.abort();
+      await reader.cancel();
+    }
+  });
+  it("sends sequenced deltas instead of the accumulated text and rewrites a newly redacted tail", async () => {
+    const id = randomUUID();
+    const secret = "fixture-private-runtime-token";
+    startTaskOutput(id);
+    configureTaskOutput(id, [secret], "fixture");
+    const prefix = "a ".repeat(20_000);
+    publishTaskText(id, prefix);
+    const response = executionOutputResponse(
+      new Request("http://localhost/events"),
+      observation(id),
+      async () => observation(id),
+    );
+    const reader = assertDefined(response.body).getReader();
+    try {
+      expect((await frame(reader))?.event).toBe("snapshot");
+      await vi.advanceTimersByTimeAsync(50);
+      await frame(reader);
+      publishTaskText(id, "fixture-private-");
+      publishTaskActivity(id, {
+        type: "tool",
+        toolCallId: "native-bash",
+        toolName: "bash",
+        status: "running",
+      });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(await frame(reader)).toMatchObject({
+        event: "delta",
+        data: { textAt: prefix.length, activityIds: ["tool:native-bash"] },
+      });
+      publishTaskText(id, "runtime-token done");
+      publishTaskActivity(id, {
+        type: "tool",
+        toolCallId: "native-bash",
+        status: "completed",
+        output: "42",
+      });
+      await vi.advanceTimersByTimeAsync(50);
+      const next = assertDefined(await frame(reader));
+      expect(next.event).toBe("delta");
+      expect(next.data.textAt).toBe(prefix.length);
+      expect(next.data.activityIds).toBeUndefined();
+      expect(next.data.activities).toHaveLength(1);
+      expect(JSON.stringify(next.data).length).toBeLessThan(1000);
+      expect(next.output).toMatchObject({
+        text: `${prefix}[REDACTED] done`,
+        activities: [
+          expect.objectContaining({ status: "completed", output: "42" }),
+        ],
+      });
+      expect(next.output).toEqual(taskOutput(id));
+    } finally {
       await reader.cancel();
     }
   });
@@ -259,7 +371,7 @@ describe("bounded observation SSE", () => {
       startTaskOutput(second);
       publishTaskText(second, "next turn");
       await vi.advanceTimersByTimeAsync(50);
-      expect((await frame(reader))?.data.output).toMatchObject({
+      expect((await frame(reader))?.output).toMatchObject({
         taskId: second,
         text: "next turn",
         active: true,
@@ -271,7 +383,7 @@ describe("bounded observation SSE", () => {
         true,
       );
       const late = assertDefined(reconnect.body).getReader();
-      expect((await frame(late))?.data.output.text).toBe("next turn");
+      expect((await frame(late))?.output?.text).toBe("next turn");
       await late.cancel();
     } finally {
       abort.abort();
@@ -305,12 +417,15 @@ describe("bounded observation SSE", () => {
       });
       await vi.advanceTimersByTimeAsync(50);
       expect(await frame(reader)).toMatchObject({
-        event: "snapshot",
-        data: { output: { text: "observed result", done: true } },
+        event: "delta",
+        output: { text: "observed result", done: true },
       });
       permitted = false;
       await vi.advanceTimersByTimeAsync(5000);
-      expect(await frame(reader)).toEqual({ event: "revoked", data: {} });
+      expect(await frame(reader)).toMatchObject({
+        event: "revoked",
+        data: {},
+      });
     } finally {
       await reader.cancel();
     }
@@ -330,7 +445,7 @@ describe("bounded observation SSE", () => {
     await frame(reader);
     load.mockRejectedValue(new TaskNotFoundError());
     await vi.advanceTimersByTimeAsync(5000);
-    expect(await frame(reader)).toEqual({ event: "revoked", data: {} });
+    expect(await frame(reader)).toMatchObject({ event: "revoked", data: {} });
     expect((await reader.read()).done).toBe(true);
     const immediate = executionOutputResponse(
       new Request("http://localhost/events"),

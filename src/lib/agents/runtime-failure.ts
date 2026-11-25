@@ -130,6 +130,12 @@ const runtimeFailures = defineFailures({
   PI_STREAM_RULE_DELIVERY_FAILED:
     "The streaming rule reminder could not be queued. Start a new request.",
   PI_TARGET_UNAVAILABLE: "PI target unavailable.",
+  PI_TASK_AUTH_REVOKED:
+    "The Agent or session is no longer authorized for this task. Review its current permissions before starting a new task.",
+  PI_SANDBOX_PREPARATION_FAILED:
+    "The authorized sandbox could not be prepared. Check its deployment before starting a new task.",
+  PI_TASK_STORAGE_UNAVAILABLE:
+    "Task preparation could not access the database. Check service health before starting a new task.",
   PI_TASK_AUTH_TIMEOUT:
     "The task expired while waiting for authorization. Confirm the required permissions before starting a new task; no automatic retry was attempted.",
   PI_TASK_DEPENDENCY_TIMEOUT:

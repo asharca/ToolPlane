@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { assertDefined } from "../assert-defined";
 import { testWorkspaceScope } from "../helpers/workspace-scope";
+import { liveOutputView } from "../helpers/live-output-frames";
 import {
   afterAll,
   afterEach,
@@ -2112,6 +2113,7 @@ describe("read-only live execution observation", () => {
   async function collect(response: Response): Promise<CollectedEvents> {
     const reader = assertDefined(response.body).getReader();
     const events: CollectedEvents["events"] = [];
+    const view = liveOutputView();
     const consuming = (async () => {
       while (true) {
         const result = await reader.read();
@@ -2119,8 +2121,18 @@ describe("read-only live execution observation", () => {
         const text = new TextDecoder().decode(result.value);
         const event = /^event: (.+)$/m.exec(text)?.[1],
           data = /^data: (.+)$/m.exec(text)?.[1];
-        if (event && data)
-          events.push({ event, data: eventData.parse(JSON.parse(data)) });
+        if (!event || !data) continue;
+        const value = JSON.parse(data);
+        // Deltas are asserted through the output they reconstruct, as the browser does.
+        const output = view.apply(event, value);
+        events.push({
+          event,
+          data: eventData.parse(
+            event === "snapshot" || event === "delta"
+              ? { ...value, output }
+              : value,
+          ),
+        });
       }
     })();
     return {
@@ -2148,8 +2160,8 @@ describe("read-only live execution observation", () => {
         .poll(() =>
           stream.events.some(
             (event) =>
-              event.event === "snapshot" &&
-              event.data.output?.text === "First live fragment",
+              event.data.output?.taskId === f.row.id &&
+              event.data.output.text === "First live fragment",
           ),
         )
         .toBe(true);

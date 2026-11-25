@@ -12,9 +12,11 @@ import WebSocket from "ws";
 import {
   ChannelAdapter,
   type ChannelAdapterConfig,
+  type ChannelAdmissionReceipt,
+  type ChannelMessageEvent,
   type SendMessageOptions,
 } from "../../ChannelAdapter";
-import { isSlashCommand } from "../../constants";
+import { isSlashCommand, MAX_INBOUND_PAYLOAD_BYTES } from "../../constants";
 import { FlushController } from "../../FlushController";
 import { splitMessage } from "../../utils";
 import { toSlackMarkdown } from "./slackMarkdown";
@@ -59,6 +61,7 @@ type SlackSocketEnvelope = {
     | "hello"
     | "disconnect";
   payload?: {
+    event_id?: string;
     event?: SlackMessageEvent;
     command?: string;
     text?: string;
@@ -353,10 +356,8 @@ export class SlackAdapter extends ChannelAdapter {
       });
 
       ws.on("message", (data: Buffer) => {
-        this.handleSocketMessage(data).catch((err) => {
-          this.log.error("Error handling Socket Mode message", {
-            error: err instanceof Error ? err.message : String(err),
-          });
+        this.handleSocketMessage(data, ws).catch(() => {
+          this.log.error("Slack event admission failed");
         });
       });
 
@@ -381,7 +382,11 @@ export class SlackAdapter extends ChannelAdapter {
 
   // ─── Socket Mode Message Handling ───────────────────────────
 
-  private async handleSocketMessage(data: Buffer): Promise<void> {
+  private async handleSocketMessage(
+    data: Buffer,
+    socket = this.ws,
+  ): Promise<void> {
+    const deadline = performance.now() + 3000;
     let envelope: SlackSocketEnvelope;
     try {
       envelope = JSON.parse(data.toString());
@@ -389,10 +394,15 @@ export class SlackAdapter extends ChannelAdapter {
       return;
     }
 
-    // Acknowledge the envelope immediately (Slack requires ACK within 3s)
-    if (envelope.envelope_id) {
-      this.send({ envelope_id: envelope.envelope_id });
-    }
+    const acknowledge = () => {
+      if (
+        envelope.envelope_id &&
+        performance.now() < deadline &&
+        socket?.readyState === WebSocket.OPEN
+      )
+        socket.send(JSON.stringify({ envelope_id: envelope.envelope_id }));
+    };
+    if (envelope.type !== "events_api") acknowledge();
 
     switch (envelope.type) {
       case "hello":
@@ -406,8 +416,11 @@ export class SlackAdapter extends ChannelAdapter {
         break;
       case "events_api":
         if (envelope.payload?.event) {
-          await this.handleEvent(envelope.payload.event);
-        }
+          this.handleEvent(envelope.payload.event, {
+            dedupeKey: envelope.payload.event_id,
+            acknowledge,
+          });
+        } else acknowledge();
         break;
       case "slash_commands":
         if (envelope.payload) {
@@ -417,18 +430,22 @@ export class SlackAdapter extends ChannelAdapter {
     }
   }
 
-  private async handleEvent(event: SlackMessageEvent): Promise<void> {
-    if (event.type !== "message") return;
-    // Ignore subtypes (edits, deletes, bot_message, etc.) but allow file_share
-    if (event.subtype && event.subtype !== "file_share") return;
-    // Ignore bot's own messages
-    if (event.user && this.botUserId && event.user === this.botUserId) return;
+  private handleEvent(
+    event: SlackMessageEvent,
+    receipt: ChannelAdmissionReceipt,
+  ) {
+    if (
+      event.type !== "message" ||
+      (event.subtype && event.subtype !== "file_share") ||
+      (event.user && event.user === this.botUserId)
+    )
+      return receipt.acknowledge();
 
     const chatId = event.channel;
-    if (!this.isAllowed(chatId)) return;
+    if (!this.isAllowed(chatId)) return receipt.acknowledge();
 
     const userId = event.user ?? "";
-    const userName = await this.resolveUserName(userId);
+    const userName = userId;
     const threadId =
       event.thread_ts && event.thread_ts !== event.ts
         ? event.thread_ts
@@ -449,29 +466,12 @@ export class SlackAdapter extends ChannelAdapter {
     const rawText = event.text ?? "";
     const text = rawText.replace(/<@[A-Z0-9]+>/g, "").trim();
 
-    // Extract images and files from attachments
-    const imageUrls: string[] = [];
-    const fileAttachments: Array<{
-      url: string;
-      filename: string;
-      size: number;
-    }> = [];
-
-    if (event.files?.length) {
-      for (const file of event.files) {
-        if (file.mimetype?.startsWith("image/")) {
-          imageUrls.push(file.url_private);
-        } else if (file.size <= MAX_FILE_SIZE_BYTES) {
-          fileAttachments.push({
-            url: file.url_private,
-            filename: file.name,
-            size: file.size,
-          });
-        }
-      }
-    }
-
-    if (!text && imageUrls.length === 0 && fileAttachments.length === 0) return;
+    // Store stable file IDs. Profile lookups and authenticated downloads run after ACK.
+    const slackFileIds = event.files
+      ?.filter((file) => file.size <= MAX_FILE_SIZE_BYTES)
+      .slice(0, 20)
+      .map((file) => file.id);
+    if (!text && !slackFileIds?.length) return receipt.acknowledge();
 
     if (isSlashCommand(text)) {
       const cmd = text.split(/\s+/)[0].slice(1) as
@@ -479,52 +479,72 @@ export class SlackAdapter extends ChannelAdapter {
         | "compact"
         | "help"
         | "whoami";
-      this.emit("command", {
-        chatId,
-        ...context,
-        userId,
-        userName,
-        messageId: event.ts,
-        command: cmd,
-        args: text.split(/\s+/).slice(1).join(" "),
-      });
+      this.emit(
+        "command",
+        {
+          chatId,
+          ...context,
+          userId,
+          userName,
+          messageId: event.ts,
+          command: cmd,
+          args: text.split(/\s+/).slice(1).join(" "),
+        },
+        receipt,
+      );
     } else {
-      // Download images (with bot token auth for private files)
-      let images: ImageAttachment[] | undefined;
-      if (imageUrls.length > 0) {
-        const results = await Promise.all(
-          imageUrls.map((url) => this.downloadSlackFile(url)),
-        );
-        const downloaded = results.filter(
-          (r): r is ImageAttachment => r !== null,
-        );
-        if (downloaded.length > 0) images = downloaded;
-      }
-
-      let files: FileAttachment[] | undefined;
-      if (fileAttachments.length > 0) {
-        const results = await Promise.all(
-          fileAttachments.map((att) =>
-            this.downloadSlackFileAsAttachment(att.url, att.filename),
-          ),
-        );
-        const downloaded = results.filter(
-          (r): r is FileAttachment => r !== null,
-        );
-        if (downloaded.length > 0) files = downloaded;
-      }
-
-      this.emit("message", {
-        chatId,
-        ...context,
-        userId,
-        userName,
-        messageId: event.ts,
-        text,
-        images,
-        files,
-      });
+      this.emit(
+        "message",
+        {
+          chatId,
+          ...context,
+          userId,
+          userName,
+          messageId: event.ts,
+          text,
+          slackFileIds,
+        },
+        receipt,
+      );
     }
+  }
+
+  override async hydrateInbound(
+    event: ChannelMessageEvent,
+  ): Promise<ChannelMessageEvent> {
+    const userName = await this.resolveUserName(event.userId);
+    if (!event.slackFileIds?.length) return { ...event, userName };
+    const images: ImageAttachment[] = [];
+    const files: FileAttachment[] = [];
+    let bytes = Buffer.byteLength(JSON.stringify(event));
+    for (const id of event.slackFileIds) {
+      const { file } = (await this.apiRequest("files.info", { file: id })) as {
+        file: SlackFile;
+      };
+      if (bytes + 4 * Math.ceil(file.size / 3) > MAX_INBOUND_PAYLOAD_BYTES)
+        throw new Error(
+          "Channel inbound payload exceeds the attachment limit.",
+        );
+      if (file.mimetype.startsWith("image/")) {
+        const image = await this.downloadSlackFile(file.url_private);
+        if (!image) throw new Error("Slack attachment download failed.");
+        bytes += image.data.length;
+        images.push(image);
+      } else {
+        const attachment = await this.downloadSlackFileAsAttachment(
+          file.url_private,
+          file.name,
+        );
+        if (!attachment) throw new Error("Slack attachment download failed.");
+        bytes += attachment.data.length;
+        files.push(attachment);
+      }
+      if (bytes > MAX_INBOUND_PAYLOAD_BYTES)
+        throw new Error(
+          "Channel inbound payload exceeds the attachment limit.",
+        );
+    }
+    return { ...event, userName, images, files };
   }
 
   private async handleSlashCommand(
@@ -765,14 +785,6 @@ export class SlackAdapter extends ChannelAdapter {
     return data;
   }
 
-  // ─── WebSocket Helper ──────────────────────────────────────
-
-  private send(payload: object): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(payload));
-    }
-  }
-
   // ─── Lifecycle Helpers ──────────────────────────────────────
 
   private cleanup(): void {
@@ -799,8 +811,9 @@ export class SlackAdapter extends ChannelAdapter {
     if (this.shouldStop) return;
 
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.markDisconnected("Max reconnect attempts reached");
-      this.log.error("Max reconnect attempts reached, giving up");
+      this.emit("fatal", "Slack reconnect attempts exhausted.", {
+        restart: true,
+      });
       return;
     }
 

@@ -22,7 +22,7 @@ const providers = [
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }));
-vi.mock("@/lib/agents/actions", () => ({
+vi.mock("@/lib/agents/config-actions", () => ({
   deleteAgentAction: vi.fn(),
   pinAgentAction: vi.fn(),
 }));

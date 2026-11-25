@@ -1,25 +1,21 @@
-import { resolveWorkspaceScope } from "@/lib/workspace/scope";
+import {
+  resolveWorkspaceScope,
+  workspaceScopeWhere,
+} from "@/lib/workspace/scope";
 import type { UIMessage } from "ai";
 import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { TaskNotFoundError } from "@a2a-js/sdk/errors";
-import { getTaskRow } from "@/lib/a2a/store";
-import { isLocalGrant, type TaskGrant } from "@/lib/a2a/principal";
-import { nativeUiView } from "@/lib/agents/execution/native-ui";
+import { persistSettledChatReply } from "@/lib/agents/execution/chat-reply";
 import {
-  runAgentEntry,
-  latestEntryText,
-  agentEntryResult,
-  agentEntryRuntimeParts,
-} from "@/lib/agents/execution/entries";
-import {
-  captureReplyArtifacts,
-  listReplyArtifacts,
-  replyArtifactParts,
-} from "@/lib/agents/execution/reply-artifacts";
+  parseRuntimeFailure,
+  runtimeFailureText,
+  taskRuntimeFailure,
+} from "@/lib/agents/runtime-failure";
+import { TaskState } from "@a2a-js/sdk";
+import { runAgentEntry, latestEntryText } from "@/lib/agents/execution/entries";
 import { parseAgentChatBody } from "@/lib/agents/chat-body";
 import { normalizeReasoningEffort } from "@/lib/agents/constants";
 import { waitForConversationOperation } from "@/lib/agents/conversation-operations";
-import { persistAgentPromptInvocation } from "@/lib/agents/prompt-invocation";
 import { getAgentForRequest } from "@/lib/agents/queries";
 import { resolvePinnedAgent } from "@/lib/agents/revisions";
 import { createSandboxUiStreamBridge } from "@/lib/agents/ui-stream";
@@ -32,8 +28,6 @@ import { db } from "@/lib/db";
 import { enrichLogContext } from "@/lib/observability/context";
 import { withRequestLogging } from "@/lib/observability/http";
 import { workspaceAccessResponse } from "@/lib/workspace/access-stream";
-import { notifyTaskOutput } from "@/lib/agents/execution/live-output";
-import { recordedTaskOutput } from "@/lib/agents/execution/live-output-read";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
@@ -83,7 +77,7 @@ export const POST = withRequestLogging(
       where: {
         id: body.conversationId,
         agentId,
-        agent: { workspaceId: liveAgent.workspaceId },
+        agent: { workspace: workspaceScopeWhere(scope) },
       },
       select: {
         id: true,
@@ -123,20 +117,17 @@ export const POST = withRequestLogging(
     } catch (error) {
       if (error instanceof AgentModelOverrideError)
         return Response.json({ error: error.code }, { status: error.status });
-      return new Response(
-        error instanceof Error
-          ? error.message
-          : "The pinned Agent revision is unavailable.",
-        { status: 409 },
-      );
+      return new Response("The pinned Agent revision is unavailable.", {
+        status: 409,
+      });
     }
     const last = body.messages.at(-1);
     let text: string;
     try {
       text = latestEntryText(last);
-    } catch (error) {
+    } catch {
       return new Response(
-        error instanceof Error ? error.message : "A user message is required.",
+        "A nonempty user text message within the input limit is required.",
         { status: 400 },
       );
     }
@@ -158,7 +149,7 @@ export const POST = withRequestLogging(
             id: conversation.id,
             agentId,
             agentRevisionId: conversation.agentRevisionId,
-            agent: { workspaceId: liveAgent.workspaceId },
+            agent: { workspace: workspaceScopeWhere(scope) },
           },
           data: {
             reasoningEffort:
@@ -168,18 +159,6 @@ export const POST = withRequestLogging(
         if (updated.count !== 1)
           return new Response("Conversation not found", { status: 404 });
       }
-      // The authored text is persisted before execution: trusted Prompt expansion
-      // metadata must survive provider errors, cancellation, and failed tools.
-      const userParts = (
-        last.parts as Array<{ type: "text"; text: string }>
-      ).map((part) => ({ type: "text", text: part.text }));
-      const savedUser = await db.message.create({
-        data: {
-          conversationId: conversation.id,
-          role: "user",
-          parts: userParts,
-        },
-      });
       const stream = createUIMessageStream<UIMessage>({
         originalMessages: body.messages,
         execute: async ({ writer }) => {
@@ -196,127 +175,55 @@ export const POST = withRequestLogging(
               actorId: user.id,
               messageId: userMessageId,
               text,
+              chatTextParts: (last.parts as Array<{ text: string }>).map(
+                (part) => part.text,
+              ),
               signal: req.signal,
               modelOverride: body.modelOverride,
               onMessageQueue: uiStream.onMessageQueue,
-              onPromptInvocation: (invocation) =>
-                persistAgentPromptInvocation({
-                  conversationId: conversation.id,
-                  messageId: savedUser.id,
-                  invocation,
-                }),
             });
-            const binding = await db.a2AEntryBinding.findFirst({
-              where: {
-                kind: "chat",
-                sourceId: conversation.id,
-                lastTaskId: result.task.id,
-                context: {
-                  workspaceId: liveAgent.workspaceId,
-                  agentId,
-                  targetKind: "local",
-                },
-              },
-              select: { lastTask: { select: { grant: true } } },
+            const parts = await persistSettledChatReply(result.task.id, {
+              workspaceId: scope.id,
+              agentId,
+              actorId: user.id,
+              conversationId: conversation.id,
             });
-            const grant = binding?.lastTask.grant as unknown as TaskGrant;
-            if (
-              !binding ||
-              !isLocalGrant(grant) ||
-              grant.workspaceId !== liveAgent.workspaceId ||
-              grant.agentId !== agentId ||
-              grant.actorId !== user.id ||
-              grant.entryPolicy?.kind !== "chat" ||
-              grant.entryPolicy.sourceId !== conversation.id ||
-              grant.entryPolicy.sourceAgentId !== agentId
-            )
-              throw new TaskNotFoundError();
-            const task = await getTaskRow(grant, result.task.id);
-            if (task.parentTaskId || task.rootTaskId !== task.id)
-              throw new TaskNotFoundError();
-            const projection = nativeUiView(task.uiProjection);
-            const hookParts = projection.hooks.map((hook) => ({
-              type: "data-hook-activity" as const,
-              id: `native-hook:${hook.id}`,
-              data: hook,
-            }));
-            const childParts = projection.activities.map((activity) => ({
-              type: "data-subagent-activity" as const,
-              id: `native-child:${task.id}:${JSON.stringify([activity.type, activity.source.subagentId, activity.toolCallId ?? null])}`,
-              data: activity,
-            }));
-            let responseText = "";
-            let responseFailed = false;
-            let responseError: unknown;
-            try {
-              responseText = agentEntryResult(result.task, result.path);
-            } catch (error) {
-              responseFailed = true;
-              responseError = error;
+            if (!parts) throw new TaskNotFoundError();
+            for (const part of parts) {
+              if (part.type === "text") uiStream.onTextDelta(part.text);
+              else if (part.type === "file") {
+                const { url, mediaType, providerMetadata } = part;
+                writer.write({
+                  type: "file",
+                  url,
+                  mediaType,
+                  providerMetadata,
+                });
+              } else writer.write(part);
             }
-            const fileParts = responseFailed
-              ? []
-              : replyArtifactParts(
-                  await captureReplyArtifacts({
-                    workspaceId: liveAgent.workspaceId,
-                    conversationId: conversation.id,
-                    uploaderId: user.id,
-                    privateEntry: true,
-                    entryTaskId: task.id,
-                    artifacts: await listReplyArtifacts(task.id),
-                    signal: req.signal,
-                  }),
-                );
-            const runtimeParts = agentEntryRuntimeParts(result.task);
-            // A failed turn keeps the text it produced, not just the error.
-            const partialText = responseFailed
-              ? (await recordedTaskOutput(result.task.id)).text
-              : "";
-            const previous = await db.message.findFirst({
-              where: { conversationId: conversation.id },
-              orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-              select: { createdAt: true },
-            });
-            const parts = [
-              ...runtimeParts,
-              ...hookParts,
-              ...childParts,
-              ...(responseFailed
-                ? partialText.trim()
-                  ? [{ type: "text", text: partialText, state: "done" }]
-                  : []
-                : [{ type: "text", text: responseText, state: "done" }]),
-              ...fileParts,
-            ];
-            if (parts.length)
-              await db.message.create({
-                data: {
-                  conversationId: conversation.id,
-                  role: "assistant",
-                  createdAt: new Date(
-                    Math.max(
-                      Date.now(),
-                      (previous?.createdAt.getTime() ?? 0) + 1,
-                    ),
-                  ),
-                  parts,
-                },
-              });
-            notifyTaskOutput(result.task.id);
-            for (const part of hookParts) writer.write(part);
-            for (const part of childParts) writer.write(part);
-            if (responseFailed) throw responseError;
-            uiStream.onTextDelta(responseText);
-            for (const { url, mediaType, providerMetadata } of fileParts)
-              writer.write({ type: "file", url, mediaType, providerMetadata });
-            for (const part of runtimeParts) writer.write(part);
+            const state = result.task.status?.state;
+            if (
+              state !== TaskState.TASK_STATE_COMPLETED &&
+              state !== TaskState.TASK_STATE_INPUT_REQUIRED
+            )
+              throw new Error(
+                runtimeFailureText(
+                  taskRuntimeFailure(result.task) ?? {
+                    code: "PI_EXECUTION_FAILED",
+                  },
+                ),
+              );
           } finally {
             uiStream.finish();
             releaseConversation();
           }
         },
         onError: (error) =>
-          error instanceof Error ? error.message : "Agent request failed.",
+          runtimeFailureText(
+            (error instanceof Error && parseRuntimeFailure(error.message)) || {
+              code: "PI_EXECUTION_FAILED",
+            },
+          ),
       });
       streamOwnsConversation = true;
       return workspaceAccessResponse(

@@ -17,7 +17,8 @@ import { Button } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
 import { Tooltip } from "@/components/motion/tooltip";
-import { deleteProviderAction, type ActionState } from "@/lib/agents/actions";
+import { deleteProviderAction } from "@/lib/agents/provider-actions";
+import type { ActionState } from "@/lib/agents/action-state";
 import {
   MODEL_CAPABILITIES,
   MODEL_INPUT_MODALITIES,

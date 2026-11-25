@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { Trash2 } from "lucide-react";
-import { deleteAgentAction } from "@/lib/agents/actions";
+import { deleteAgentAction } from "@/lib/agents/config-actions";
 import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
 
 export function DeleteAgentButton({

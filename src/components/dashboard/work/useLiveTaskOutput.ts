@@ -2,6 +2,8 @@
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type {
+  LiveTaskActivity,
+  LiveTaskDeltaEvent,
   LiveTaskOutput,
   LiveTaskSnapshotEvent,
   LiveTaskSettledEvent,
@@ -64,6 +66,9 @@ export function useLiveTaskOutput({
     let watchdog: number | undefined;
     let failures = 0;
     let previousOutput: LiveTaskOutput | null = null;
+    let previousParts: ToolApprovalDataPart[] = [];
+    // Last frame applied on this connection; null until its snapshot arrives.
+    let seq: number | null = null;
     const update = (patch: Partial<StreamState>) => {
       if (!alive) return;
       setState((previous) => ({
@@ -94,6 +99,99 @@ export function useLiveTaskOutput({
       controller?.abort();
       revoked();
     };
+    const isOutput = (output: Partial<LiveTaskOutput> | null | undefined) =>
+      Boolean(
+        output &&
+          typeof output.taskId === "string" &&
+          typeof output.active === "boolean" &&
+          typeof output.done === "boolean",
+      );
+    const isActivities = (value: unknown): value is LiveTaskActivity[] =>
+      Array.isArray(value) &&
+      value.every(
+        (item) =>
+          typeof item === "object" &&
+          item !== null &&
+          "id" in item &&
+          typeof item.id === "string",
+      );
+    const accept = (
+      next: LiveTaskOutput | null,
+      dataParts: ToolApprovalDataPart[],
+    ) => {
+      failures = 0;
+      if (
+        next &&
+        (next.taskId !== previousOutput?.taskId ||
+          next.startedAt !== previousOutput?.startedAt ||
+          (previousOutput &&
+            (!next.text.startsWith(previousOutput.text) ||
+              next.activities.length < previousOutput.activities.length ||
+              previousOutput.messageQueue?.messages.some(
+                (message) =>
+                  !next.messageQueue?.messages.some(
+                    (item) => item.id === message.id,
+                  ),
+              ))))
+      ) {
+        transcriptChanged();
+      }
+      previousOutput = next;
+      previousParts = dataParts;
+      snapshot(next);
+      // Every frame is authoritative, including a null snapshot after reconnect.
+      update({ output: next, dataParts, connection: "live" });
+    };
+    // A delta that cannot be applied exactly throws; reconnecting resyncs from a snapshot.
+    const applyDelta = (value: LiveTaskDeltaEvent) => {
+      const previous = previousOutput;
+      if (
+        !previous ||
+        seq === null ||
+        value.seq !== seq + 1 ||
+        value.taskId !== previous.taskId
+      )
+        throw new Error("Live output delta out of sequence");
+      seq = value.seq;
+      let text = previous.text;
+      if (value.text !== undefined) {
+        if (
+          typeof value.text !== "string" ||
+          typeof value.textAt !== "number" ||
+          value.textAt < 0 ||
+          value.textAt > text.length
+        )
+          throw new Error("Invalid live output delta");
+        text = text.slice(0, value.textAt) + value.text;
+      }
+      let activities = previous.activities;
+      if (value.activities !== undefined || value.activityIds !== undefined) {
+        const changed = value.activities ?? [];
+        const order = value.activityIds ?? activities.map((item) => item.id);
+        if (!isActivities(changed) || !Array.isArray(order))
+          throw new Error("Invalid live output delta");
+        const byId = new Map(activities.map((item) => [item.id, item]));
+        for (const item of changed) byId.set(item.id, item);
+        activities = order.map((id) => {
+          const item = byId.get(id);
+          if (!item) throw new Error("Invalid live output delta");
+          return item;
+        });
+        if (!value.activityIds && byId.size !== activities.length)
+          throw new Error("Invalid live output delta");
+      }
+      if (
+        value.fields !== undefined &&
+        (!isOutput(value.fields) || value.fields.taskId !== previous.taskId)
+      )
+        throw new Error("Invalid live output delta");
+      accept(
+        { ...(value.fields ?? previous), text, activities },
+        value.dataParts === undefined
+          ? previousParts
+          : ToolApprovalDataPartsSchema.parse(value.dataParts),
+      );
+    };
     const acceptFrame = (frame: string) => {
       let event = "message";
       const data: string[] = [];
@@ -107,41 +205,21 @@ export function useLiveTaskOutput({
       } else if (event === "snapshot") {
         const value = JSON.parse(data.join("\n")) as LiveTaskSnapshotEvent;
         if (
-          value.output !== null &&
-          (!value.output ||
-            typeof value.output.taskId !== "string" ||
-            typeof value.output.text !== "string" ||
-            !Array.isArray(value.output.activities) ||
-            typeof value.output.active !== "boolean" ||
-            typeof value.output.done !== "boolean")
+          typeof value.seq !== "number" ||
+          (value.output !== null &&
+            (!isOutput(value.output) ||
+              typeof value.output.text !== "string" ||
+              !isActivities(value.output.activities)))
         ) {
           throw new Error("Invalid live output snapshot");
         }
-        failures = 0;
-        const next = value.output;
-        if (
-          next &&
-          (next.taskId !== previousOutput?.taskId ||
-            next.startedAt !== previousOutput?.startedAt ||
-            (previousOutput &&
-              (!next.text.startsWith(previousOutput.text) ||
-                next.activities.length < previousOutput.activities.length ||
-                previousOutput.messageQueue?.messages.some(
-                  (message) =>
-                    !next.messageQueue?.messages.some(
-                      (item) => item.id === message.id,
-                    ),
-                ))))
-        ) {
-          transcriptChanged();
-        }
-        previousOutput = next;
-        snapshot(next);
-        // Every event is authoritative, including a null snapshot after reconnect.
-        const dataParts = ToolApprovalDataPartsSchema.parse(
-          value.dataParts ?? [],
+        seq = value.seq;
+        accept(
+          value.output,
+          ToolApprovalDataPartsSchema.parse(value.dataParts ?? []),
         );
-        update({ output: value.output, dataParts, connection: "live" });
+      } else if (event === "delta") {
+        applyDelta(JSON.parse(data.join("\n")) as LiveTaskDeltaEvent);
       } else if (event === "settled") {
         const value = JSON.parse(data.join("\n")) as LiveTaskSettledEvent;
         if (typeof value.taskId === "string") settled(value.taskId);
@@ -150,6 +228,7 @@ export function useLiveTaskOutput({
     const connect = async () => {
       if (!alive || denied) return;
       update({ connection: failures ? "reconnecting" : "connecting" });
+      seq = null;
       const flight = new AbortController();
       controller = flight;
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;

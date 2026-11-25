@@ -1,5 +1,5 @@
 import "server-only";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import {
   encryptSecretRecord,
@@ -111,40 +111,52 @@ function statusForCredentials(
   return "stopped";
 }
 
-async function toView(
+type ChannelSummary = {
+  id: string;
+  pendingCount: number;
+  currentVersion: number | null;
+  outdatedConversations: number;
+};
+
+async function channelViews(rows: ChannelRow[], workspaceId: string) {
+  if (!rows.length) return [];
+  const summaries = await db.$queryRaw<ChannelSummary[]>`
+    WITH channels AS (
+      SELECT ch.id, a.id AS "agentId", a."currentRevisionVersion" AS "currentVersion"
+      FROM "AgentChannelConnection" ch
+      LEFT JOIN "Agent" a ON a.id = ch."agentId" AND a."workspaceId" = ch."workspaceId"
+      WHERE ch."workspaceId" = ${workspaceId} AND ch.id IN (${Prisma.join(rows.map((row) => row.id))})
+    ), pending AS (
+      SELECT p."connectionId", count(*)::int AS total
+      FROM "AgentChannelPairingRequest" p JOIN channels ch ON ch.id = p."connectionId"
+      WHERE p.status = 'pending' AND p."expiresAt" > ${new Date()}
+      GROUP BY p."connectionId"
+    ), outdated AS (
+      SELECT ch.id, count(*)::int AS total FROM "Conversation" c
+      JOIN channels ch ON ch."agentId" = c."agentId" AND ch.id = split_part(c."runtimeSessionKey", ':', 2)
+      JOIN "AgentRevision" r ON r.id = c."agentRevisionId" AND r."agentId" = c."agentId"
+      WHERE c."runtimeSessionKey" LIKE 'channel:%:%' AND r.version < ch."currentVersion"
+      GROUP BY ch.id
+    )
+    SELECT ch.id, ch."currentVersion", COALESCE(p.total, 0) AS "pendingCount",
+      COALESCE(o.total, 0) AS "outdatedConversations"
+    FROM channels ch LEFT JOIN pending p ON p."connectionId" = ch.id
+    LEFT JOIN outdated o ON o.id = ch.id`;
+  const byId = new Map(summaries.map((summary) => [summary.id, summary]));
+  return rows.flatMap((row) => {
+    const summary = byId.get(row.id);
+    const view = summary && toView(row, summary);
+    return view ? [view] : [];
+  });
+}
+
+function toView(
   row: ChannelRow,
-): Promise<AgentChannelConnectionView | null> {
+  { pendingCount, currentVersion, outdatedConversations }: ChannelSummary,
+): AgentChannelConnectionView | null {
   const platform = getMessagingPlatform(row.platform);
   if (!platform) return null;
   const credentials = decryptChannelCredentials(row.credentials);
-  const [agent, pendingCount] = await Promise.all([
-    row.agentId
-      ? db.agent.findFirst({
-          where: { id: row.agentId, workspaceId: row.workspaceId },
-          select: { currentRevisionVersion: true },
-        })
-      : null,
-    db.agentChannelPairingRequest.count({
-      where: {
-        connectionId: row.id,
-        connection: { workspaceId: row.workspaceId },
-        status: "pending",
-        expiresAt: { gt: new Date() },
-      },
-    }),
-  ]);
-  const currentVersion = agent?.currentRevisionVersion ?? null;
-  const outdatedConversations =
-    row.agentId && currentVersion
-      ? await db.conversation.count({
-          where: {
-            agentId: row.agentId,
-            agent: { workspaceId: row.workspaceId },
-            runtimeSessionKey: { startsWith: `channel:${row.id}:` },
-            agentRevision: { version: { lt: currentVersion } },
-          },
-        })
-      : 0;
   return {
     id: row.id,
     workspaceId: row.workspaceId,
@@ -205,9 +217,7 @@ export async function listAgentChannelConnections(
     where: { workspaceId, agentId, sandboxId },
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
   });
-  return (await Promise.all(rows.map(toView))).filter(
-    (row): row is AgentChannelConnectionView => Boolean(row),
-  );
+  return channelViews(rows, workspaceId);
 }
 
 export async function getAgentChannelConnection(
@@ -217,7 +227,7 @@ export async function getAgentChannelConnection(
   const row = await db.agentChannelConnection.findFirst({
     where: { id: connectionId, workspaceId },
   });
-  return row ? toView(row) : null;
+  return row ? ((await channelViews([row], workspaceId))[0] ?? null) : null;
 }
 
 export async function getAgentChannelConnectionRaw(connectionId: string) {
@@ -283,7 +293,9 @@ export async function createAgentChannelConnection(params: {
         inboundTokenPrefix: tokenPrefix(token),
       },
     });
-    return { connection: await toView(row) };
+    return {
+      connection: (await channelViews([row], params.workspaceId))[0] ?? null,
+    };
   } catch {
     return {
       error:

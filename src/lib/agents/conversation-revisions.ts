@@ -69,6 +69,7 @@ async function conversationEntryContexts(
       entryBindings: { select: { kind: true, sourceId: true } },
     },
   });
+  const revisionIds = new Set<string>();
   for (const context of contexts) {
     if (
       context.legacyRevisionUnresolved ||
@@ -79,11 +80,10 @@ async function conversationEntryContexts(
       )
     )
       throw new AgentConversationRevisionError("readOnly");
-    const revision = await requireAgentRevision(
-      tx,
-      input.agentId,
-      context.agentRevisionId,
-    );
+    revisionIds.add(context.agentRevisionId);
+  }
+  for (const revisionId of revisionIds) {
+    const revision = await requireAgentRevision(tx, input.agentId, revisionId);
     if (revision.version > target.version)
       throw new AgentConversationRevisionError("targetRevisionNotCurrent");
   }

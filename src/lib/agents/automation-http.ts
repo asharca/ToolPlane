@@ -141,6 +141,44 @@ function apiFailure(error: unknown) {
     return jsonError("AGENT_BUDGET_EXCEEDED", 402);
   return jsonError("TRIGGER_EXECUTION_FAILED", 409);
 }
+type UsageBucket = {
+  bucket: string;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  turns: number;
+  failedTurns: number;
+};
+
+function aggregateUsage(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  agentId: string,
+  start: Date,
+  dimension: "month" | "date" | "model",
+) {
+  const bucket =
+    dimension === "date"
+      ? Prisma.sql`to_char("createdAt", 'YYYY-MM-DD')`
+      : dimension === "model"
+        ? Prisma.sql`COALESCE(model, 'unknown')`
+        : Prisma.sql`'month'::text`;
+  return tx.$queryRaw<UsageBucket[]>`
+    SELECT ${bucket} AS bucket,
+      (COALESCE(SUM("costMicros"), 0) / 1000000)::float8 AS "costUsd",
+      COALESCE(SUM("inputTokens"), 0)::float8 AS "inputTokens",
+      COALESCE(SUM("outputTokens"), 0)::float8 AS "outputTokens",
+      COALESCE(SUM("cacheReadTokens"), 0)::float8 AS "cacheReadTokens",
+      COALESCE(SUM("cacheWriteTokens"), 0)::float8 AS "cacheWriteTokens",
+      (COUNT(*) FILTER (WHERE "meteringCompleted"))::float8 AS turns,
+      (COUNT(*) FILTER (WHERE "meteringCompleted" AND NOT succeeded))::float8 AS "failedTurns"
+    FROM "AgentUsage"
+    WHERE "workspaceId" = ${workspaceId} AND "agentId" = ${agentId} AND "createdAt" >= ${start}
+    ${dimension === "month" ? Prisma.empty : Prisma.sql`GROUP BY 1 ORDER BY 1`}`;
+}
+
 export async function handleAgentAutomation(
   req: Request,
   agentId: string,
@@ -166,23 +204,39 @@ export async function handleAgentAutomation(
   if (action === "usage") {
     const range = usageRange(req);
     if (!range) return jsonError("INVALID_DAYS", 400);
-    const rows = await db.agentUsage.findMany({
-      where: { agentId, createdAt: { gte: range.queryStart } },
-    });
-    const monthToDate = usageTotals(
-      rows.filter((r) => r.createdAt >= utcMonth()),
+    const result = await db.$transaction(
+      async (tx) => {
+        const current = await tx.agent.findFirst({
+          where: {
+            id: agentId,
+            ...ORDINARY_AGENT_FILTER,
+            workspace: workspaceScopeWhere(scope),
+          },
+          select: { monthlyBudgetMicros: true },
+        });
+        if (!current) return null;
+        const [[{ bucket: _month, ...monthToDate }], dates, models] =
+          await Promise.all([
+            aggregateUsage(tx, scope.id, agentId, utcMonth(), "month"),
+            aggregateUsage(tx, scope.id, agentId, range.start, "date"),
+            aggregateUsage(tx, scope.id, agentId, range.start, "model"),
+          ]);
+        return {
+          monthToDate,
+          budget: budgetDto(current.monthlyBudgetMicros, monthToDate.costUsd),
+          daily: dates.map(({ bucket: date, ...usage }) => ({
+            date,
+            ...usage,
+          })),
+          byModel: models.map(({ bucket: model, ...usage }) => ({
+            model,
+            ...usage,
+          })),
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
     );
-    const recent = rows.filter((r) => r.createdAt >= range.start);
-    return Response.json({
-      monthToDate,
-      budget: budgetDto(agent.monthlyBudgetMicros, monthToDate.costUsd),
-      daily: groupedUsage(
-        recent,
-        (r) => r.createdAt.toISOString().slice(0, 10),
-        "date",
-      ),
-      byModel: groupedUsage(recent, (r) => r.model ?? "unknown", "model"),
-    });
+    return result ? Response.json(result) : jsonError("Not found", 404);
   }
   if (action === "budget") {
     const body = await parseJson(req, budgetSchema, 1024);
@@ -192,14 +246,22 @@ export async function handleAgentAutomation(
         ? null
         : BigInt(Math.round(body.value.monthlyUsd * 1_000_000));
     await db.agent.update({
-      where: { id: agentId },
+      where: { id: agentId, workspace: workspaceScopeWhere(scope) },
       data: { monthlyBudgetMicros },
     });
-    const rows = await db.agentUsage.findMany({
-      where: { agentId, createdAt: { gte: utcMonth() } },
+    const sum = await db.agentUsage.aggregate({
+      where: {
+        agentId,
+        workspace: workspaceScopeWhere(scope),
+        createdAt: { gte: utcMonth() },
+      },
+      _sum: { costMicros: true },
     });
     return Response.json({
-      budget: budgetDto(monthlyBudgetMicros, usageTotals(rows).costUsd),
+      budget: budgetDto(
+        monthlyBudgetMicros,
+        Number(sum._sum.costMicros ?? 0) / 1_000_000,
+      ),
     });
   }
   if (action === "targets" && req.method === "GET") {

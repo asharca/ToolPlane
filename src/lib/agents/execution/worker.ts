@@ -3,7 +3,14 @@ import { tickEvolutionJobs } from "@/lib/agents/evolution/jobs";
 import { recordEpisode } from "@/lib/agents/evolution/service";
 import { A2AQuotaError } from "@/lib/a2a/quotas";
 import { TaskState } from "@a2a-js/sdk";
-import type { A2ATask } from "@prisma/client";
+import {
+  TaskNotFoundError,
+  UnsupportedOperationError,
+} from "@a2a-js/sdk/errors";
+import { AgentRevisionError } from "@/lib/agents/revisions";
+import { PluginError } from "@/lib/plugins/errors";
+import { Prisma, type A2ATask } from "@prisma/client";
+import { localTargetReason } from "@/lib/a2a/local-policy";
 import { db } from "@/lib/db";
 import {
   assertRuntimeOwner,
@@ -50,7 +57,10 @@ import {
   AgentExecutionBusyError,
   withAgentExecutionLease,
 } from "@/lib/agents/agent-execution-gate";
-import { localTaskSandbox } from "@/lib/a2a/local-sandbox";
+import {
+  localTaskSandbox,
+  type LocalTaskSandboxLease,
+} from "@/lib/a2a/local-sandbox";
 import { deleteAgentContextSandbox } from "@/lib/agents/conversation-sandbox";
 import { stageTaskFileTransfers } from "@/lib/a2a/task-files";
 import { cleanupTaskFiles } from "@/lib/a2a/files";
@@ -73,6 +83,7 @@ type ActiveExecution = {
 type State = {
   active: Map<string, ActiveExecution>;
   ticking: boolean;
+  maintaining?: boolean;
   stopped: boolean;
   timer?: NodeJS.Timeout;
   prunedAt: number;
@@ -101,6 +112,32 @@ function nativeFailure(error: unknown) {
     error instanceof Error ? parseRuntimeFailure(error.message) : undefined;
   return `${failure?.code ?? "PI_EXECUTION_FAILED"}: ${failure?.reason ? `${failure.reason}. ` : ""}Agent task execution failed. No automatic replay was performed.`;
 }
+function preparationFailure(error: unknown, native: boolean) {
+  if (error instanceof PluginError && error.code === "listing_unavailable")
+    return "PI_PACKAGE_UNAVAILABLE: A pinned package is unavailable.";
+  if (
+    error instanceof A2AQuotaError ||
+    (error instanceof Error && parseRuntimeFailure(error.message))
+  )
+    return nativeFailure(error);
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError ||
+    error instanceof Prisma.PrismaClientUnknownRequestError ||
+    error instanceof Prisma.PrismaClientInitializationError
+  )
+    return "PI_TASK_STORAGE_UNAVAILABLE: The task preparation database operation failed.";
+  if (error instanceof TaskNotFoundError && localTargetReason(error))
+    return "PI_TARGET_UNAVAILABLE: The Agent target is unavailable.";
+  if (
+    error instanceof TaskNotFoundError ||
+    error instanceof UnsupportedOperationError ||
+    error instanceof AgentRevisionError
+  )
+    return "PI_TASK_AUTH_REVOKED: The Agent or session is no longer authorized for this task.";
+  return native
+    ? "PI_TARGET_UNAVAILABLE: The bound Agent target is unavailable."
+    : "PI_SANDBOX_PREPARATION_FAILED: The Agent sandbox could not be prepared.";
+}
 export function executeAgentTask(
   id: string,
   executor: TaskExecutor = executeTask,
@@ -115,7 +152,7 @@ export function executeAgentTask(
     running: false,
   };
   state.active.set(id, active);
-  const operation = async () => {
+  const operation = async (mapping?: LocalTaskSandboxLease["mapping"]) => {
     let claimed: A2ATask | null;
     try {
       if (state.stopped || !runtimeCanOperate()) return;
@@ -265,7 +302,13 @@ export function executeAgentTask(
               }
             })();
           }, 1000);
-          const result = await executor(row, signal);
+          const result = await executor(
+            row,
+            signal,
+            mapping && row.leaseToken
+              ? { taskId: row.id, leaseToken: row.leaseToken, mapping }
+              : undefined,
+          );
           const nativeOperationId = result.nativeOperationId;
           if (result.deferred) {
             if (!isRemoteGrant(grant))
@@ -483,7 +526,7 @@ export function executeAgentTask(
     active.native = queued.executionBackend === "pi-harness";
     const grant = queued.grant as unknown as TaskGrant;
     active.local = isLocalGrant(grant);
-    const run = () => {
+    const run = (mapping?: LocalTaskSandboxLease["mapping"]) => {
       if (
         !active.native &&
         !active.local &&
@@ -493,7 +536,7 @@ export function executeAgentTask(
       )
         return Promise.resolve();
       active.running = true;
-      return operation();
+      return operation(mapping);
     };
     if (!isLocalGrant(grant)) return run();
     let reserved = false;
@@ -531,16 +574,17 @@ export function executeAgentTask(
             await recordTaskExecutionStage(id, queued.leaseToken, "preparing");
           await observer?.onExecutionStage?.("preparing");
           const cleanup = Boolean(active.native && queued.nativeOperationId);
-          const { sandboxId } = await localTaskSandbox(
+          const mapping = await localTaskSandbox(
             queued,
-            cleanup,
+            cleanup ? "cleanup" : "admit",
             controller.signal,
           );
+          const { sandboxId } = mapping;
           if (sandboxSessionBusy(sandboxId, sessionId))
             throw new SandboxExecutionBusyError();
           return withSandboxSessionLease(sandboxId, sessionId, () => {
             reserved = true;
-            return run();
+            return run(cleanup ? undefined : mapping);
           });
         },
       );
@@ -560,31 +604,65 @@ export function executeAgentTask(
         await observer?.onExecutionStage?.("queued");
         return;
       }
-      const failure =
-        error instanceof SandboxExecutionBusyError ||
-        error instanceof AgentExecutionBusyError
-          ? error
-          : new Error("PI_TARGET_UNAVAILABLE");
       if (active.native && queued.nativeOperationId)
         throw new PiRuntimeInterruptedError(
           "Bound native sandbox is unavailable; operation retained for recovery.",
           { cause: error },
         );
-      await interruptTask(
-        id,
-        active.native
-          ? nativeFailure(failure)
-          : error instanceof SandboxExecutionBusyError ||
-              error instanceof AgentExecutionBusyError
-            ? "The target Agent sandbox is busy; the child task was not started."
-            : "Local execution is unavailable.",
-      );
+      const failure = preparationFailure(error, active.native);
+      logSystemEvent("agent.task.preparation_failed", {
+        domain: "agent",
+        workspaceId: grant.workspaceId,
+        taskId: id,
+        errorCode: parseRuntimeFailure(failure)?.code,
+      });
+      await interruptTask(id, failure, {
+        phase: queued.phase,
+        remoteMessageId: queued.remoteMessageId,
+        sequence: queued.sequence,
+      });
     }
   }).finally(() => state.active.delete(id));
 }
-export async function tickAgentWorker() {
-  if (state.ticking || state.stopped || !runtimeCanOperate()) return;
-  state.ticking = true;
+const EXPIRY_CONCURRENCY = 4;
+type ExpiryCandidate = Pick<
+  A2ATask,
+  "id" | "phase" | "remoteMessageId" | "sequence"
+>;
+
+async function expireTasks(
+  rows: ExpiryCandidate[],
+  reason: "deadline" | "retention",
+) {
+  const detail =
+    reason === "deadline"
+      ? "Task deadline exceeded."
+      : "File reception retention expired. The observed remote outcome remains in task metadata.";
+  for (let offset = 0; offset < rows.length; offset += EXPIRY_CONCURRENCY) {
+    const batch = rows.slice(offset, offset + EXPIRY_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (row) => {
+        try {
+          await interruptTask(row.id, detail, row);
+          if (reason === "deadline") {
+            const task = await db.a2ATask.findUnique({ where: { id: row.id } });
+            if (task) await recordEpisode(task);
+          }
+        } catch {
+          logSystemEvent("a2a.task.expiry_failed", {
+            domain: "a2a",
+            taskId: row.id,
+            errorCode: "A2A_EXPIRY_FAILED",
+          });
+        }
+      }),
+    );
+  }
+}
+
+async function maintainAgentTasks() {
+  if (state.maintaining) return;
+  state.maintaining = true;
   try {
     void tickEvolutionJobs().catch(() =>
       logSystemEvent("agent.evolution.tick_failed", {
@@ -592,7 +670,6 @@ export async function tickAgentWorker() {
         errorCode: "EVOLUTION_FAILED",
       }),
     );
-    await reconcileLocalWaits();
     void reconcileRemoteTasks().catch((error) =>
       logSystemEvent("a2a.remote.reconcile_failed", { domain: "a2a", error }),
     );
@@ -628,58 +705,12 @@ export async function tickAgentWorker() {
           },
         ],
       },
+      orderBy: [{ deadlineAt: "asc" }, { id: "asc" }],
       take: 50,
-      select: { id: true },
+      select: { id: true, phase: true, remoteMessageId: true, sequence: true },
     });
-    for (const task of expired) {
-      await interruptTask(task.id, "Task deadline exceeded.");
-      const terminal = await db.a2ATask.findUnique({ where: { id: task.id } });
-      if (terminal) await recordEpisode(terminal);
-    }
-    const ready = [
-      {
-        state: TaskState.TASK_STATE_SUBMITTED,
-        phase: { in: ["queued", "file-receiving"] },
-      },
-      {
-        state: TaskState.TASK_STATE_WORKING,
-        phase: {
-          in: ["resumable", "file-stage-ready", "remote-file-receiving"],
-        },
-      },
-    ];
-    // Separate pages keep remote observations from hiding SDK admission or bound cleanup.
-    // Retired published queues never acquire a new execution lease.
-    const queues = await Promise.all(
-      [
-        { executionBackend: "pi-harness" },
-        {
-          executionBackend: { in: ["pi-sdk"] },
-          context: { targetKind: "local" },
-        },
-        {
-          executionBackend: "legacy",
-          context: { targetKind: "remote" },
-        },
-      ].map((scope) =>
-        db.a2ATask.findMany({
-          where: { ...scope, OR: ready },
-          orderBy: [{ depth: "desc" }, { createdAt: "asc" }],
-          take: 16,
-          select: { id: true },
-        }),
-      ),
-    );
-    for (const rows of queues)
-      for (const row of rows) {
-        void executeAgentTask(row.id).catch((error) =>
-          logSystemEvent("agent.task.settle_failed", {
-            domain: "agent",
-            taskId: row.id,
-            error,
-          }),
-        );
-      }
+    await expireTasks(expired, "deadline");
+    await reconcileLocalWaits();
     if (Date.now() - state.prunedAt > 60_000) {
       state.prunedAt = Date.now();
       await cleanupAttachmentUploads();
@@ -690,14 +721,16 @@ export async function tickAgentWorker() {
           phase: { in: ["remote-file-receiving", "remote-file-failed"] },
           context: { expiresAt: { lte: new Date() } },
         },
-        select: { id: true },
+        select: {
+          id: true,
+          phase: true,
+          remoteMessageId: true,
+          sequence: true,
+        },
+        orderBy: { id: "asc" },
         take: 50,
       });
-      for (const task of staleDelivery)
-        await interruptTask(
-          task.id,
-          "File reception retention expired. The observed remote outcome remains in task metadata.",
-        );
+      await expireTasks(staleDelivery, "retention");
       const contexts = await db.a2AContext.findMany({
         where: {
           expiresAt: { lte: new Date() },
@@ -724,8 +757,89 @@ export async function tickAgentWorker() {
       await cleanupTaskFiles();
     }
   } finally {
+    state.maintaining = false;
+  }
+}
+
+async function admitReadyTasks() {
+  if (state.ticking) return;
+  state.ticking = true;
+  try {
+    const ready = [
+      {
+        state: TaskState.TASK_STATE_SUBMITTED,
+        phase: { in: ["queued", "file-receiving"] },
+      },
+      {
+        state: TaskState.TASK_STATE_WORKING,
+        phase: {
+          in: ["resumable", "file-stage-ready", "remote-file-receiving"],
+        },
+      },
+    ];
+    const now = new Date();
+    // Separate pages keep remote observations from hiding SDK admission or bound cleanup.
+    // Retired published queues never acquire a new execution lease.
+    const queues = await Promise.all(
+      [
+        {
+          executionBackend: "pi-harness",
+          AND: [
+            {
+              OR: [
+                { deadlineAt: { gt: now } },
+                { nativeOperationId: { not: null } },
+              ],
+            },
+          ],
+        },
+        {
+          executionBackend: { in: ["pi-sdk"] },
+          deadlineAt: { gt: now },
+          context: { targetKind: "local" },
+        },
+        {
+          executionBackend: "legacy",
+          AND: [
+            {
+              OR: [
+                { deadlineAt: { gt: now } },
+                {
+                  phase: "remote-file-receiving",
+                  remoteObservedState: { in: [3, 4, 5, 7] },
+                },
+              ],
+            },
+          ],
+          context: { targetKind: "remote" },
+        },
+      ].map((scope) =>
+        db.a2ATask.findMany({
+          where: { ...scope, OR: ready },
+          orderBy: [{ depth: "desc" }, { createdAt: "asc" }, { id: "asc" }],
+          take: 16,
+          select: { id: true },
+        }),
+      ),
+    );
+    for (const rows of queues)
+      for (const row of rows) {
+        void executeAgentTask(row.id).catch((error) =>
+          logSystemEvent("agent.task.settle_failed", {
+            domain: "agent",
+            taskId: row.id,
+            error,
+          }),
+        );
+      }
+  } finally {
     state.ticking = false;
   }
+}
+
+export async function tickAgentWorker() {
+  if (state.stopped || !runtimeCanOperate()) return;
+  await Promise.all([maintainAgentTasks(), admitReadyTasks()]);
 }
 export async function startAgentWorker() {
   assertRuntimeOwner();

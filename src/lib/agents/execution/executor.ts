@@ -1,6 +1,7 @@
 import "server-only";
 import type { Artifact, TaskState } from "@a2a-js/sdk";
 import type { A2ATask } from "@prisma/client";
+import type { LocalTaskSandboxLease } from "@/lib/a2a/local-sandbox";
 import {
   isLocalGrant,
   isRemoteGrant,
@@ -18,6 +19,7 @@ export type ExecutionResult = {
 export type TaskExecutor = (
   task: A2ATask,
   signal: AbortSignal,
+  lease?: LocalTaskSandboxLease,
 ) => Promise<ExecutionResult>;
 /** Published legacy runtime history is retained, but its execution API is retired. */
 export const executePublishedTask: TaskExecutor = async () => {
@@ -25,7 +27,7 @@ export const executePublishedTask: TaskExecutor = async () => {
 };
 
 /** Target dispatch belongs to the native task core, never the legacy Responses lifecycle. */
-export const executeTask: TaskExecutor = async (row, signal) => {
+export const executeTask: TaskExecutor = async (row, signal, lease) => {
   if (isRemoteGrant(row.grant as unknown as TaskGrant)) {
     const { executeRemoteTask } = await import("@/lib/a2a/remote-executor");
     return executeRemoteTask(row, signal);
@@ -34,7 +36,7 @@ export const executeTask: TaskExecutor = async (row, signal) => {
     const { executeLocalTask } = await import(
       "@/lib/agents/execution/pi-executor"
     );
-    return executeLocalTask(row, signal);
+    return executeLocalTask(row, signal, lease);
   }
   return executePublishedTask(row, signal);
 };

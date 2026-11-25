@@ -8,7 +8,7 @@ import {
   enableAgentResourceAction,
   previewAgentResourceAction,
   type ResourceEnableState,
-} from "@/lib/agents/actions";
+} from "@/lib/agents/config-actions";
 
 type ResourceEnableProps = {
   workspace: string;

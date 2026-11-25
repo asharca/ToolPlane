@@ -8,7 +8,7 @@ import { FormCheckbox } from "@/components/ui/FormCheckbox";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { DialogField } from "@/components/dashboard/dialog";
 import { notify } from "@/components/dashboard/Toaster";
-import { cloneAgentAction } from "@/lib/agents/actions";
+import { cloneAgentAction } from "@/lib/agents/config-actions";
 
 export function AgentClonePanel({
   slug,

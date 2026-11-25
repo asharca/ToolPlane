@@ -3403,7 +3403,10 @@ describe("unified native ingress mappings", () => {
           historyRequired: true,
         });
         expect(options.messages.at(-1)?.parts).toEqual(parts);
-        expect(options.messages).toHaveLength(3);
+        expect(options.messages).not.toContainEqual({
+          role: "user",
+          parts: [{ type: "text", text: "Historical message" }],
+        });
         expect(options.mcpServers).toEqual([
           expect.objectContaining({ deploymentId: "toolplane-runtime" }),
         ]);

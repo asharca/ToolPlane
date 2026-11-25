@@ -111,17 +111,26 @@ export async function resolvePiSessionPackages(
     });
     if (!agent) throw new Error("PI_PACKAGE_UNAVAILABLE");
     const pinnedPackages: NonNullable<LoadedAgentPiPackages["piPackages"]> = [];
-    for (const pin of revision.config.packages) {
-      const marketInstall = await tx.marketInstall.findFirst({
-        where: {
-          id: pin.marketInstallId,
-          targetWorkspaceId: input.workspaceId,
-        },
-        include: { listing: true },
-      });
-      const release = await tx.marketRelease.findUnique({
-        where: { id: pin.releaseId },
-      });
+    const pins = revision.config.packages;
+    const [installs, releases] = pins.length
+      ? await Promise.all([
+          tx.marketInstall.findMany({
+            where: {
+              id: { in: pins.map((pin) => pin.marketInstallId) },
+              targetWorkspaceId: input.workspaceId,
+            },
+            include: { listing: true },
+          }),
+          tx.marketRelease.findMany({
+            where: { id: { in: pins.map((pin) => pin.releaseId) } },
+          }),
+        ])
+      : [[], []];
+    const installsById = new Map(installs.map((item) => [item.id, item]));
+    const releasesById = new Map(releases.map((item) => [item.id, item]));
+    for (const pin of pins) {
+      const marketInstall = installsById.get(pin.marketInstallId);
+      const release = releasesById.get(pin.releaseId);
       if (
         !marketInstall ||
         (marketInstall.status !== "ready" &&

@@ -610,7 +610,7 @@ async function validateRevisionAuthorization(
       release,
     });
   }
-  resolveAgentPiPackages({
+  const resolvedPackages = resolveAgentPiPackages({
     ...agent,
     piPackages: packages,
     agentRevisionId: retainedRevisionId,
@@ -652,11 +652,7 @@ async function validateRevisionAuthorization(
     }
     throw error;
   }
-  return {
-    ...agent,
-    piPackages: packages,
-    agentRevisionId: retainedRevisionId,
-  };
+  return { servers: agent.servers, resolvedPackages };
 }
 
 export type PublishAgentRevisionInput = {
@@ -665,16 +661,154 @@ export type PublishAgentRevisionInput = {
   environment?: AgentEnvironmentSnapshot;
 };
 
-/** Caller holds the transaction: CAS, validation and publication are one atomic change. */
+type RevisionPublication = {
+  expectedRevisionId: string | null;
+  config: unknown;
+  purpose?: "candidate" | "rollback" | "published";
+};
+
+function revisionCapabilities(
+  config: AgentRevisionConfig,
+  authorized: Awaited<ReturnType<typeof validateRevisionAuthorization>>,
+) {
+  const nativeToolNames = config.mcpGrants.flatMap((grant, serverIndex) => {
+    const deployment = authorized.servers.find(
+      (entry) => entry.deploymentId === grant.deploymentId,
+    )?.deployment;
+    if (!deployment) throw new AgentRevisionError("AGENT_GRANT_REVOKED");
+    return readMcpToolCatalog(deployment.installCfg)
+      .filter(
+        (tool) =>
+          grant.allowedToolNames.includes(tool.name) &&
+          (deployment.mcpToolExposure !== "allowlist" ||
+            deployment.mcpAllowedTools.includes(tool.name)),
+      )
+      .map((tool, toolIndex) =>
+        nativePiMcpToolName(serverIndex, toolIndex, tool.name),
+      );
+  });
+  if (nativeToolNames.length) nativeToolNames.push(MCP_RESULT_TO_FILE_TOOL);
+  // Session servers: MCP grants, then external sandboxes, then the task server.
+  for (const [index, entry] of config.externalSandboxes.entries())
+    nativeToolNames.push(
+      ...externalSandboxTools(entry.access).map((tool, toolIndex) =>
+        nativePiMcpToolName(config.mcpGrants.length + index, toolIndex, tool),
+      ),
+    );
+  nativeToolNames.push(
+    ...piRuntimeCatalog(
+      config.a2a.outboundEnabled,
+      config.optionalBuiltinTools,
+    ).map((tool, toolIndex) =>
+      nativePiMcpToolName(
+        config.mcpGrants.length + config.externalSandboxes.length,
+        toolIndex,
+        tool.name,
+      ),
+    ),
+  );
+  return {
+    optionalBuiltinTools: config.optionalBuiltinTools,
+    piPackages: authorized.resolvedPackages,
+    skills: config.skills.map((skill) => ({
+      skillId: null,
+      skill: null,
+      name: skill.name,
+      slug: skill.slug,
+      content: skill.markdown,
+      files: skill.files,
+      userInvocable: skill.userInvocable,
+      agentInvocable: skill.agentInvocable,
+    })),
+    toolNames: nativeToolNames,
+  };
+}
+
+async function publicationSnapshot(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  agentId: string,
+  config: AgentRevisionConfig,
+) {
+  const initialSnapshot = config.environment.initialSnapshot;
+  if (initialSnapshot) {
+    const snapshot = await tx.sandboxSnapshot.findFirst({
+      where: {
+        id: initialSnapshot.snapshotId,
+        volumeName: initialSnapshot.volumeName,
+        status: "ready",
+        sandboxId: config.sandboxTemplateId ?? "",
+        sandbox: { workspaceId, agentLinks: { some: { agentId } } },
+      },
+      select: { id: true, updatedAt: true },
+    });
+    if (!snapshot)
+      throw new AgentRevisionError("AGENT_INITIAL_SNAPSHOT_INVALID");
+    return snapshot;
+  }
+  return null;
+}
+
+async function preparePublication(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  agentId: string,
+  input: RevisionPublication,
+) {
+  const config = parsePublicationConfig(input.config);
+  if (config.subagents?.length)
+    throw new AgentRevisionError("SUBAGENT_AUTHORING_RETIRED");
+  if (!isExecutableAgentRuntimeKind(config.runtimeKind))
+    throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
+  AgentEnvironmentSnapshotSchema.parse(config.environment);
+  if (config.runtimeKind === "pi-sdk") {
+    if (!isSupportedPiVersion(config.environment.piVersion))
+      throw new AgentRevisionError("PI_SDK_VERSION_MISMATCH");
+    // Legacy pins run on the installed SDK, so republished configs record it.
+    config.environment.piVersion = PI_SDK_VERSION;
+  }
+  if (input.expectedRevisionId && !input.purpose) {
+    const existing = await tx.agentRevision.findFirst({
+      where: { id: input.expectedRevisionId, agentId, agent: { workspaceId } },
+      select: { config: true },
+    });
+    if (existing && isDeepStrictEqual(existing.config, config))
+      return { config, unchanged: true } as const;
+  }
+  const authorized = await validateRevisionAuthorization(
+    tx,
+    workspaceId,
+    agentId,
+    config,
+  );
+  const snapshot = await publicationSnapshot(tx, workspaceId, agentId, config);
+  const initial = config.environment.initialSnapshot;
+  if (
+    initial &&
+    (await digestDockerVolume(initial.volumeName)) !== initial.checksum
+  )
+    throw new AgentRevisionError("AGENT_INITIAL_SNAPSHOT_INVALID");
+  const capabilities = revisionCapabilities(config, authorized);
+  await preflightPiSdkCapabilities(capabilities);
+  return { config, unchanged: false, snapshot, capabilities } as const;
+}
+
 export async function publishAgentRevisionInTransaction(
   tx: Prisma.TransactionClient,
   workspaceId: string,
   agentId: string,
-  input: {
-    expectedRevisionId: string | null;
-    config: unknown;
-    purpose?: "candidate" | "rollback" | "published";
-  },
+  input: RevisionPublication,
+) {
+  const prepared = await preparePublication(tx, workspaceId, agentId, input);
+  return commitPublication(tx, workspaceId, agentId, input, prepared);
+}
+
+async function commitPublication(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  agentId: string,
+  input: RevisionPublication,
+  prepared: Awaited<ReturnType<typeof preparePublication>>,
 ) {
   await tx.$queryRaw`SELECT id FROM "Agent" WHERE id=${agentId} AND "workspaceId"=${workspaceId} FOR UPDATE`;
   const owner = await tx.agent.findFirst({
@@ -692,113 +826,30 @@ export async function publishAgentRevisionInTransaction(
     : null;
   if ((current?.id ?? null) !== input.expectedRevisionId)
     throw new AgentRevisionError("AGENT_REVISION_CONFLICT");
-  const config = parsePublicationConfig(input.config);
-  if (config.subagents?.length)
-    throw new AgentRevisionError("SUBAGENT_AUTHORING_RETIRED");
-  if (!isExecutableAgentRuntimeKind(config.runtimeKind))
-    throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
-  AgentEnvironmentSnapshotSchema.parse(config.environment);
-  if (config.runtimeKind === "pi-sdk") {
-    if (!isSupportedPiVersion(config.environment.piVersion))
-      throw new AgentRevisionError("PI_SDK_VERSION_MISMATCH");
-    // Legacy pins run on the installed SDK, so republished configs record it.
-    config.environment.piVersion = PI_SDK_VERSION;
-  }
+  const { config } = prepared;
   const authorized = await validateRevisionAuthorization(
     tx,
     workspaceId,
     agentId,
     config,
   );
-  if (current && !input.purpose) {
-    const existing = await tx.agentRevision.findUniqueOrThrow({
-      where: { id: current.id },
-    });
-    if (isDeepStrictEqual(existing.config, config))
-      return { id: existing.id, version: existing.version, config };
-  }
-  const initialSnapshot = config.environment.initialSnapshot;
-  if (initialSnapshot) {
-    const snapshot = await tx.sandboxSnapshot.findFirst({
-      where: {
-        id: initialSnapshot.snapshotId,
-        volumeName: initialSnapshot.volumeName,
-        status: "ready",
-        sandboxId: config.sandboxTemplateId ?? "",
-        sandbox: { workspaceId, agentLinks: { some: { agentId } } },
-      },
-      select: { id: true },
-    });
-    if (
-      !snapshot ||
-      (await digestDockerVolume(initialSnapshot.volumeName)) !==
-        initialSnapshot.checksum
+  if (prepared.unchanged && current)
+    return { id: current.id, version: owner.currentRevisionVersion, config };
+  if (
+    prepared.unchanged ||
+    !isDeepStrictEqual(
+      prepared.capabilities,
+      revisionCapabilities(config, authorized),
     )
-      throw new AgentRevisionError("AGENT_INITIAL_SNAPSHOT_INVALID");
-  }
-  if (config.runtimeKind === "pi-sdk") {
-    const nativeToolNames = config.mcpGrants.flatMap((grant, serverIndex) => {
-      const deployment = authorized.servers.find(
-        (entry) => entry.deploymentId === grant.deploymentId,
-      )?.deployment;
-      if (!deployment) throw new AgentRevisionError("AGENT_GRANT_REVOKED");
-      return readMcpToolCatalog(deployment.installCfg)
-        .filter(
-          (tool) =>
-            grant.allowedToolNames.includes(tool.name) &&
-            (deployment.mcpToolExposure !== "allowlist" ||
-              deployment.mcpAllowedTools.includes(tool.name)),
-        )
-        .map((tool, toolIndex) =>
-          nativePiMcpToolName(serverIndex, toolIndex, tool.name),
-        );
-    });
-    if (nativeToolNames.length) nativeToolNames.push(MCP_RESULT_TO_FILE_TOOL);
-    // Session servers: MCP grants, then external sandboxes, then the task server.
-    for (const [index, entry] of config.externalSandboxes.entries())
-      nativeToolNames.push(
-        ...externalSandboxTools(entry.access).map((tool, toolIndex) =>
-          nativePiMcpToolName(config.mcpGrants.length + index, toolIndex, tool),
-        ),
-      );
-    nativeToolNames.push(
-      ...piRuntimeCatalog(
-        config.a2a.outboundEnabled,
-        config.optionalBuiltinTools,
-      ).map((tool, toolIndex) =>
-        nativePiMcpToolName(
-          config.mcpGrants.length + config.externalSandboxes.length,
-          toolIndex,
-          tool.name,
-        ),
-      ),
-    );
-    await preflightPiSdkCapabilities({
-      optionalBuiltinTools: config.optionalBuiltinTools,
-      piPackages: resolveAgentPiPackages({
-        ...authorized,
-        piPackages: authorized.piPackages.filter((binding) =>
-          config.packages.some(
-            (pin) =>
-              pin.marketInstallId === binding.marketInstallId &&
-              pin.releaseId === binding.releaseId,
-          ),
-        ),
-      }),
-      skills: config.skills.map((skill) => ({
-        skillId: null,
-        skill: null,
-        name: skill.name,
-        slug: skill.slug,
-        content: skill.markdown,
-        files: skill.files,
-        userInvocable: skill.userInvocable,
-        agentInvocable: skill.agentInvocable,
-      })),
-      toolNames: nativeToolNames,
-    });
-  }
-  await validateRevisionAuthorization(tx, workspaceId, agentId, config);
+  )
+    throw new AgentRevisionError("AGENT_REVISION_CONFLICT");
+  if (
+    !isDeepStrictEqual(
+      prepared.snapshot,
+      await publicationSnapshot(tx, workspaceId, agentId, config),
+    )
+  )
+    throw new AgentRevisionError("AGENT_INITIAL_SNAPSHOT_INVALID");
   // Candidates consume sequence numbers but never become the default implicitly.
   const latest = await tx.agentRevision.aggregate({
     where: { agentId },
@@ -881,63 +932,55 @@ export async function refreshAgentRevisionMcpGrants(
       stale = true;
   }
   if (!stale) return null;
-  return db.$transaction(
-    async (tx) => {
-      const live = await tx.agent.findFirst({
-        where: { id: agentId, workspaceId },
-        select: {
-          servers: { include: { deployment: true } },
-          externalSandboxes: { select: { sandboxId: true, access: true } },
-        },
-      });
-      if (!live) throw new AgentRevisionError("AGENT_NOT_FOUND");
-      const mcpGrants = await Promise.all(
-        applied.mcpGrants.map(async (grant) => {
-          const binding = live.servers.find(
-            (entry) => entry.deploymentId === grant.deploymentId,
-          );
-          // A removed binding is a revocation; runtime already narrows it.
-          if (!binding) return grant;
-          return {
-            ...grant,
-            ...(await prepareSessionMcpDefinition(binding.deployment, {
-              prepare: false,
-            })),
-            runtimeFilesChecksum: await mcpRuntimeFilesChecksum(
-              tx,
-              grant.deploymentId,
-            ),
-            allowedToolNames: exposedMcpToolNames(
-              binding.deployment,
-              binding.allowedToolNames,
-            ),
-          };
-        }),
-      );
-      // Never widen: keep only still-attached sandboxes at the lower access.
-      const externalSandboxes = applied.externalSandboxes.flatMap((entry) => {
-        const attached = live.externalSandboxes.find(
-          (item) => item.sandboxId === entry.sandboxId,
-        );
-        return attached && isExternalSandboxAccess(attached.access)
-          ? [
-              {
-                sandboxId: entry.sandboxId,
-                access: narrowExternalSandboxAccess(
-                  entry.access,
-                  attached.access,
-                ),
-              },
-            ]
-          : [];
-      });
-      return publishAgentRevisionInTransaction(tx, workspaceId, agentId, {
-        expectedRevisionId: current.id,
-        config: { ...applied, mcpGrants, externalSandboxes },
-      });
+  const live = await db.agent.findFirst({
+    where: { id: agentId, workspaceId },
+    select: {
+      servers: { include: { deployment: true } },
+      externalSandboxes: { select: { sandboxId: true, access: true } },
     },
-    { timeout: 120_000 },
+  });
+  if (!live) throw new AgentRevisionError("AGENT_NOT_FOUND");
+  const mcpGrants = await Promise.all(
+    applied.mcpGrants.map(async (grant) => {
+      const binding = live.servers.find(
+        (entry) => entry.deploymentId === grant.deploymentId,
+      );
+      // A removed binding is a revocation; runtime already narrows it.
+      if (!binding) return grant;
+      return {
+        ...grant,
+        ...(await prepareSessionMcpDefinition(binding.deployment, {
+          prepare: false,
+        })),
+        runtimeFilesChecksum: await mcpRuntimeFilesChecksum(
+          db,
+          grant.deploymentId,
+        ),
+        allowedToolNames: exposedMcpToolNames(
+          binding.deployment,
+          binding.allowedToolNames,
+        ),
+      };
+    }),
   );
+  // Never widen: keep only still-attached sandboxes at the lower access.
+  const externalSandboxes = applied.externalSandboxes.flatMap((entry) => {
+    const attached = live.externalSandboxes.find(
+      (item) => item.sandboxId === entry.sandboxId,
+    );
+    return attached && isExternalSandboxAccess(attached.access)
+      ? [
+          {
+            sandboxId: entry.sandboxId,
+            access: narrowExternalSandboxAccess(entry.access, attached.access),
+          },
+        ]
+      : [];
+  });
+  return publishAgentRevision(workspaceId, agentId, {
+    expectedRevisionId: current.id,
+    config: { ...applied, mcpGrants, externalSandboxes },
+  });
 }
 
 /** Removing a default package grants nothing; preserve all other applied scopes, even revoked ones. */
@@ -1014,12 +1057,15 @@ export async function publishAgentRevision(
   if (!isExecutableAgentRuntimeKind(preparedConfig.runtimeKind))
     throw new AgentRevisionError("AGENT_EXECUTION_RETIRED");
   if (preparedConfig.runtimeKind === "pi-sdk") await preparePiRuntime();
+  const publication = { ...input, config: preparedConfig };
+  const prepared = await preparePublication(
+    db,
+    workspaceId,
+    agentId,
+    publication,
+  );
   return db.$transaction(
-    (tx) =>
-      publishAgentRevisionInTransaction(tx, workspaceId, agentId, {
-        expectedRevisionId: input.expectedRevisionId,
-        config: preparedConfig,
-      }),
+    (tx) => commitPublication(tx, workspaceId, agentId, publication, prepared),
     { timeout: 120_000 },
   );
 }
@@ -1037,15 +1083,20 @@ export async function rollbackAgentRevision(
   });
   if (!owner) throw new AgentRevisionError("AGENT_NOT_FOUND");
   if (owner.runtimeKind === "pi-sdk") await preparePiRuntime();
+  const revision = await requireAgentRevision(db, agentId, revisionId);
+  const publication = {
+    expectedRevisionId,
+    config: revision.config,
+    purpose: "rollback" as const,
+  };
+  const prepared = await preparePublication(
+    db,
+    workspaceId,
+    agentId,
+    publication,
+  );
   return db.$transaction(
-    async (tx) => {
-      const revision = await requireAgentRevision(tx, agentId, revisionId);
-      return publishAgentRevisionInTransaction(tx, workspaceId, agentId, {
-        expectedRevisionId,
-        config: revision.config,
-        purpose: "rollback",
-      });
-    },
+    (tx) => commitPublication(tx, workspaceId, agentId, publication, prepared),
     { timeout: 120_000 },
   );
 }

@@ -27,6 +27,8 @@ import {
 } from "./channel-inbound-queue";
 import type { Prisma } from "@prisma/client";
 import { getChannelSandbox } from "./channel-sandboxes";
+import { ORDINARY_AGENT_FILTER } from "./queries";
+import { isAgentEndpointRuntimeSandboxConfig } from "./public-api/tool-policy";
 import { createChannelAdapter } from "./channels/create-adapter";
 import {
   runAgentChannelMessage,
@@ -35,6 +37,7 @@ import {
 } from "./message-service";
 import type {
   ChannelAdapter,
+  ChannelAdmissionReceipt,
   ChannelCommandEvent,
   ChannelLogEvent,
   ChannelMessageEvent,
@@ -69,6 +72,146 @@ type RunnerState = {
   cleanup: () => void;
   pendingWrite: Promise<unknown>;
 };
+type Restart = Pick<RunnerState, "workspaceId" | "sandboxId" | "agentId"> & {
+  attempts: number;
+  due: number;
+};
+type BindingMonitor = {
+  restarts: Map<string, Restart>;
+  timer?: NodeJS.Timeout;
+  checking: boolean;
+};
+const globals = globalThis as typeof globalThis & {
+  __toolplaneBindings?: BindingMonitor;
+};
+globals.__toolplaneBindings ??= {
+  restarts: new Map(),
+  checking: false,
+};
+const monitor: BindingMonitor = globals.__toolplaneBindings;
+const { restarts } = monitor;
+
+function deferRestart(id: string, state: Restart) {
+  const delay = Math.min(300_000, 5_000 * 2 ** Math.min(state.attempts, 6));
+  restarts.set(id, {
+    ...state,
+    attempts: state.attempts + 1,
+    due: Date.now() + delay * (0.5 + Math.random() / 2),
+  });
+}
+
+async function checkRunnerBindings() {
+  if (monitor.checking || !runtimeCanOperate()) return;
+  const live = new Map(runners());
+  const retry = new Map(restarts);
+  if (!live.size && !retry.size) {
+    clearInterval(monitor.timer);
+    monitor.timer = undefined;
+    return;
+  }
+  monitor.checking = true;
+  try {
+    const rows = await db.agentChannelConnection.findMany({
+      where: { id: { in: [...new Set([...live.keys(), ...retry.keys()])] } },
+      select: {
+        id: true,
+        workspaceId: true,
+        agentId: true,
+        sandboxId: true,
+        status: true,
+        sandbox: {
+          select: {
+            workspaceId: true,
+            config: true,
+            agentLinks: {
+              where: { agent: ORDINARY_AGENT_FILTER },
+              select: { agent: { select: { id: true, workspaceId: true } } },
+            },
+          },
+        },
+      },
+    });
+    const bound = new Map(rows.map((row) => [row.id, row]));
+    const matches = (
+      id: string,
+      expected: Pick<RunnerState, "workspaceId" | "agentId" | "sandboxId">,
+    ) => {
+      const row = bound.get(id);
+      if (
+        !row ||
+        row.workspaceId !== expected.workspaceId ||
+        row.agentId !== expected.agentId ||
+        row.sandboxId !== expected.sandboxId
+      )
+        return false;
+      if (!row.sandboxId) return true;
+      const sandbox = row.sandbox;
+      return (
+        sandbox?.workspaceId === expected.workspaceId &&
+        !isAgentEndpointRuntimeSandboxConfig(sandbox.config) &&
+        sandbox.agentLinks.find(
+          ({ agent }) => agent.workspaceId === expected.workspaceId,
+        )?.agent.id === expected.agentId
+      );
+    };
+    for (const [id, state] of live) {
+      if (
+        runtimeCanOperate() &&
+        runners().get(id) === state &&
+        !matches(id, state)
+      )
+        await stopAgentChannelRunner(state.workspaceId, id);
+    }
+    for (const [id, state] of retry) {
+      if (
+        !runtimeCanOperate() ||
+        restarts.get(id) !== state ||
+        runners().has(id)
+      )
+        continue;
+      const status = bound.get(id)?.status;
+      if (
+        !matches(id, state) ||
+        !status ||
+        !["starting", "running", "error"].includes(status)
+      ) {
+        restarts.delete(id);
+        continue;
+      }
+      if (
+        state.due <= Date.now() &&
+        !starts().has(`${state.workspaceId}:${id}`)
+      ) {
+        void startAgentChannelRunner(state.workspaceId, id)
+          .catch((error) =>
+            logSystemEvent("channel.runner.recovery_failed", {
+              domain: "channel",
+              channelId: id,
+              workspaceId: state.workspaceId,
+              error,
+            }),
+          )
+          .finally(() => {
+            if (restarts.get(id) === state && !runners().has(id))
+              deferRestart(id, state);
+          });
+      }
+    }
+  } catch (error) {
+    logSystemEvent("channel.runner.heartbeat_failed", {
+      domain: "channel",
+      error,
+    });
+  } finally {
+    monitor.checking = false;
+  }
+}
+
+function watchRunnerBindings() {
+  if (monitor.timer) return;
+  monitor.timer = setInterval(() => void checkRunnerBindings(), 5000);
+  monitor.timer.unref();
+}
 declare global {
   var __toolplaneAgentChannelAdapters: Map<string, RunnerState> | undefined;
   var __toolplaneAgentChannelStarts:
@@ -184,7 +327,16 @@ async function start(
   const row = await db.agentChannelConnection.findFirst({
     where: { id: connectionId, workspaceId },
   });
+  const restart = restarts.get(connectionId);
   if (!row) return { error: "Channel connection not found." };
+  if (
+    restart &&
+    (restart.workspaceId !== workspaceId ||
+      restart.agentId !== row.agentId ||
+      restart.sandboxId !== row.sandboxId ||
+      !["starting", "running", "error"].includes(row.status))
+  )
+    return { error: "Channel binding changed." };
   if (row.sandboxId) {
     const sandbox = await getChannelSandbox(workspaceId, row.sandboxId);
     if (!sandbox?.agentId)
@@ -192,7 +344,7 @@ async function start(
         error: "Assign an Agent to this sandbox before starting the channel.",
       };
     if (row.agentId !== sandbox.agentId) {
-      if (runners().has(connectionId))
+      if (restart || runners().has(connectionId))
         return { error: "Stop the channel before changing its sandbox Agent." };
       await db.agentChannelConnection.update({
         where: { id: row.id },
@@ -280,6 +432,7 @@ async function start(
     });
     adapter.on("statusChange", (event: ChannelStatusEvent) => {
       if (!current()) return;
+      if (event.connected) restarts.delete(connectionId);
       active.status = event.connected ? "running" : "starting";
       if (event.error) log("error", event.error);
       update({
@@ -289,10 +442,20 @@ async function start(
           : null,
       });
     });
-    adapter.on("fatal", (message: string) => {
+    adapter.on("fatal", (message: string, options?: { restart: boolean }) => {
       if (!current()) return;
       active.cleanup();
       runners().delete(connectionId);
+      if (options?.restart) {
+        deferRestart(connectionId, {
+          workspaceId,
+          agentId: active.agentId,
+          sandboxId: active.sandboxId,
+          attempts: restarts.get(connectionId)?.attempts ?? 0,
+          due: 0,
+        });
+        watchRunnerBindings();
+      }
       void adapter.disconnect().catch(() => {});
       log("error", message);
       const error = channelRuntimeFailures.text("CHANNEL_CONNECTION_FAILED");
@@ -301,8 +464,18 @@ async function start(
           runners().has(connectionId)
             ? undefined
             : db.agentChannelConnection.updateMany({
-                where: { id: connectionId, workspaceId },
-                data: { status: "error", runnerPid: null, lastError: error },
+                where: {
+                  id: connectionId,
+                  workspaceId,
+                  agentId: active.agentId,
+                  sandboxId: active.sandboxId,
+                  status: { in: ["running", "starting"] },
+                },
+                data: {
+                  status: options?.restart ? "starting" : "error",
+                  runnerPid: null,
+                  lastError: error,
+                },
               }),
         )
         .catch((error) => {
@@ -385,7 +558,12 @@ async function start(
     ) => {
       if (!current()) throw new Error("Channel runner unavailable.");
       const connection = await db.agentChannelConnection.findFirst({
-        where: { id: connectionId, workspaceId },
+        where: {
+          id: connectionId,
+          workspaceId,
+          agentId: active.agentId,
+          sandboxId: active.sandboxId,
+        },
       });
       if (!connection) return;
       const admission = await admitChannelSender({
@@ -407,6 +585,26 @@ async function start(
           );
         return;
       }
+      const approvalReply = await channelToolApprovalReply({
+        connectionId,
+        workspaceId,
+        agentId: active.agentId,
+        source: {
+          ...event,
+          platform: row.platform,
+          chatType: event.chatType ?? "dm",
+        },
+        text: event.text,
+        roleIds: event.roleIds,
+      });
+      if (approvalReply !== null) {
+        await adapter.sendMessage(event.chatId, approvalReply, {
+          replyToMessageId: event.threadId ?? event.messageId,
+          replyInThread: event.replyInThread,
+        });
+        return;
+      }
+      if (adapter.hydrateInbound) event = await adapter.hydrateInbound(event);
       const replyOptions = {
         replyToMessageId:
           row.platform === "telegram"
@@ -617,11 +815,19 @@ async function start(
         await processEvent(saved.event, dedupeKey);
       },
     );
-    const enqueue = (event: ChannelMessageEvent) => {
+    const enqueue = (
+      event: ChannelMessageEvent,
+      receipt?: ChannelAdmissionReceipt,
+    ) => {
       void (async () => {
         if (!current()) return;
         const connection = await db.agentChannelConnection.findFirst({
-          where: { id: connectionId, workspaceId },
+          where: {
+            id: connectionId,
+            workspaceId,
+            agentId: active.agentId,
+            sandboxId: active.sandboxId,
+          },
         });
         if (!connection) return;
         const decision = await admitChannelSender({
@@ -631,6 +837,7 @@ async function start(
           roleIds: event.roleIds,
         });
         if (!decision.allowed) {
+          receipt?.acknowledge();
           if (decision.reply)
             await adapter.sendMessage(event.chatId, decision.reply, {
               replyToMessageId: event.messageId,
@@ -641,25 +848,6 @@ async function start(
               "This command is not allowed by the channel access policy.",
               { replyToMessageId: event.messageId },
             );
-          return;
-        }
-        const approvalReply = await channelToolApprovalReply({
-          connectionId,
-          workspaceId,
-          agentId: active.agentId,
-          source: {
-            ...event,
-            platform: row.platform,
-            chatType: event.chatType ?? "dm",
-          },
-          text: event.text,
-          roleIds: event.roleIds,
-        });
-        if (approvalReply !== null) {
-          await adapter.sendMessage(event.chatId, approvalReply, {
-            replyToMessageId: event.threadId ?? event.messageId,
-            replyInThread: event.replyInThread,
-          });
           return;
         }
         const bounded: ChannelMessageEvent = {
@@ -673,6 +861,7 @@ async function start(
           conversationId: event.conversationId,
           roleIds: event.roleIds,
           replyInThread: event.replyInThread,
+          slackFileIds: event.slackFileIds,
           images: event.images?.slice(0, 20),
           files: event.files?.slice(
             0,
@@ -680,13 +869,19 @@ async function start(
           ),
         };
         const dedupeKey = channelInboundDedupeKey(
-          event.messageId,
+          receipt?.dedupeKey ?? event.messageId,
           bounded,
-          row.platform === "telegram" ? event.chatId : undefined,
+          row.platform === "telegram" ||
+            (row.platform === "slack" && !receipt?.dedupeKey)
+            ? event.chatId
+            : undefined,
         );
         bounded.messageId ??= dedupeKey;
-        const queueKey = `channel:${connectionId}:${buildMessagingSessionKey({ ...event, platform: row.platform, chatType: event.chatType ?? "dm" }, connection)}`;
-        await persistChannelInboundEvent({
+        // Approval replies must reach a turn even while it holds its normal queue.
+        const queueKey = /^\/(approve|deny)(?:\s|$)/i.test(event.text.trim())
+          ? `approval:${connectionId}`
+          : `channel:${connectionId}:${buildMessagingSessionKey({ ...event, platform: row.platform, chatType: event.chatType ?? "dm" }, connection)}`;
+        const saved = await persistChannelInboundEvent({
           connectionId,
           workspaceId,
           queueKey,
@@ -700,9 +895,11 @@ async function start(
             }),
           ) as Prisma.InputJsonValue,
         });
-        await processChannelInboundQueue(connectionId, queueKey);
+        receipt?.acknowledge();
+        await processChannelInboundQueue(connectionId, saved.event.queueKey);
       })().catch(async () => {
         log("error", "Channel inbound event could not be queued or delivered.");
+        if (receipt) return;
         await adapter
           .sendPendingReply(event.chatId, CHANNEL_EXECUTION_FAILURE_MESSAGE, {
             replyToMessageId: event.messageId,
@@ -713,47 +910,19 @@ async function start(
       });
     };
     adapter.on("message", enqueue);
-    adapter.on("command", (event: ChannelCommandEvent) =>
-      enqueue({
-        ...event,
-        text: `/${event.command}${event.args ? ` ${event.args}` : ""}`,
-      }),
-    );
-    const bindingTimer = setInterval(() => {
-      void Promise.all([
-        db.agentChannelConnection.findFirst({
-          where: {
-            id: connectionId,
-            workspaceId,
-            agentId: active.agentId,
-            sandboxId: active.sandboxId,
+    adapter.on(
+      "command",
+      (event: ChannelCommandEvent, receipt?: ChannelAdmissionReceipt) =>
+        enqueue(
+          {
+            ...event,
+            text: `/${event.command}${event.args ? ` ${event.args}` : ""}`,
           },
-          select: { id: true },
-        }),
-        active.sandboxId
-          ? getChannelSandbox(workspaceId, active.sandboxId)
-          : null,
-      ])
-        .then(([bound, sandbox]) => {
-          if (
-            (!bound ||
-              (active.sandboxId && sandbox?.agentId !== active.agentId)) &&
-            current()
-          )
-            return stopAgentChannelRunner(workspaceId, connectionId);
-        })
-        .catch((error) => {
-          logSystemEvent("channel.runner.heartbeat_failed", {
-            domain: "channel",
-            channelId: connectionId,
-            workspaceId,
-            error,
-          });
-        });
-    }, 5000);
-    bindingTimer.unref?.();
+          receipt,
+        ),
+    );
+    watchRunnerBindings();
     active.cleanup = () => {
-      clearInterval(bindingTimer);
       unregister();
       controller.abort();
     };
@@ -780,17 +949,7 @@ async function start(
     } finally {
       clearTimeout(timeout);
     }
-    const recoveryTimer = setInterval(() => {
-      if (current())
-        void recoverChannelInboundEvents(connectionId).catch(() => {});
-    }, 30_000);
-    recoveryTimer.unref?.();
-    const cleanup = active.cleanup;
-    active.cleanup = () => {
-      clearInterval(recoveryTimer);
-      cleanup();
-    };
-    void recoverChannelInboundEvents(connectionId).catch(() => {});
+    if (current()) startChannelInboundRecovery();
     await active.pendingWrite;
     return {};
   } catch (error) {
@@ -818,9 +977,13 @@ export async function stopAgentChannelRunner(
   workspaceId: string,
   connectionId: string,
 ) {
+  if (restarts.get(connectionId)?.workspaceId === workspaceId)
+    restarts.delete(connectionId);
   await starts()
     .get(`${workspaceId}:${connectionId}`)
     ?.catch(() => {});
+  if (restarts.get(connectionId)?.workspaceId === workspaceId)
+    restarts.delete(connectionId);
   const state = runners().get(connectionId);
   if (state?.workspaceId === workspaceId) {
     state.cleanup();
@@ -843,6 +1006,9 @@ export async function stopAgentChannelRunner(
 
 export async function shutdownAgentChannelRunners() {
   // Do not write persisted channel state: running channels should resume on a clean restart.
+  clearInterval(monitor.timer);
+  monitor.timer = undefined;
+  restarts.clear();
   await Promise.allSettled([...starts().values()]);
   const active = [...runners()];
   runners().clear();

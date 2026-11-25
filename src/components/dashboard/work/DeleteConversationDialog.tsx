@@ -15,7 +15,7 @@ import {
 } from "@/components/dashboard/dialog";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { notify } from "@/components/dashboard/Toaster";
-import { deleteConversationAction } from "@/lib/agents/actions";
+import { deleteConversationAction } from "@/lib/agents/conversation-actions";
 import { apiRequest } from "@/lib/client/api";
 import type { ConversationSummary } from "./work-types";
 

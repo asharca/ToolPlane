@@ -5,7 +5,8 @@ import {
   type WorkspaceScope,
 } from "@/lib/workspace/scope";
 import { posix } from "node:path";
-import type { Prisma, WorkSessionStatus } from "@prisma/client";
+import { Prisma, type WorkSessionStatus } from "@prisma/client";
+import { TERMINAL } from "@/lib/a2a/model";
 import { db } from "@/lib/db";
 import { defaultConversationRuntimeSession } from "@/lib/agents/conversation-mutations";
 import { conversationTitleFromParts } from "@/lib/agents/conversation-title";
@@ -256,10 +257,14 @@ export function assertWorkPiPackageSnapshot(
 
 export async function createWorkSession(input: CreateWorkSessionInput) {
   const task = input.task.trim();
-  const hasSupplementaryInput = Boolean(
-    input.attachments?.length || input.references?.length,
-  );
-  if ((!task && !hasSupplementaryInput) || task.length > 20_000) return null;
+  const attachments = input.attachments ?? [];
+  const { uploadedById } = input;
+  if (
+    (!task && !attachments.length && !input.references?.length) ||
+    task.length > 20_000 ||
+    (attachments.length && !uploadedById)
+  )
+    return null;
   const title = conversationTitleFromParts([
     {
       type: "text",
@@ -358,17 +363,29 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
     agent.systemPrompt = config.systemPrompt;
     agent.maxSteps = config.maxSteps;
     const pinnedPackages: NonNullable<LoadedAgentPiPackages["piPackages"]> = [];
+    const [installs, releases] = config.packages.length
+      ? await Promise.all([
+          tx.marketInstall.findMany({
+            where: {
+              id: { in: config.packages.map((pin) => pin.marketInstallId) },
+              targetWorkspaceId: input.workspaceId,
+            },
+            include: { listing: true },
+          }),
+          tx.marketRelease.findMany({
+            where: { id: { in: config.packages.map((pin) => pin.releaseId) } },
+          }),
+        ])
+      : [[], []];
+    const installsById = new Map(
+      installs.map((install) => [install.id, install]),
+    );
+    const releasesById = new Map(
+      releases.map((release) => [release.id, release]),
+    );
     for (const pin of config.packages) {
-      const marketInstall = await tx.marketInstall.findFirst({
-        where: {
-          id: pin.marketInstallId,
-          targetWorkspaceId: input.workspaceId,
-        },
-        include: { listing: true },
-      });
-      const release = await tx.marketRelease.findUnique({
-        where: { id: pin.releaseId },
-      });
+      const marketInstall = installsById.get(pin.marketInstallId);
+      const release = releasesById.get(pin.releaseId);
       if (
         marketInstall?.listing.status !== "published" ||
         (marketInstall.status !== "ready" &&
@@ -411,9 +428,8 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
               marketInstallId: pkg.marketInstallId,
               releaseId: pkg.releaseId,
               checksum: pkg.checksum,
-              resourceMap: (pinnedPackages.find(
-                (binding) => binding.marketInstallId === pkg.marketInstallId,
-              )?.marketInstall.resourceMap ?? {}) as Prisma.InputJsonValue,
+              resourceMap: (installsById.get(pkg.marketInstallId)
+                ?.resourceMap ?? {}) as Prisma.InputJsonValue,
             })),
           },
         },
@@ -422,12 +438,10 @@ export async function createWorkSession(input: CreateWorkSessionInput) {
       where: { id: conversation.id },
       data: defaultConversationRuntimeSession(agent.id, conversation.id),
     });
-    const attachments = input.attachments ?? [];
-    if (attachments.length) {
-      if (!input.uploadedById) return null;
+    if (attachments.length && uploadedById) {
       await claimWorkAttachments(tx, {
         workspaceId: input.workspaceId,
-        userId: input.uploadedById,
+        userId: uploadedById,
         conversationId: conversation.id,
         attachments,
       });
@@ -542,17 +556,38 @@ export async function finalizeWorkSessionCancellation(
   workspaceId: string,
   workSessionId: string,
 ) {
-  const result = await updateWorkSessionStatus(
-    db,
-    { id: workSessionId, workspaceId, status: "cancelling" },
-    {
-      status: "idle",
-      error: null,
-      waitingQuestion: null,
-      completedAt: new Date(),
-    },
-  );
-  return result.count === 1;
+  return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Workspace" WHERE id=${workspaceId} FOR UPDATE`;
+    const work = await tx.workSession.findFirst({
+      where: { id: workSessionId, workspaceId, status: "cancelling" },
+      select: { agentId: true },
+    });
+    if (!work) return false;
+    const active = await tx.$queryRaw<{ id: string }[]>`
+      SELECT root.id FROM "A2AEntryBinding" binding
+      JOIN "A2AContext" ctx ON ctx.id = binding."contextId"
+      JOIN "A2ATask" root ON root."contextId" = ctx.id AND root."parentTaskId" IS NULL
+      WHERE binding.kind = 'work' AND binding."sourceId" = ${workSessionId}
+        AND ctx."workspaceId" = ${workspaceId} AND ctx."agentId" = ${work.agentId}
+        AND (root.state NOT IN (${Prisma.join(TERMINAL)}) OR EXISTS (
+          SELECT 1 FROM "A2ATask" child
+          JOIN "A2AContext" child_ctx ON child_ctx.id = child."contextId"
+          WHERE child."rootTaskId" = root.id AND child_ctx."workspaceId" = ${workspaceId}
+            AND child.state NOT IN (${Prisma.join(TERMINAL)})
+        )) LIMIT 1`;
+    if (active.length) return false;
+    const result = await updateWorkSessionStatus(
+      tx,
+      { id: workSessionId, workspaceId, status: "cancelling" },
+      {
+        status: "idle",
+        error: null,
+        waitingQuestion: null,
+        completedAt: new Date(),
+      },
+    );
+    return result.count === 1;
+  });
 }
 
 // Admission must commit before deletion can take the Agent maintenance lease;
@@ -644,10 +679,13 @@ export async function appendWorkSessionInput(
   } = {},
 ): Promise<WorkSessionTransitionResult> {
   const text = input.trim();
-  const hasSupplementaryInput = Boolean(
-    options.attachments?.length || options.references?.length,
-  );
-  if ((!text && !hasSupplementaryInput) || text.length > 20_000)
+  const attachments = options.attachments ?? [];
+  const { uploadedById } = options;
+  if (
+    (!text && !attachments.length && !options.references?.length) ||
+    text.length > 20_000 ||
+    (attachments.length && !uploadedById)
+  )
     return { ok: false, reason: "invalid_input" };
 
   return withWorkSessionInputLease(workspaceId, workSessionId, async (tx) => {
@@ -719,13 +757,10 @@ export async function appendWorkSessionInput(
         },
       });
     }
-    const attachments = options.attachments ?? [];
-    if (attachments.length) {
-      if (!options.uploadedById)
-        return { ok: false, reason: "invalid_input" } as const;
+    if (attachments.length && uploadedById) {
       await claimWorkAttachments(tx, {
         workspaceId,
-        userId: options.uploadedById,
+        userId: uploadedById,
         conversationId: work.conversationId,
         attachments,
       });

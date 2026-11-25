@@ -6,7 +6,7 @@ import { useTranslations } from "next-intl";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Cpu, RefreshCw, Search } from "lucide-react";
-import type { ActionState } from "@/lib/agents/actions";
+import type { ActionState } from "@/lib/agents/action-state";
 import type { ProviderModelValues } from "@/lib/agents/model-catalog";
 import { apiRequest } from "@/lib/client/api";
 import {

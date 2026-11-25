@@ -52,10 +52,15 @@ export type ChannelMessageEvent = {
   roleIds?: string[];
   images?: ImageAttachment[];
   files?: FileAttachment[];
+  slackFileIds?: string[];
 };
 export type ChannelCommandEvent = Omit<ChannelMessageEvent, "text"> & {
   command: string;
   args?: string;
+};
+export type ChannelAdmissionReceipt = {
+  dedupeKey?: string;
+  acknowledge: () => void;
 };
 export type SendMessageOptions = {
   parseMode?: "MarkdownV2" | "HTML";
@@ -126,6 +131,7 @@ export abstract class ChannelAdapter extends EventEmitter {
     this.isConnected = false;
     await this.performDisconnect();
   }
+  hydrateInbound?(event: ChannelMessageEvent): Promise<ChannelMessageEvent>;
   protected async checkReady(): Promise<boolean> {
     return true;
   }

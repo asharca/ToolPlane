@@ -8,36 +8,56 @@ import { runPersistedChannelCallback } from "./message-service";
 import { runtimeCanOperate } from "@/lib/runtime/ownership-state";
 import { logSystemEvent } from "@/lib/observability/system";
 import { queueRunningChannelMessages } from "./channel-message-queue";
+import { MAX_INBOUND_PAYLOAD_BYTES } from "./channels/constants";
 
 const LEASE_MS = 90_000;
 const MAX_ATTEMPTS = 3;
 const MAX_QUEUED = 200;
-const MAX_PAYLOAD_BYTES = 32 * 1024 * 1024;
 type Handler = (
   payload: Prisma.JsonValue,
   dedupeKey: string,
 ) => Promise<unknown>;
-const handlers = new Map<string, Handler>();
-const active = new Map<string, Promise<void>>();
-let recoveryTimer: ReturnType<typeof setInterval> | undefined;
-let stopping = false;
-let recoveryAbort = new AbortController();
+const MAX_DRAINS = 8;
+type Slots = { available: number; waiters: (() => void)[] };
+type InboundState = {
+  handlers: Map<string, Handler>;
+  active: Map<string, Promise<void>>;
+  regularDrains: Slots;
+  approvalDrains: Slots;
+  recovery?: Promise<void>;
+  timer?: NodeJS.Timeout;
+  lastRetention: number;
+  abort: AbortController;
+};
+const globals = globalThis as typeof globalThis & {
+  __toolplaneInbound?: InboundState;
+};
+globals.__toolplaneInbound ??= {
+  handlers: new Map(),
+  active: new Map(),
+  // A waiting approval holds its normal drain. Reserve one slot for decisions.
+  regularDrains: { available: MAX_DRAINS - 1, waiters: [] },
+  approvalDrains: { available: 1, waiters: [] },
+  lastRetention: 0,
+  abort: new AbortController(),
+};
+const inbound: InboundState = globals.__toolplaneInbound;
+const { handlers, active, regularDrains, approvalDrains } = inbound;
 
 export function startChannelInboundRecovery() {
-  stopping = false;
-  if (recoveryAbort.signal.aborted) recoveryAbort = new AbortController();
-  if (recoveryTimer) return;
-  recoveryTimer = setInterval(() => {
+  if (inbound.abort.signal.aborted) inbound.abort = new AbortController();
+  if (inbound.timer) return;
+  inbound.timer = setInterval(() => {
     if (runtimeCanOperate()) void recoverChannelInboundEvents().catch(() => {});
   }, 30_000);
-  recoveryTimer.unref?.();
+  inbound.timer.unref();
 }
 
 export async function stopChannelInboundRecovery() {
-  stopping = true;
-  recoveryAbort.abort();
-  clearInterval(recoveryTimer);
-  recoveryTimer = undefined;
+  inbound.abort.abort();
+  clearInterval(inbound.timer);
+  inbound.timer = undefined;
+  await inbound.recovery?.catch(() => {});
   await Promise.allSettled([...active.values()]);
 }
 
@@ -69,7 +89,9 @@ export async function persistChannelInboundEvent(input: {
   kind: "hosted" | "callback";
   payload: Prisma.InputJsonValue;
 }) {
-  if (Buffer.byteLength(JSON.stringify(input.payload)) > MAX_PAYLOAD_BYTES)
+  if (
+    Buffer.byteLength(JSON.stringify(input.payload)) > MAX_INBOUND_PAYLOAD_BYTES
+  )
     throw new Error("Channel inbound payload exceeds the attachment limit.");
   return db.$transaction(async (tx) => {
     const owner = await tx.$queryRaw<
@@ -142,16 +164,30 @@ export async function processChannelInboundQueue(
     await queueRunningChannelMessages(connectionId, queueKey);
     return pending;
   }
-  const operation = drain(connectionId, queueKey).finally(() =>
-    active.delete(key),
-  );
+  const operation = (async () => {
+    const slots =
+      queueKey === `approval:${connectionId}` ? approvalDrains : regularDrains;
+    if (slots.available) slots.available--;
+    else {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      slots.waiters.push(resolve);
+      await promise;
+    }
+    try {
+      await drain(connectionId, queueKey);
+    } finally {
+      active.delete(key);
+      const next = slots.waiters.shift();
+      if (next) next();
+      else slots.available++;
+    }
+  })();
   active.set(key, operation);
   return operation;
 }
 
 async function drain(connectionId: string, queueKey: string) {
-  if (stopping) return;
-  for (;;) {
+  while (!inbound.abort.signal.aborted && runtimeCanOperate()) {
     const now = new Date();
     const row = await db.agentChannelInboundEvent.findFirst({
       where: {
@@ -174,7 +210,7 @@ async function drain(connectionId: string, queueKey: string) {
               return runPersistedChannelCallback(
                 connectionId,
                 payload,
-                recoveryAbort.signal,
+                inbound.abort.signal,
                 dedupeKey,
               );
             }
@@ -241,7 +277,8 @@ async function drain(connectionId: string, queueKey: string) {
       clearInterval(timer);
       await heartbeat;
       const detached =
-        stopping || (error instanceof Error && error.name === "AbortError");
+        inbound.abort.signal.aborted ||
+        (error instanceof Error && error.name === "AbortError");
       await db.agentChannelInboundEvent.updateMany({
         where: { id: row.id, status: "processing", leaseUntil: lease },
         data: {
@@ -269,30 +306,73 @@ async function drain(connectionId: string, queueKey: string) {
   }
 }
 
-export async function recoverChannelInboundEvents(connectionId?: string) {
+export function recoverChannelInboundEvents(connectionId?: string) {
+  if (connectionId) return recover(connectionId);
+  inbound.recovery ??= recover().finally(() => {
+    inbound.recovery = undefined;
+  });
+  return inbound.recovery;
+}
+
+async function recover(connectionId?: string) {
   try {
-    const rows = await db.agentChannelInboundEvent.findMany({
-      where: {
-        ...(connectionId ? { connectionId } : {}),
+    let cursor: { connectionId: string; queueKey: string } | undefined;
+    const cutoff = new Date();
+    while (!inbound.abort.signal.aborted && runtimeCanOperate()) {
+      const where: Prisma.AgentChannelInboundEventWhereInput = {
+        connectionId,
         OR: [
           { status: "queued" },
-          { status: "processing", leaseUntil: { lte: new Date() } },
+          { status: "processing", leaseUntil: { lte: cutoff } },
         ],
-      },
-      distinct: ["connectionId", "queueKey"],
-      select: { connectionId: true, queueKey: true },
-    });
-    await Promise.all(
-      rows.map((row) =>
-        processChannelInboundQueue(row.connectionId, row.queueKey),
-      ),
-    );
+        ...(cursor && {
+          AND: {
+            OR: [
+              { connectionId: { gt: cursor.connectionId } },
+              {
+                connectionId: cursor.connectionId,
+                queueKey: { gt: cursor.queueKey },
+              },
+            ],
+          },
+        }),
+      };
+      const keys = await db.agentChannelInboundEvent.groupBy({
+        by: ["connectionId", "queueKey"],
+        where,
+        orderBy: [{ connectionId: "asc" }, { queueKey: "asc" }],
+        take: 64,
+      });
+      for (
+        let index = 0;
+        index < keys.length && !inbound.abort.signal.aborted;
+        index += MAX_DRAINS
+      ) {
+        await Promise.all(
+          keys
+            .slice(index, index + MAX_DRAINS)
+            .map((key) =>
+              processChannelInboundQueue(key.connectionId, key.queueKey),
+            ),
+        );
+      }
+      if (keys.length < 64) break;
+      cursor = keys[keys.length - 1];
+    }
+    if (
+      connectionId ||
+      inbound.abort.signal.aborted ||
+      !runtimeCanOperate() ||
+      Date.now() - inbound.lastRetention < 3_600_000
+    )
+      return;
     await db.agentChannelInboundEvent.deleteMany({
       where: {
         status: { in: ["done", "failed"] },
         updatedAt: { lt: new Date(Date.now() - 7 * 86400_000) },
       },
     });
+    inbound.lastRetention = Date.now();
   } catch (error) {
     logSystemEvent("channel.inbound.recovery_failed", {
       domain: "channel",

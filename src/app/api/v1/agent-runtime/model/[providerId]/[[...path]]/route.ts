@@ -96,14 +96,6 @@ async function proxyProviderRequest(
 
   const { providerId, path = [] } = await params;
   const routePath = path.join("/");
-  const grant = await resolveAgentRuntimeGrant(token);
-  if (!grant || !token.agentRevisionId) {
-    return NextResponse.json(
-      { error: "runtime grant is no longer valid" },
-      { status: 403 },
-    );
-  }
-
   const hasBody = req.method !== "GET" && req.method !== "HEAD";
   let model: string | undefined;
   let stream = false;
@@ -124,12 +116,21 @@ async function proxyProviderRequest(
       // Malformed model requests are denied below without reaching the upstream.
     }
   }
+  const grant = await resolveAgentRuntimeGrant(
+    token,
+    model ? { providerId, model } : undefined,
+  );
+  if (!grant || !token.agentRevisionId) {
+    return NextResponse.json(
+      { error: "runtime grant is no longer valid" },
+      { status: 403 },
+    );
+  }
   // Extra providers are accessible only for the exact model pairs on this pin.
   // Never authorize arbitrary endpoints or catalog models with the session token.
   if (
     (hasBody && !model && routePath !== "v1/messages/count_tokens") ||
-    (providerId !== token.providerId && !model) ||
-    (model && !(await resolveAgentRuntimeGrant(token, { providerId, model })))
+    (providerId !== token.providerId && !model)
   )
     return NextResponse.json(
       { error: "model is outside the runtime grant" },

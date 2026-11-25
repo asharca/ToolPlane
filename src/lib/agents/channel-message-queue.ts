@@ -41,9 +41,16 @@ function normalized(
         roleIds?: string[];
         images?: unknown[];
         files?: unknown[];
+        slackFileIds?: string[];
       }
     | undefined;
-  if (!event || event.images?.length || event.files?.length) return null;
+  if (
+    !event ||
+    event.images?.length ||
+    event.files?.length ||
+    event.slackFileIds?.length
+  )
+    return null;
   return parseAgentMessageBody({
     message: event.text,
     conversationId: event.conversationId,

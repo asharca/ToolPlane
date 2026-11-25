@@ -33,8 +33,8 @@ import {
   addProviderModelAction,
   deleteProviderModelAction,
   updateProviderModelAction,
-  type ActionState,
-} from "@/lib/agents/actions";
+} from "@/lib/agents/provider-actions";
+import type { ActionState } from "@/lib/agents/action-state";
 import {
   defaultProviderModel,
   type ModelCapability,
