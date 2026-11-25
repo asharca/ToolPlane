@@ -1,4 +1,8 @@
 import "server-only";
+import {
+  TaskNotFoundError,
+  UnsupportedOperationError,
+} from "@a2a-js/sdk/errors";
 import type { Prisma } from "@prisma/client";
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
@@ -14,6 +18,7 @@ import {
 } from "@/lib/a2a/local-runtime";
 import { assertAgentEnvironmentCredentialReferences } from "./environment-credentials";
 import {
+  AgentModelOverrideError,
   resolveAgentModelOverride,
   conversationModelOverride,
 } from "./turn-model";
@@ -25,6 +30,7 @@ import {
 } from "@/lib/sandboxes/external";
 import { AgentRevisionConfigSchema } from "./revision-types";
 import { enrichLogContext } from "@/lib/observability/context";
+import { recordEvent } from "@/lib/observability/events";
 import { entryConversationIds } from "./entry-kinds";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import { assertMarketReleasesExecutable } from "@/lib/pi-packages/revocation";
@@ -42,6 +48,48 @@ import {
   isOfficialRegistrySource,
 } from "@/lib/plugins/env-store";
 import { PluginError } from "@/lib/plugins/errors";
+
+// Revision, credential and session-binding helpers also report these denials
+// as plain Errors. Only explicit denials may be converted to a 403.
+const grantDenials: Record<string, true> = {
+  AGENT_EXECUTION_RETIRED: true,
+  AGENT_REVISION_UNRESOLVED: true,
+  AGENT_RUNTIME_MISMATCH: true,
+  AGENT_CREDENTIAL_NAME_INVALID: true,
+  AGENT_CREDENTIAL_REFERENCE_INVALID: true,
+  AGENT_CREDENTIAL_REVOKED: true,
+  MODEL_OVERRIDE_UNAVAILABLE: true,
+  "Conversation or native context is required.": true,
+  "Agent not found in workspace.": true,
+  "Conversation/context does not belong to this Agent.": true,
+  "Native context is not bound to this conversation.": true,
+  "Conversation/context sandbox mappings conflict.": true,
+  "Conversation sandbox binding is invalid.": true,
+};
+
+function classifyGrantFailure(
+  error: unknown,
+  token: AgentRuntimeTokenPayload | AgentPluginProxyTokenPayload,
+) {
+  if (error instanceof PluginError && error.code === "listing_unavailable")
+    return "revoked";
+  if (
+    error instanceof TaskNotFoundError ||
+    error instanceof UnsupportedOperationError ||
+    error instanceof AgentModelOverrideError ||
+    (error instanceof Error && Object.hasOwn(grantDenials, error.message))
+  )
+    return "denied";
+  void recordEvent({
+    domain: "runtime",
+    eventName: "runtime.grant_check_failed",
+    workspaceId: token.workspaceId,
+    agentId: token.agentId,
+    outcome: "error",
+    errorCode: "RUNTIME_GRANT_CHECK_FAILED",
+  });
+  throw new Error("RUNTIME_GRANT_CHECK_FAILED");
+}
 
 async function verifyActiveRuntimeSession(
   tx: Prisma.TransactionClient,
@@ -340,7 +388,8 @@ export async function resolveAgentRuntimeGrant(
           : {}),
       });
     return grant;
-  } catch {
+  } catch (error) {
+    classifyGrantFailure(error, token);
     return null;
   }
 }
@@ -382,13 +431,7 @@ export async function resolveAgentPluginProxyGrant(
     ) {
       return { ok: false, status: 403, code: "PLUGIN_PROXY_FORBIDDEN" };
     }
-    if (token.a2aTaskId) {
-      try {
-        await assertLocalTaskLease(token);
-      } catch {
-        return { ok: false, status: 403, code: "PLUGIN_PROXY_FORBIDDEN" };
-      }
-    }
+    if (token.a2aTaskId) await assertLocalTaskLease(token);
 
     let verifiedConversationId: string | undefined;
     const result = await db.$transaction(async (tx) => {
@@ -414,18 +457,7 @@ export async function resolveAgentPluginProxyGrant(
         } as const;
       }
 
-      try {
-        await assertMarketReleasesExecutable(tx, [token.releaseId]);
-      } catch (err) {
-        if (err instanceof PluginError) {
-          return {
-            ok: false,
-            status: 403,
-            code: "PLUGIN_PROXY_REVOKED",
-          } as const;
-        }
-        throw err;
-      }
+      await assertMarketReleasesExecutable(tx, [token.releaseId]);
 
       const install = await tx.marketInstall.findFirst({
         where: {
@@ -643,7 +675,7 @@ export async function resolveAgentPluginProxyGrant(
     }
     return result;
   } catch (err) {
-    if (err instanceof PluginError && err.code === "listing_unavailable") {
+    if (classifyGrantFailure(err, token) === "revoked") {
       return { ok: false, status: 403, code: "PLUGIN_PROXY_REVOKED" };
     }
     return { ok: false, status: 403, code: "PLUGIN_PROXY_FORBIDDEN" };

@@ -5,10 +5,8 @@ import { useTranslations } from "next-intl";
 import { FlaskConical } from "lucide-react";
 import { Tooltip } from "@/components/motion/tooltip";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
-import {
-  testProviderModelAction,
-  type ActionState,
-} from "@/lib/agents/actions";
+import { testProviderModelAction } from "@/lib/agents/provider-actions";
+import type { ActionState } from "@/lib/agents/action-state";
 import { ActionMessage } from "./ProviderDialogs";
 import {
   compactTokens,

@@ -423,9 +423,19 @@ it("refreshes real native task UI projection on the same SDK host and rejects th
       kind: "output",
       text: assertDefined(output.result).text,
     });
-    const saved = await db.message.findFirstOrThrow({
-      where: { conversationId: conversation.id, role: "assistant" },
+    const savedReplies = await db.message.findMany({
+      where: {
+        conversationId: conversation.id,
+        role: "assistant",
+        parts: {
+          array_contains: [
+            { type: "data-agent-task", data: { taskId: second.id } },
+          ],
+        },
+      },
     });
+    expect(savedReplies).toHaveLength(1);
+    const saved = assertDefined(savedReplies[0]);
     expect(saved.parts).toEqual(
       expect.arrayContaining([
         {

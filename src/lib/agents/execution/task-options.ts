@@ -25,12 +25,13 @@ import {
   sandboxRuntimeOrigin,
 } from "@/lib/agents/runtime-access";
 import { db } from "@/lib/db";
-import { isLocalGrant } from "@/lib/a2a/principal";
+import { assertLiveGrant, isLocalGrant } from "@/lib/a2a/principal";
 import type { TaskGrant } from "@/lib/a2a/principal";
 import { localTarget } from "@/lib/a2a/local-policy";
 import { assertWorkPiPackageSnapshot } from "@/lib/work/sessions";
 import {
-  localTaskSandbox,
+  claimedTaskSandbox,
+  type LocalTaskSandboxLease,
   receiveSettledChildFiles,
   SandboxFileStagingError,
   stageLocalTaskFiles,
@@ -43,10 +44,8 @@ import {
 } from "@/lib/agents/turn-model";
 import { resolveSessionExternalSandboxes } from "@/lib/agents/external-sandboxes";
 import { sessionMcpServers as pinnedSessionMcpServers } from "@/lib/agents/session-mcp-servers";
-import {
-  activeConversationMessages,
-  hasNativeConversationHistory,
-} from "@/lib/agents/conversation-context";
+import { hasNativeConversationHistory } from "@/lib/agents/conversation-context";
+import { workTurnContext } from "./work-turn-context";
 import { parseRuntimeCommand } from "@/lib/agents/runtime-commands";
 import type { SandboxRuntimeMessage } from "@/lib/agents/sandbox-runtime";
 import { outputsInstruction } from "./outputs";
@@ -71,6 +70,7 @@ export async function localTaskOptions(
   row: A2ATask,
   signal: AbortSignal,
   instructions: string,
+  lease?: LocalTaskSandboxLease,
 ): Promise<RunSandboxAgentTurnOptions> {
   const grant = row.grant as unknown as TaskGrant;
   if (!isLocalGrant(grant) || !row.leaseToken)
@@ -78,7 +78,7 @@ export async function localTaskOptions(
   if (row.executionBackend !== "pi-sdk")
     throw new Error("Retired local execution cannot mint runtime credentials.");
   signal.throwIfAborted();
-  const mapped = await localTaskSandbox(row, false, signal);
+  await assertLiveGrant(grant, "send");
   const target = await localTarget(
     db,
     grant.workspaceId,
@@ -115,6 +115,8 @@ export async function localTaskOptions(
     agent.publicRuntimeAllocation
   )
     throw new Error("Local target unavailable.");
+  const pinnedPackages = resolveAgentPiPackages(agent);
+  const mapped = await claimedTaskSandbox(row, signal, lease);
   const sessionConversation =
     !grant.ancestorTaskIds.length && grant.entryPolicy
       ? await db.conversation.findFirst({
@@ -163,8 +165,10 @@ export async function localTaskOptions(
             conversation: {
               include: {
                 messages: {
-                  where: { supersededAt: null },
-                  orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                  where: { role: "user", supersededAt: null },
+                  orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+                  take: 1,
+                  select: { id: true, piRewindEntryId: true },
                 },
               },
             },
@@ -184,7 +188,7 @@ export async function localTaskOptions(
           runtimeSessionId,
         })
       : undefined;
-  const piPackages = piSession?.packages ?? resolveAgentPiPackages(agent);
+  const piPackages = piSession?.packages ?? pinnedPackages;
   const resolved = resolveAgentTools(
     piSession ? { ...agent, piPackages: [] } : agent,
   );
@@ -276,8 +280,25 @@ export async function localTaskOptions(
   }
   await completeTaskFileStaging(row.id, row.leaseToken);
   const history = Task.fromJSON(row.snapshot).history;
-  const messages: SandboxRuntimeMessage[] = work
-    ? activeConversationMessages(work.conversation.messages).map((message) => ({
+  const hasPriorExecution = async () =>
+    Boolean(
+      await db.a2ATask.findFirst({
+        where: {
+          contextId: row.contextId,
+          id: { not: row.id },
+          executionBackend: row.executionBackend,
+          state: TaskState.TASK_STATE_COMPLETED,
+        },
+        select: { id: true },
+      }),
+    );
+  const priorExecution =
+    row.resumeCount > 0 || (work !== null && (await hasPriorExecution()));
+  const turn = work
+    ? await workTurnContext(work.conversationId, 2, !priorExecution)
+    : null;
+  const messages: SandboxRuntimeMessage[] = turn
+    ? turn.messages.map((message) => ({
         role: message.role,
         parts: message.parts as SandboxRuntimeMessage["parts"],
       }))
@@ -310,16 +331,10 @@ export async function localTaskOptions(
   const command = parseRuntimeCommand(commandText, agent.runtimeKind);
   if (command) messages.pop();
   const historyRequired =
-    row.resumeCount > 0 ||
-    hasNativeConversationHistory(messages) ||
-    (await db.a2ATask.count({
-      where: {
-        contextId: row.contextId,
-        id: { not: row.id },
-        executionBackend: row.executionBackend,
-        state: TaskState.TASK_STATE_COMPLETED,
-      },
-    })) > 0;
+    priorExecution ||
+    (turn
+      ? turn.nativeHistory
+      : hasNativeConversationHistory(messages) || (await hasPriorExecution()));
   const playbook = await turnPlaybook(
     {
       agentId: grant.agentId,
@@ -338,13 +353,9 @@ export async function localTaskOptions(
     ...(work
       ? {
           navigateBeforeEntryId:
-            work.conversation.messages.findLast(
-              (message) => message.role === "user",
-            )?.piRewindEntryId ?? undefined,
+            work.conversation.messages[0]?.piRewindEntryId ?? undefined,
           onSessionEntries: async (entries) => {
-            const user = work.conversation.messages.findLast(
-              (message) => message.role === "user",
-            );
+            const user = work.conversation.messages[0];
             if (!user) throw new Error("Work user message unavailable.");
             await db.message.updateMany({
               where: {

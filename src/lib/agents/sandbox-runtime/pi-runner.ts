@@ -5,7 +5,7 @@ import { hasNativeConversationHistory } from "../conversation-context";
 import { parseRuntimeFailure, runtimeFailureText } from "../runtime-failure";
 import { ContextMaintenanceSchema } from "../context-maintenance";
 import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { db } from "@/lib/db";
 import { modelReasoningSupported } from "../model";
 import { AgentRevisionConfigSchema } from "../revision-types";
@@ -67,6 +67,29 @@ import {
   PI_HOST_FILES,
   PI_HOST_PACKAGE_VERIFIER,
 } from "./pi-host-files";
+
+const MAX_PI_EVENT_BYTES = 8 * 1024 * 1024;
+const hostFileCache = new Map<
+  string,
+  { content: string; digest: string; mtimeMs?: number }
+>();
+
+async function readPiHostFile(path: string) {
+  const mtimeMs =
+    process.env.NODE_ENV === "development"
+      ? (await stat(path)).mtimeMs
+      : undefined;
+  const cached = hostFileCache.get(path);
+  if (cached && cached.mtimeMs === mtimeMs) return cached;
+  const content = await readFile(path, "utf8");
+  const entry = {
+    content,
+    digest: createHash("sha256").update(content).digest("hex"),
+    mtimeMs,
+  };
+  hostFileCache.set(path, entry);
+  return entry;
+}
 
 export async function runPiSdk(
   options: RunSandboxAgentTurnOptions,
@@ -189,11 +212,10 @@ export async function runPiSdk(
     });
   }
   for (const source of PI_HOST_FILES) {
-    const content = await readFile(
+    const { content, digest } = await readPiHostFile(
       `${process.cwd()}/scripts/${source}`,
-      "utf8",
     );
-    hostSources.update(source).update(content);
+    hostSources.update(source).update(digest);
     hostFiles.push({ path: `${privateRoot}/${source}`, content });
   }
   const browserNetwork = options.optionalBuiltinTools?.includes("browser")
@@ -424,8 +446,9 @@ export async function runPiSdk(
       hostOnlyCommands: HOST_ONLY_COMMAND_NAMES,
     }),
   });
-  let buffer = "",
-    text = "",
+  let pendingLine = "";
+  let pendingLineBytes = 0;
+  let text = "",
     streamed = "",
     error = "",
     terminal = false,
@@ -609,13 +632,20 @@ export async function runPiSdk(
         PI_CODING_AGENT_DIR: stateRoot,
       },
       onStdout: async (chunk) => {
-        buffer += chunk;
-        for (;;) {
-          const newline = buffer.indexOf("\n");
+        let start = 0;
+        while (start < chunk.length) {
+          const newline = chunk.indexOf("\n", start);
+          const part = chunk.slice(start, newline < 0 ? undefined : newline);
+          pendingLineBytes += Buffer.byteLength(part);
+          if (pendingLineBytes > MAX_PI_EVENT_BYTES)
+            throw new Error("Sandbox runtime output exceeded its limit.");
+          pendingLine += part;
           if (newline < 0) break;
-          const line = buffer.slice(0, newline).trim();
-          buffer = buffer.slice(newline + 1);
+          const line = pendingLine.trim();
+          pendingLine = "";
+          pendingLineBytes = 0;
           if (line) await consume(line);
+          start = newline + 1;
         }
       },
     },
@@ -647,7 +677,7 @@ export async function runPiSdk(
       },
     },
   );
-  if (buffer.trim()) await consume(buffer.trim());
+  if (pendingLine.trim()) await consume(pendingLine.trim());
   if (!terminal) throw new Error("PI_SDK_PROTOCOL_ERROR");
   if (error && mcpUnavailable) {
     const deployment = await db.deployment.findFirst({

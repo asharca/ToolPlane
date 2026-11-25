@@ -11,7 +11,7 @@ import { db } from "@/lib/db";
 import { A2A_LIMITS } from "@/lib/a2a/model";
 import { getAgentConcurrencySettings } from "@/lib/admin/settings";
 import { generateWorkSessionTitle } from "@/lib/agents/conversation-naming";
-import { activeConversationMessages } from "@/lib/agents/conversation-context";
+import { workTurnContext } from "@/lib/agents/execution/work-turn-context";
 import { persistAgentPromptInvocation } from "@/lib/agents/prompt-invocation";
 import type { SandboxRuntimeActivity } from "@/lib/agents/sandbox-runtime";
 import type { AgentExecutionStage } from "@/lib/agents/execution-stages";
@@ -23,7 +23,6 @@ import {
   STREAM_RULE_TRIGGER_PART,
   type StreamRuleTrigger,
 } from "@/lib/agents/stream-rules";
-import { nativeUiProjection } from "@/lib/agents/execution/native-ui";
 import {
   COMMAND_RESULT_PART,
   RUNTIME_COMMANDS_PART,
@@ -264,7 +263,9 @@ async function executeWork(workSessionId: string) {
         include: {
           messages: {
             where: { supersededAt: null },
-            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            take: 1,
+            select: { id: true, role: true, parts: true },
           },
         },
       },
@@ -281,8 +282,8 @@ async function executeWork(workSessionId: string) {
     conversationId: work.conversationId,
   });
   if (work.status === "cancelling") {
-    await finalizeWorkSessionCancellation(work.workspaceId, work.id);
-    finishWorkOutput(work.id);
+    if (await finalizeWorkSessionCancellation(work.workspaceId, work.id))
+      finishWorkOutput(work.id);
     return;
   }
   if (work.status !== "running") {
@@ -293,10 +294,13 @@ async function executeWork(workSessionId: string) {
   registerWorkRun(work.id, controller);
   const runStartedAt = Date.now();
   const initialSnapshot = snapshot(work.runtimeSnapshot);
-  const turnOverride = agentMessageModelOverride(
-    work.conversation.messages.findLast((message) => message.role === "user")
-      ?.parts,
-  );
+  const latest = work.conversation.messages[0];
+  const last = (
+    latest?.role === "user"
+      ? latest
+      : (await workTurnContext(work.conversationId, 1, false)).messages.at(-1)
+  ) as RuntimeMessage | undefined;
+  const turnOverride = agentMessageModelOverride(last?.parts);
   const initialModelName =
     turnOverride?.model ?? initialSnapshot.model ?? undefined;
   startWorkOutput(work.id, {
@@ -331,27 +335,6 @@ async function executeWork(workSessionId: string) {
   let commandResult: RuntimeCommandResult | undefined;
   const streamRuleTriggers = new Map<string, StreamRuleTrigger>();
   const contextMaintenance: ContextMaintenance[] = [];
-  const previousHookIds =
-    work.runtimeKind === "omp"
-      ? new Set(
-          nativeUiProjection(work.uiProjection).hooks.map((hook) => hook.id),
-        )
-      : null;
-  const hookMetadata = async (): Promise<Prisma.InputJsonValue[]> => {
-    if (!previousHookIds) return [];
-    const current = await db.workSession.findFirst({
-      where: {
-        id: work.id,
-        workspaceId: work.workspaceId,
-        agentId: work.agentId,
-        conversationId: work.conversationId,
-      },
-      select: { uiProjection: true },
-    });
-    return nativeUiProjection(current?.uiProjection)
-      .hooks.filter((hook) => !previousHookIds.has(hook.id))
-      .map((hook) => ({ type: "hook-activity", data: hook }));
-  };
   const runtimeMetadata = (): Prisma.InputJsonValue[] => [
     ...(budgetWarning
       ? [
@@ -723,17 +706,9 @@ async function executeWork(workSessionId: string) {
       );
     }
 
-    const runtimeMessages: RuntimeMessage[] = activeConversationMessages(
-      work.conversation.messages,
-    ).map((message) => ({
-      id: message.id,
-      role: message.role,
-      parts: message.parts as RuntimeMessage["parts"],
-    }));
     let response: string;
     let replyFiles: CapturedArtifact[];
     {
-      const last = runtimeMessages.at(-1);
       const commandText =
         last?.role === "user"
           ? last.parts
@@ -770,12 +745,13 @@ async function executeWork(workSessionId: string) {
           publishWorkStreamRule(work.id, trigger);
         },
         onMessageQueue: (queue) => publishWorkMessageQueue(work.id, queue),
-        onQueuedMessage: async (_message, assistantText) => {
+        queuedReplyParts: (assistantText) => {
           finishReasoning();
-          const parts = traceParts(assistantText).filter(
+          return traceParts(assistantText).filter(
             (part) => part.type !== "work-runtime",
-          );
-          await appendAssistantResult(work.conversationId, "", parts);
+          ) as unknown as Prisma.InputJsonValue[];
+        },
+        onQueuedMessage: () => {
           trace.length = 0;
           toolTrace.clear();
           toolStartedAt.clear();
@@ -896,7 +872,7 @@ async function executeWork(workSessionId: string) {
       traceParts(fallbackText),
       contextUsage,
       turnTiming(),
-      [...runtimeMetadata(), ...(await hookMetadata())],
+      runtimeMetadata(),
       replyArtifactParts(replyFiles),
     );
     tracePersisted = true;
@@ -954,7 +930,7 @@ async function executeWork(workSessionId: string) {
           traceParts(),
           contextUsage,
           turnTiming(),
-          [...runtimeMetadata(), ...(await hookMetadata())],
+          runtimeMetadata(),
         );
         tracePersisted = true;
       } catch (traceError) {
@@ -974,11 +950,21 @@ async function executeWork(workSessionId: string) {
     }
   } finally {
     unregisterWorkRun(workSessionId, controller);
-    try {
-      await finalizeWorkSessionCancellation(work.workspaceId, work.id);
-    } finally {
+    const finalized = await finalizeWorkSessionCancellation(
+      work.workspaceId,
+      work.id,
+    );
+    if (
+      finalized ||
+      !(await db.workSession.count({
+        where: {
+          id: work.id,
+          workspaceId: work.workspaceId,
+          status: "cancelling",
+        },
+      }))
+    )
       finishWorkOutput(workSessionId);
-    }
   }
 }
 
@@ -1042,6 +1028,14 @@ async function drainWorkQueue() {
   if (state.draining || state.stopping || !runtimeCanOperate()) return;
   state.draining = true;
   try {
+    const stopping = await db.workSession.findMany({
+      where: { status: "cancelling", id: { notIn: [...state.active] } },
+      select: { id: true, workspaceId: true },
+    });
+    for (const work of stopping) {
+      if (await finalizeWorkSessionCancellation(work.workspaceId, work.id))
+        finishWorkOutput(work.id);
+    }
     // Work obeys the admin Agent concurrency limits; a saturated Agent's Work
     // stays queued without blocking other Agents.
     const limits = await getAgentConcurrencySettings();
@@ -1092,16 +1086,6 @@ export async function startWorkCoordinator() {
           error: "WORK_INTERRUPTED",
           completedAt: now,
           uiLease: null,
-        },
-      );
-      await updateWorkSessionStatus(
-        tx,
-        { status: "cancelling" },
-        {
-          status: "idle",
-          error: null,
-          waitingQuestion: null,
-          completedAt: now,
         },
       );
       await updateWorkSessionStatus(

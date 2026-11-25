@@ -53,8 +53,8 @@ import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import {
   createProviderAction,
   updateProviderAction,
-  type ActionState,
-} from "@/lib/agents/actions";
+} from "@/lib/agents/provider-actions";
+import type { ActionState } from "@/lib/agents/action-state";
 import type { ProviderOAuthSessionSnapshot } from "@/lib/agents/provider-oauth-types";
 import { apiRequest } from "@/lib/client/api";
 import type { ProviderRow } from "./ProvidersPanel";

@@ -6,6 +6,9 @@ import {
   UnsupportedOperationError,
 } from "@a2a-js/sdk/errors";
 import { db } from "@/lib/db";
+import { AgentRevisionError } from "@/lib/agents/revisions";
+import { logSystemEvent } from "@/lib/observability/system";
+import { PluginError } from "@/lib/plugins/errors";
 import {
   A2A_LIMITS,
   agentMessage,
@@ -14,7 +17,7 @@ import {
   taskEvent,
 } from "./model";
 import {
-  assertLiveGrant,
+  permits,
   isLocalGrant,
   isRemoteGrant,
   type TaskGrant,
@@ -217,43 +220,75 @@ export async function resumeMessage(tx: Tx, row: A2ATask): Promise<Message> {
     ],
   });
 }
+const WAIT_PAGE_SIZE = 32;
+let lastWaitId: string | undefined;
+
+async function reconcileWait(id: string) {
+  const stopped = await db.$transaction(async (tx) => {
+    const row = await lockTask(tx, id);
+    if (row.phase !== "waiting" || row.state !== TaskState.TASK_STATE_WORKING)
+      return;
+    const expected = {
+      phase: row.phase,
+      remoteMessageId: row.remoteMessageId,
+      sequence: row.sequence,
+    };
+    if (row.cancelRequestedAt || row.deadlineAt <= new Date())
+      return { expected, detail: "Parent continuation cancelled or expired." };
+    const grant = row.grant as unknown as TaskGrant;
+    try {
+      if (!isLocalGrant(grant) || !permits(grant, "send"))
+        throw new TaskNotFoundError();
+      await assertLocalGrant(grant, tx);
+      const children = await ownedChildren(tx, row, row.waitForTaskIds);
+      if (children.length && children.every(childSettled)) {
+        await tx.a2ATask.update({
+          where: { id },
+          data: { phase: "resumable" },
+        });
+      }
+    } catch (error) {
+      if (
+        error instanceof TaskNotFoundError ||
+        error instanceof UnsupportedOperationError ||
+        error instanceof AgentRevisionError ||
+        (error instanceof PluginError && error.code === "listing_unavailable")
+      )
+        return {
+          expected,
+          detail:
+            "PI_TASK_AUTH_REVOKED: Parent or child continuation authority changed.",
+        };
+      throw error;
+    }
+  });
+  if (stopped) await interruptTask(id, stopped.detail, stopped.expected);
+}
+
 export async function reconcileLocalWaits() {
   const rows = await db.a2ATask.findMany({
     where: {
-      executionBackend: { in: ["pi-sdk"] },
+      executionBackend: "pi-sdk",
       state: TaskState.TASK_STATE_WORKING,
-      phase: { in: ["waiting", "resumable"] },
+      phase: "waiting",
       context: { targetKind: "local" },
+      ...(lastWaitId ? { id: { gt: lastWaitId } } : {}),
     },
-    take: 32,
+    orderBy: { id: "asc" },
+    take: WAIT_PAGE_SIZE,
+    select: { id: true },
   });
-  for (const initial of rows) {
+  // Seek by value so deleting or resuming the last row cannot strand the cursor.
+  lastWaitId = rows.length === WAIT_PAGE_SIZE ? rows.at(-1)?.id : undefined;
+  for (const { id } of rows) {
     try {
-      await assertLiveGrant(initial.grant as unknown as TaskGrant, "send");
-      if (initial.cancelRequestedAt || initial.deadlineAt <= new Date())
-        throw new Error("Stopped");
-      await db.$transaction(async (tx) => {
-        const row = await lockTask(tx, initial.id);
-        if (
-          row.phase !== "waiting" ||
-          row.state !== TaskState.TASK_STATE_WORKING
-        )
-          return;
-        if (row.cancelRequestedAt) return;
-        const children = await ownedChildren(tx, row, row.waitForTaskIds);
-        if (children.length && children.every(childSettled)) {
-          // Under the workspace lock: only one scheduler can mark this generation ready.
-          await tx.a2ATask.update({
-            where: { id: row.id },
-            data: { phase: "resumable" },
-          });
-        }
-      });
+      await reconcileWait(id);
     } catch {
-      await interruptTask(
-        initial.id,
-        "Parent continuation stopped: authority, deadline or child task changed.",
-      );
+      logSystemEvent("a2a.local.reconcile_failed", {
+        domain: "a2a",
+        taskId: id,
+        errorCode: "A2A_WAIT_RECONCILE_FAILED",
+      });
     }
   }
 }

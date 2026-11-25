@@ -225,14 +225,14 @@ export async function createPiMcpTools(config) {
   let registeredTools = 0;
   const definitions = [];
   const fileTools = new Map();
-  for (let serverIndex = 0; serverIndex < config.servers.length; serverIndex += 1) {
-    const server = config.servers[serverIndex];
+  for (const server of config.servers) {
     if (!server || typeof server.name !== 'string' || typeof server.deploymentId !== 'string' || typeof server.url !== 'string') {
       throw new Error('Invalid ToolPlane MCP server entry');
     }
-    let catalog;
+  }
+  const catalogs = await Promise.all(config.servers.map(async (server) => {
     try {
-      catalog = await rpc(server, 'tools/list');
+      return await rpc(server, 'tools/list');
     } catch (error) {
       // Tell the host which server failed and why before Pi aborts the session.
       writeSync(${options.eventFd}, JSON.stringify({
@@ -242,6 +242,9 @@ export async function createPiMcpTools(config) {
       }) + '\n');
       throw error;
     }
+  }));
+  for (const [serverIndex, catalog] of catalogs.entries()) {
+    const server = config.servers[serverIndex];
     const tools = Array.isArray(catalog.tools) ? catalog.tools : [];
     for (let toolIndex = 0; toolIndex < tools.length; toolIndex += 1) {
       const tool = tools[toolIndex];

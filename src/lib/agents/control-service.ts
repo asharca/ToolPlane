@@ -1,4 +1,5 @@
 import "server-only";
+import { ORDINARY_AGENT_FILTER } from "./queries";
 import type { WorkspaceScope } from "@/lib/workspace/scope";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
@@ -217,7 +218,7 @@ function toSafeAgent(agent: AgentControlRow, workspaceSlug: string) {
 
 function loadAgentControlRow(workspaceId: string, agentId: string) {
   return db.agent.findFirst({
-    where: { id: agentId, workspaceId },
+    where: { id: agentId, workspaceId, ...ORDINARY_AGENT_FILTER },
     select: AGENT_CONTROL_SELECT,
   });
 }
@@ -347,7 +348,7 @@ export async function listAgentControlResources(workspaceId: string) {
 
 export async function listAgentControlAgents(workspaceId: string) {
   const agents = await db.agent.findMany({
-    where: { workspaceId },
+    where: { workspaceId, ...ORDINARY_AGENT_FILTER },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,

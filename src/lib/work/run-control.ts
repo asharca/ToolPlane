@@ -1,4 +1,5 @@
 import "server-only";
+import type { Prisma } from "@prisma/client";
 import type { StreamRuleTrigger } from "@/lib/agents/stream-rules";
 import type {
   RunSandboxAgentTurnOptions,
@@ -23,7 +24,9 @@ export type WorkRuntimeObserver = Pick<
   | "onQueuedMessage"
   | "onMessageQueue"
   | "onContextMaintenance"
->;
+> & {
+  queuedReplyParts?: (assistantText: string) => Prisma.InputJsonValue[];
+};
 
 export type WorkOutputSnapshot = {
   text: string;

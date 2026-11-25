@@ -77,6 +77,7 @@ import {
   taskStateName,
 } from "@/lib/observability/a2a-log";
 import { logHealth, recordEvent } from "@/lib/observability/events";
+import { persistSettledChatReply } from "@/lib/agents/execution/chat-reply";
 import { isEntryRootGrant } from "@/lib/observability/views/task-origin";
 import { prepareTaskFileParts, retryTaskFileTransfers } from "./task-files";
 import { TASK_INPUT_SOURCE_PREFIX } from "./file-limits";
@@ -1192,7 +1193,11 @@ export async function finishTask(
 export async function interruptTask(
   id: string,
   detail: string,
-  expected?: { remoteMessageId: string | null; phase: string },
+  expected?: {
+    remoteMessageId: string | null;
+    phase: string;
+    sequence?: number;
+  },
 ): Promise<void> {
   const committed = await db.$transaction(async (tx) => {
     const row = await lockTask(tx, id);
@@ -1200,7 +1205,9 @@ export async function interruptTask(
       terminal(row.state) ||
       (expected &&
         (row.remoteMessageId !== expected.remoteMessageId ||
-          row.phase !== expected.phase))
+          row.phase !== expected.phase ||
+          (expected.sequence !== undefined &&
+            row.sequence !== expected.sequence)))
     )
       return;
     if (isPiHarnessTask(row) && row.nativeOperationId) {
@@ -1264,6 +1271,21 @@ export async function recordTaskSettled(row: A2ATask): Promise<void> {
       grant.entryPolicy &&
       isEntryRootGrant(grant, row.parentTaskId)
     ) {
+      if (grant.entryPolicy.kind === "chat") {
+        try {
+          await persistSettledChatReply(row.id);
+        } catch {
+          await recordEvent({
+            domain: "agent",
+            eventName: "agent.chat_reply.persist_failed",
+            level: "warn",
+            workspaceId: grant.workspaceId,
+            agentId: grant.agentId,
+            taskId: row.id,
+            attributes: { code: "CHAT_REPLY_PERSIST_FAILED" },
+          });
+        }
+      }
       await recordEvent({
         domain: "agent",
         eventName: "agent.execution.settled",

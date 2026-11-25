@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ResourceEnableForm } from "@/components/dashboard/ResourceEnableForm";
 
 const mocks = vi.hoisted(() => ({ preview: vi.fn(), apply: vi.fn() }));
-vi.mock("@/lib/agents/actions", () => ({
+vi.mock("@/lib/agents/config-actions", () => ({
   previewAgentResourceAction: mocks.preview,
   enableAgentResourceAction: mocks.apply,
 }));

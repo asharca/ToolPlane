@@ -33,9 +33,11 @@ export const POST = withRequestLogging(
     }
     const active = abortWorkRun(work.id);
     if (result.status === "cancelling" && !active) {
-      await finalizeWorkSessionCancellation(work.workspaceId, work.id);
-      finishWorkOutput(work.id);
-      return Response.json({ status: "idle" });
+      if (await finalizeWorkSessionCancellation(work.workspaceId, work.id)) {
+        finishWorkOutput(work.id);
+        return Response.json({ status: "idle" });
+      }
+      return Response.json({ status: "cancelling" });
     }
     if (!active) finishWorkOutput(work.id);
     return Response.json({ status: result.status });

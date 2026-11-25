@@ -16,6 +16,7 @@ import { sandboxRuntimeExecWrapper, TURN_TIMEOUT_MS } from "../sandbox-runtime";
 export const PACKAGE_INSTALL_TIMEOUT_MS = 15 * 60_000;
 
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
+const MAX_STDERR_CHARS = 16 * 1024;
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -35,6 +36,7 @@ export type DockerExecOptions = {
   signal?: AbortSignal;
   timeoutMs?: number;
   maxStdoutBytes?: number;
+  /** Consumes stdout in order. The resolved output is empty in this mode. */
   onStdout?: (chunk: string) => void | Promise<void>;
   secrets?: readonly string[];
   piHarness?: boolean;
@@ -249,7 +251,9 @@ function runTrackedDockerExecOwned(
     const secrets = options.secrets ?? [];
     const maxStdout = options.maxStdoutBytes ?? MAX_STDOUT_BYTES;
     let stdout = "";
+    let stdoutBytes = 0;
     let stderr = "";
+    let stderrTruncated = false;
     let prelude = "";
     let preludeDone = false;
     let innerPid: number | null = null;
@@ -283,22 +287,52 @@ function runTrackedDockerExecOwned(
       if (!forceKillTimer)
         forceKillTimer = setTimeout(() => child.kill("SIGKILL"), 2_000);
     };
+    const appendStderr = (chunk: string) => {
+      stderr += chunk;
+      if (stderr.length > MAX_STDERR_CHARS * 2) {
+        stderr = stderr.slice(-MAX_STDERR_CHARS);
+        stderrTruncated = true;
+      }
+    };
     const appendStdout = (chunk: string) => {
-      if (!chunk) return;
-      if (Buffer.byteLength(stdout) + Buffer.byteLength(chunk) > maxStdout) {
+      if (!chunk || stopError) return;
+      const onStdout = options.onStdout;
+      if (onStdout) {
+        child.stdout.pause();
+        callbackChain = callbackChain.then(async () => {
+          try {
+            if (!stopError) await onStdout.call(options, chunk);
+          } catch (error) {
+            const failure =
+              error instanceof Error
+                ? error
+                : new Error("Sandbox output consumer failed.");
+            if (settled) stopError ??= failure;
+            else stop(failure);
+          } finally {
+            child.stdout.resume();
+          }
+        });
+        return;
+      }
+      stdoutBytes += Buffer.byteLength(chunk);
+      if (stdoutBytes > maxStdout) {
         stop(new Error("Sandbox runtime output exceeded its limit."));
         return;
       }
       stdout += chunk;
-      const onStdout = options.onStdout;
-      if (onStdout)
-        callbackChain = callbackChain.then(() => onStdout.call(options, chunk));
     };
     const consumeStdout = (chunk: string) => {
       if (preludeDone) return appendStdout(chunk);
       prelude += chunk;
       const newline = prelude.indexOf("\n");
-      if (newline < 0) return;
+      if (newline < 0) {
+        if (prelude.length <= controlPrefix.length + 20) return;
+        preludeDone = true;
+        appendStdout(prelude);
+        prelude = "";
+        return;
+      }
       const firstLine = prelude.slice(0, newline).replace(/\r$/, "");
       const rest = prelude.slice(newline + 1);
       prelude = "";
@@ -326,18 +360,13 @@ function runTrackedDockerExecOwned(
       settled = true;
       cleanup();
       consumeStdout(stdoutDecoder.end());
-      stderr += stderrDecoder.end();
+      appendStderr(stderrDecoder.end());
       if ((options.piHarness || options.stdinFile) && code !== 0 && !spawnError)
         terminate();
       if (inputTransfer) await inputTransfer;
+      await callbackChain;
       if (stopping) await stopping;
       if (terminationError) return reject(terminationError);
-      try {
-        await callbackChain;
-      } catch (error) {
-        reject(error);
-        return;
-      }
       if (stopError)
         return reject(
           options.piHarness && aborted
@@ -360,7 +389,21 @@ function runTrackedDockerExecOwned(
             : spawnError,
         );
       if (code !== 0) {
-        const detail = redact(stderr.trim(), secrets);
+        let detail = redact(stderr, secrets);
+        if (stderrTruncated && secrets.some(Boolean)) {
+          // The retained tail may begin inside a secret. Full secrets have
+          // already been redacted, so discard any possibly partial lines.
+          const lines = Math.max(
+            ...secrets.map((secret) => secret.split("\n").length),
+          );
+          let start = 0;
+          for (let i = 0; i < lines; i++) {
+            const newline = detail.indexOf("\n", start);
+            start = newline < 0 ? detail.length : newline + 1;
+          }
+          detail = detail.slice(start);
+        }
+        detail = detail.slice(-MAX_STDERR_CHARS).trim();
         if (options.piHarness && (signal || code === 137 || code === 143)) {
           return reject(
             new PiRuntimeInterruptedError(
@@ -396,7 +439,7 @@ function runTrackedDockerExecOwned(
       consumeStdout(stdoutDecoder.write(chunk)),
     );
     child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += stderrDecoder.write(chunk);
+      appendStderr(stderrDecoder.write(chunk));
     });
     child.once("error", (error) => void finish(null, null, error));
     child.once("close", (code, signal) => void finish(code, signal));

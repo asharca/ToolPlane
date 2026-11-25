@@ -81,6 +81,7 @@ import {
 } from "@/lib/agents/budget-warning";
 import { taskOutput, taskReplySegments } from "./live-output";
 import type { AgentMessageQueue } from "./message-queue";
+import { chatUserMessageId } from "./chat-reply";
 import { isSilentAgentReply } from "@/lib/agents/messaging";
 
 export type EntryMessage = { id?: string; role: string; parts: unknown };
@@ -90,6 +91,7 @@ export type AgentEntryInput = EntryIdentity & {
   actorId: string;
   messageId: string;
   text: string;
+  chatTextParts?: string[];
   modelOverride?: AgentModelOverride;
 };
 const hash = (data: unknown) =>
@@ -325,6 +327,32 @@ export async function submitAgentEntry(
         taskId: row.id,
       },
     });
+    if (input.kind === "chat") {
+      const latest = await tx.message.findFirst({
+        where: { conversationId: input.sourceId },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { createdAt: true },
+      });
+      await tx.message.create({
+        data: {
+          id: chatUserMessageId(input.sourceId, input.actorId, input.messageId),
+          conversationId: input.sourceId,
+          role: "user",
+          // Reserve room for a previous turn whose file capture is still finishing.
+          createdAt: new Date(
+            Math.max(
+              Date.now(),
+              (previous?.statusAt.getTime() ?? 0) + 1,
+              (latest?.createdAt.getTime() ?? 0) + 2,
+            ),
+          ),
+          parts: (input.chatTextParts ?? [input.text]).map((text) => ({
+            type: "text",
+            text,
+          })),
+        },
+      });
+    }
     await refreshTaskStorage(tx, row.id);
     return { row, grant, replay: false };
   });
@@ -425,7 +453,6 @@ export async function runAgentEntry(
   try {
     while (true) {
       input.signal?.throwIfAborted();
-      await assertLocalGrant(accepted.grant);
       const row = await getTaskRow(accepted.grant, accepted.row.id);
       const task = Task.fromJSON(row.snapshot);
       // Close the terminal-observation/accounting race for successful entry replies.
@@ -482,15 +509,6 @@ export async function runAgentEntry(
       await delay(500, undefined, { signal: input.signal });
     }
   } catch (error) {
-    const recorded = await db.a2ATask.findUnique({
-      where: { id: accepted.row.id },
-      select: { snapshot: true, uiProjection: true },
-    });
-    if (recorded) {
-      await observeActivities(recorded.uiProjection);
-      await observePrompts(Task.fromJSON(recorded.snapshot));
-      await observeBudgetWarning();
-    }
     // Work's explicit cancel flag is authoritative. A socket close/shutdown is not.
     if (input.kind === "work") {
       const work = await db.workSession.findFirst({
@@ -504,15 +522,30 @@ export async function runAgentEntry(
       });
       if (work?.cancelRequestedAt) {
         await requestWorkEntryCancellation(input.sourceId, accepted.row.id);
-        // Do not mark Work idle while its leased sandbox operation is still stopping.
-        for (;;) {
+        // Reconciliation keeps Work cancelling until the task tree has stopped.
+        const deadline = AbortSignal.timeout(5_000);
+        const stop = input.signal
+          ? AbortSignal.any([input.signal, deadline])
+          : deadline;
+        while (!stop.aborted) {
           const current = await db.a2ATask.findUnique({
             where: { id: accepted.row.id },
+            select: { state: true },
           });
           if (!current || terminal(current.state)) break;
-          await delay(500);
+          await delay(500, undefined, { signal: stop });
         }
       }
+    }
+    if (
+      !input.signal?.aborted &&
+      !(error instanceof TaskNotFoundError) &&
+      (input.onActivity || input.onPromptInvocation || input.onBudgetWarning)
+    ) {
+      const recorded = await getTaskRow(accepted.grant, accepted.row.id);
+      await observeActivities(recorded.uiProjection);
+      await observePrompts(Task.fromJSON(recorded.snapshot));
+      await observeBudgetWarning();
     }
     throw error;
   }

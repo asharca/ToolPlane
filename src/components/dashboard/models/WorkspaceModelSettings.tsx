@@ -25,7 +25,7 @@ import {
 import {
   updateWorkspaceModelPreferenceAction,
   updateWorkspaceModelRetryAction,
-} from "@/lib/agents/actions";
+} from "@/lib/agents/provider-actions";
 
 function ModelPreferenceRow({
   slug,

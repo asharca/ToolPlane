@@ -6,7 +6,7 @@ import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/motion/button/base";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
-import { approveAgentPluginSyncAction } from "@/lib/agents/actions";
+import { approveAgentPluginSyncAction } from "@/lib/agents/config-actions";
 
 export type AgentPluginCapabilityDiff = {
   addedMcp: { key: string; tools: string[]; requirementAdded: boolean }[];

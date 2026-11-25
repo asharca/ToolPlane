@@ -33,6 +33,8 @@ import {
   conversationModelOverride,
 } from "./turn-model";
 import { notifyTaskOutput } from "./execution/live-output";
+import { persistSettledChatReply } from "./execution/chat-reply";
+import { parseRuntimeFailure, runtimeFailureText } from "./runtime-failure";
 import { appendBudgetWarningText } from "./budget-warning";
 
 export class RuntimeCommandError extends Error {
@@ -67,7 +69,6 @@ export async function executeRuntimeCommand(input: {
       include: {
         workSession: true,
         publicApiConversation: { select: { id: true } },
-        messages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
       },
     }),
   ]);
@@ -111,7 +112,6 @@ export async function executeRuntimeCommand(input: {
       where: { id: scope.id },
       include: {
         workSession: true,
-        messages: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
       },
     });
     const work = conversation.workSession;
@@ -221,13 +221,16 @@ export async function executeRuntimeCommand(input: {
     if (input.entry?.kind === "channel" && !input.messageId)
       throw new RuntimeCommandError("invalidCommand");
     try {
-      const user = await db.message.create({
-        data: {
-          conversationId: conversation.id,
-          role: "user",
-          parts: [{ type: "text", text: input.line }],
-        },
-      });
+      const user =
+        sdkEntry.kind === "chat"
+          ? null
+          : await db.message.create({
+              data: {
+                conversationId: conversation.id,
+                role: "user",
+                parts: [{ type: "text", text: input.line }],
+              },
+            });
       const result = await runAgentEntry({
         ...sdkEntry,
         workspaceId: input.workspaceId,
@@ -240,13 +243,30 @@ export async function executeRuntimeCommand(input: {
           sdkEntry.kind === "chat" || sdkEntry.kind === "work"
             ? input.modelOverride
             : undefined,
-        onPromptInvocation: (invocation) =>
-          persistAgentPromptInvocation({
-            conversationId: conversation.id,
-            messageId: user.id,
-            invocation,
-          }),
+        ...(user && {
+          onPromptInvocation: (invocation) =>
+            persistAgentPromptInvocation({
+              conversationId: conversation.id,
+              messageId: user.id,
+              invocation,
+            }),
+        }),
       });
+      if (sdkEntry.kind === "chat") {
+        if (
+          !(await persistSettledChatReply(result.task.id, {
+            workspaceId: input.workspaceId,
+            agentId: input.agentId,
+            actorId: input.actorId,
+            conversationId: conversation.id,
+          }))
+        )
+          throw new TaskNotFoundError();
+        return {
+          kind: "output" as const,
+          text: agentEntryResult(result.task, result.path),
+        };
+      }
       const reply = agentEntryResult(result.task, result.path);
       const text =
         sdkEntry.kind === "channel"
@@ -273,7 +293,11 @@ export async function executeRuntimeCommand(input: {
       if (error instanceof TaskNotFoundError)
         throw new RuntimeCommandError("notFound", 404);
       throw new RuntimeCommandError(
-        error instanceof Error ? error.message : "The runtime command failed.",
+        runtimeFailureText(
+          (error instanceof Error && parseRuntimeFailure(error.message)) || {
+            code: "PI_EXECUTION_FAILED",
+          },
+        ),
         502,
       );
     }

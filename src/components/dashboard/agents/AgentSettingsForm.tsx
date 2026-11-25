@@ -47,7 +47,7 @@ import {
   prepareAgentRevisionAction,
   publishAgentRevisionAction,
   updateAgentAction,
-} from "@/lib/agents/actions";
+} from "@/lib/agents/config-actions";
 import type { AgentRevisionConfig } from "@/lib/agents/revision-types";
 import { buildAgentRevisionDiff } from "@/lib/revisions/config-diff";
 import {

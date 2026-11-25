@@ -25,8 +25,8 @@ export async function listAgentSessionPrompts(
         await sessionMcpRequest(context, source.deploymentId, "prompts/list"),
       );
       return result.prompts.map((prompt) => ({
-        ...source,
         ...prompt,
+        ...source,
         arguments: prompt.arguments ?? [],
       }));
     }),
@@ -43,10 +43,11 @@ export async function resolveAgentSessionPrompt(
     arguments: Record<string, string>;
   },
 ) {
-  const prompt = (await listAgentSessionPrompts(context, deploymentIds)).find(
-    (item) =>
-      item.deploymentId === input.deploymentId && item.name === input.name,
-  );
+  const prompt = deploymentIds.includes(input.deploymentId)
+    ? (await listAgentSessionPrompts(context, [input.deploymentId])).find(
+        (item) => item.name === input.name,
+      )
+    : undefined;
   if (!prompt)
     throw new McpPromptRequestError(
       404,
@@ -124,9 +125,11 @@ export async function readAgentSessionResource(
   deploymentId: string,
   uri: string,
 ) {
-  const resource = (
-    await listAgentSessionResources(context, deploymentIds)
-  ).find((item) => item.deploymentId === deploymentId && item.uri === uri);
+  const resource = deploymentIds.includes(deploymentId)
+    ? (await listAgentSessionResources(context, [deploymentId])).find(
+        (item) => item.uri === uri,
+      )
+    : undefined;
   if (!resource)
     throw new McpPromptRequestError(
       404,

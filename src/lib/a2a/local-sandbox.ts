@@ -1,6 +1,6 @@
 import "server-only";
 import type { A2ATask } from "@prisma/client";
-import { Task, Role } from "@a2a-js/sdk";
+import { Task, Role, TaskState } from "@a2a-js/sdk";
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { posix } from "node:path";
@@ -9,6 +9,9 @@ import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { sandboxContainerName } from "@/lib/sandboxes/runtime";
 import { agentSessionWorkingDirectory } from "@/lib/agents/session-paths";
+import { resolveAgentEnvironmentCredentials } from "@/lib/agents/environment-credentials";
+import { requireAgentRevision } from "@/lib/agents/revisions";
+import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import {
   runtimeAbortSignal,
   trackRuntimeOperation,
@@ -23,6 +26,7 @@ import { taskFileLimitError } from "./file-limits";
 import { db } from "@/lib/db";
 import { assertRuntimeOwner } from "@/lib/runtime/ownership-state";
 import {
+  type AgentConversationSandbox,
   ensureAgentConversationSandbox,
   findAgentConversationSandbox,
 } from "@/lib/agents/conversation-sandbox";
@@ -39,19 +43,62 @@ export class SandboxFileStagingError extends Error {
   }
 }
 
+type LocalTaskSandboxMapping = AgentConversationSandbox & {
+  a2aContextId: string;
+};
+
 /** Entry IDs come from the signed, revalidated ingress grant, never runtime input. */
 export async function localTaskSandbox(
   row: A2ATask,
-  cleanup = false,
+  mode: "admit" | "cleanup" | "access",
   signal?: AbortSignal,
-) {
+): Promise<LocalTaskSandboxMapping> {
   const grant = row.grant as unknown as TaskGrant;
-  if (!isLocalGrant(grant)) throw new Error("Local target unavailable.");
-  if (cleanup) {
+  if (!isLocalGrant(grant)) throw new Error("PI_TARGET_UNAVAILABLE");
+  if (mode === "cleanup") {
     assertRuntimeOwner();
     if (row.executionBackend !== "pi-harness" || !row.nativeOperationId)
       throw new Error("Native cleanup requires a bound operation.");
   } else await assertLiveGrant(grant, "send");
+  if (mode === "admit" && row.executionBackend === "pi-sdk") {
+    const { config } = await requireAgentRevision(
+      db,
+      grant.agentId,
+      grant.agentRevisionId,
+    );
+    if (config.packages.length) {
+      const releases = await db.marketRelease.findMany({
+        where: {
+          reviewStatus: "approved",
+          OR: config.packages.map((pin) => ({
+            id: pin.releaseId,
+            checksum: pin.integrity,
+            listing: {
+              kind: "pi-package",
+              status: { in: ["published", "removed"] },
+              installs: {
+                some: {
+                  id: pin.marketInstallId,
+                  targetWorkspaceId: grant.workspaceId,
+                  status: { in: ["ready", "uninstalled"] },
+                },
+              },
+            },
+          })),
+        },
+        select: { manifest: true, checksum: true },
+      });
+      if (releases.length !== config.packages.length)
+        throw new Error("PI_PACKAGE_UNAVAILABLE");
+      for (const release of releases) {
+        try {
+          parsePiPackageReleaseManifest(release.manifest, release.checksum);
+        } catch {
+          throw new Error("PI_PACKAGE_UNAVAILABLE");
+        }
+      }
+    }
+  }
   let conversationId: string | undefined;
   if (!grant.ancestorTaskIds.length && grant.entryPolicy) {
     if (grant.entryPolicy.kind === "work") {
@@ -63,7 +110,7 @@ export async function localTaskSandbox(
         },
         select: { conversationId: true },
       });
-      if (!work) throw new Error("Local Work session unavailable.");
+      if (!work) throw new Error("PI_TARGET_UNAVAILABLE");
       conversationId = work.conversationId;
     } else
       conversationId =
@@ -75,10 +122,11 @@ export async function localTaskSandbox(
     conversationId,
     contextId: row.contextId,
   };
-  const mapping = cleanup
-    ? await findAgentConversationSandbox({ ...identity, cleanup: true })
-    : await ensureAgentConversationSandbox({ ...identity, signal });
-  if (!mapping) throw new Error("Bound native sandbox unavailable.");
+  const mapping =
+    mode === "cleanup"
+      ? await findAgentConversationSandbox({ ...identity, cleanup: true })
+      : await ensureAgentConversationSandbox({ ...identity, signal });
+  if (!mapping) throw new Error("PI_TARGET_UNAVAILABLE");
   if (conversationId && grant.entryPolicy?.kind === "work")
     await db.workSession.updateMany({
       where: {
@@ -94,6 +142,62 @@ export async function localTaskSandbox(
     conversationId: mapping.conversationId ?? conversationId,
     a2aContextId: row.contextId,
   };
+}
+
+export type LocalTaskSandboxLease = {
+  taskId: string;
+  leaseToken: string;
+  mapping: LocalTaskSandboxMapping;
+};
+
+export async function claimedTaskSandbox(
+  row: A2ATask,
+  signal: AbortSignal,
+  lease?: LocalTaskSandboxLease,
+) {
+  signal.throwIfAborted();
+  if (!lease) return localTaskSandbox(row, "access", signal);
+  assertRuntimeOwner();
+  const grant = row.grant as unknown as TaskGrant;
+  const { mapping } = lease;
+  if (
+    !isLocalGrant(grant) ||
+    lease.taskId !== row.id ||
+    lease.leaseToken !== row.leaseToken ||
+    mapping.a2aContextId !== row.contextId
+  )
+    throw new Error("PI_TASK_AUTH_REVOKED");
+  await assertLiveGrant(grant, "send");
+  // Reuse allocation only while this claim owns the same live session binding.
+  const bound = await db.a2ATask.findFirst({
+    where: {
+      id: row.id,
+      leaseToken: lease.leaseToken,
+      state: TaskState.TASK_STATE_WORKING,
+      executionBackend: "pi-sdk",
+      phase: "executing",
+      cancelRequestedAt: null,
+      deadlineAt: { gt: new Date() },
+      context: {
+        id: row.contextId,
+        workspaceId: grant.workspaceId,
+        agentId: grant.agentId,
+        sandboxId: mapping.sandboxId,
+        agentRevisionId: grant.agentRevisionId,
+      },
+    },
+    select: { id: true },
+  });
+  if (!bound) throw new Error("PI_TASK_AUTH_REVOKED");
+  await resolveAgentEnvironmentCredentials({
+    workspaceId: grant.workspaceId,
+    agentId: grant.agentId,
+    agentRevisionId: grant.agentRevisionId,
+    contextId: row.contextId,
+    conversationId: mapping.conversationId,
+  });
+  signal.throwIfAborted();
+  return mapping;
 }
 
 export function sandboxFilePath(path: string): string {
@@ -126,7 +230,7 @@ async function fileProcess(
   path: string,
   signal?: AbortSignal,
 ) {
-  const mapping = await localTaskSandbox(row, false, signal);
+  const mapping = await localTaskSandbox(row, "access", signal);
   const owner = runtimeAbortSignal();
   const combined = AbortSignal.any([
     AbortSignal.timeout(60_000),
@@ -374,7 +478,7 @@ export async function stageLocalTaskFiles(
   const files = await listTaskFiles(row.id);
   const staged: StagedTaskFile[] = [];
   if (!files.length) return staged;
-  const mapping = await localTaskSandbox(row, false, signal);
+  const mapping = await localTaskSandbox(row, "access", signal);
   for (const file of files) {
     const path = `${mapping.workspaceRoot}/.a2a-files/${row.id}/${file.id}-${file.filename}`;
     await trackRuntimeOperation(async () => {

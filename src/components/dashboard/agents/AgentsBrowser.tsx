@@ -32,7 +32,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { createAgentAction } from "@/lib/agents/actions";
+import { createAgentAction } from "@/lib/agents/config-actions";
 import {
   DashboardEmptyState,
   DashboardPage,

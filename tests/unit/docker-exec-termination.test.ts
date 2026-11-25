@@ -22,7 +22,10 @@ import { ownership } from "@/lib/runtime/ownership-state";
 function fakeChild() {
   const child = Object.assign(new EventEmitter(), {
     stdin: Object.assign(new EventEmitter(), { end: vi.fn() }),
-    stdout: new EventEmitter(),
+    stdout: Object.assign(new EventEmitter(), {
+      pause: vi.fn(),
+      resume: vi.fn(),
+    }),
     stderr: new EventEmitter(),
     kill: vi.fn(() => {
       queueMicrotask(() => child.emit("close", null, "SIGKILL"));
@@ -77,6 +80,58 @@ describe("sandbox exec termination", () => {
     await vi.advanceTimersByTimeAsync(10 * 10_100);
     return settled;
   }
+
+  const command = {
+    container: "toolplane-sandbox-1",
+    workdir: "/workspace",
+    executable: "node",
+  };
+
+  it("delivers streamed stdout in order beyond the buffer limit and returns empty output", async () => {
+    const child = fakeChild();
+    mocks.spawn.mockReturnValueOnce(child);
+    const received: string[] = [];
+    const turn = runTrackedDockerExec({
+      ...command,
+      maxStdoutBytes: 4,
+      async onStdout(chunk) {
+        await Promise.resolve();
+        received.push(chunk);
+      },
+    });
+    const bytes = Buffer.from("a\n猫猫");
+    child.stdout.emit("data", bytes.subarray(0, 4));
+    child.stdout.emit("data", bytes.subarray(4));
+    child.emit("close", 0, null);
+    await expect(turn).resolves.toBe("");
+    expect(received.join("")).toBe("a\n猫猫");
+  });
+
+  it.each([7, 6])(
+    "enforces a buffered stdout limit of %i bytes",
+    async (limit) => {
+      const child = fakeChild();
+      mocks.spawn.mockReturnValueOnce(child);
+      mocks.killAttempts = ["ok"];
+      const turn = runTrackedDockerExec({ ...command, maxStdoutBytes: limit });
+      child.stdout.emit("data", Buffer.from("猫\n"));
+      child.stdout.emit("data", Buffer.from("猫"));
+      child.emit("close", 0, null);
+      if (limit === 7) await expect(turn).resolves.toBe("猫\n猫");
+      else await expect(turn).rejects.toThrow("output exceeded its limit");
+    },
+  );
+
+  it("returns the redacted stderr tail on failure", async () => {
+    const child = fakeChild();
+    mocks.spawn.mockReturnValueOnce(child);
+    const turn = runTrackedDockerExec({ ...command, secrets: ["sensitive"] });
+    child.stderr.emit("data", Buffer.from("x".repeat(64 * 1024)));
+    child.stderr.emit("data", Buffer.from("\nfailed: sens"));
+    child.stderr.emit("data", Buffer.from("itive"));
+    child.emit("close", 1, null);
+    await expect(turn).rejects.toThrow(/^failed: \[REDACTED\]$/);
+  });
 
   it("does not latch ownership uncertainty when a later stop attempt completes", async () => {
     mocks.killAttempts = ["hang", "hang", "ok"];

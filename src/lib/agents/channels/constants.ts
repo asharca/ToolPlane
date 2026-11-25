@@ -1,4 +1,6 @@
 // Adapted from Cherry Studio. See NOTICE for source and license.
+export const MAX_INBOUND_PAYLOAD_BYTES = 32 * 1024 * 1024;
+
 export const SLASH_COMMANDS = [
   { name: "new", description: "Start a new conversation" },
   { name: "compact", description: "Compact conversation history" },

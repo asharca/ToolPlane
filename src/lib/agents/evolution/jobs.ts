@@ -1,7 +1,7 @@
 import "server-only";
 import { workspaceAccessWhere } from "@/lib/workspace/scope";
 import { randomUUID } from "node:crypto";
-import type { AgentEvolutionRecord, Prisma } from "@prisma/client";
+import { type AgentEvolutionRecord, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
@@ -526,97 +526,157 @@ async function runEvaluation(job: AgentEvolutionRecord) {
     },
   });
 }
-let busy = false,
-  lastScheduled = 0;
-export async function tickEvolutionJobs() {
-  if (busy || !runtimeCanOperate()) return;
-  busy = true;
-  try {
-    assertRuntimeOwner();
-    await cleanupEvolutionContainers();
-    const episodes = await db.agentEvolutionRecord.findMany({
+type EvolutionWorker = {
+  lastScheduled: number;
+  maintenance?: Promise<void>;
+  claiming: boolean;
+  activeAgents: Set<string>;
+};
+const globals = globalThis as typeof globalThis & {
+  __toolplaneEvolution?: EvolutionWorker;
+};
+globals.__toolplaneEvolution ??= {
+  lastScheduled: 0,
+  claiming: false,
+  activeAgents: new Set(),
+};
+const worker: EvolutionWorker = globals.__toolplaneEvolution;
+const { activeAgents } = worker;
+const MAX_RUNNING_JOBS = 2;
+
+async function maintainEvolutionJobs() {
+  await cleanupEvolutionContainers();
+  const episodes = await db.agentEvolutionRecord.findMany({
+    where: {
+      kind: "episode-ingest",
+      status: "queued",
+      createdAt: { lte: new Date(Date.now() - 3000) },
+    },
+    take: 50,
+    orderBy: { createdAt: "asc" },
+  });
+  for (const episode of episodes) {
+    const task = await db.a2ATask.findFirst({
       where: {
-        kind: "episode-ingest",
-        status: "queued",
-        createdAt: { lte: new Date(Date.now() - 3000) },
+        id: String(payload(episode).taskId),
+        context: {
+          agentId: episode.agentId,
+          workspaceId: episode.workspaceId,
+        },
       },
-      take: 50,
-      orderBy: { createdAt: "asc" },
     });
-    for (const episode of episodes) {
-      const task = await db.a2ATask.findFirst({
-        where: {
-          id: String(payload(episode).taskId),
-          context: {
-            agentId: episode.agentId,
-            workspaceId: episode.workspaceId,
-          },
-        },
-      });
-      if (task) await recordEpisode(task);
-      await db.agentEvolutionRecord.update({
-        where: { id: episode.id },
-        data: { status: "succeeded" },
-      });
-    }
-    if (Date.now() - lastScheduled > 60_000) {
-      lastScheduled = Date.now();
-      await scheduleReflections();
-    }
-    const job = await db.$transaction(async (tx) => {
-      const rows = await tx.$queryRaw<
-        Array<{ id: string }>
-      >`SELECT id FROM "AgentEvolutionRecord" WHERE kind IN ('reflection','evaluation') AND (status='queued' OR (status='running' AND "leaseExpiresAt" < NOW())) ORDER BY "createdAt" FOR UPDATE SKIP LOCKED LIMIT 1`;
-      if (!rows[0]) return null;
-      return tx.agentEvolutionRecord.update({
-        where: { id: rows[0].id },
-        data: {
-          status: "running",
-          leaseToken: randomUUID(),
-          leaseExpiresAt: new Date(Date.now() + 360_000),
-        },
-      });
+    if (task) await recordEpisode(task);
+    await db.agentEvolutionRecord.update({
+      where: { id: episode.id },
+      data: { status: "succeeded" },
     });
-    if (!job) return;
-    try {
-      if (
-        !(await actorAuthorized({
-          agentId: job.agentId,
-          workspaceId: job.workspaceId,
-          actorId: job.actorId,
-        }))
-      )
-        throw new EvolutionError("FORBIDDEN");
-      if (job.kind === "reflection") await runReflection(job);
-      else await runEvaluation(job);
-      await db.agentEvolutionRecord.updateMany({
-        where: { id: job.id, status: "running", leaseToken: job.leaseToken },
-        data: {
-          status: "succeeded",
-          completedAt: new Date(),
-          leaseToken: null,
-          leaseExpiresAt: null,
-        },
-      });
-    } catch (error) {
-      // Interrupted isolated work is side-effect-free and safely resumed after lease expiry.
-      if (!runtimeCanOperate()) return;
-      await db.agentEvolutionRecord.updateMany({
-        where: { id: job.id, status: "running", leaseToken: job.leaseToken },
-        data: {
-          status: "failed",
-          failureCode:
-            error instanceof EvolutionError ? error.code : "EVOLUTION_FAILED",
-          completedAt: new Date(),
-          leaseToken: null,
-          leaseExpiresAt: null,
-        },
-      });
-    }
-  } finally {
-    busy = false;
+  }
+  if (Date.now() - worker.lastScheduled > 60_000) {
+    worker.lastScheduled = Date.now();
+    await scheduleReflections();
   }
 }
+
+async function claimEvolutionJob() {
+  // Keep the per-Agent budget check serial across that Agent's jobs.
+  const idleAgent = activeAgents.size
+    ? Prisma.sql`AND j."agentId" NOT IN (${Prisma.join([...activeAgents])})`
+    : Prisma.empty;
+  return db.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<
+      Array<{ id: string }>
+    >`SELECT j.id FROM "AgentEvolutionRecord" j
+        JOIN "Agent" a ON a.id = j."agentId" AND a."workspaceId" = j."workspaceId"
+        WHERE j.kind IN ('reflection','evaluation') AND
+          (j.status='queued' OR (j.status='running' AND j."leaseExpiresAt" < NOW()))
+          ${idleAgent}
+          AND NOT EXISTS (SELECT 1 FROM "AgentEvolutionRecord" other
+            WHERE other."agentId"=j."agentId" AND other.kind IN ('reflection','evaluation')
+              AND other.status='running' AND other."leaseExpiresAt" >= NOW())
+        ORDER BY j."createdAt", j.id LIMIT 1 FOR UPDATE OF a,j SKIP LOCKED`;
+    if (!rows[0]) return null;
+    return tx.agentEvolutionRecord.update({
+      where: { id: rows[0].id },
+      data: {
+        status: "running",
+        leaseToken: randomUUID(),
+        leaseExpiresAt: new Date(Date.now() + 360_000),
+      },
+    });
+  });
+}
+
+async function executeEvolutionJob(job: AgentEvolutionRecord) {
+  try {
+    if (
+      !(await actorAuthorized({
+        agentId: job.agentId,
+        workspaceId: job.workspaceId,
+        actorId: job.actorId,
+      }))
+    )
+      throw new EvolutionError("FORBIDDEN");
+    if (job.kind === "reflection") await runReflection(job);
+    else await runEvaluation(job);
+    await db.agentEvolutionRecord.updateMany({
+      where: { id: job.id, status: "running", leaseToken: job.leaseToken },
+      data: {
+        status: "succeeded",
+        completedAt: new Date(),
+        leaseToken: null,
+        leaseExpiresAt: null,
+      },
+    });
+  } catch (error) {
+    // Interrupted isolated work is side-effect-free and safely resumed after lease expiry.
+    if (!runtimeCanOperate()) return;
+    await db.agentEvolutionRecord.updateMany({
+      where: { id: job.id, status: "running", leaseToken: job.leaseToken },
+      data: {
+        status: "failed",
+        failureCode:
+          error instanceof EvolutionError ? error.code : "EVOLUTION_FAILED",
+        completedAt: new Date(),
+        leaseToken: null,
+        leaseExpiresAt: null,
+      },
+    });
+  }
+}
+async function fillEvolutionSlots() {
+  if (worker.claiming || activeAgents.size >= MAX_RUNNING_JOBS) return;
+  worker.claiming = true;
+  const claimed: AgentEvolutionRecord[] = [];
+  try {
+    while (runtimeCanOperate() && activeAgents.size < MAX_RUNNING_JOBS) {
+      const job = await claimEvolutionJob();
+      if (!job) break;
+      activeAgents.add(job.agentId);
+      claimed.push(job);
+    }
+  } finally {
+    worker.claiming = false;
+    await Promise.all(
+      claimed.map(async (job) => {
+        try {
+          if (runtimeCanOperate()) await executeEvolutionJob(job);
+        } finally {
+          activeAgents.delete(job.agentId);
+        }
+      }),
+    );
+  }
+}
+
+export async function tickEvolutionJobs() {
+  if (!runtimeCanOperate()) return;
+  assertRuntimeOwner();
+  worker.maintenance ??= maintainEvolutionJobs().finally(() => {
+    worker.maintenance = undefined;
+  });
+  await Promise.all([worker.maintenance, fillEvolutionSlots()]);
+}
+
 async function scheduleReflections() {
   const due = await db.agentEvolutionSettings.findMany({
     where: {

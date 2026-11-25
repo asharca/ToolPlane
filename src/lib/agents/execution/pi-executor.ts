@@ -40,7 +40,7 @@ import {
 } from "./live-output";
 
 /** Local runtime port: Task context identity, not a private Conversation or old sub-agent runner. */
-export const executeLocalTask: TaskExecutor = async (row, signal) => {
+export const executeLocalTask: TaskExecutor = async (row, signal, lease) => {
   if (row.executionBackend === "pi-harness")
     return drainRetiredPiHarnessTask(row, signal);
   if (row.executionBackend !== "pi-sdk")
@@ -64,6 +64,7 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
     row,
     signal,
     LOCAL_COLLABORATION_INSTRUCTIONS,
+    lease,
   );
   configureTaskOutput(
     row.id,
@@ -119,11 +120,19 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
       onQueuedMessage: async (message, assistantText) => {
         if (!conversation) throw new Error("Queued conversation unavailable.");
         await assertLiveGrant(grant, "send");
-        if (assistantText && !isSilentAgentReply(assistantText))
-          queuedReplyText += `${queuedReplyText ? "\n\n" : ""}${assistantText}`;
-        await observer?.onQueuedMessage?.(message, assistantText);
-        await db.$transaction(async (tx) => {
+        const assistantParts =
+          observer?.queuedReplyParts?.(assistantText) ??
+          (assistantText ? [{ type: "text", text: assistantText }] : []);
+        const inserted = await db.$transaction(async (tx) => {
           await tx.$queryRaw`SELECT id FROM "Conversation" WHERE id=${conversation.id} FOR UPDATE`;
+          const userId = `queued-message-${message.id}`;
+          if (
+            await tx.message.findFirst({
+              where: { id: userId, conversationId: conversation.id },
+              select: { id: true },
+            })
+          )
+            return false;
           const previous = await tx.message.findFirst({
             where: { conversationId: conversation.id },
             orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -133,20 +142,47 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
             Date.now(),
             (previous?.createdAt.getTime() ?? 0) + 1,
           );
-          if (!observer && assistantText)
+          if (assistantParts.length) {
+            const workUser =
+              isLocalGrant(grant) && grant.entryPolicy?.kind === "work"
+                ? await tx.message.findFirst({
+                    where: {
+                      conversationId: conversation.id,
+                      role: "user",
+                      supersededAt: null,
+                    },
+                    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+                    select: { piTurnLeafId: true },
+                  })
+                : null;
             await tx.message.create({
               data: {
+                id: `queued-assistant-${message.id}`,
                 conversationId: conversation.id,
                 role: "assistant",
                 createdAt: new Date(timestamp++),
-                parts: [{ type: "text", text: assistantText }],
+                parts: assistantParts,
+                ...(workUser && {
+                  piEntryId: workUser.piTurnLeafId,
+                  textCharacters: assistantParts.reduce<number>(
+                    (sum, part) =>
+                      sum +
+                      (typeof part === "object" &&
+                      "type" in part &&
+                      part.type === "text" &&
+                      "text" in part &&
+                      typeof part.text === "string"
+                        ? part.text.length
+                        : 0),
+                    0,
+                  ),
+                }),
               },
             });
-          await tx.message.upsert({
-            where: { id: `queued-message-${message.id}` },
-            update: {},
-            create: {
-              id: `queued-message-${message.id}`,
+          }
+          await tx.message.create({
+            data: {
+              id: userId,
               conversationId: conversation.id,
               role: "user",
               createdAt: new Date(timestamp),
@@ -170,7 +206,12 @@ export const executeLocalTask: TaskExecutor = async (row, signal) => {
               conversation.id,
             );
           }
+          return true;
         });
+        if (!inserted) return;
+        if (assistantText && !isSilentAgentReply(assistantText))
+          queuedReplyText += `${queuedReplyText ? "\n\n" : ""}${assistantText}`;
+        await observer?.onQueuedMessage?.(message, assistantText);
         resetTaskMessageOutput(row.id);
       },
       onTextDelta: async (delta) => {

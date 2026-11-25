@@ -23,6 +23,7 @@ export type CapturedArtifact = ReplyArtifact & {
 };
 
 const MAX_REPLY_ARTIFACTS = 20;
+const COPY_CONCURRENCY = 4;
 const readyFile = {
   status: "ready",
   storagePath: { not: null },
@@ -156,59 +157,98 @@ export async function captureReplyArtifacts(input: {
 }): Promise<CapturedArtifact[]> {
   const { workspaceId, conversationId, uploaderId, entryTaskId, signal } =
     input;
-  const captured: CapturedArtifact[] = [];
-  for (const artifact of input.artifacts) {
-    const { fileId, taskId } = artifact;
-    const uploaderOnly = input.privateEntry && taskId === entryTaskId;
-    const fallbackUrl = taskFileUrl(fileId, taskId);
-    const { filename, mediaType, size, sha256, producer } = artifact;
-    let metadata = {
-      taskId,
-      fileId,
-      filename,
-      mediaType,
-      size,
-      sha256,
-      producer,
-    };
-    try {
-      const findReadyCopy = () =>
-        db.workspaceAttachment.findFirst({
-          where: {
-            sourceTaskFileId: fileId,
-            workspaceId,
-            origin: "artifact",
-            status: "ready",
-            uploaderOnly,
-            ...(uploaderOnly ? { uploadedById: uploaderId } : {}),
+  if (!input.artifacts.length) return [];
+  const privateCopy = (artifact: ReplyArtifact) =>
+    input.privateEntry && artifact.taskId === entryTaskId;
+  const privateIds: string[] = [];
+  const sharedIds: string[] = [];
+  for (const artifact of input.artifacts)
+    (privateCopy(artifact) ? privateIds : sharedIds).push(artifact.fileId);
+  const copyScope = {
+    workspaceId,
+    conversationId,
+    origin: "artifact",
+    status: "ready",
+  } as const;
+  // A failed prefetch must not trigger speculative storage writes. Use the
+  // existing per-artifact failure path for every affected handle.
+  let lookupError: unknown;
+  const copies = await db.workspaceAttachment
+    .findMany({
+      where: {
+        ...copyScope,
+        OR: [
+          { sourceTaskFileId: { in: sharedIds }, uploaderOnly: false },
+          {
+            sourceTaskFileId: { in: privateIds },
+            uploaderOnly: true,
+            uploadedById: uploaderId,
           },
-          select: { id: true },
-        });
-      let attachment = await findReadyCopy();
-      if (attachment) {
-        captured.push({
+        ],
+      },
+      select: { id: true, sourceTaskFileId: true, uploaderOnly: true },
+    })
+    .catch((error: unknown) => {
+      lookupError = error;
+      return null;
+    });
+  const copiesById = new Map(
+    copies?.map((copy) => [copy.sourceTaskFileId, copy]),
+  );
+  const missing =
+    copies &&
+    input.artifacts.filter(
+      (artifact) =>
+        copiesById.get(artifact.fileId)?.uploaderOnly !== privateCopy(artifact),
+    );
+  const files = missing?.length
+    ? await db.a2ATaskFile
+        .findMany({
+          where: {
+            ...readyFile,
+            id: { in: missing.map((artifact) => artifact.fileId) },
+            workspaceId,
+            expiresAt: { gt: new Date() },
+            task: {
+              context: { workspaceId },
+              OR: [{ id: entryTaskId }, { rootTaskId: entryTaskId }],
+            },
+          },
+          select: { ...fileMetadata, storagePath: true, expiresAt: true },
+        })
+        .catch((error: unknown) => {
+          lookupError = error;
+          return [];
+        })
+    : [];
+  const filesById = new Map(files.map((file) => [file.id, file]));
+
+  const capture = async (
+    artifact: ReplyArtifact,
+  ): Promise<CapturedArtifact> => {
+    const { fileId, taskId } = artifact;
+    const uploaderOnly = privateCopy(artifact);
+    const fallbackUrl = taskFileUrl(fileId, taskId);
+    let metadata = artifact;
+    try {
+      const existing = copiesById.get(fileId);
+      if (existing?.uploaderOnly === uploaderOnly) {
+        return {
           ...metadata,
-          attachmentId: attachment.id,
-          url: `/api/v1/attachments/${attachment.id}`,
-        });
-        continue;
+          attachmentId: existing.id,
+          url: `/api/v1/attachments/${existing.id}`,
+        };
       }
       // A listed artifact is a handle, not authority to read its claimed path or size.
-      const file = await db.a2ATaskFile.findFirst({
-        where: {
-          ...readyFile,
-          id: fileId,
-          taskId,
-          workspaceId,
-          expiresAt: { gt: new Date() },
-          task: {
-            context: { workspaceId },
-            OR: [{ id: entryTaskId }, { rootTaskId: entryTaskId }],
-          },
-        },
-        select: { ...fileMetadata, storagePath: true },
-      });
-      if (!file?.storagePath || file.size === null || !file.sha256)
+      if (lookupError) throw lookupError;
+      const file = filesById.get(fileId);
+      if (
+        !file?.storagePath ||
+        file.taskId !== taskId ||
+        file.size === null ||
+        !file.sha256 ||
+        file.expiresAt <= new Date()
+      )
         throw new Error("Reply artifact unavailable.");
       metadata = {
         taskId,
@@ -225,6 +265,7 @@ export async function captureReplyArtifacts(input: {
         file.storagePath,
         file.size,
       );
+      let attachment: { id: string } | null;
       try {
         attachment = await storeWorkspaceAttachment({
           workspaceId,
@@ -249,17 +290,25 @@ export async function captureReplyArtifacts(input: {
           )
         )
           throw error;
-        attachment = await findReadyCopy();
+        attachment = await db.workspaceAttachment.findFirst({
+          where: {
+            ...copyScope,
+            sourceTaskFileId: fileId,
+            uploaderOnly,
+            ...(uploaderOnly ? { uploadedById: uploaderId } : {}),
+          },
+          select: { id: true },
+        });
         if (!attachment) throw error; // The winning reservation may still be uploading.
       } finally {
         // Reservation failures happen before the store consumes the source stream.
         if (!body.locked) await body.cancel().catch(() => {});
       }
-      captured.push({
+      return {
         ...metadata,
         attachmentId: attachment.id,
         url: `/api/v1/attachments/${attachment.id}`,
-      });
+      };
     } catch (error) {
       const errorClass =
         error instanceof Error ? error.constructor.name : "Error";
@@ -276,8 +325,17 @@ export async function captureReplyArtifacts(input: {
         attributes: { fileId, errorClass },
         error: { name: errorClass },
       });
-      captured.push({ ...metadata, attachmentId: null, url: fallbackUrl });
+      return { ...metadata, attachmentId: null, url: fallbackUrl };
     }
+  };
+  const captured: CapturedArtifact[] = [];
+  for (
+    let offset = 0;
+    offset < input.artifacts.length;
+    offset += COPY_CONCURRENCY
+  ) {
+    const batch = input.artifacts.slice(offset, offset + COPY_CONCURRENCY);
+    captured.push(...(await Promise.all(batch.map(capture))));
   }
   return captured;
 }

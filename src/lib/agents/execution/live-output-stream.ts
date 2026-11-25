@@ -9,7 +9,12 @@ import {
 } from "@/lib/agents/public-api/sse";
 import { observeWorkspaceStreamRevocation } from "@/lib/workspace/access-stream";
 import { subscribeTaskOutput, taskOutput } from "./live-output";
-import type { LiveTaskOutput } from "./live-output-types";
+import type {
+  LiveTaskDeltaEvent,
+  LiveTaskOutput,
+  LiveTaskSnapshotEvent,
+  ToolApprovalDataPart,
+} from "./live-output-types";
 import type { ToolApprovalCard } from "./tool-approvals";
 
 export type Observation = {
@@ -19,9 +24,81 @@ export type Observation = {
   settled: boolean;
   toolApprovals?: ToolApprovalCard[];
 };
-/** Snapshots coalesce before serialization; downstream has one queued frame and
- * at most one pending snapshot/settlement. A slow or disconnected reader cannot
- * retain an unbounded token/event queue. No stream path ever submits work. */
+type Sent = { output: LiveTaskOutput; fields: string; dataParts: string };
+/** A snapshot for a new connection, task turn or null output; otherwise the
+ * changes since the client's last frame. Every frame advances `seq` by one. */
+function encodeOutput(
+  seq: number,
+  sent: Sent | null,
+  output: LiveTaskOutput | null,
+  dataParts: ToolApprovalDataPart[],
+) {
+  if (!output)
+    return {
+      frame: encodeSseEvent("snapshot", {
+        seq,
+        output,
+        dataParts,
+      } satisfies LiveTaskSnapshotEvent),
+      sent: null,
+    };
+  const { text, activities, ...fields } = output;
+  const next: Sent = {
+    output,
+    fields: JSON.stringify(fields),
+    dataParts: JSON.stringify(dataParts),
+  };
+  if (
+    !sent ||
+    sent.output.taskId !== output.taskId ||
+    sent.output.startedAt !== output.startedAt
+  )
+    return {
+      frame: encodeSseEvent("snapshot", {
+        seq,
+        output,
+        dataParts,
+      } satisfies LiveTaskSnapshotEvent),
+      sent: next,
+    };
+  const previous = sent.output;
+  const delta: LiveTaskDeltaEvent = { seq, taskId: output.taskId };
+  if (text !== previous.text) {
+    let at = previous.text.length;
+    // Redaction can rewrite the unsettled tail; resend from the first difference.
+    if (!text.startsWith(previous.text)) {
+      at = 0;
+      while (
+        at < text.length &&
+        text.charCodeAt(at) === previous.text.charCodeAt(at)
+      )
+        at++;
+    }
+    delta.textAt = at;
+    delta.text = text.slice(at);
+  }
+  // Live activities keep their identity until changed; only replayed ones need JSON.
+  const before = new Map(previous.activities.map((item) => [item.id, item]));
+  const changed = activities.filter((item) => {
+    const old = before.get(item.id);
+    return (
+      old !== item && (!old || JSON.stringify(old) !== JSON.stringify(item))
+    );
+  });
+  if (changed.length) delta.activities = changed;
+  if (
+    activities.length !== previous.activities.length ||
+    activities.some((item, index) => item.id !== previous.activities[index]?.id)
+  )
+    delta.activityIds = activities.map((item) => item.id);
+  if (next.fields !== sent.fields) delta.fields = fields;
+  if (next.dataParts !== sent.dataParts) delta.dataParts = dataParts;
+  return { frame: encodeSseEvent("delta", delta), sent: next };
+}
+/** Output changes coalesce into one snapshot or delta against the last frame
+ * sent; downstream has one queued frame and at most one pending output/settlement.
+ * A slow or disconnected reader cannot retain an unbounded token/event queue.
+ * No stream path ever submits work. */
 export function executionOutputResponse(
   req: Request,
   initial: Observation,
@@ -43,6 +120,8 @@ export function executionOutputResponse(
         let current = initial;
         let pendingSnapshot = true,
           pendingSettled: string | null = null;
+        let seq = 0;
+        let sent: Sent | null = null;
         let lastSettled: string | null = null;
         let flushTimer: ReturnType<typeof setTimeout> | undefined;
         const unsubscribe = subscribeTaskOutput((taskId, reason) => {
@@ -87,16 +166,18 @@ export function executionOutputResponse(
               const live = taskOutput(current.output.taskId);
               if (live) current = { ...current, output: live };
             }
-            controller.enqueue(
-              encodeSseEvent("snapshot", {
-                output: current.output,
-                dataParts: (current.toolApprovals ?? []).map((card) => ({
-                  type: "data-tool-approval",
-                  id: card.id,
-                  data: card,
-                })),
-              }),
+            const encoded = encodeOutput(
+              ++seq,
+              sent,
+              current.output,
+              (current.toolApprovals ?? []).map((card) => ({
+                type: "data-tool-approval",
+                id: card.id,
+                data: card,
+              })),
             );
+            sent = encoded.sent;
+            controller.enqueue(encoded.frame);
           } else if (pendingSettled) {
             const taskId = pendingSettled;
             pendingSettled = null;

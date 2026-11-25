@@ -181,6 +181,7 @@ function logDeliveryFailure(
 // The persisted queued timestamp doubles as a generation guard for overlapping runs.
 export async function deliverPendingTrigger(triggerId: string) {
   let trigger: AgentTrigger | null = null;
+  let failClaim: (() => Promise<void>) | undefined;
   try {
     trigger = await db.agentTrigger.findUnique({ where: { id: triggerId } });
     if (trigger?.lastDeliveryStatus !== "pending") return;
@@ -194,9 +195,10 @@ export async function deliverPendingTrigger(triggerId: string) {
       deliveryConnectionId: trigger.deliveryConnectionId,
       deliveryChatId: trigger.deliveryChatId,
     };
+    const claimedAt = new Date();
     const claimed = await db.agentTrigger.updateMany({
       where: { ...scope, lastDeliveryStatus: "pending" },
-      data: { lastDeliveryStatus: "sending" },
+      data: { lastDeliveryStatus: "sending", lastDeliveryAt: claimedAt },
     });
     if (!claimed.count) return;
     const finish = async (
@@ -204,17 +206,22 @@ export async function deliverPendingTrigger(triggerId: string) {
       errorCode: string | null = null,
     ) => {
       const updated = await db.agentTrigger.updateMany({
-        where: { ...scope, lastDeliveryStatus: "sending" },
+        where: {
+          ...scope,
+          lastDeliveryAt: claimedAt,
+          lastDeliveryStatus: "sending",
+        },
         data: {
           lastDeliveryStatus: status,
           lastDeliveryError: errorCode,
           ...(status === "pending"
-            ? {}
+            ? { lastDeliveryAt: scope.lastDeliveryAt }
             : { lastDeliveryAt: new Date(), lastDeliveryText: null }),
         },
       });
       if (updated.count && errorCode) logDeliveryFailure(current, errorCode);
     };
+    failClaim = () => finish("failed", "TRIGGER_DELIVERY_INTERRUPTED");
     const { deliveryConnectionId, deliveryChatId } = trigger;
     const connection =
       deliveryConnectionId && deliveryChatId
@@ -252,6 +259,14 @@ export async function deliverPendingTrigger(triggerId: string) {
       await finish("failed", "TRIGGER_DELIVERY_FAILED");
     else await finish("delivered");
   } catch {
+    if (failClaim) {
+      try {
+        await failClaim();
+        return;
+      } catch {
+        // If storage is unavailable, the scheduler settles the expired claim.
+      }
+    }
     // Never include outbound text, credentials, or transport exception strings.
     if (trigger) logDeliveryFailure(trigger, "TRIGGER_DELIVERY_FAILED");
     else
@@ -390,6 +405,8 @@ export async function runAgentTrigger(
 
 const EVENT_RETENTION_MS = 30 * 24 * 60 * 60_000;
 const UNSUBMITTED_EVENT_MS = 5 * 60_000;
+const QUEUED_EVENT_GRACE_MS = 15_000;
+const DELIVERY_LEASE_MS = 5 * 60_000;
 
 export type TriggerEventStatus = "queued" | "running" | "duplicate";
 
@@ -429,14 +446,11 @@ export async function acceptTriggerEvent(
     },
   });
   if (input.threadKey === null) {
-    await db.agentTriggerEvent.update({
-      where: { id: event.id },
-      data: { status: "running" },
-    });
-    const started = await startTriggerEvent(trigger, event);
-    return { status: "running", conversationId: started };
-  }
-  await dispatchTriggerThread(trigger, input.threadKey);
+    if (await claimUnthreadedEvent(event)) {
+      const started = await startTriggerEvent(trigger, event);
+      return { status: "running", conversationId: started };
+    }
+  } else await dispatchTriggerThread(trigger, input.threadKey);
   const current = await db.agentTriggerEvent.findUniqueOrThrow({
     where: { id: event.id },
     select: { status: true, conversationId: true },
@@ -445,6 +459,24 @@ export async function acceptTriggerEvent(
     status: current.status === "queued" ? "queued" : "running",
     conversationId: current.conversationId,
   };
+}
+
+async function claimUnthreadedEvent(
+  event: AgentTriggerEvent,
+  queuedBefore?: Date,
+) {
+  const claim = await db.agentTriggerEvent.updateMany({
+    where: {
+      id: event.id,
+      triggerId: event.triggerId,
+      threadKey: null,
+      status: "queued",
+      trigger: { enabled: true },
+      createdAt: { lte: queuedBefore },
+    },
+    data: { status: "running" },
+  });
+  return claim.count > 0;
 }
 
 async function threadConversation(trigger: AgentTrigger, threadKey: string) {
@@ -537,16 +569,30 @@ export async function dispatchTriggerThread(
   if (claimed) await startTriggerEvent(trigger, claimed);
 }
 
+async function* triggerEventPages(where: Prisma.AgentTriggerEventWhereInput) {
+  let after: string | undefined;
+  do {
+    const events: (AgentTriggerEvent & { trigger: AgentTrigger })[] =
+      await db.agentTriggerEvent.findMany({
+        where: { ...where, id: { gt: after } },
+        orderBy: { id: "asc" },
+        include: { trigger: true },
+        take: 100,
+      });
+    yield* events;
+    if (events.length < 100) return;
+    after = events[events.length - 1].id;
+  } while (runtimeCanOperate());
+}
+
 /** Closes events whose task settled and starts each thread's next queued event. */
 async function completeTriggerEvents(
   where: Prisma.AgentTriggerEventWhereInput,
 ) {
-  const events = await db.agentTriggerEvent.findMany({
-    where: { ...where, status: "running" },
-    include: { trigger: true },
-    take: 100,
-  });
-  for (const event of events) {
+  for await (const event of triggerEventPages({
+    ...where,
+    status: "running",
+  })) {
     let status: "done" | "failed" | null = null;
     let error: string | null = null;
     if (event.taskId) {
@@ -576,6 +622,17 @@ async function completeTriggerEvents(
 /** Scheduler recovery: settle interrupted events and restart idle threads. */
 async function recoverTriggerEvents() {
   await completeTriggerEvents({});
+  const queuedBefore = new Date(Date.now() - QUEUED_EVENT_GRACE_MS);
+  for await (const event of triggerEventPages({
+    status: "queued",
+    threadKey: null,
+    createdAt: { lte: queuedBefore },
+    trigger: { enabled: true },
+  })) {
+    if (!runtimeCanOperate()) return;
+    if (await claimUnthreadedEvent(event, queuedBefore))
+      await startTriggerEvent(event.trigger, event);
+  }
   const queued = await db.agentTriggerEvent.findMany({
     where: {
       status: "queued",
@@ -685,44 +742,56 @@ export async function settleAgentTriggerTask(row: A2ATask) {
     });
   }
 }
+async function expireDeliveryClaims() {
+  const interrupted = await db.agentTrigger.updateManyAndReturn({
+    where: {
+      lastDeliveryStatus: "sending",
+      OR: [
+        { lastDeliveryAt: null },
+        { lastDeliveryAt: { lt: new Date(Date.now() - DELIVERY_LEASE_MS) } },
+      ],
+    },
+    data: {
+      lastDeliveryStatus: "failed",
+      lastDeliveryError: "TRIGGER_DELIVERY_INTERRUPTED",
+      lastDeliveryAt: new Date(),
+      lastDeliveryText: null,
+    },
+    select: {
+      id: true,
+      workspaceId: true,
+      agentId: true,
+      deliveryConnectionId: true,
+    },
+  });
+  for (const trigger of interrupted)
+    logDeliveryFailure(trigger, "TRIGGER_DELIVERY_INTERRUPTED");
+}
+
 const globalTriggers = globalThis as typeof globalThis & {
   __agentTriggerTimer?: NodeJS.Timeout;
 };
 export function startAgentTriggerScheduler() {
   if (globalTriggers.__agentTriggerTimer) return;
   let busy = false;
-  let recoverSending = true;
+  let expiring = false;
+  let projectionCursor: string | undefined;
   const tick = async () => {
-    if (busy || !runtimeCanOperate()) return;
+    if (!runtimeCanOperate()) return;
+    if (!expiring) {
+      expiring = true;
+      void trackRuntimeOperation(expireDeliveryClaims)
+        .catch((error) =>
+          logSystemEvent("scheduler.triggers.tick_failed", { error }),
+        )
+        .finally(() => {
+          expiring = false;
+        });
+    }
+    if (busy) return;
     busy = true;
     try {
       await trackRuntimeOperation(async () => {
-        if (recoverSending) {
-          const interrupted = await db.agentTrigger.findMany({
-            where: { lastDeliveryStatus: "sending" },
-          });
-          for (const trigger of interrupted) {
-            const updated = await db.agentTrigger.updateMany({
-              where: {
-                id: trigger.id,
-                workspaceId: trigger.workspaceId,
-                agentId: trigger.agentId,
-                lastDeliveryStatus: "sending",
-                lastDeliveryAt: trigger.lastDeliveryAt,
-                lastConversationId: trigger.lastConversationId,
-              },
-              data: {
-                lastDeliveryStatus: "failed",
-                lastDeliveryError: "TRIGGER_DELIVERY_INTERRUPTED",
-                lastDeliveryAt: new Date(),
-                lastDeliveryText: null,
-              },
-            });
-            if (updated.count)
-              logDeliveryFailure(trigger, "TRIGGER_DELIVERY_INTERRUPTED");
-          }
-          recoverSending = false;
-        }
         const pending = await db.agentTrigger.findMany({
           where: { lastDeliveryStatus: "pending" },
           orderBy: { lastDeliveryAt: "asc" },
@@ -736,9 +805,16 @@ export function startAgentTriggerScheduler() {
         await recoverTriggerEvents();
         // Terminal task state is durable even if shutdown interrupted message projection.
         const running = await db.agentTrigger.findMany({
-          where: { lastStatus: "running", lastConversationId: { not: null } },
+          where: {
+            id: { gt: projectionCursor },
+            lastStatus: "running",
+            lastConversationId: { not: null },
+          },
+          orderBy: { id: "asc" },
           take: 100,
         });
+        projectionCursor =
+          running.length === 100 ? running[running.length - 1].id : undefined;
         for (const trigger of running) {
           if (trigger.lastConversationId === null) continue;
           const binding = await db.a2AEntryBinding.findFirst({
