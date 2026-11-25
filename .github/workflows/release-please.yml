@@ -46,7 +46,9 @@ jobs:
         id: release
         uses: googleapis/release-please-action@v4
         with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          # GITHUB_TOKEN on purpose: a tag pushed with a personal token would
+          # start this workflow again on the tag path and publish twice.
+          token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           skip-github-pull-request: true
@@ -220,3 +222,6 @@ jobs:
             toolplane-runtime-linux-amd64.tar.gz \
             toolplane-runtime-linux-amd64.tar.gz.sha256 \
             --clobber
+          # The release stays a draft until its artifact exists, so the online
+          # updater never sees a release it cannot install.
+          gh release edit "$TAG_NAME" --draft=false --latest
