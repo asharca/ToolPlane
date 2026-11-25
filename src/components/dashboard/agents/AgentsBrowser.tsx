@@ -13,7 +13,13 @@ import {
 } from "@/components/dashboard/dialog";
 
 import { useTranslations } from "next-intl";
-import { Fragment, startTransition, useActionState, useState } from "react";
+import {
+  Fragment,
+  startTransition,
+  useActionState,
+  useState,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
@@ -246,10 +252,11 @@ export function AgentsBrowser({
     setEnabledOptionalTools(new Set());
   }
 
+  // In the create modal the form fills the dialog edge to edge; the page
+  // gutters belong to the standalone list only.
+  const Shell = createOnly ? ModalFill : DashboardPage;
   return (
-    <DashboardPage
-      className={createOnly ? "h-full max-w-none p-0" : "space-y-5"}
-    >
+    <Shell className={createOnly ? "h-full" : "space-y-5"}>
       {!createOnly ? (
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
@@ -309,7 +316,7 @@ export function AgentsBrowser({
             startTransition(() => createAction(formData));
           }}
           className={cx(
-            "flex min-h-0 flex-col overflow-hidden bg-background text-foreground",
+            "flex min-h-0 flex-col overflow-hidden text-foreground",
             createOnly
               ? "h-full"
               : "min-h-[38rem] max-h-[calc(100dvh-10rem)] rounded-3xl border border-border bg-card shadow-sm",
@@ -356,7 +363,7 @@ export function AgentsBrowser({
             <DialogBody className="flex min-w-0 flex-col overscroll-contain !p-0 !space-y-0 [scrollbar-width:thin]">
               <section
                 hidden={activeCreateStep !== "basic"}
-                aria-labelledby="agent-create-basic-title"
+                aria-label={t("basic")}
                 className="space-y-6 px-6 py-5"
               >
                 {!hasProviders ? (
@@ -365,14 +372,6 @@ export function AgentsBrowser({
                     description={t("modelProviderRequiredDescription")}
                   />
                 ) : null}
-                <div>
-                  <h3
-                    id="agent-create-basic-title"
-                    className="text-xl font-semibold tracking-tight text-foreground"
-                  >
-                    {t("basic")}
-                  </h3>
-                </div>
 
                 <DialogField
                   label={t("name")}
@@ -493,20 +492,12 @@ export function AgentsBrowser({
 
               <section
                 hidden={activeCreateStep !== "instructions"}
-                aria-labelledby="agent-create-instructions-title"
+                aria-label={t("instructions")}
                 className="flex flex-1 flex-col gap-6 px-6 py-5"
               >
-                <div>
-                  <h3
-                    id="agent-create-instructions-title"
-                    className="text-xl font-semibold tracking-tight text-foreground"
-                  >
-                    {t("instructions")}
-                  </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("instructionsSettingsDescription")}
-                  </p>
-                </div>
+                <p className="text-sm text-muted-foreground">
+                  {t("instructionsSettingsDescription")}
+                </p>
                 <SystemPromptEditor
                   workspaceId={workspaceId}
                   name={agentName}
@@ -523,15 +514,9 @@ export function AgentsBrowser({
 
               <section
                 hidden={activeCreateStep !== "builtInTools"}
-                aria-labelledby="agent-create-built-in-tools-title"
+                aria-label={builtinFeatures("title")}
                 className="space-y-6 px-6 py-5"
               >
-                <h3
-                  id="agent-create-built-in-tools-title"
-                  className="text-xl font-semibold tracking-tight text-foreground"
-                >
-                  {builtinFeatures("title")}
-                </h3>
                 <AgentBuiltinFeatureInputs
                   runtimeKind={runtime}
                   disabledTools={disabledBuiltinTools}
@@ -551,20 +536,12 @@ export function AgentsBrowser({
 
               <section
                 hidden={activeCreateStep !== "mcp"}
-                aria-labelledby="agent-create-mcp-title"
+                aria-label={t("mcp")}
                 className="space-y-6 px-6 py-5"
               >
-                <div>
-                  <h3
-                    id="agent-create-mcp-title"
-                    className="text-xl font-semibold tracking-tight text-foreground"
-                  >
-                    {t("mcp")}
-                  </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("mcpSettingsDescription")}
-                  </p>
-                </div>
+                <p className="text-sm text-muted-foreground">
+                  {t("mcpSettingsDescription")}
+                </p>
                 <DialogField
                   label={t("mcp")}
                   dirty={selectedDeploymentIds.size > 0}
@@ -582,20 +559,12 @@ export function AgentsBrowser({
 
               <section
                 hidden={activeCreateStep !== "skills"}
-                aria-labelledby="agent-create-skills-title"
+                aria-label={t("skills")}
                 className="space-y-6 px-6 py-5"
               >
-                <div>
-                  <h3
-                    id="agent-create-skills-title"
-                    className="text-xl font-semibold tracking-tight text-foreground"
-                  >
-                    {t("skills")}
-                  </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("skillsSettingsDescription")}
-                  </p>
-                </div>
+                <p className="text-sm text-muted-foreground">
+                  {t("skillsSettingsDescription")}
+                </p>
                 <DialogField
                   label={t("skills")}
                   dirty={selectedSkillIds.size > 0}
@@ -862,6 +831,16 @@ export function AgentsBrowser({
             </ul>
           </section>
         ))}
-    </DashboardPage>
+    </Shell>
   );
+}
+
+function ModalFill({
+  className,
+  children,
+}: {
+  className?: string;
+  children: ReactNode;
+}) {
+  return <div className={className}>{children}</div>;
 }

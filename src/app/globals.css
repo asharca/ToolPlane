@@ -49,6 +49,15 @@
   --field: rgb(255 255 255 / 0.03);
 }
 
+/* A modal is one surface. Page and card fills inside it resolve to the modal
+   surface, so nested panels, navigation and sticky footers cannot paint a
+   second shade. Muted fills keep their token for hover and selection. The
+   mobile sidebar is a navigation sheet, not a modal surface. */
+[role="dialog"][aria-modal="true"]:not([data-mobile]) {
+  --background: var(--popover);
+  --card: var(--popover);
+}
+
 @layer base {
   body {
     text-rendering: auto;

@@ -3945,7 +3945,7 @@
       "mcpEnabled": "Enable MCP tools",
       "stopNotAccepted": "This run did not accept a stop request. Its saved status has been refreshed; external effects are not rolled back.",
       "assistants": "Assistants",
-      "newAssistant": "Add assistant",
+      "newAssistant": "New assistant",
       "editAssistant": "Assistant settings",
       "assistantActions": "Actions for {name}",
       "pinAssistant": "Pin",

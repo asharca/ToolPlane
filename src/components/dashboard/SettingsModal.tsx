@@ -80,7 +80,7 @@ export function SettingsModal({
           }}
           className={`flex flex-col overflow-hidden w-full ${compact ? "max-w-5xl h-[min(48rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)]" : "max-w-6xl h-[calc(100dvh-4rem)]"}`}
         >
-          <DialogHeader title={title} />
+          <DialogHeader title={title} className="border-b border-border" />
           <CloseSettingsContext.Provider value={() => setOpen(false)}>
             <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
           </CloseSettingsContext.Provider>

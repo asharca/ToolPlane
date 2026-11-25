@@ -688,3 +688,12 @@
 - **下次怎么验证**：用可控网关返回只有 `reasoning_content`、`finish_reason: stop` 的响应，确认有重试预算时重试且失败尝试不回放，无预算时以 `EMPTY_RESPONSE` 失败（原实现下返回成功）。
 - **约束层（结构）**：`emptyModelReply` 接入重试判定和回合失败判定，见 [`pi-sdk-session.mjs`](scripts/pi-sdk-session.mjs)；原因码在 [`runtime-failure.ts`](src/lib/agents/runtime-failure.ts) 和 [`native-runtime-session.mjs`](scripts/native-runtime-session.mjs) 登记；回归见 [`pi-sdk-host.test.ts`](tests/integration/pi-sdk-host.test.ts)。
 - **确认日期**：2026-11-25（用户反馈）。
+
+### TP-L065：弹窗只有一种底色，同一对象的设置只有一个常驻入口
+
+**规则**：弹窗内的导航、正文和底栏不再各自铺底色；`bg-background`／`bg-card` 在模态层内等于弹窗表面。同一对象（智能体、助手）的设置在页头名称旁只保留一个常驻按钮；切换器、空状态和侧栏行菜单不再重复放置，只有报错或待处理提示里的“去修复”链接可以直达对应设置分区。
+
+- **错误与原因（2026-11-25，用户反馈“弹窗一边灰一边黑”“进入设置的按钮很多”）**：`CenterMorphModal` 面板为 `bg-popover`（深色 `#232323`），而智能体设置分栏、`DialogFooter` 和新建智能体表单铺 `bg-background`（`#151515`），新建智能体表单还被 `DashboardPage` 的 `sm:px-6 py-6` 内缩成一块嵌套黑框（`p-0` 被纯拼接的 `cx` 吞掉）。Work 页同一智能体的设置入口有切换器菜单、空状态按钮和侧栏行菜单三处，助手页则是页头图标加侧栏“编辑”，两页形态不一致。
+- **下次怎么验证**：打开新建智能体、新建助手和智能体设置弹窗，在深浅主题下读取弹窗内宽度超过 300px 的元素的计算背景色，除输入框的 `--field` 外应只有弹窗表面一种颜色；数一次同一设置的常驻入口，只能有页头一个。
+- **约束层（结构）**：[`globals.css`](src/app/globals.css) 中 `[role="dialog"][aria-modal="true"]:not([data-mobile])` 把 `--background`、`--card` 指向 `--popover`；入口在 [`WorkspaceWork.tsx`](src/components/dashboard/work/WorkspaceWork.tsx) 与 [`WorkspaceAssistantChat.tsx`](src/components/dashboard/chat/WorkspaceAssistantChat.tsx) 的页头。
+- **确认日期**：2026-11-25（用户反馈）。

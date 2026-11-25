@@ -3945,7 +3945,7 @@
       "mcpEnabled": "启用 MCP 工具",
       "stopNotAccepted": "此次运行未接受停止请求。已刷新其保存状态；外部操作产生的影响不会回滚。",
       "assistants": "助手",
-      "newAssistant": "添加助手",
+      "newAssistant": "新建助手",
       "editAssistant": "助手设置",
       "assistantActions": "{name} 的操作",
       "pinAssistant": "置顶",

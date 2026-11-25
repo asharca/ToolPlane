@@ -1327,19 +1327,6 @@ export function WorkspaceAssistantChat({
             type="button"
             onClick={() => {
               close();
-              setEditing(assistant);
-            }}
-            variant="ghost"
-            size="sm"
-            className="flex w-full justify-start gap-2"
-          >
-            <Pencil className="size-3.5" />
-            {common("edit")}
-          </Button>
-          <Button
-            type="button"
-            onClick={() => {
-              close();
               deleteAssistant(assistant.id);
             }}
             variant="ghost"

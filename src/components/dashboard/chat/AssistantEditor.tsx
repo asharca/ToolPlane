@@ -311,7 +311,7 @@ export function AssistantEditor({
         ariaLabel={assistant ? t("editAssistant") : t("newAssistant")}
         closeButtonLabel={common("close")}
         onExitComplete={onClose}
-        className="flex h-[min(48rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] max-w-5xl flex-col gap-0 overflow-hidden rounded-2xl p-0"
+        className="flex h-[min(48rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] w-full max-w-5xl flex-col overflow-hidden"
       >
         <DialogHeader
           title={assistant ? t("editAssistant") : t("newAssistant")}
@@ -345,16 +345,10 @@ export function AssistantEditor({
             <DialogBody className="flex min-w-0 flex-col overscroll-contain">
               <section
                 hidden={createStep !== "basic"}
-                aria-labelledby="assistant-create-basic-title"
+                aria-label={t("basic")}
                 className="space-y-5"
               >
                 {!providers.length ? <ModelProviderNotice slug={slug} /> : null}
-                <h3
-                  id="assistant-create-basic-title"
-                  className="text-base font-semibold text-foreground"
-                >
-                  {t("basic")}
-                </h3>
 
                 <DialogField
                   label={t("name")}
@@ -393,9 +387,9 @@ export function AssistantEditor({
                   />
                 </DialogField>
 
-                <DialogField label={t("model")} dirty={modelDirty}>
+                <DialogField label={t("model")} dirty={modelDirty} layout="row">
                   <ModelPicker
-                    className="flex w-full"
+                    className="flex w-72 max-w-full"
                     providers={providers}
                     value={providerId && model ? { providerId, model } : null}
                     onSelect={(selection) => {
@@ -413,7 +407,6 @@ export function AssistantEditor({
                         label={model || t("selectModel")}
                         placeholder={!model}
                         provider={selectedProvider?.name}
-                        note={selectedProvider?.name}
                       />
                     }
                   />
@@ -426,8 +419,10 @@ export function AssistantEditor({
                     label={agentsT("defaultReasoningEffort")}
                     htmlFor="assistant-settings-reasoning-effort"
                     dirty={reasoningDirty}
+                    layout="row"
                   >
                     <FormSelect
+                      className="w-40"
                       id="assistant-settings-reasoning-effort"
                       label={agentsT("defaultReasoningEffort")}
                       value={reasoningEffort}
@@ -448,15 +443,9 @@ export function AssistantEditor({
 
               <section
                 hidden={createStep !== "instructions"}
-                aria-labelledby="assistant-create-instructions-title"
+                aria-label={t("systemPrompt")}
                 className="flex flex-1 flex-col gap-5"
               >
-                <h3
-                  id="assistant-create-instructions-title"
-                  className="text-base font-semibold text-foreground"
-                >
-                  {t("systemPrompt")}
-                </h3>
                 <SystemPromptEditor
                   workspaceId={workspaceId}
                   name={name}
@@ -473,15 +462,9 @@ export function AssistantEditor({
 
               <section
                 hidden={createStep !== "modelParameters"}
-                aria-labelledby="assistant-create-model-parameters-title"
+                aria-label={t("modelParameters")}
                 className="space-y-5"
               >
-                <h3
-                  id="assistant-create-model-parameters-title"
-                  className="text-base font-semibold text-foreground"
-                >
-                  {t("modelParameters")}
-                </h3>
                 <DialogField label={t("temperature")} dirty={temperatureDirty}>
                   <div className="flex flex-col items-start gap-3 px-1 py-1 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex min-w-0 items-center gap-2 text-sm text-foreground">
@@ -752,20 +735,12 @@ export function AssistantEditor({
 
               <section
                 hidden={createStep !== "tools"}
-                aria-labelledby="assistant-create-tools-title"
+                aria-label={t("mcpAccess")}
                 className="space-y-5"
               >
-                <div>
-                  <h3
-                    id="assistant-create-tools-title"
-                    className="text-base font-semibold text-foreground"
-                  >
-                    {t("mcpAccess")}
-                  </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("mcpDescription")}
-                  </p>
-                </div>
+                <p className="text-sm text-muted-foreground">
+                  {t("mcpDescription")}
+                </p>
 
                 <DialogField
                   label={t("maxToolSteps")}
