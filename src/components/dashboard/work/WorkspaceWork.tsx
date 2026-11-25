@@ -4,7 +4,27 @@ import { Button } from "@/components/motion/button";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Bot, FileOutput, PanelLeft } from "lucide-react";
+import {
+  Bot,
+  Boxes,
+  Check,
+  ChevronDown,
+  FileOutput,
+  PanelLeft,
+  Plus,
+  Settings2,
+  SquarePen,
+} from "lucide-react";
+import {
+  MorphPopover,
+  MorphPopoverContent,
+  MorphPopoverTrigger,
+} from "@/components/motion/popover-morph";
+import {
+  ScrollToBottomButton,
+  hasOpenDialog,
+} from "@/components/dashboard/ConversationUxPrimitives";
+import { cn } from "@/lib/utils";
 import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
 import {
   ManageFilesButton,
@@ -599,7 +619,98 @@ export function WorkspaceWork({
       "",
       `/app/${encodeURIComponent(slug)}/work`,
     );
+    requestAnimationFrame(() =>
+      document
+        .querySelector<HTMLTextAreaElement>(
+          '[data-ui="chat.composer"] textarea',
+        )
+        ?.focus(),
+    );
   }
+
+  const [agentSwitcherOpen, setAgentSwitcherOpen] = useState(false);
+  const [sandboxSwitcherOpen, setSandboxSwitcherOpen] = useState(false);
+  const sortedWorkAgents = useMemo(
+    () =>
+      sortSidebarItems(
+        workAgents,
+        sidebarPreferences.groupPreferences.entityOrder,
+      ),
+    [workAgents, sidebarPreferences.groupPreferences.entityOrder],
+  );
+  const switcherAgent = controlAgent ?? agent;
+  const hasWorkspacePanel = Boolean(
+    !viewingA2A && (controlSandbox || conversationWorkspace),
+  );
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || hasOpenDialog()) return;
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "o"
+      ) {
+        if (!switcherAgent && !workAgents.length) return;
+        event.preventDefault();
+        sidebarPreferences.revealAgent(
+          switcherAgent?.id ?? workAgents[0]?.id ?? "",
+        );
+        setAgentId(switcherAgent?.id ?? workAgents[0]?.id ?? "");
+        setSandboxId("");
+        setDraftSelectionKey(selectionKey);
+        setMobilePane("work");
+        composer.clearDraft();
+        setWorkingDirectory(".");
+        window.history.replaceState(
+          window.history.state,
+          "",
+          `/app/${encodeURIComponent(slug)}/work`,
+        );
+        requestAnimationFrame(() =>
+          document
+            .querySelector<HTMLTextAreaElement>(
+              '[data-ui="chat.composer"] textarea',
+            )
+            ?.focus(),
+        );
+        return;
+      }
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.shiftKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === "b"
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        setSidebarOpen((current) => !current);
+        return;
+      }
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.shiftKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === "j" &&
+        hasWorkspacePanel
+      ) {
+        event.preventDefault();
+        panels.togglePanel(panels.desktopPanel ?? "files");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [
+    composer,
+    hasWorkspacePanel,
+    panels,
+    selectionKey,
+    setSidebarOpen,
+    sidebarPreferences,
+    slug,
+    switcherAgent,
+    workAgents,
+  ]);
 
   /** After deleting the open Work session, show the Agent's next conversation. */
   function removeWorkSession(
@@ -677,41 +788,185 @@ export function WorkspaceWork({
 
           <AnimatedSidebarInset className="h-full min-h-0 min-w-0 flex-1 overflow-hidden">
             <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">
-              <header className="flex h-12 shrink-0 items-center justify-between gap-2 px-3 sm:px-5">
-                <div className="flex min-w-0 flex-1 items-center gap-2.5">
+              <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border/50 bg-background px-3 sm:px-5">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
                   <ChatAppSidebarTrigger
                     openLabel={t("showSidebar")}
                     closeLabel={t("hideSidebar")}
                   >
                     <PanelLeft className="size-4" />
                   </ChatAppSidebarTrigger>
-                  <div className="flex min-w-0 items-center gap-2">
-                    <p className="truncate text-sm font-medium text-foreground">
-                      {viewingA2A
-                        ? t("a2a.title")
-                        : conversation?.title ||
-                          selected?.title ||
-                          selected?.task ||
-                          t("untitledSession")}
-                    </p>
-                    {controlAgent ? (
-                      <span className="hidden max-w-40 truncate rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground sm:inline-block">
-                        {controlAgent.name}
-                      </span>
-                    ) : null}
-                    {channelConversation && conversation?.modelOverride ? (
-                      <span
-                        className="max-w-48 truncate rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground"
-                        title={
-                          conversation.modelOverride.providerName ?? undefined
-                        }
+                  {switcherAgent || sortedWorkAgents.length > 0 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() =>
+                        startNewWork(
+                          switcherAgent?.id ?? sortedWorkAgents[0]?.id,
+                        )
+                      }
+                      aria-label={t("newWork")}
+                      title={t("shortcutNewWork")}
+                      className="size-8 shrink-0 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+                    >
+                      <SquarePen className="size-4" />
+                    </Button>
+                  ) : null}
+                  {sortedWorkAgents.length > 0 && switcherAgent ? (
+                    <MorphPopover
+                      open={agentSwitcherOpen}
+                      onOpenChange={setAgentSwitcherOpen}
+                    >
+                      <MorphPopoverTrigger>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          aria-label={t("switchAgent")}
+                          className="h-8 min-w-0 gap-1.5 rounded-lg px-2 text-foreground hover:bg-muted"
+                        >
+                          <Bot className="size-4 shrink-0 text-primary" />
+                          <span
+                            aria-hidden="true"
+                            title={
+                              switcherAgent.ready
+                                ? t("agentReady")
+                                : t("agentNeedsSetup")
+                            }
+                            className={cn(
+                              "size-1.5 shrink-0 rounded-full",
+                              switcherAgent.ready
+                                ? "bg-emerald-500"
+                                : "bg-amber-500",
+                            )}
+                          />
+                          <span className="max-w-32 truncate text-sm font-medium sm:max-w-48">
+                            {switcherAgent.name}
+                          </span>
+                          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                        </Button>
+                      </MorphPopoverTrigger>
+                      <MorphPopoverContent
+                        side="bottom"
+                        align="start"
+                        sideOffset={6}
+                        className="z-50 w-72 max-w-[calc(100vw-2rem)] p-1.5"
                       >
-                        {tChannels("sessionModelOverride", {
-                          model: conversation.modelOverride.model,
-                        })}
+                        <div className="max-h-72 space-y-0.5 overflow-y-auto overscroll-contain">
+                          {sortedWorkAgents.map((item) => {
+                            const current = item.id === switcherAgent.id;
+                            return (
+                              <button
+                                key={item.id}
+                                type="button"
+                                onClick={() => {
+                                  setAgentSwitcherOpen(false);
+                                  startNewWork(item.id);
+                                }}
+                                className={cn(
+                                  "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-muted/70",
+                                  current && "bg-muted/80 font-medium",
+                                )}
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  className={cn(
+                                    "size-2 shrink-0 rounded-full",
+                                    item.ready
+                                      ? "bg-emerald-500"
+                                      : "bg-amber-500",
+                                  )}
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate text-foreground">
+                                    {item.name}
+                                  </div>
+                                  {item.model ? (
+                                    <div className="truncate font-mono text-[11px] text-muted-foreground">
+                                      {item.model}
+                                    </div>
+                                  ) : null}
+                                </div>
+                                {current ? (
+                                  <Check className="size-4 shrink-0 text-primary" />
+                                ) : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="my-1 h-px bg-border" />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setAgentSwitcherOpen(false);
+                            router.push(
+                              agentSettingsHref(
+                                slug,
+                                switcherAgent.id,
+                                workReturnTo,
+                              ),
+                            );
+                          }}
+                          className="w-full justify-start gap-2 rounded-lg text-sm"
+                        >
+                          <Settings2 className="size-4" />
+                          <span>{t("agentSettings")}</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setAgentSwitcherOpen(false);
+                            router.push(
+                              `/app/${encodeURIComponent(slug)}/agents?create=1&returnTo=${encodeURIComponent(workReturnTo)}`,
+                            );
+                          }}
+                          className="w-full justify-start gap-2 rounded-lg text-sm"
+                        >
+                          <Plus className="size-4" />
+                          <span>{t("newAgent")}</span>
+                        </Button>
+                      </MorphPopoverContent>
+                    </MorphPopover>
+                  ) : switcherAgent ? (
+                    <span className="truncate text-sm font-medium text-foreground">
+                      {switcherAgent.name}
+                    </span>
+                  ) : null}
+                  {viewingA2A || selected || conversation ? (
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        aria-hidden="true"
+                        className="hidden text-muted-foreground/40 sm:inline"
+                      >
+                        /
                       </span>
-                    ) : null}
-                  </div>
+                      <p className="truncate text-sm text-muted-foreground">
+                        {viewingA2A
+                          ? t("a2a.title")
+                          : conversation?.title ||
+                            selected?.title ||
+                            selected?.task ||
+                            t("untitledSession")}
+                      </p>
+                      {channelConversation && conversation?.modelOverride ? (
+                        <span
+                          className="max-w-48 truncate rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground"
+                          title={
+                            conversation.modelOverride.providerName ?? undefined
+                          }
+                        >
+                          {tChannels("sessionModelOverride", {
+                            model: conversation.modelOverride.model,
+                          })}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   {completionNotificationControl}
@@ -807,280 +1062,351 @@ export function WorkspaceWork({
                     ) : null}
                   </div>
                 )
-              ) : (
-                <>
-                  {conversation &&
-                  !sessionReadOnly &&
-                  !channelConversation &&
-                  controlAgent ? (
-                    <AgentConversation
-                      key={conversation.id}
-                      activeConversationId={conversation.id}
-                      agentId={controlAgent.id}
-                      agentName={controlAgent.name}
-                      settingsHref={agentSettingsHref(
-                        slug,
-                        controlAgent.id,
-                        workReturnTo,
-                      )}
-                      composerNotice={(
-                        setEditorText,
-                        widgetTarget,
-                        renderedActivityIds,
-                      ) => (
-                        <ConversationExecution
-                          key={`${controlAgent.id}:${conversation.id}`}
-                          endpoint={`/api/v1/agents/${encodeURIComponent(controlAgent.id)}/conversations/${encodeURIComponent(conversation.id)}/execution`}
-                          toolApprovalEndpoint={approvalEndpoint}
-                          toolApprovalParts={approvalParts}
-                          showStatus={false}
-                          showActivities={false}
-                          active={conversationBusy}
-                          onSetEditorText={setEditorText}
-                          belowEditorElement={widgetTarget}
-                          renderedActivityIds={renderedActivityIds}
-                          className="mb-3"
-                          onChange={() => router.refresh()}
-                          onOpenScreen={
-                            panels.hasScreen ? panels.openScreen : undefined
-                          }
-                          onTakeoverRequest={panels.openTakeoverScreen}
-                          onTakeoverAnswered={panels.releaseScreenControl}
-                        />
-                      )}
-                      ready={!sessionReadOnly}
-                      runtimeKind={conversation.runtimeKind ?? null}
-                      agentRevisionVersion={conversation.agentRevisionVersion}
-                      currentRevisionVersion={
-                        controlAgent.currentRevisionVersion
+              ) : conversation &&
+                !sessionReadOnly &&
+                !channelConversation &&
+                controlAgent ? (
+                <AgentConversation
+                  key={conversation.id}
+                  activeConversationId={conversation.id}
+                  agentId={controlAgent.id}
+                  agentName={controlAgent.name}
+                  settingsHref={agentSettingsHref(
+                    slug,
+                    controlAgent.id,
+                    workReturnTo,
+                  )}
+                  composerNotice={(
+                    setEditorText,
+                    widgetTarget,
+                    renderedActivityIds,
+                  ) => (
+                    <ConversationExecution
+                      key={`${controlAgent.id}:${conversation.id}`}
+                      endpoint={`/api/v1/agents/${encodeURIComponent(controlAgent.id)}/conversations/${encodeURIComponent(conversation.id)}/execution`}
+                      toolApprovalEndpoint={approvalEndpoint}
+                      toolApprovalParts={approvalParts}
+                      showStatus={false}
+                      showActivities={false}
+                      active={conversationBusy}
+                      onSetEditorText={setEditorText}
+                      belowEditorElement={widgetTarget}
+                      renderedActivityIds={renderedActivityIds}
+                      className="mb-3"
+                      onChange={() => router.refresh()}
+                      onOpenScreen={
+                        panels.hasScreen ? panels.openScreen : undefined
                       }
-                      mcpToolsUpdated={controlAgent.mcpToolsUpdated}
-                      modelName={conversation.modelName}
-                      modelOverride={composer.modelChoice}
-                      modelPicker={
-                        <ComposerModelSelect
-                          providers={providers}
-                          defaultSelection={composer.defaultModelSelection}
-                          value={composer.modelChoice}
-                          onChange={composer.setModelChoice}
-                        />
-                      }
-                      initialMessages={
-                        conversation.messages.filter(
-                          (message) => !messageCompaction(message),
-                        ) as AgentUIMessage[]
-                      }
-                      initialReasoningEffort={
-                        conversation.reasoningEffort ?? "default"
-                      }
-                      reasoningAvailable={composer.reasoningAvailable}
-                      inheritedReasoningEffort={
-                        controlAgent.reasoningEffort ?? null
-                      }
-                      creatingConversation={false}
-                      ensureConversation={async () => conversation.id}
-                      attachmentUploadUrl={`/api/v1/workspaces/${workspaceId}/attachments`}
-                      mcpPromptApiPath={`/api/v1/agents/${controlAgent.id}/prompts`}
-                      mcpResourceApiPath={`/api/v1/agents/${controlAgent.id}/composer`}
-                      onBusyChange={setConversationBusy}
-                      onConversationChanged={() => router.refresh()}
+                      onTakeoverRequest={panels.openTakeoverScreen}
+                      onTakeoverAnswered={panels.releaseScreenControl}
                     />
-                  ) : (
-                    <MessageScroller
-                      key={selected?.id ?? conversation?.id ?? "new"}
-                      label={t("title")}
-                      data-ui="work.transcript"
-                      busy={
-                        selectedActive || Boolean(conversationOutput?.active)
-                      }
-                      followOutput={followingOutput}
-                      onFollowChange={setFollowingOutput}
-                      navigation="rail"
-                      className={
-                        selected || conversation
-                          ? "min-h-0 flex-1"
-                          : "mt-auto min-h-0 flex-none"
-                      }
-                    >
-                      {selected || conversation ? (
-                        <>
-                          <WorkTranscript
-                            workspaceSlug={slug}
-                            submitterName={
-                              selected?.a2aActor?.name ?? undefined
-                            }
-                            treeActionsEnabled={Boolean(
-                              selected &&
-                                !sessionReadOnly &&
-                                selected.runtimeKind === "pi-sdk",
-                            )}
-                            treeActionsDisabled={
-                              selectedActive ||
-                              Boolean(busy) ||
-                              composerPending ||
-                              !MESSAGEABLE_STATUSES.has(selected?.status ?? "")
-                            }
-                            treeActionPending={busy === "tree"}
-                            onTreeAction={composer.mutateConversationTree}
-                            agentName={controlAgent?.name ?? t("agent")}
-                            agentId={conversation?.agentId ?? selected?.agentId}
-                            conversationId={
-                              conversation?.id ?? selected?.conversationId
-                            }
-                            modelName={
-                              conversation?.modelOverride?.model ??
-                              conversation?.modelName ??
-                              selected?.modelName ??
-                              null
-                            }
-                            messages={
-                              conversationAccessRevoked
-                                ? []
-                                : (conversation?.messages ??
-                                  selected?.messages ??
-                                  [])
-                            }
-                            streamText={stream.streamText}
-                            streamActivities={stream.streamActivities}
-                            streamBudgetWarning={stream.streamBudgetWarning}
-                            streamRuleTriggers={stream.streamRuleTriggers}
-                            streamStartedAt={stream.streamStartedAt}
-                            streamRuntimeKind={stream.streamRuntimeKind}
-                            streamModelName={stream.streamModelName}
-                            executionStage={stream.executionStage}
-                            sessionStartedAt={selected?.startedAt}
-                            sessionCompletedAt={selected?.completedAt}
-                            streaming={selectedActive}
-                          />
-                          {observingConversation &&
-                          !conversationAccessRevoked &&
-                          conversationOutput &&
-                          !conversationOutputPersisted ? (
-                            <div className="mx-auto w-full max-w-3xl px-4 pb-8 sm:px-6">
-                              <LiveOutputView output={conversationOutput} />
-                            </div>
-                          ) : null}
-                          {selected?.artifacts.length ? (
-                            <section className="mx-auto w-full max-w-3xl px-4 py-5">
-                              <p className="flex items-center gap-2 text-xs font-semibold">
-                                <FileOutput className="size-4" />
-                                {t("artifacts")}
-                              </p>
-                              <ul className="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
-                                {selected.artifacts.map((artifact) => (
-                                  <li key={artifact}>{artifact}</li>
-                                ))}
-                              </ul>
-                            </section>
-                          ) : null}
-                        </>
-                      ) : (
-                        <div className="flex items-center justify-center px-6 pb-7 pt-10 text-center">
-                          <div className="max-w-lg">
-                            <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-muted text-foreground ring-1 ring-border/50">
-                              <Bot className="size-6" />
-                            </span>
-                            {agent ? (
-                              <p className="mt-4 text-sm font-medium text-muted-foreground">
-                                {agent.name}
-                              </p>
-                            ) : null}
-                            <h2 className="mt-2 text-2xl font-medium tracking-tight sm:text-3xl">
-                              {t("emptyTitle")}
-                            </h2>
-                            <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
-                              {agent?.description &&
-                              agent.description.trim() !== agent.name.trim()
-                                ? agent.description
-                                : t("emptyDescription")}
-                            </p>
-                            {agent?.mcpToolsUpdated ? (
-                              <McpToolsUpdatedNote {...agent.mcpToolsUpdated} />
-                            ) : null}
-                          </div>
+                  )}
+                  ready={!sessionReadOnly}
+                  runtimeKind={conversation.runtimeKind ?? null}
+                  agentRevisionVersion={conversation.agentRevisionVersion}
+                  currentRevisionVersion={controlAgent.currentRevisionVersion}
+                  mcpToolsUpdated={controlAgent.mcpToolsUpdated}
+                  modelName={conversation.modelName}
+                  modelOverride={composer.modelChoice}
+                  modelPicker={
+                    <ComposerModelSelect
+                      providers={providers}
+                      defaultSelection={composer.defaultModelSelection}
+                      value={composer.modelChoice}
+                      onChange={composer.setModelChoice}
+                    />
+                  }
+                  initialMessages={
+                    conversation.messages.filter(
+                      (message) => !messageCompaction(message),
+                    ) as AgentUIMessage[]
+                  }
+                  initialReasoningEffort={
+                    conversation.reasoningEffort ?? "default"
+                  }
+                  reasoningAvailable={composer.reasoningAvailable}
+                  inheritedReasoningEffort={
+                    controlAgent.reasoningEffort ?? null
+                  }
+                  creatingConversation={false}
+                  ensureConversation={async () => conversation.id}
+                  attachmentUploadUrl={`/api/v1/workspaces/${workspaceId}/attachments`}
+                  mcpPromptApiPath={`/api/v1/agents/${controlAgent.id}/prompts`}
+                  mcpResourceApiPath={`/api/v1/agents/${controlAgent.id}/composer`}
+                  onBusyChange={setConversationBusy}
+                  onConversationChanged={() => router.refresh()}
+                />
+              ) : (
+                <MessageScroller
+                  key={selected?.id ?? conversation?.id ?? "new"}
+                  label={t("title")}
+                  data-ui="work.transcript"
+                  busy={selectedActive || Boolean(conversationOutput?.active)}
+                  followOutput={followingOutput}
+                  onFollowChange={setFollowingOutput}
+                  navigation="rail"
+                  className={
+                    selected || conversation
+                      ? "min-h-0 flex-1"
+                      : "mt-auto min-h-0 flex-none"
+                  }
+                >
+                  {selected || conversation ? (
+                    <>
+                      <WorkTranscript
+                        workspaceSlug={slug}
+                        submitterName={selected?.a2aActor?.name ?? undefined}
+                        treeActionsEnabled={Boolean(
+                          selected &&
+                            !sessionReadOnly &&
+                            selected.runtimeKind === "pi-sdk",
+                        )}
+                        treeActionsDisabled={
+                          selectedActive ||
+                          Boolean(busy) ||
+                          composerPending ||
+                          !MESSAGEABLE_STATUSES.has(selected?.status ?? "")
+                        }
+                        treeActionPending={busy === "tree"}
+                        onTreeAction={composer.mutateConversationTree}
+                        agentName={controlAgent?.name ?? t("agent")}
+                        agentId={conversation?.agentId ?? selected?.agentId}
+                        conversationId={
+                          conversation?.id ?? selected?.conversationId
+                        }
+                        modelName={
+                          conversation?.modelOverride?.model ??
+                          conversation?.modelName ??
+                          selected?.modelName ??
+                          null
+                        }
+                        messages={
+                          conversationAccessRevoked
+                            ? []
+                            : (conversation?.messages ??
+                              selected?.messages ??
+                              [])
+                        }
+                        streamText={stream.streamText}
+                        streamActivities={stream.streamActivities}
+                        streamBudgetWarning={stream.streamBudgetWarning}
+                        streamRuleTriggers={stream.streamRuleTriggers}
+                        streamStartedAt={stream.streamStartedAt}
+                        streamRuntimeKind={stream.streamRuntimeKind}
+                        streamModelName={stream.streamModelName}
+                        executionStage={stream.executionStage}
+                        sessionStartedAt={selected?.startedAt}
+                        sessionCompletedAt={selected?.completedAt}
+                        streaming={selectedActive}
+                      />
+                      {observingConversation &&
+                      !conversationAccessRevoked &&
+                      conversationOutput &&
+                      !conversationOutputPersisted ? (
+                        <div className="mx-auto w-full max-w-3xl px-4 pb-8 sm:px-6">
+                          <LiveOutputView output={conversationOutput} />
                         </div>
-                      )}
-                      {visibleError && !configurationError ? (
-                        <div
-                          role="alert"
-                          className="mx-auto my-4 w-[calc(100%_-_2rem)] max-w-[736px] rounded-2xl border border-border bg-muted/40 p-4 text-sm text-muted-foreground"
-                        >
-                          {runtimeError ? runtimeError.text : visibleError}
-                          {runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE" &&
-                          controlAgent ? (
+                      ) : null}
+                      {selected?.artifacts.length ? (
+                        <section className="mx-auto w-full max-w-3xl px-4 py-5">
+                          <p className="flex items-center gap-2 text-xs font-semibold">
+                            <FileOutput className="size-4" />
+                            {t("artifacts")}
+                          </p>
+                          <ul className="mt-2 space-y-1 font-mono text-xs text-muted-foreground">
+                            {selected.artifacts.map((artifact) => (
+                              <li key={artifact}>{artifact}</li>
+                            ))}
+                          </ul>
+                        </section>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div className="flex items-center justify-center px-6 pb-7 pt-10 text-center">
+                      <div className="max-w-lg">
+                        <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-muted text-foreground ring-1 ring-border/50">
+                          <Bot className="size-6" />
+                        </span>
+                        {agent ? (
+                          <p className="mt-4 text-sm font-medium text-muted-foreground">
+                            {agent.name}
+                          </p>
+                        ) : null}
+                        <h2 className="mt-2 text-2xl font-medium tracking-tight sm:text-3xl">
+                          {t("emptyTitle")}
+                        </h2>
+                        <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
+                          {agent?.description &&
+                          agent.description.trim() !== agent.name.trim()
+                            ? agent.description
+                            : t("emptyDescription")}
+                        </p>
+                        {agent?.mcpToolsUpdated ? (
+                          <McpToolsUpdatedNote {...agent.mcpToolsUpdated} />
+                        ) : null}
+                        {agent ? (
+                          <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
+                            {sandboxOptions.length > 1 ? (
+                              <MorphPopover
+                                open={sandboxSwitcherOpen}
+                                onOpenChange={setSandboxSwitcherOpen}
+                              >
+                                <MorphPopoverTrigger>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 gap-1.5 rounded-full px-3 text-xs font-normal"
+                                  >
+                                    <Boxes className="size-3.5 text-muted-foreground" />
+                                    <span>
+                                      {activeSandbox?.name ?? t("sandbox")}
+                                    </span>
+                                    <ChevronDown className="size-3 text-muted-foreground" />
+                                  </Button>
+                                </MorphPopoverTrigger>
+                                <MorphPopoverContent
+                                  side="bottom"
+                                  align="start"
+                                  sideOffset={4}
+                                  className="z-50 w-60 p-1"
+                                >
+                                  {sandboxOptions.map((sb) => (
+                                    <button
+                                      key={sb.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setSandboxId(sb.id);
+                                        setSandboxSwitcherOpen(false);
+                                      }}
+                                      className={cn(
+                                        "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs hover:bg-muted/70",
+                                        sb.id === activeSandboxId &&
+                                          "bg-muted font-medium",
+                                      )}
+                                    >
+                                      <span
+                                        className={cn(
+                                          "size-1.5 shrink-0 rounded-full",
+                                          sb.running
+                                            ? "bg-emerald-500"
+                                            : "bg-muted-foreground/50",
+                                        )}
+                                      />
+                                      <span className="min-w-0 flex-1 truncate text-foreground">
+                                        {sb.name}
+                                      </span>
+                                      {sb.id === activeSandboxId ? (
+                                        <Check className="size-3.5 shrink-0 text-primary" />
+                                      ) : null}
+                                    </button>
+                                  ))}
+                                </MorphPopoverContent>
+                              </MorphPopover>
+                            ) : activeSandbox ? (
+                              <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-3 py-1">
+                                <Boxes className="size-3.5" />
+                                <span>{activeSandbox.name}</span>
+                              </span>
+                            ) : null}
                             <Button
-                              variant="outline"
+                              type="button"
+                              variant="ghost"
                               size="sm"
-                              className="ml-3 rounded-full"
                               onClick={() =>
                                 router.push(
                                   agentSettingsHref(
                                     slug,
-                                    controlAgent.id,
+                                    agent.id,
                                     workReturnTo,
-                                    "mcp",
                                   ),
                                 )
                               }
+                              className="h-7 gap-1.5 rounded-full px-3 text-xs text-muted-foreground hover:text-foreground"
                             >
-                              {tAgents("configureAgent")}
+                              <Settings2 className="size-3.5" />
+                              <span>{t("agentSettings")}</span>
                             </Button>
-                          ) : null}
-                          {storageQuotaExceeded ? (
-                            <ManageFilesButton
-                              returnTo={workReturnTo}
-                              className="ml-3"
-                            />
-                          ) : null}
-                          {retryableMessageId ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="ml-3 rounded-full"
-                              onClick={() =>
-                                void composer.mutateConversationTree({
-                                  kind: "retry",
-                                  messageId: retryableMessageId,
-                                })
-                              }
-                            >
-                              {t("tree.retry")}
-                            </Button>
-                          ) : null}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="ml-3 rounded-full"
-                            onClick={() => {
-                              const params = new URLSearchParams({
-                                category: "failure",
-                              });
-                              if (runtimeError?.code) {
-                                params.set("failureCode", runtimeError.code);
-                              }
-                              if (selected?.id) {
-                                params.set("workSessionId", selected.id);
-                              }
-                              if (conversation?.id) {
-                                params.set("conversationId", conversation.id);
-                              }
-                              const targetAgentId =
-                                controlAgent?.id ?? agent?.id;
-                              if (targetAgentId) {
-                                params.set("agentId", targetAgentId);
-                              }
-                              router.push(
-                                `/app/${encodeURIComponent(slug)}/feedback?${params.toString()}`,
-                              );
-                            }}
-                          >
-                            {t("reportThisIssue")}
-                          </Button>
-                        </div>
-                      ) : null}
-                    </MessageScroller>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
                   )}
-                </>
+                  {visibleError && !configurationError ? (
+                    <div
+                      role="alert"
+                      className="mx-auto my-4 w-[calc(100%_-_2rem)] max-w-[736px] rounded-2xl border border-border bg-muted/40 p-4 text-sm text-muted-foreground"
+                    >
+                      {runtimeError ? runtimeError.text : visibleError}
+                      {runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE" &&
+                      controlAgent ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="ml-3 rounded-full"
+                          onClick={() =>
+                            router.push(
+                              agentSettingsHref(
+                                slug,
+                                controlAgent.id,
+                                workReturnTo,
+                                "mcp",
+                              ),
+                            )
+                          }
+                        >
+                          {tAgents("configureAgent")}
+                        </Button>
+                      ) : null}
+                      {storageQuotaExceeded ? (
+                        <ManageFilesButton className="ml-3" />
+                      ) : null}
+                      {retryableMessageId ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="ml-3 rounded-full"
+                          onClick={() =>
+                            void composer.mutateConversationTree({
+                              kind: "retry",
+                              messageId: retryableMessageId,
+                            })
+                          }
+                        >
+                          {t("tree.retry")}
+                        </Button>
+                      ) : null}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="ml-3 rounded-full"
+                        onClick={() => {
+                          const params = new URLSearchParams({
+                            category: "failure",
+                          });
+                          if (runtimeError?.code) {
+                            params.set("failureCode", runtimeError.code);
+                          }
+                          if (selected?.id) {
+                            params.set("workSessionId", selected.id);
+                          }
+                          if (conversation?.id) {
+                            params.set("conversationId", conversation.id);
+                          }
+                          const targetAgentId = controlAgent?.id ?? agent?.id;
+                          if (targetAgentId) {
+                            params.set("agentId", targetAgentId);
+                          }
+                          router.push(
+                            `/app/${encodeURIComponent(slug)}/feedback?${params.toString()}`,
+                          );
+                        }}
+                      >
+                        {t("reportThisIssue")}
+                      </Button>
+                    </div>
+                  ) : null}
+                </MessageScroller>
               )}
               {conversation &&
               channelConversation &&
@@ -1170,6 +1496,13 @@ export function WorkspaceWork({
                   <div
                     className={`${conversationComposerDockClassName} ${!selected ? "mb-auto before:hidden" : ""} ${showConfigurationNotice || unappliedDraft ? "before:hidden" : ""}`}
                   >
+                    <ScrollToBottomButton
+                      visible={
+                        !followingOutput && Boolean(selected || conversation)
+                      }
+                      onClick={() => setFollowingOutput(true)}
+                      label={t("scrollToBottom")}
+                    />
                     <div>
                       {selected && !sessionReadOnly ? (
                         <ConversationExecution

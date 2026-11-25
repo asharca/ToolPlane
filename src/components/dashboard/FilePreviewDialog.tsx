@@ -11,12 +11,13 @@ import {
   type RefObject,
 } from "react";
 import { useTranslations } from "next-intl";
-import { Download, FileText, Loader2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Download, FileText, X, ZoomIn, ZoomOut } from "lucide-react";
 import {
   CenterMorphModal,
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
 import { Button } from "@/components/motion/button";
+import { Loader } from "@/components/motion/loader";
 import { Table, type TableColumn } from "@/components/motion/table";
 import {
   AIArtifact,
@@ -387,7 +388,7 @@ function PreviewContent({
           onClick={() => void download()}
         >
           {downloading ? (
-            <Loader2 className="size-4 animate-spin" />
+            <Loader variant="spinner" size={16} label={t("loading")} />
           ) : (
             <Download className="size-4" />
           )}
@@ -464,7 +465,12 @@ function PreviewContent({
             role="status"
             className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"
           >
-            <Loader2 className="size-4 animate-spin" />
+            <Loader
+              variant="spinner"
+              size={16}
+              label={t("loading")}
+              className="text-muted-foreground"
+            />
             {t("loading")}
           </div>
         ) : file.blob?.size === 0 ? (

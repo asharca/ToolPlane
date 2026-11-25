@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { Brain, MoreHorizontal, Search, Trash2, X } from "lucide-react";
@@ -8,12 +8,14 @@ import { useTranslations } from "next-intl";
 import { Button, ButtonLink } from "@/components/motion/button";
 import { Checkbox } from "@/components/motion/checkbox";
 import { Input } from "@/components/motion/input";
+import { Pagination } from "@/components/motion/pagination";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/motion/popover";
 import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
+import { useSlashFocusSearch } from "@/components/dashboard/ConversationUxPrimitives";
 import {
   DashboardEmptyState,
   DashboardTable,
@@ -45,6 +47,8 @@ export function InstalledSkillsTable({
   const selection = useTranslations("console.agents");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  useSlashFocusSearch(searchInputRef);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const availableIds = useMemo(
     () => new Set(skills.map((skill) => skill.id)),
@@ -155,6 +159,7 @@ export function InstalledSkillsTable({
     <section className="min-w-0 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Input
+          ref={searchInputRef}
           value={query}
           onChange={(value) => {
             setQuery(value);
@@ -163,6 +168,16 @@ export function InstalledSkillsTable({
           placeholder={t("searchSkills")}
           aria-label={t("searchSkills")}
           leftIcon={<Search className="size-4" />}
+          rightIcon={
+            !query ? (
+              <span
+                aria-hidden="true"
+                className="pointer-events-none mr-3 hidden h-5 items-center rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex"
+              >
+                /
+              </span>
+            ) : undefined
+          }
           className="w-full sm:w-72"
         />
         {actions ? (
@@ -326,32 +341,19 @@ export function InstalledSkillsTable({
         />
       ) : null}
       {skills.length ? (
-        <nav
-          aria-label={common("pagination")}
-          className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3"
-        >
-          <p className="text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+          <p className="text-xs tabular-nums text-muted-foreground">
             {currentPage} / {totalPages}
           </p>
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={currentPage <= 1}
-              onClick={() => setPage(currentPage - 1)}
-            >
-              {common("previous")}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={currentPage >= totalPages}
-              onClick={() => setPage(currentPage + 1)}
-            >
-              {common("next")}
-            </Button>
-          </div>
-        </nav>
+          {totalPages > 1 ? (
+            <Pagination
+              totalPages={totalPages}
+              page={currentPage}
+              onPageChange={setPage}
+              aria-label={common("pagination")}
+            />
+          ) : null}
+        </div>
       ) : null}
     </section>
   );

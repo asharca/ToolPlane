@@ -19,6 +19,7 @@ import {
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button, ButtonLink } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
+import { Pagination } from "@/components/motion/pagination";
 import {
   Popover,
   PopoverContent,
@@ -39,6 +40,7 @@ import {
 } from "@/lib/workspace/actions";
 import { cn } from "@/lib/utils";
 import { DashboardEmptyState, DashboardTable } from "./DashboardUI";
+import { useSlashFocusSearch } from "@/components/dashboard/ConversationUxPrimitives";
 import { AddMcpDialog } from "./AddMcpDialog";
 
 export type McpDeploymentListItem = {
@@ -394,8 +396,10 @@ export function McpDeploymentsBrowser({
   >(() => new Set());
   const [page, setPage] = useState(1);
   const tableAreaRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [tableHeight, setTableHeight] = useState(0);
   const hasDeployments = deployments.length > 0;
+  useSlashFocusSearch(searchInputRef, hasDeployments);
 
   useEffect(() => {
     const area = hasDeployments ? tableAreaRef.current : null;
@@ -534,6 +538,7 @@ export function McpDeploymentsBrowser({
         <div className="flex min-w-0 w-full flex-col gap-2.5 sm:w-auto sm:flex-1 sm:flex-row sm:flex-wrap sm:items-center">
           <div className="w-full sm:w-64 lg:w-72">
             <Input
+              ref={searchInputRef}
               value={query}
               onChange={(value) => {
                 setQuery(value);
@@ -556,7 +561,14 @@ export function McpDeploymentsBrowser({
                   >
                     <X className="size-4" />
                   </Button>
-                ) : undefined
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none mr-3 hidden h-5 items-center rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex"
+                  >
+                    /
+                  </span>
+                )
               }
             />
           </div>
@@ -768,37 +780,20 @@ export function McpDeploymentsBrowser({
       )}
 
       {totalPages > 1 ? (
-        <nav
-          aria-label={common("pagination")}
-          className="flex shrink-0 items-center justify-between gap-3 border-t border-border pt-3"
-        >
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
           <p
             className="text-sm tabular-nums text-muted-foreground"
             aria-live="polite"
           >
             {currentPage} / {totalPages}
           </p>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={currentPage === 1}
-              onClick={() => setPage(currentPage - 1)}
-            >
-              {common("previous")}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={currentPage === totalPages}
-              onClick={() => setPage(currentPage + 1)}
-            >
-              {common("next")}
-            </Button>
-          </div>
-        </nav>
+          <Pagination
+            totalPages={totalPages}
+            page={currentPage}
+            onPageChange={setPage}
+            aria-label={common("pagination")}
+          />
+        </div>
       ) : null}
     </section>
   );

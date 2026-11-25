@@ -290,7 +290,7 @@ export async function createTokenAction(
   const { token } = await createApiToken(userId, name);
   revalidatePath("/app");
   const workspace = String(formData.get("workspace") ?? "");
-  if (workspace) revalidatePath(`/app/${workspace}/settings/tokens`);
+  if (workspace) revalidatePath(`/app/${workspace}/settings/account`);
   return { token };
 }
 
@@ -301,5 +301,5 @@ export async function revokeTokenAction(formData: FormData): Promise<void> {
   if (id) await revokeApiToken(userId, id);
   revalidatePath("/app");
   const workspace = String(formData.get("workspace") ?? "");
-  if (workspace) revalidatePath(`/app/${workspace}/settings/tokens`);
+  if (workspace) revalidatePath(`/app/${workspace}/settings/account`);
 }

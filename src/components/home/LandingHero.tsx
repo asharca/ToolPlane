@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { useMemo, useState } from "react";
-import { FaGithub } from "react-icons/fa";
+import { GithubIcon } from "@/components/ui/GithubIcon";
 import {
   type AgentTraceRun,
   TraceWaterfall,
@@ -232,7 +232,7 @@ export function LandingHero({ home, locale }: LandingHeroProps) {
               variant="ghost"
               size="md"
             >
-              <FaGithub aria-hidden="true" className="size-4" />
+              <GithubIcon aria-hidden="true" className="size-4" />
               {home.tertiaryCta}
             </ButtonLink>
           </div>

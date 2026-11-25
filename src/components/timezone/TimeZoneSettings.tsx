@@ -1,5 +1,4 @@
 "use client";
-import { FormSelect } from "@/components/ui/FormSelect";
 
 import {
   startTransition,
@@ -13,13 +12,38 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { updateTimeZonePreference } from "@/lib/auth/timezone-actions";
 import { AUTO_TIME_ZONE_VALUE, listSupportedTimeZones } from "@/lib/timezone";
-import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import {
-  DialogCancel,
-  DialogField,
-  DialogFooter,
-} from "@/components/dashboard/dialog";
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+} from "@/components/motion/alert";
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxGroup,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxLabel,
+  ComboboxList,
+  ComboboxSeparator,
+  ComboboxTrigger,
+} from "@/components/motion/combobox";
+import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { useUserTimeZone } from "./UserTimeZoneContext";
+
+function groupTimeZonesByRegion(timeZones: string[]) {
+  const groups = new Map<string, string[]>();
+  for (const timeZone of timeZones) {
+    const slash = timeZone.indexOf("/");
+    const region = slash === -1 ? "UTC" : timeZone.slice(0, slash);
+    const bucket = groups.get(region);
+    if (bucket) bucket.push(timeZone);
+    else groups.set(region, [timeZone]);
+  }
+  return Array.from(groups, ([region, zones]) => ({ region, zones }));
+}
 
 export function TimeZoneSettings({
   timeZoneOverride,
@@ -27,15 +51,17 @@ export function TimeZoneSettings({
   timeZoneOverride: string | null;
 }) {
   const t = useTranslations("console.settings");
+  const common = useTranslations("common");
   const router = useRouter();
   const { detectedTimeZone } = useUserTimeZone();
   const [state, formAction] = useActionState(updateTimeZonePreference, {});
   const refreshedSave = useRef<number | null>(null);
   const savedTimeZone = timeZoneOverride ?? AUTO_TIME_ZONE_VALUE;
   const [selected, setSelected] = useState(savedTimeZone);
+  const [open, setOpen] = useState(false);
   const [trackedSaved, setTrackedSaved] = useState(savedTimeZone);
   if (trackedSaved !== savedTimeZone) {
-    // The select remounts on a new saved value; mirror its reset.
+    // Sync local selection when a new saved timezone arrives from the server.
     setTrackedSaved(savedTimeZone);
     setSelected(savedTimeZone);
   }
@@ -43,6 +69,13 @@ export function TimeZoneSettings({
     () => listSupportedTimeZones([timeZoneOverride, detectedTimeZone]),
     [detectedTimeZone, timeZoneOverride],
   );
+  const regionGroups = useMemo(
+    () => groupTimeZonesByRegion(timeZones),
+    [timeZones],
+  );
+  const autoLabel = detectedTimeZone
+    ? t("timezoneAutomatic", { timeZone: detectedTimeZone })
+    : t("timezoneDetecting");
 
   useEffect(() => {
     if (!state.savedAt || refreshedSave.current === state.savedAt) return;
@@ -54,50 +87,74 @@ export function TimeZoneSettings({
     <form
       action={formAction}
       onReset={() => setSelected(savedTimeZone)}
-      className="space-y-3"
+      className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
     >
       <input
         type="hidden"
         name="detectedTimeZone"
         value={detectedTimeZone ?? ""}
       />
-      <div className="min-w-0">
-        <DialogField
-          label={t("timezone")}
-          htmlFor="user-time-zone"
-          dirty={selected !== savedTimeZone}
-        >
-          <FormSelect
-            key={savedTimeZone}
-            id="user-time-zone"
-            name="timeZone"
-            defaultValue={savedTimeZone}
-            onValueChange={setSelected}
-            label={t("timezone")}
-            options={[
-              {
-                value: AUTO_TIME_ZONE_VALUE,
-                label: detectedTimeZone
-                  ? t("timezoneAutomatic", { timeZone: detectedTimeZone })
-                  : t("timezoneDetecting"),
-              },
-              ...timeZones.map((timeZone) => ({
-                value: timeZone,
-                label: timeZone,
-              })),
-            ]}
-          />
-        </DialogField>
+      <input type="hidden" name="timeZone" value={selected} />
+      <div className="min-w-0 sm:max-w-md">
+        <p className="text-sm font-medium text-foreground">{t("timezone")}</p>
+        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+          {t("timezoneScheduled")}
+        </p>
         {state.error ? (
-          <p role="alert" className="mt-2 text-xs text-destructive">
-            {t(state.error)}
-          </p>
+          <Alert variant="destructive" className="mt-2">
+            <AlertIcon />
+            <AlertContent>
+              <AlertDescription>{t(state.error)}</AlertDescription>
+            </AlertContent>
+          </Alert>
         ) : null}
       </div>
-      <DialogFooter
-        cancel={<DialogCancel />}
-        className="static -mx-5 -mb-4 mt-5 bg-transparent px-5"
-      >
+      <div className="flex min-w-0 items-center gap-2 sm:w-96">
+        <Combobox
+          value={selected}
+          onValueChange={setSelected}
+          open={open}
+          onOpenChange={setOpen}
+          className="min-w-0 flex-1"
+        >
+          <ComboboxTrigger className="min-w-0 border-(--input) bg-(--field)">
+            <ComboboxInput
+              aria-label={t("timezone")}
+              placeholder={t("timezoneSearch")}
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && open) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.nativeEvent.stopPropagation();
+                  setOpen(false);
+                }
+              }}
+            />
+          </ComboboxTrigger>
+          <ComboboxContent className="rounded-xl">
+            <ComboboxList ariaLabel={t("timezone")}>
+              <ComboboxEmpty>{t("timezoneEmpty")}</ComboboxEmpty>
+              <ComboboxItem
+                value={AUTO_TIME_ZONE_VALUE}
+                textValue={autoLabel}
+                keywords={["auto", "automatic", "自动", detectedTimeZone ?? ""]}
+              >
+                {autoLabel}
+              </ComboboxItem>
+              {regionGroups.map(({ region, zones }) => (
+                <ComboboxGroup key={region}>
+                  <ComboboxSeparator />
+                  <ComboboxLabel>{region}</ComboboxLabel>
+                  {zones.map((timeZone) => (
+                    <ComboboxItem key={timeZone} value={timeZone}>
+                      {timeZone}
+                    </ComboboxItem>
+                  ))}
+                </ComboboxGroup>
+              ))}
+            </ComboboxList>
+          </ComboboxContent>
+        </Combobox>
         <SubmitButton
           pendingLabel={t("savingTimezone")}
           savedLabel={t("timezoneSaved")}
@@ -105,10 +162,11 @@ export function TimeZoneSettings({
           disabled={selected === savedTimeZone}
           variant="primary"
           size="md"
+          className="shrink-0"
         >
-          {t("saveTimezone")}
+          {common("save")}
         </SubmitButton>
-      </DialogFooter>
+      </div>
     </form>
   );
 }

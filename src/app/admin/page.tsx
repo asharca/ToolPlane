@@ -228,20 +228,22 @@ export default async function AdminOverviewPage() {
                         className="flex min-w-0 flex-wrap items-center gap-3 py-3 hover:text-destructive"
                       >
                         <span className="min-w-0 flex-1 basis-44">
-                          <code className="block break-all text-xs font-medium">
+                          <code className="block [overflow-wrap:anywhere] text-xs font-medium">
                             {group.errorType ?? group.eventName}
                             {group.errorCode ? ` / ${group.errorCode}` : ""}
                           </code>
                           {group.errorType ? (
-                            <code className="mt-1 block break-all text-xs text-muted-foreground">
+                            <code className="mt-1 block [overflow-wrap:anywhere] text-xs text-muted-foreground">
                               {group.eventName}
                             </code>
                           ) : null}
                         </span>
-                        <LogTimestamp date={group.last} compact />
-                        <AdminBadge tone="danger">
-                          {t("logsOccurrences", { count: group.count })}
-                        </AdminBadge>
+                        <span className="flex shrink-0 items-center gap-2">
+                          <LogTimestamp date={group.last} compact />
+                          <AdminBadge tone="danger">
+                            {t("logsOccurrences", { count: group.count })}
+                          </AdminBadge>
+                        </span>
                       </Link>
                     </li>
                   ))}

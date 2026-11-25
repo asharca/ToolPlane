@@ -121,43 +121,47 @@ export default async function AdminWorkspacesPage({
       ) : (
         <DashboardTable
           ariaLabel={t("workspacesTableLabel")}
-          minWidth="70rem"
+          minWidth="58rem"
+          selectable={false}
+          adjustableColumns={false}
           headers={[
-            { label: t("workspaceColumn"), width: "35%" },
-            { label: t("ownerColumn") },
-            { label: t("statusColumn") },
-            { label: t("membersColumn"), align: "right" },
-            { label: t("agentsColumn"), align: "right" },
-            { label: t("deploymentsColumn"), align: "right" },
-            { label: t("createdColumn") },
-            { label: <span className="sr-only">{t("viewDetails")}</span> },
+            { label: t("workspaceColumn"), width: "26%" },
+            { label: t("ownerColumn"), width: "13rem" },
+            { label: t("statusColumn"), width: "5.5rem" },
+            { label: t("membersColumn"), align: "right", width: "4.5rem" },
+            { label: t("agentsColumn"), align: "right", width: "4.5rem" },
+            { label: t("deploymentsColumn"), align: "right", width: "5rem" },
+            { label: t("createdColumn"), width: "7.5rem" },
+            {
+              label: <span className="sr-only">{t("viewDetails")}</span>,
+              width: "3rem",
+            },
           ]}
           rows={items.map((workspace) => ({
             id: workspace.id,
             cells: [
-              <>
-                {" "}
-                <AdminEntity
-                  title={
-                    <Link
-                      href={adminHref(`/admin/workspaces/${workspace.id}`, {
-                        returnTo: hrefForPage(currentPage),
-                      })}
-                      className="hover:underline"
-                    >
-                      {workspace.name}
-                    </Link>
-                  }
-                  description={`/${workspace.slug}`}
-                  initials={workspace.name}
-                />{" "}
-              </>,
+              <AdminEntity
+                key="workspace"
+                title={
+                  <Link
+                    href={adminHref(`/admin/workspaces/${workspace.id}`, {
+                      returnTo: hrefForPage(currentPage),
+                    })}
+                    className="hover:underline"
+                  >
+                    {workspace.name}
+                  </Link>
+                }
+                description={`/${workspace.slug}`}
+                initials={workspace.name}
+              />,
               <Link
                 key="owner"
                 href={adminHref(`/admin/users/${workspace.owner.id}`, {
                   returnTo: hrefForPage(currentPage),
                 })}
-                className="text-sm font-medium text-foreground hover:underline"
+                title={workspace.owner.email}
+                className="block truncate text-sm font-medium text-foreground hover:underline"
               >
                 {workspace.owner.email}
               </Link>,
@@ -188,15 +192,13 @@ export default async function AdminWorkspacesPage({
                 },
                 locale,
               ),
-              <>
-                {" "}
-                <AdminTableLink
-                  href={adminHref(`/admin/workspaces/${workspace.id}`, {
-                    returnTo: hrefForPage(currentPage),
-                  })}
-                  label={`${t("viewDetails")}: ${workspace.name}`}
-                />{" "}
-              </>,
+              <AdminTableLink
+                key="link"
+                href={adminHref(`/admin/workspaces/${workspace.id}`, {
+                  returnTo: hrefForPage(currentPage),
+                })}
+                label={`${t("viewDetails")}: ${workspace.name}`}
+              />,
             ],
           }))}
         />

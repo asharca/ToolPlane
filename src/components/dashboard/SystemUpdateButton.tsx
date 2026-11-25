@@ -1,6 +1,6 @@
 "use client";
+import dynamic from "next/dynamic";
 import { Button } from "@/components/motion/button";
-import { SafeStreamdown } from "./SafeStreamdown";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -10,8 +10,8 @@ import {
   ExternalLink,
   RefreshCw,
 } from "lucide-react";
-import { MarkGithubIcon } from "@primer/octicons-react";
 import { useTranslations } from "next-intl";
+import { GithubIcon } from "@/components/ui/GithubIcon";
 import { systemUpdateFailures } from "@/lib/system/update-failures";
 import {
   MorphPopover,
@@ -19,6 +19,11 @@ import {
   MorphPopoverTrigger,
 } from "@/components/motion/popover-morph";
 import { apiRequest } from "@/lib/client/api";
+
+const SafeStreamdown = dynamic(
+  () => import("./SafeStreamdown").then((mod) => mod.SafeStreamdown),
+  { ssr: false },
+);
 
 export const SYSTEM_UPDATE_LOCAL_STATUS_PATH =
   "/api/v1/admin/system/update?local=1";
@@ -473,7 +478,7 @@ export function SystemUpdateButton({
               title={status.repository}
               className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
             >
-              <MarkGithubIcon aria-hidden="true" size={14} />
+              <GithubIcon aria-hidden="true" className="size-3.5" />
             </a>
           ) : null}
           {canInstall ? (

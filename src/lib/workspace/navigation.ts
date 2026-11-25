@@ -15,6 +15,7 @@ export type WorkspaceSummary = {
 const WORKSPACE_SECTIONS = new Set([
   "agents",
   "chat",
+  "files",
   "knowledge",
   "plugins",
   "mcp",

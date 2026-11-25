@@ -17,6 +17,7 @@ import {
   lastWorkspaceCookieName,
 } from "@/lib/workspace/navigation";
 import { AnimatedSidebarTrigger } from "@/components/motion/animated-sidebar";
+import { hasOpenDialog } from "@/components/dashboard/ConversationUxPrimitives";
 import { Tooltip } from "@/components/motion/tooltip";
 import { WorkspaceShell } from "@/components/workspace/workspace-shell";
 
@@ -87,6 +88,8 @@ export function DashboardChrome({
         return t("notifications");
       case "feedback":
         return t("feedback");
+      case "files":
+        return t("files");
       case "settings":
         return t("settings");
       default:
@@ -153,6 +156,25 @@ export function DashboardChrome({
     // biome-ignore lint/suspicious/noDocumentCookie: Persist synchronously on HTTP development origins and browsers without Cookie Store support.
     document.cookie = `${lastWorkspaceCookieName(userId)}=${encodeURIComponent(slug)}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
   }, [slug, userId]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        !(event.metaKey || event.ctrlKey) ||
+        event.shiftKey ||
+        event.altKey ||
+        event.key !== "\\" ||
+        event.isComposing
+      ) {
+        return;
+      }
+      if (hasOpenDialog()) return;
+      event.preventDefault();
+      setCollapsed(!collapsed);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [collapsed, setCollapsed]);
 
   return (
     <DashboardRuntimeConfigProvider supportEmail={supportEmail}>

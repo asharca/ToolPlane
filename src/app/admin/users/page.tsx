@@ -120,37 +120,44 @@ export default async function AdminUsersPage({
       ) : (
         <DashboardTable
           ariaLabel={t("usersTableLabel")}
-          minWidth="69rem"
+          minWidth="58rem"
+          selectable={false}
+          adjustableColumns={false}
           headers={[
-            { label: t("userColumn"), width: "35%" },
-            { label: t("roleColumn") },
-            { label: t("ownedWorkspacesColumn"), align: "right" },
-            { label: t("membershipsColumn"), align: "right" },
-            { label: t("tokensColumn"), align: "right" },
-            { label: t("statusColumn") },
-            { label: t("joinedColumn") },
-            { label: <span className="sr-only">{t("viewDetails")}</span> },
+            { label: t("userColumn"), width: "30%" },
+            { label: t("roleColumn"), width: "6.5rem" },
+            {
+              label: t("ownedWorkspacesColumn"),
+              align: "right",
+              width: "6.5rem",
+            },
+            { label: t("membershipsColumn"), align: "right", width: "5.5rem" },
+            { label: t("tokensColumn"), align: "right", width: "5rem" },
+            { label: t("statusColumn"), width: "6rem" },
+            { label: t("joinedColumn"), width: "7.5rem" },
+            {
+              label: <span className="sr-only">{t("viewDetails")}</span>,
+              width: "3rem",
+            },
           ]}
           rows={items.map((user) => ({
             id: user.id,
             cells: [
-              <>
-                {" "}
-                <AdminEntity
-                  title={
-                    <Link
-                      href={adminHref(`/admin/users/${user.id}`, {
-                        returnTo: hrefForPage(currentPage),
-                      })}
-                      className="hover:underline"
-                    >
-                      {user.name ?? user.email}
-                    </Link>
-                  }
-                  description={user.name ? user.email : undefined}
-                  initials={user.name ?? user.email}
-                />{" "}
-              </>,
+              <AdminEntity
+                key="user"
+                title={
+                  <Link
+                    href={adminHref(`/admin/users/${user.id}`, {
+                      returnTo: hrefForPage(currentPage),
+                    })}
+                    className="hover:underline"
+                  >
+                    {user.name ?? user.email}
+                  </Link>
+                }
+                description={user.name ? user.email : undefined}
+                initials={user.name ?? user.email}
+              />,
               <AdminBadge
                 key="role"
                 tone={user.role === "admin" ? "info" : "neutral"}
@@ -177,15 +184,13 @@ export default async function AdminUsersPage({
                 },
                 locale,
               ),
-              <>
-                {" "}
-                <AdminTableLink
-                  href={adminHref(`/admin/users/${user.id}`, {
-                    returnTo: hrefForPage(currentPage),
-                  })}
-                  label={`${t("viewDetails")}: ${user.name ?? user.email}`}
-                />{" "}
-              </>,
+              <AdminTableLink
+                key="link"
+                href={adminHref(`/admin/users/${user.id}`, {
+                  returnTo: hrefForPage(currentPage),
+                })}
+                label={`${t("viewDetails")}: ${user.name ?? user.email}`}
+              />,
             ],
           }))}
         />

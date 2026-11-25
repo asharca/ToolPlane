@@ -478,19 +478,19 @@ export default async function SandboxesPage({
                             scope === "external" ? "sandbox" : "ownerAgent",
                           ),
                         },
-                        { label: t("mode"), width: "5.5rem" },
-                        { label: t("status"), width: "7.5rem" },
-                        { label: t("backingStore"), width: "11.5rem" },
+                        { label: t("mode"), width: "5.75rem" },
+                        { label: t("status"), width: "9.5rem" },
+                        { label: t("backingStore"), width: "9.5rem" },
                         {
                           label: t(
                             scope === "external"
                               ? "agentsColumn"
                               : "usageColumn",
                           ),
-                          width: "7rem",
+                          width: "7.25rem",
                         },
-                        { label: t("snapshots"), width: "3.75rem" },
-                        { label: t("created"), width: "7rem" },
+                        { label: t("snapshots"), width: "4.25rem" },
+                        { label: t("created"), width: "7.5rem" },
                         {
                           label: t("actions"),
                           align: "right",

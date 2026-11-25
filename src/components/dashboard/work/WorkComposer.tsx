@@ -44,6 +44,10 @@ import {
   ConversationFilePreview,
   ConversationComposer,
 } from "@/components/dashboard/ConversationComposer";
+import {
+  ComposerDropOverlay,
+  useComposerFileDrop,
+} from "@/components/dashboard/ConversationUxPrimitives";
 import { ComposerPromptManager } from "./ComposerPromptManager";
 import {
   ComposerReferencesSchema,
@@ -437,9 +441,33 @@ export function WorkComposer({
     else if (option.id === "prompts") setPromptsOpen(true);
   }
 
+  function appendAttachmentFiles(incoming: FileList | File[]) {
+    const files = [...attachments, ...Array.from(incoming)];
+    if (files.length > 5)
+      onError(agentsT("attachmentLimitReached", { count: 5 }));
+    onAttachmentsChange(files.slice(0, 5));
+    focusInput();
+  }
+
+  const { dragging, dropProps, handlePaste } = useComposerFileDrop({
+    enabled: Boolean(
+      supportsAttachments && !disabled && !resolving && !running,
+    ),
+    onFiles: appendAttachmentFiles,
+  });
+
   return (
     <>
-      <div ref={formRef} data-ui="chat.composer" className="relative">
+      <div
+        ref={formRef}
+        data-ui="chat.composer"
+        {...dropProps}
+        className="relative"
+      >
+        <ComposerDropOverlay
+          dragging={dragging}
+          label={workT("dropFilesToAttach")}
+        />
         <ComposerMenu
           menu={menu}
           footer={{
@@ -458,15 +486,8 @@ export function WorkComposer({
             multiple
             hidden
             onChange={(event) => {
-              const files = [
-                ...attachments,
-                ...Array.from(event.target.files ?? []),
-              ];
-              if (files.length > 5)
-                onError(agentsT("attachmentLimitReached", { count: 5 }));
-              onAttachmentsChange(files.slice(0, 5));
+              if (event.target.files) appendAttachmentFiles(event.target.files);
               event.target.value = "";
-              focusInput();
             }}
           />
           <ConversationComposer
@@ -569,6 +590,7 @@ export function WorkComposer({
             onFocus={(event) => {
               inputRef.current = event.currentTarget;
             }}
+            onPaste={handlePaste}
             onValueChange={(value) => {
               onDraftChange(value);
               const input = inputRef.current;

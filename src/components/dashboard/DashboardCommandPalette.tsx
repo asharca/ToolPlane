@@ -1,77 +1,153 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useMemo } from "react";
-import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { Sun, Moon, Code2, Home } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import {
+  ArrowRightLeft,
+  Bot,
+  Boxes,
+  Briefcase,
+  Code2,
+  Home,
+  MessageSquare,
+  Moon,
+  PanelLeft,
+  Plug,
+  Sparkles,
+  SquarePen,
+  Sun,
+  Terminal,
+  UserCog,
+} from "lucide-react";
 import {
   CommandPalette,
   type CommandItem,
 } from "@/components/motion/command-palette";
 import { useThemeToggle } from "@/components/motion/theme-toggle";
+import { apiRequest } from "@/lib/client/api";
 import { SITE } from "@/lib/site";
 import { FEEDBACK_NAV_ITEM, WORKSPACE_NAV_GROUPS } from "./workspace-nav";
+
+type WorkspaceSummary = { id: string; slug: string; name: string };
+
+type QuickJumpPayload = {
+  assistants: Array<{
+    id: string;
+    name: string;
+    model: string | null;
+    pinned: boolean;
+    updatedAt: string;
+  }>;
+  threads: Array<{
+    id: string;
+    title: string | null;
+    assistantId: string;
+    assistantName: string | null;
+    updatedAt: string;
+  }>;
+  agents: Array<{
+    id: string;
+    name: string;
+    model: string | null;
+    pinned: boolean;
+    ready: boolean;
+    updatedAt: string;
+  }>;
+  sessions: Array<{
+    id: string;
+    title: string | null;
+    task: string | null;
+    status: string;
+    agentId: string;
+    agentName: string | null;
+    updatedAt: string;
+  }>;
+  mcpServers: Array<{
+    id: string;
+    name: string;
+    status: string;
+    sandboxName: string | null;
+    updatedAt: string;
+  }>;
+  sandboxes: Array<{
+    id: string;
+    name: string;
+    kind: string;
+    updatedAt: string;
+  }>;
+};
+
+const NAV_SEGMENT_KEYWORDS: Record<string, string[]> = {
+  chat: ["chat", "assistant", "conversation", "对话", "助手", "聊天"],
+  work: ["work", "task", "session", "工作", "任务", "会话"],
+  agents: ["agent", "bot", "pi", "智能体"],
+  mcp: ["mcp", "server", "tool", "工具", "服务"],
+  skills: ["skill", "prompt", "技能"],
+  plugins: ["plugin", "market", "extension", "插件", "扩展"],
+  sandboxes: ["sandbox", "container", "docker", "terminal", "沙箱", "终端"],
+  models: ["model", "provider", "llm", "api", "模型", "供应商"],
+  knowledge: ["knowledge", "rag", "docs", "知识库", "文档"],
+  logs: ["log", "trace", "audit", "日志", "审计"],
+  settings: ["settings", "workspace", "preferences", "设置", "配置"],
+  feedback: ["feedback", "bug", "support", "反馈"],
+};
 
 function workspaceSlug(pathname: string): string | null {
   const parts = pathname.split("/");
   return parts[1] === "app" && parts[2] ? parts[2] : null;
 }
 
-/** Workspace quick navigation; the sidebar owns the trigger and open state. */
+/** Workspace quick navigation and command center; the sidebar owns open state. */
 export function DashboardCommandPalette({
   open,
   onOpenChange,
   pluginUpdateCount = 0,
+  workspaces = [],
+  currentSlug,
+  onToggleSidebar,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   pluginUpdateCount?: number;
+  workspaces?: WorkspaceSummary[];
+  currentSlug?: string;
+  onToggleSidebar?: () => void;
 }) {
   const t = useTranslations("console.header");
   const sidebarT = useTranslations("console.sidebar");
   const router = useRouter();
   const pathname = usePathname() ?? "";
-  const searchParams = useSearchParams();
-  const queryString = searchParams.toString();
-  const returnTo = `${pathname}${queryString ? `?${queryString}` : ""}`;
   const { isDark, toggle: toggleTheme } = useThemeToggle();
+  const slug = currentSlug ?? workspaceSlug(pathname);
+  const [quickJumpBySlug, setQuickJumpBySlug] = useState<
+    Record<string, QuickJumpPayload>
+  >({});
+
   useEffect(() => {
-    if (!open) return;
-    const previous = document.activeElement;
-    const trap = (event: KeyboardEvent) => {
-      if (event.key !== "Tab") return;
-      const dialog = document
-        .querySelector('[role="dialog"] [role="combobox"]')
-        ?.closest('[role="dialog"]');
-      const controls = Array.from(
-        dialog?.querySelectorAll<HTMLElement>(
-          'input, button:not(:disabled), [tabindex="0"]',
-        ) ?? [],
-      );
-      const first = controls[0];
-      const last = controls[controls.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first?.focus();
-      }
-    };
-    document.addEventListener("keydown", trap);
+    if (!open || !slug) return;
+    let active = true;
+    void apiRequest<QuickJumpPayload>(
+      `/api/v1/workspaces/${encodeURIComponent(slug)}/quick-jump`,
+    ).then((result) => {
+      if (!active || !result.ok) return;
+      setQuickJumpBySlug((previous) => ({
+        ...previous,
+        [slug]: result.data,
+      }));
+    });
     return () => {
-      document.removeEventListener("keydown", trap);
-      if (previous instanceof HTMLElement && previous.isConnected)
-        previous.focus();
+      active = false;
     };
-  }, [open]);
+  }, [open, slug]);
 
   const closePalette = useCallback(() => {
     onOpenChange(false);
   }, [onOpenChange]);
 
+  const quickJump = slug ? quickJumpBySlug[slug] : undefined;
+
   const commands = useMemo<CommandItem[]>(() => {
-    const slug = workspaceSlug(pathname);
     const go = (href: string) => () => {
       closePalette();
       router.push(href);
@@ -80,43 +156,252 @@ export function DashboardCommandPalette({
       closePalette();
       window.open(href, "_blank", "noopener,noreferrer");
     };
-    const list: CommandItem[] = [];
-    if (slug) {
-      const b = `/app/${slug}`;
+
+    const items: CommandItem[] = [];
+    const actionsGroup = t("groupActions");
+    const base = slug ? `/app/${slug}` : null;
+
+    if (base) {
+      items.push(
+        {
+          id: "quick:new-chat",
+          label: t("newChatAction"),
+          group: actionsGroup,
+          icon: SquarePen,
+          hint: "⌘⇧O",
+          keywords: ["new chat", "assistant", "thread", "新建对话", "助手"],
+          onSelect: go(`${base}/chat?new=1`),
+        },
+        {
+          id: "quick:new-work",
+          label: t("newWorkAction"),
+          group: actionsGroup,
+          icon: Briefcase,
+          keywords: ["new work", "agent", "task", "新建任务", "智能体"],
+          onSelect: go(`${base}/work`),
+        },
+      );
+      if (onToggleSidebar) {
+        items.push({
+          id: "quick:toggle-sidebar",
+          label: t("toggleSidebarAction"),
+          group: actionsGroup,
+          icon: PanelLeft,
+          hint: "⌘\\",
+          keywords: ["sidebar", "collapse", "expand", "侧边栏", "收起"],
+          onSelect: () => {
+            closePalette();
+            onToggleSidebar();
+          },
+        });
+      }
+      items.push({
+        id: "quick:personal-settings",
+        label: t("personalSettingsAction"),
+        group: actionsGroup,
+        icon: UserCog,
+        keywords: [
+          "account",
+          "profile",
+          "theme",
+          "language",
+          "个人设置",
+          "账号",
+        ],
+        onSelect: go(`${base}/settings/account`),
+      });
+    }
+
+    if (base && quickJump) {
+      const recentGroup = t("groupRecent");
+      const assistantKind = t("kindAssistant");
+      const agentKind = t("kindAgent");
+      const threadKind = t("kindThread");
+      const workKind = t("kindWorkSession");
+      const mcpKind = t("kindMcp");
+      const sandboxKind = t("kindSandbox");
+
+      const recentEntries = [
+        ...quickJump.threads.map((thread) => ({
+          sortAt: Date.parse(thread.updatedAt) || 0,
+          item: {
+            id: `thread:${thread.id}`,
+            label: thread.title?.trim() || thread.assistantName || threadKind,
+            group: recentGroup,
+            icon: MessageSquare,
+            hint: thread.assistantName ?? undefined,
+            badge: threadKind,
+            keywords: [
+              thread.title ?? "",
+              thread.assistantName ?? "",
+              "chat",
+              "thread",
+              "对话",
+            ],
+            onSelect: go(
+              `${base}/chat?assistant=${encodeURIComponent(thread.assistantId)}&thread=${encodeURIComponent(thread.id)}`,
+            ),
+          } satisfies CommandItem,
+        })),
+        ...quickJump.sessions.map((session) => ({
+          sortAt: Date.parse(session.updatedAt) || 0,
+          item: {
+            id: `work:${session.id}`,
+            label:
+              session.title?.trim() ||
+              session.task?.trim() ||
+              session.agentName ||
+              workKind,
+            group: recentGroup,
+            icon: Terminal,
+            hint: session.agentName ?? undefined,
+            badge: workKind,
+            keywords: [
+              session.title ?? "",
+              session.task ?? "",
+              session.agentName ?? "",
+              session.status,
+              "work",
+              "session",
+              "任务",
+            ],
+            onSelect: go(`${base}/work?w=${encodeURIComponent(session.id)}`),
+          } satisfies CommandItem,
+        })),
+      ]
+        .sort((a, b) => b.sortAt - a.sortAt)
+        .slice(0, 10);
+
+      for (const entry of recentEntries) {
+        items.push(entry.item);
+      }
+
+      const assistantsAndAgentsGroup = t("groupAssistantsAndAgents");
+      for (const assistant of quickJump.assistants) {
+        items.push({
+          id: `assistant:${assistant.id}`,
+          label: assistant.name,
+          group: assistantsAndAgentsGroup,
+          icon: Sparkles,
+          hint: assistant.model ?? undefined,
+          badge: assistantKind,
+          keywords: [
+            assistant.name,
+            assistant.model ?? "",
+            "assistant",
+            "助手",
+          ],
+          onSelect: go(
+            `${base}/chat?assistant=${encodeURIComponent(assistant.id)}`,
+          ),
+        });
+      }
+      for (const agent of quickJump.agents) {
+        items.push({
+          id: `agent:${agent.id}`,
+          label: agent.name,
+          group: assistantsAndAgentsGroup,
+          icon: Bot,
+          hint: agent.model ?? undefined,
+          badge: agentKind,
+          keywords: [agent.name, agent.model ?? "", "agent", "智能体"],
+          onSelect: go(`${base}/work?agent=${encodeURIComponent(agent.id)}`),
+        });
+      }
+
+      const resourcesGroup = t("groupWorkspaceResources");
+      for (const server of quickJump.mcpServers) {
+        items.push({
+          id: `mcp:${server.id}`,
+          label: server.name,
+          group: resourcesGroup,
+          icon: Plug,
+          hint: server.sandboxName ?? server.status,
+          badge: mcpKind,
+          keywords: [
+            server.name,
+            server.sandboxName ?? "",
+            server.status,
+            "mcp",
+          ],
+          onSelect: go(`${base}/mcp/${encodeURIComponent(server.id)}`),
+        });
+      }
+      for (const sandbox of quickJump.sandboxes) {
+        items.push({
+          id: `sandbox:${sandbox.id}`,
+          label: sandbox.name,
+          group: resourcesGroup,
+          icon: Boxes,
+          hint: sandbox.kind,
+          badge: sandboxKind,
+          keywords: [sandbox.name, sandbox.kind, "sandbox", "沙箱"],
+          onSelect: go(`${base}/sandboxes`),
+        });
+      }
+    }
+
+    if (base) {
       for (const group of WORKSPACE_NAV_GROUPS) {
+        const groupLabel = sidebarT(group.labelKey);
         for (const item of group.items) {
-          list.push({
+          const baseKeywords = NAV_SEGMENT_KEYWORDS[item.segment] ?? [
+            item.segment,
+          ];
+          items.push({
             id: item.segment,
             label: sidebarT(item.labelKey),
-            group: sidebarT(group.labelKey),
+            group: groupLabel,
             icon: item.icon,
+            keywords: [item.segment, ...baseKeywords],
             badge: item.badgeKey
               ? sidebarT(item.badgeKey)
               : item.segment === "plugins" && pluginUpdateCount > 0
                 ? pluginUpdateCount
                 : undefined,
-            onSelect: go(
-              item.segment === "settings"
-                ? `${b}/settings?returnTo=${encodeURIComponent(returnTo)}`
-                : `${b}/${item.segment}`,
-            ),
+            onSelect: go(`${base}/${item.segment}`),
           });
         }
       }
-      list.push({
+      items.push({
         id: FEEDBACK_NAV_ITEM.segment,
-        label: sidebarT("feedback"),
-        group: t("groupActions"),
+        label: sidebarT(FEEDBACK_NAV_ITEM.labelKey),
+        group: actionsGroup,
         icon: FEEDBACK_NAV_ITEM.icon,
-        onSelect: go(`${b}/${FEEDBACK_NAV_ITEM.segment}`),
+        keywords: NAV_SEGMENT_KEYWORDS[FEEDBACK_NAV_ITEM.segment] ?? [],
+        onSelect: go(`${base}/${FEEDBACK_NAV_ITEM.segment}`),
       });
     }
-    list.push(
+
+    const otherWorkspaces = workspaces.filter((ws) => ws.slug !== slug);
+    if (otherWorkspaces.length > 0) {
+      const workspacesGroup = t("groupWorkspaces");
+      for (const workspace of otherWorkspaces) {
+        items.push({
+          id: `ws:${workspace.id}`,
+          label: workspace.name,
+          group: workspacesGroup,
+          icon: ArrowRightLeft,
+          hint: workspace.slug,
+          keywords: [
+            workspace.name,
+            workspace.slug,
+            "workspace",
+            "switch",
+            "工作区",
+          ],
+          onSelect: go(`/app/${encodeURIComponent(workspace.slug)}/chat`),
+        });
+      }
+    }
+
+    items.push(
       {
         id: "home",
         label: t("backToToolPlane"),
-        group: t("groupActions"),
+        group: actionsGroup,
         icon: Home,
+        keywords: ["home", "marketing", "首页"],
         onSelect: go("/"),
       },
       {
@@ -124,30 +409,35 @@ export function DashboardCommandPalette({
         label: t("sourceCode"),
         group: t("groupProject"),
         icon: Code2,
+        keywords: ["github", "source", "repo", "源码"],
         onSelect: openExternal(SITE.sourceUrl),
       },
       {
         id: "theme",
-        label: t(isDark ? "switchToLightMode" : "switchToDarkMode"),
-        group: t("groupActions"),
+        label: isDark ? t("switchToLightMode") : t("switchToDarkMode"),
+        group: actionsGroup,
         icon: isDark ? Sun : Moon,
+        keywords: ["theme", "dark", "light", "主题", "深色", "浅色"],
         onSelect: () => {
-          toggleTheme();
           closePalette();
+          toggleTheme();
         },
       },
     );
-    return list;
+
+    return items;
   }, [
     closePalette,
-    pathname,
     isDark,
-    returnTo,
-    router,
-    t,
-    sidebarT,
+    onToggleSidebar,
     pluginUpdateCount,
+    quickJump,
+    router,
+    sidebarT,
+    slug,
+    t,
     toggleTheme,
+    workspaces,
   ]);
 
   return (
