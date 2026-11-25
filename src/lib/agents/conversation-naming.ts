@@ -135,9 +135,9 @@ async function generateConversationTitle(
     }),
   ]);
   const temporaryTitle = conversation.workSession
-    ? conversationTitleFromParts([
+    ? (conversationTitleFromParts([
         { type: "text", text: conversation.workSession.task ?? "" },
-      ])
+      ]) ?? conversation.workSession.title)
     : conversationTitleFromParts(firstUser?.parts);
   if (
     !force &&

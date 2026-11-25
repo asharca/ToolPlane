@@ -72,11 +72,17 @@ export function ConversationComposer({
           : undefined,
         className,
       )}
+      canSubmit={Boolean(
+        (hasAttachments ?? Boolean(attachments)) && !onRunningSubmit,
+      )}
+      {...props}
       labels={{
+        addToPrompt: agentUiT("addToPrompt"),
+        chooseModel: agentUiT("chooseModel"),
         stopGenerating: agentUiT("stopGenerating"),
         sendPrompt: agentUiT("sendPrompt"),
+        ...props.labels,
       }}
-      {...props}
       leadingAction={
         onRunningSubmit ? (
           <>

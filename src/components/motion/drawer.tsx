@@ -2,6 +2,7 @@
 // asharca.github.io/ui/components/motion/drawer
 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useTranslations } from "next-intl";
 import { useEffect, type KeyboardEventHandler, type ReactNode } from "react";
 import { EASE_OUT, SPRING_PANEL } from "@/lib/ease";
 import { PresenceGate } from "@/lib/presence-gate";
@@ -33,10 +34,12 @@ export function Drawer({
   className,
   backdropClassName,
   ariaLabel,
-  closeLabel = "Close",
+  closeLabel,
   dismissable = true,
   onKeyDown,
 }: DrawerProps) {
+  const common = useTranslations("common");
+  const resolvedCloseLabel = closeLabel ?? common("close");
   const reduce = useReducedMotion();
 
   useEffect(() => {
@@ -83,7 +86,7 @@ export function Drawer({
           {({ gate }) => (
             <motion.button
               type="button"
-              aria-label={closeLabel}
+              aria-label={resolvedCloseLabel}
               tabIndex={dismissable ? 0 : -1}
               onClick={() => dismissable && onOpenChange(false)}
               initial={{ opacity: 0 }}

@@ -1230,10 +1230,7 @@ export function AgentConversation({
               attachments.length > 0 &&
               !(nativeRunning && !messageQueue.fallback)
             }
-            labels={{
-              stopGenerating: agentUi.composer.stopGenerating,
-              sendPrompt: agentUi.composer.sendPrompt,
-            }}
+            labels={agentUi.composer}
             value={composerText}
             onValueChange={setComposerText}
             onPaste={handlePaste}

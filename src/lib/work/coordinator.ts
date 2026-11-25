@@ -8,6 +8,7 @@ import { withLogContext, enrichLogContext } from "@/lib/observability/context";
 import { recordEvent } from "@/lib/observability/events";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { A2A_LIMITS } from "@/lib/a2a/model";
 import { getAgentConcurrencySettings } from "@/lib/admin/settings";
 import { generateWorkSessionTitle } from "@/lib/agents/conversation-naming";
 import { activeConversationMessages } from "@/lib/agents/conversation-context";
@@ -809,7 +810,23 @@ async function executeWork(workSessionId: string) {
           agentId: work.agentId,
           actorId: work.a2aActorId,
           messageId: last.id,
-          text: commandText,
+          text:
+            commandText.trim() ||
+            last.parts
+              .flatMap((part) => {
+                if (part.type === "text" && part.text?.trim())
+                  return [part.text.trim()];
+                if (part.type === "file" || part.type === "image") {
+                  const filename =
+                    (typeof part.filename === "string"
+                      ? part.filename.trim()
+                      : "") || "attachment";
+                  return [`[Attached file: ${filename.slice(0, 240)}]`];
+                }
+                return [];
+              })
+              .join("\n")
+              .slice(0, A2A_LIMITS.inputCharacters),
           modelOverride: turnOverride,
           signal: controller.signal,
           onBudgetWarning: (warning) => {

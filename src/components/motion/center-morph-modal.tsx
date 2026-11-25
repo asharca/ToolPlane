@@ -2,6 +2,7 @@
 
 import { X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useTranslations } from "next-intl";
 import {
   cloneElement,
   createContext,
@@ -198,12 +199,15 @@ export function CenterMorphModalContent({
   ariaDescribedBy,
   dismissible = true,
   showCloseButton = true,
-  closeButtonLabel = "Close modal",
+  closeButtonLabel,
   dismissLabel,
   onExitComplete,
   className,
   backdropClassName,
 }: CenterMorphModalContentProps) {
+  const common = useTranslations("common");
+  const resolvedCloseButtonLabel = closeButtonLabel ?? common("closeModal");
+  const resolvedDismissLabel = dismissLabel ?? common("dismissModal");
   const context = useCenterMorphModalContext("CenterMorphModalContent");
   const reduce = useReducedMotion() ?? false;
   const [mounted, setMounted] = useState(false);
@@ -297,7 +301,7 @@ export function CenterMorphModalContent({
             <>
               <motion.button
                 type="button"
-                aria-label={dismissLabel ?? "Dismiss modal"}
+                aria-label={resolvedDismissLabel}
                 tabIndex={-1}
                 disabled={!dismissible}
                 initial={{ "--modal-opacity": 0 }}
@@ -383,7 +387,7 @@ export function CenterMorphModalContent({
                     {showCloseButton ? (
                       <motion.button
                         type="button"
-                        aria-label={closeButtonLabel}
+                        aria-label={resolvedCloseButtonLabel}
                         onClick={() => context.setOpen(false)}
                         initial={
                           reduce

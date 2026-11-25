@@ -85,6 +85,8 @@
     "modified": "Modified",
     "cancel": "Cancel",
     "close": "Close",
+    "closeModal": "Close modal",
+    "dismissModal": "Dismiss modal",
     "delete": "Delete",
     "confirm": "Confirm",
     "back": "Back",
@@ -4978,7 +4980,9 @@
       "senderUser": "your",
       "senderAssistant": "assistant",
       "sendPrompt": "Send prompt",
-      "stopGenerating": "Stop generating"
+      "stopGenerating": "Stop generating",
+      "addToPrompt": "Add to prompt",
+      "chooseModel": "Choose model"
     }
   },
   "privacy": {

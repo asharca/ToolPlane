@@ -212,7 +212,7 @@ export function useWorkComposer({
       !isExecutableAgentRuntimeKind(agent?.runtimeKind) ||
       !agentId ||
       !activeSandboxId ||
-      !draft.trim()
+      (!draft.trim() && !attachments.length && !references.length)
     )
       return;
     const runtimeKind = agent.runtimeKind;
@@ -257,7 +257,16 @@ export function useWorkComposer({
         {
           id: workSessionId,
           agentId,
-          title: conversationTitleFromParts([{ type: "text", text: draft }]),
+          title: conversationTitleFromParts([
+            {
+              type: "text",
+              text:
+                draft.trim() ||
+                references[0]?.label ||
+                attachments[0]?.name ||
+                "",
+            },
+          ]),
           titlePending: true,
           optimistic: true,
           task: draft.trim(),
@@ -409,7 +418,7 @@ export function useWorkComposer({
     )
       return;
     const input = draft.trim();
-    if (!input) return;
+    if (!input && !attachments.length && !references.length) return;
     // Opening a disclosure pauses following; a new turn returns to the live edge.
     setFollowingOutput(true);
     const command = parseRuntimeCommand(input, commandRuntimeKind);
