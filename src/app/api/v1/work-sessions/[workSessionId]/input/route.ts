@@ -46,9 +46,12 @@ export const POST = withRequestLogging(
     } catch {
       return Response.json({ error: "Bad request" }, { status: 400 });
     }
+    const hasSupplementaryInput =
+      (Array.isArray(body.attachmentIds) && body.attachmentIds.length > 0) ||
+      (Array.isArray(body.references) && body.references.length > 0);
     if (
       typeof body.input !== "string" ||
-      !body.input.trim() ||
+      (!body.input.trim() && !hasSupplementaryInput) ||
       body.input.length > 20_000
     ) {
       return Response.json({ error: "Invalid input" }, { status: 400 });

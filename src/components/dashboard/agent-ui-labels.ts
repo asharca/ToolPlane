@@ -24,6 +24,8 @@ export function useAgentUiLabels() {
       composer: {
         stopGenerating: ui("stopGenerating"),
         sendPrompt: ui("sendPrompt"),
+        addToPrompt: ui("addToPrompt"),
+        chooseModel: ui("chooseModel"),
       },
       codeBlock: {
         streaming: ui("codeWriting"),

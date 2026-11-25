@@ -323,6 +323,35 @@ describe("Work attachment transaction failures", () => {
     ).toHaveValue("  Keep my task  ");
     expect(screen.getByRole("button", { name: "Send prompt" })).toBeEnabled();
   });
+  it("submits a new task and a follow-up with only an attachment", async () => {
+    const fetchMock = vi.fn(async (url: string, ..._rest: [RequestInit?]) => {
+      if (url.includes("/attachments?")) return Response.json({ id: "staged" });
+      if (url === "/api/v1/work-sessions" || url.endsWith("/input"))
+        return Response.json({ error: "Stop here" }, { status: 403 });
+      return Response.json({ ok: true });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    for (const [mount, matches] of [
+      [show, (url: string) => url === "/api/v1/work-sessions"],
+      [showSession, (url: string) => url.endsWith("/input")],
+    ] as const) {
+      fetchMock.mockClear();
+      const { container, unmount } = mount();
+      const picker = container.querySelector('input[type="file"]');
+      if (!picker) throw new Error("Attachment picker missing");
+      fireEvent.change(picker, {
+        target: { files: [new File(["report"], "report.txt")] },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Send prompt" }));
+      await screen.findByText("Stop here");
+      const request = fetchMock.mock.calls.find(([url]) => matches(url));
+      const body = JSON.parse(String(request?.[1]?.body));
+      expect(body.task ?? body.input).toBe("");
+      expect(body.attachmentIds).toEqual(["staged"]);
+      unmount();
+    }
+  });
+
   it("keeps a rejected follow-up draft and clears it only after the server accepts a retry", async () => {
     let inputAttempts = 0;
     const messages: WorkSession["messages"] = [

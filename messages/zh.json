@@ -85,6 +85,8 @@
     "modified": "已修改",
     "cancel": "取消",
     "close": "关闭",
+    "closeModal": "关闭弹窗",
+    "dismissModal": "关闭弹窗",
     "delete": "删除",
     "confirm": "确认",
     "back": "返回",
@@ -4978,7 +4980,9 @@
       "senderUser": "用户",
       "senderAssistant": "助手",
       "sendPrompt": "发送",
-      "stopGenerating": "停止生成"
+      "stopGenerating": "停止生成",
+      "addToPrompt": "添加到提示词",
+      "chooseModel": "选择模型"
     }
   },
   "privacy": {

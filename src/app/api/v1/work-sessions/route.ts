@@ -80,9 +80,12 @@ export const POST = withRequestLogging(
     if (body.sandboxId !== undefined && typeof body.sandboxId !== "string") {
       return Response.json({ error: "Invalid sandboxId" }, { status: 400 });
     }
+    const hasSupplementaryInput =
+      (Array.isArray(body.attachmentIds) && body.attachmentIds.length > 0) ||
+      (Array.isArray(body.references) && body.references.length > 0);
     if (
       typeof body.task !== "string" ||
-      !body.task.trim() ||
+      (!body.task.trim() && !hasSupplementaryInput) ||
       body.task.length > 20_000
     ) {
       return Response.json({ error: "Invalid task" }, { status: 400 });

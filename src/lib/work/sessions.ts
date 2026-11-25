@@ -256,8 +256,20 @@ export function assertWorkPiPackageSnapshot(
 
 export async function createWorkSession(input: CreateWorkSessionInput) {
   const task = input.task.trim();
-  if (!task || task.length > 20_000) return null;
-  const title = conversationTitleFromParts([{ type: "text", text: task }]);
+  const hasSupplementaryInput = Boolean(
+    input.attachments?.length || input.references?.length,
+  );
+  if ((!task && !hasSupplementaryInput) || task.length > 20_000) return null;
+  const title = conversationTitleFromParts([
+    {
+      type: "text",
+      text:
+        task ||
+        input.references?.[0]?.label ||
+        input.attachments?.[0]?.name ||
+        "",
+    },
+  ]);
   const workingDirectory = normalizeWorkDirectory(
     input.workingDirectory ?? ".",
   );
@@ -632,7 +644,10 @@ export async function appendWorkSessionInput(
   } = {},
 ): Promise<WorkSessionTransitionResult> {
   const text = input.trim();
-  if (!text || text.length > 20_000)
+  const hasSupplementaryInput = Boolean(
+    options.attachments?.length || options.references?.length,
+  );
+  if ((!text && !hasSupplementaryInput) || text.length > 20_000)
     return { ok: false, reason: "invalid_input" };
 
   return withWorkSessionInputLease(workspaceId, workSessionId, async (tx) => {

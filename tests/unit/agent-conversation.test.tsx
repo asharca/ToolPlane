@@ -478,9 +478,7 @@ describe("AgentConversation", () => {
           text,
         );
       await userEvent.click(
-        screen.getByRole("button", {
-          name: text ? "Send prompt" : "Send",
-        }),
+        screen.getByRole("button", { name: "Send prompt" }),
       );
 
       await waitFor(() =>
