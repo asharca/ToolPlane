@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.46.0](https://github.com/asharca/ToolPlane/compare/v0.45.1...v0.46.0) (2026-11-25)
+
+
+### Features
+
+* **console:** 重构控制台设置导航、动效控件与对话工作台交互 ([#320](https://github.com/asharca/ToolPlane/issues/320)) ([21f52e7](https://github.com/asharca/ToolPlane/commit/21f52e752b3c6d1ae3d7750e1f98785eb035397e))
+* **ui:** 优化控制台导航、工作台交互与设计系统一致性 ([#321](https://github.com/asharca/ToolPlane/issues/321)) ([d73414f](https://github.com/asharca/ToolPlane/commit/d73414fed8e63c5366065353db2eda5e740aaf13))
+* **work:** 支持仅附件或引用发起会话，并本地化输入框与弹窗名称 ([#322](https://github.com/asharca/ToolPlane/issues/322)) ([63579d7](https://github.com/asharca/ToolPlane/commit/63579d72d1d4ec5b5c988d7548586f39af72fa93))
+
+
+### Bug Fixes
+
+* **agents:** 修复对话结果持久化并减少执行链路重复开销 ([#323](https://github.com/asharca/ToolPlane/issues/323)) ([5aae8a0](https://github.com/asharca/ToolPlane/commit/5aae8a01d88a34ee1096e131c36c433cf6f3549f))
+* **agents:** 模型只返回思考内容时不再把回合记为完成 ([#324](https://github.com/asharca/ToolPlane/issues/324)) ([6bf1041](https://github.com/asharca/ToolPlane/commit/6bf104140a1399eff9e3a34dbd1c4ba0dda8b00c))
+
 ## [0.45.1](https://github.com/asharca/ToolPlane/compare/v0.45.0...v0.45.1) (2026-11-24)
 
 
