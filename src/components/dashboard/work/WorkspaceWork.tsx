@@ -925,25 +925,6 @@ export function WorkspaceWork({
                           onClick={() => {
                             setAgentSwitcherOpen(false);
                             router.push(
-                              agentSettingsHref(
-                                slug,
-                                switcherAgent.id,
-                                workReturnTo,
-                              ),
-                            );
-                          }}
-                          className="w-full justify-start gap-2 rounded-lg text-sm"
-                        >
-                          <Settings2 className="size-4" />
-                          <span>{t("agentSettings")}</span>
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setAgentSwitcherOpen(false);
-                            router.push(
                               `/app/${encodeURIComponent(slug)}/agents?create=1&returnTo=${encodeURIComponent(workReturnTo)}`,
                             );
                           }}
@@ -958,6 +939,27 @@ export function WorkspaceWork({
                     <span className="truncate text-sm font-medium text-foreground">
                       {switcherAgent.name}
                     </span>
+                  ) : null}
+                  {switcherAgent ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() =>
+                        router.push(
+                          agentSettingsHref(
+                            slug,
+                            switcherAgent.id,
+                            workReturnTo,
+                          ),
+                        )
+                      }
+                      aria-label={`${t("agentSettings")}: ${switcherAgent.name}`}
+                      title={t("agentSettings")}
+                      className="size-8 shrink-0 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+                    >
+                      <Settings2 className="size-4" />
+                    </Button>
                   ) : null}
                   {viewingA2A || selected || conversation ? (
                     <div className="flex min-w-0 items-center gap-2">
@@ -1361,24 +1363,6 @@ export function WorkspaceWork({
                                 <span>{activeSandbox.name}</span>
                               </span>
                             ) : null}
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() =>
-                                router.push(
-                                  agentSettingsHref(
-                                    slug,
-                                    agent.id,
-                                    workReturnTo,
-                                  ),
-                                )
-                              }
-                              className="h-7 gap-1.5 rounded-full px-3 text-xs text-muted-foreground hover:text-foreground"
-                            >
-                              <Settings2 className="size-3.5" />
-                              <span>{t("agentSettings")}</span>
-                            </Button>
                           </div>
                         ) : null}
                       </div>

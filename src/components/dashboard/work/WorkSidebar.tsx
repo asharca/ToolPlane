@@ -1416,15 +1416,6 @@ export function WorkSidebar({
                       if (!itemAgent) return null;
                       return (
                         <>
-                          {action(tAgents("configureAgent"), () =>
-                            router.push(
-                              agentSettingsHref(
-                                slug,
-                                itemAgent.id,
-                                workReturnTo,
-                              ),
-                            ),
-                          )}
                           {action(
                             tAgents("deleteAgent"),
                             () => setDeleteAgentTarget(itemAgent),
