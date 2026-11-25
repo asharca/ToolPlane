@@ -46,6 +46,7 @@ export default async function WorkspaceChatPage({
   searchParams: Promise<{
     assistant?: string;
     thread?: string;
+    new?: string;
     agent?: string;
     c?: string;
     newAssistant?: string;
@@ -117,8 +118,10 @@ export default async function WorkspaceChatPage({
     assistants.find((item) => item.id === query.assistant) ??
     assistants[0] ??
     null;
-  const requestedThreadId =
-    query.thread ?? activeAssistant?.threads[0]?.id ?? null;
+  const startNewThread = query.new === "1" && !query.thread;
+  const requestedThreadId = startNewThread
+    ? null
+    : (query.thread ?? activeAssistant?.threads[0]?.id ?? null);
   let activeThread =
     activeAssistant && requestedThreadId
       ? await getChatThreadForWorkspace(
@@ -167,6 +170,7 @@ export default async function WorkspaceChatPage({
         initialSidebarOpen={initialSidebarOpen}
         startCreating={query.newAssistant === "1"}
         startEditing={query.settings === "1"}
+        startNewThread={startNewThread}
         selectedAssistantId={activeAssistant?.id ?? null}
         selectedThreadId={activeThread?.id ?? null}
         defaultReasoningEffort={

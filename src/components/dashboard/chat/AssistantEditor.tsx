@@ -97,7 +97,7 @@ export function AssistantEditor({
   assistant: ChatAssistantItem | null;
   deployments: McpOption[];
   onClose: () => void;
-  onDelete: (assistantId: string) => Promise<void>;
+  onDelete: (assistantId: string) => void | Promise<void>;
   onSaved: (assistantId: string, created: boolean) => Promise<void>;
   open: boolean;
   providers: ProviderOption[];

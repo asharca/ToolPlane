@@ -25,6 +25,8 @@ import {
 import {
   ArrowUp,
   Bot,
+  ChevronLeft,
+  ChevronRight,
   Database,
   Globe,
   GitBranch,
@@ -95,6 +97,23 @@ import {
   McpToolsUpdatedNote,
 } from "@/components/dashboard/RevisionUpgradeNotice";
 import type { RevisionMcpToolChange } from "@/lib/revisions/upgrade-diff";
+import type { ChatBranchNavigation } from "@/lib/chat/branches";
+import {
+  ComposerDropOverlay,
+  ScrollToBottomButton,
+  uploadWorkspaceAttachments,
+  useComposerFileDrop,
+} from "@/components/dashboard/ConversationUxPrimitives";
+
+export type AssistantAutoSubmitPayload = {
+  key: string;
+  threadId: string;
+  text: string;
+  files: FileUIPart[];
+  modelOverride?: ModelSelection;
+  reasoningEffort?: ReasoningEffort;
+  webSearchEnabled: boolean;
+};
 
 const CHAT_RUN_FAILURE_BY_TEXT: Record<string, string> = {
   "Chat execution interrupted; remote effect outcome unknown. Do not replay.":
@@ -223,6 +242,11 @@ export function AssistantConversation({
   defaultModelSelection,
   modelSelection,
   onModelChange,
+  branchNavigation = [],
+  branchBusy = false,
+  onSwitchBranch,
+  initialAutoSubmit = null,
+  onAutoSubmitConsumed,
 }: {
   threadId: string;
   revision: number;
@@ -246,23 +270,46 @@ export function AssistantConversation({
   defaultModelSelection: ModelSelection | null;
   modelSelection: ModelSelection | null;
   onModelChange: (selection: ModelSelection | null) => void;
+  branchNavigation?: ChatBranchNavigation[];
+  branchBusy?: boolean;
+  onSwitchBranch?: (messageId: string) => void | Promise<void>;
+  initialAutoSubmit?: AssistantAutoSubmitPayload | null;
+  onAutoSubmitConsumed?: (key: string) => void;
 }) {
   const t = useTranslations("console.chatAssistants");
   const composerT = useTranslations("console.agents");
   const common = useTranslations("common");
   const workT = useTranslations("console.work");
   const processFailedText = workT("processFailed");
-  const [editMessageId, setEditMessageId] = useState<string | undefined>();
+  const [editingMessage, setEditingMessage] = useState<{
+    id: string;
+    text: string;
+    files: Array<{ key: string; part: FileUIPart }>;
+  } | null>(null);
+  const inlineEditTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const editingMessageId = editingMessage?.id;
+  useEffect(() => {
+    if (editingMessageId) inlineEditTextareaRef.current?.focus();
+  }, [editingMessageId]);
   const [files, setFiles] = useState<FileUIPart[]>([]);
   const [uploading, setUploading] = useState(false);
   const attachmentInput = useRef<HTMLInputElement>(null);
-  const [reasoningEffort, setReasoningEffort] =
-    useState<ReasoningEffort>("default");
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
+    initialAutoSubmit?.threadId === threadId &&
+      initialAutoSubmit.reasoningEffort
+      ? initialAutoSubmit.reasoningEffort
+      : "default",
+  );
   const reasoningAvailable = selectionSupportsReasoning(
     providers,
     modelSelection ?? defaultModelSelection,
   );
-  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(
+    Boolean(
+      initialAutoSubmit?.threadId === threadId &&
+        initialAutoSubmit.webSearchEnabled,
+    ),
+  );
   const [customizing, setCustomizing] = useState(false);
   const composerRef = useRef<HTMLDivElement>(null);
   const toolbarValue = useSyncExternalStore(
@@ -594,11 +641,54 @@ export function AssistantConversation({
     currentExecution?.stage ??
     (chat.status === "submitted" ? "queued" : "preparing");
   const executionLabel = workT(CHAT_EXECUTION_LABELS[executionStage]);
-  const submit = async (retry: boolean) => {
-    if (readOnly || running || uploading || !restored) return;
-    setError(null);
-    if (!retry) {
-      if (!text.trim() && !files.length) return;
+  const executePendingTurn = useCallback(
+    async (retry: boolean) => {
+      const request = pending.current;
+      if (!request) return;
+      // Opening a disclosure pauses following; a new turn returns to the live edge.
+      setFollowingOutput(true);
+      try {
+        // A transport retry reuses the exact user message ID and idempotency key.
+        if (request.regenerateId) {
+          await chat.regenerate({ messageId: request.regenerateId });
+        } else {
+          if (retry) {
+            setMessages((messages) =>
+              messages.filter((message) => message.id !== request.messageId),
+            );
+          }
+          await chat.sendMessage({
+            id: request.messageId,
+            role: "user",
+            parts: [{ type: "text", text: request.text }, ...request.files],
+          });
+        }
+        await restore(false);
+      } catch (cause) {
+        setError(displayErrorText(cause, workT("processFailed")));
+      }
+    },
+    [chat, restore, setMessages, workT],
+  );
+  const startNewTurn = useCallback(
+    async ({
+      key,
+      text: turnText,
+      files: turnFiles,
+      editMessageId,
+      modelOverride,
+      reasoningEffort: turnReasoning,
+      webSearchEnabled: turnWebSearch,
+    }: {
+      key?: string;
+      text: string;
+      files: FileUIPart[];
+      editMessageId?: string;
+      modelOverride?: ModelSelection;
+      reasoningEffort?: ReasoningEffort;
+      webSearchEnabled: boolean;
+    }) => {
+      if (!turnText.trim() && !turnFiles.length) return;
       restoreGeneration.current += 1;
       subscription.current?.abort();
       cursor.current = null;
@@ -606,43 +696,86 @@ export function AssistantConversation({
       setSnapshot(null);
       setExecutionProgress(null);
       pending.current = {
-        key: crypto.randomUUID(),
+        key: key ?? crypto.randomUUID(),
         messageId: crypto.randomUUID(),
         editMessageId,
-        text,
-        files,
-        ...(reasoningAvailable ? { reasoningEffort } : {}),
-        webSearchEnabled,
-        modelOverride: modelSelection ?? undefined,
+        text: turnText,
+        files: turnFiles,
+        ...(turnReasoning ? { reasoningEffort: turnReasoning } : {}),
+        webSearchEnabled: turnWebSearch,
+        modelOverride,
       };
-      setText("");
-      setFiles([]);
-      setEditMessageId(undefined);
+      await executePendingTurn(false);
+    },
+    [executePendingTurn],
+  );
+  const submit = async (retry: boolean) => {
+    if (readOnly || running || uploading || !restored) return;
+    setError(null);
+    if (retry) {
+      await executePendingTurn(true);
+      return;
     }
-    const request = pending.current;
-    if (!request) return;
-    // Opening a disclosure pauses following; a new turn returns to the live edge.
-    setFollowingOutput(true);
-    try {
-      // A transport retry reuses the exact user message ID and idempotency key.
-      if (request.regenerateId)
-        await chat.regenerate({ messageId: request.regenerateId });
-      else {
-        if (retry)
-          setMessages((messages) =>
-            messages.filter((message) => message.id !== request.messageId),
-          );
-        await chat.sendMessage({
-          id: request.messageId,
-          role: "user",
-          parts: [{ type: "text", text: request.text }, ...request.files],
-        });
-      }
-      await restore(false);
-    } catch (cause) {
-      setError(displayErrorText(cause, workT("processFailed")));
-    }
+    if (!text.trim() && !files.length) return;
+    const turnText = text;
+    const turnFiles = files;
+    setText("");
+    setFiles([]);
+    await startNewTurn({
+      text: turnText,
+      files: turnFiles,
+      modelOverride: modelSelection ?? undefined,
+      reasoningEffort: reasoningAvailable ? reasoningEffort : undefined,
+      webSearchEnabled,
+    });
   };
+  const submitInlineEdit = async () => {
+    if (!editingMessage || readOnly || running || uploading || !restored)
+      return;
+    if (!editingMessage.text.trim() && !editingMessage.files.length) return;
+    setError(null);
+    const target = editingMessage;
+    setEditingMessage(null);
+    await startNewTurn({
+      text: target.text,
+      files: target.files.map((item) => item.part),
+      editMessageId: target.id,
+      modelOverride: modelSelection ?? undefined,
+      reasoningEffort: reasoningAvailable ? reasoningEffort : undefined,
+      webSearchEnabled,
+    });
+  };
+  const autoSubmittedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !restored ||
+      readOnly ||
+      running ||
+      !initialAutoSubmit ||
+      initialAutoSubmit.threadId !== threadId ||
+      autoSubmittedKeyRef.current === initialAutoSubmit.key
+    ) {
+      return;
+    }
+    autoSubmittedKeyRef.current = initialAutoSubmit.key;
+    onAutoSubmitConsumed?.(initialAutoSubmit.key);
+    void startNewTurn({
+      key: initialAutoSubmit.key,
+      text: initialAutoSubmit.text,
+      files: initialAutoSubmit.files,
+      modelOverride: initialAutoSubmit.modelOverride,
+      reasoningEffort: initialAutoSubmit.reasoningEffort,
+      webSearchEnabled: initialAutoSubmit.webSearchEnabled,
+    });
+  }, [
+    initialAutoSubmit,
+    onAutoSubmitConsumed,
+    readOnly,
+    restored,
+    running,
+    startNewTurn,
+    threadId,
+  ]);
   const regenerate = async (messageId: string) => {
     if (readOnly || running || snapshot?.phase === "execution_unknown") return;
     restoreGeneration.current += 1;
@@ -663,46 +796,33 @@ export function AssistantConversation({
     };
     await submit(true);
   };
-  const upload = async (selected: FileList | null) => {
+  const upload = async (selected: FileList | File[] | null) => {
     if (!selected || !attachmentUploadUrl) return;
-    if (selected.length + files.length > 5) {
-      setError(composerT("attachmentLimitReached", { count: 5 }));
-      return;
-    }
+    const list = Array.from(selected);
+    if (!list.length) return;
     setUploading(true);
     setError(null);
     try {
-      for (const file of Array.from(selected)) {
-        const url = new URL(attachmentUploadUrl, window.location.origin);
-        url.searchParams.set("filename", file.name);
-        const response = await fetch(`${url.pathname}${url.search}`, {
-          method: "POST",
-          headers: { "content-type": file.type || "application/octet-stream" },
-          body: file,
-        });
-        const body = await response.json();
-        if (!response.ok || !body.url)
-          throw new DisplayError(
-            body.code === STORAGE_QUOTA_EXCEEDED
-              ? STORAGE_QUOTA_EXCEEDED
-              : (body.error ?? composerT("attachmentUploadFailed")),
-          );
-        setFiles((previous) => [
-          ...previous,
-          {
-            type: "file",
-            url: body.url,
-            filename: body.name ?? file.name,
-            mediaType: body.mimeType ?? file.type,
-          },
-        ]);
-      }
+      const uploaded = await uploadWorkspaceAttachments({
+        attachmentUploadUrl,
+        selected: list,
+        existingCount: files.length,
+        limitReachedMessage: composerT("attachmentLimitReached", { count: 5 }),
+        uploadFailedMessage: composerT("attachmentUploadFailed"),
+      });
+      setFiles((previous) => [...previous, ...uploaded]);
     } catch (cause) {
       setError(displayErrorText(cause, composerT("attachmentUploadFailed")));
     } finally {
       setUploading(false);
     }
   };
+  const { dragging, dropProps, handlePaste } = useComposerFileDrop({
+    enabled: Boolean(
+      attachmentUploadUrl && !readOnly && !running && !uploading,
+    ),
+    onFiles: (selected) => void upload(selected),
+  });
   const stop = async () => {
     try {
       const turnId = activeRunId;
@@ -938,13 +1058,19 @@ export function AssistantConversation({
       </Button>
     );
   }
+  const branchByMessageId = useMemo(
+    () => new Map(branchNavigation.map((item) => [item.messageId, item])),
+    [branchNavigation],
+  );
   return (
     <div
+      {...dropProps}
       className={cn(
-        "flex min-h-0 min-w-0 flex-1 flex-col",
+        "relative flex min-h-0 min-w-0 flex-1 flex-col",
         empty && "overflow-y-auto",
       )}
     >
+      <ComposerDropOverlay dragging={dragging} label={t("dropFilesToAttach")} />
       {/* Only states the reader can act on or is waiting for; routine run/revision metadata stays hidden. */}
       {((hasContinuingRun && !connected) ||
         (snapshot?.status === "pending" && snapshot.stopRequested)) && (
@@ -989,6 +1115,7 @@ export function AssistantConversation({
         className="min-h-0 flex-1"
         label={assistantName}
         busy={running}
+        navigation="rail"
         followOutput={followingOutput}
         onFollowChange={setFollowingOutput}
         contentClassName={cn(
@@ -1024,10 +1151,46 @@ export function AssistantConversation({
             .filter((part) => part.type === "text")
             .map((part) => part.text)
             .join("\n\n");
+          const branchNav = branchByMessageId.get(message.id);
           const actionVisibility =
-            messageIndex === displayMessages.length - 1
+            messageIndex === displayMessages.length - 1 || branchNav
               ? ""
               : "opacity-0 pointer-events-none transition-opacity group-hover/message:opacity-100 group-hover/message:pointer-events-auto group-focus-within/message:opacity-100 group-focus-within/message:pointer-events-auto [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto motion-reduce:transition-none";
+          const inlineBranchPager =
+            branchNav && onSwitchBranch ? (
+              <fieldset
+                aria-label={t("conversationBranches")}
+                className="inline-flex items-center gap-0.5 text-xs text-muted-foreground"
+              >
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className={messageActionClassName}
+                  disabled={readOnly || running || branchBusy}
+                  aria-label={common("previous")}
+                  onClick={() =>
+                    void onSwitchBranch(branchNav.previousMessageId)
+                  }
+                >
+                  <ChevronLeft className="size-3.5" />
+                </Button>
+                <span className="min-w-8 text-center tabular-nums">
+                  {branchNav.position}/{branchNav.total}
+                </span>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className={messageActionClassName}
+                  disabled={readOnly || running || branchBusy}
+                  aria-label={common("next")}
+                  onClick={() => void onSwitchBranch(branchNav.nextMessageId)}
+                >
+                  <ChevronRight className="size-3.5" />
+                </Button>
+              </fieldset>
+            ) : null;
           const showIdentity =
             messageIndex === 0 ||
             displayMessages[messageIndex - 1]?.role !== "assistant";
@@ -1155,10 +1318,102 @@ export function AssistantConversation({
                           <RotateCcw className="size-3.5" />
                         </Button>
                       ) : null}
+                      {inlineBranchPager}
                       {branchAction}
                     </MessageFooter>
                   ) : null}
                 </>
+              ) : editingMessage?.id === message.id ? (
+                <div className="w-full max-w-[85%] self-end rounded-2xl border border-primary/40 bg-card p-3 shadow-xs sm:max-w-[78%]">
+                  {editingMessage.files.length ? (
+                    <div className="mb-2 flex flex-wrap gap-2">
+                      {editingMessage.files.map((item) => (
+                        <Button
+                          key={item.key}
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 gap-1.5 rounded-full bg-muted/60 px-2.5 text-xs"
+                          aria-label={composerT("removeAttachment", {
+                            name: item.part.filename ?? item.part.mediaType,
+                          })}
+                          onClick={() =>
+                            setEditingMessage((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    files: current.files.filter(
+                                      (candidate) => candidate.key !== item.key,
+                                    ),
+                                  }
+                                : null,
+                            )
+                          }
+                        >
+                          <span className="max-w-44 truncate">
+                            {item.part.filename ?? item.part.mediaType}
+                          </span>
+                          <X className="size-3 shrink-0" aria-hidden="true" />
+                        </Button>
+                      ))}
+                    </div>
+                  ) : null}
+                  <textarea
+                    ref={inlineEditTextareaRef}
+                    rows={3}
+                    aria-label={common("edit")}
+                    value={editingMessage.text}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setEditingMessage((current) =>
+                        current ? { ...current, text: nextValue } : null,
+                      );
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        setEditingMessage(null);
+                        return;
+                      }
+                      if (
+                        event.key === "Enter" &&
+                        !event.shiftKey &&
+                        !event.nativeEvent.isComposing &&
+                        event.keyCode !== 229
+                      ) {
+                        event.preventDefault();
+                        void submitInlineEdit();
+                      }
+                    }}
+                    className="block max-h-[30vh] w-full resize-none bg-transparent text-sm leading-6 text-foreground outline-none"
+                  />
+                  <div className="mt-2 flex items-center justify-end gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setEditingMessage(null)}
+                    >
+                      {common("cancel")}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="primary"
+                      disabled={
+                        readOnly ||
+                        running ||
+                        uploading ||
+                        !restored ||
+                        (!editingMessage.text.trim() &&
+                          !editingMessage.files.length)
+                      }
+                      onClick={() => void submitInlineEdit()}
+                    >
+                      {t("saveAndSend")}
+                    </Button>
+                  </div>
+                </div>
               ) : (
                 <>
                   <MessageBubble
@@ -1168,6 +1423,7 @@ export function AssistantConversation({
                     <MessageBubbleContent>{messageBody}</MessageBubbleContent>
                   </MessageBubble>
                   <MessageFooter className={cn("gap-0.5", actionVisibility)}>
+                    {inlineBranchPager}
                     {text ? (
                       <CopyButton
                         text={text}
@@ -1186,11 +1442,16 @@ export function AssistantConversation({
                       className={messageActionClassName}
                       disabled={readOnly || running}
                       onClick={() => {
-                        setEditMessageId(message.id);
-                        setText(text);
-                        setFiles(
-                          message.parts.filter((part) => part.type === "file"),
-                        );
+                        setEditingMessage({
+                          id: message.id,
+                          text,
+                          files: message.parts
+                            .filter((part) => part.type === "file")
+                            .map((part) => ({
+                              key: crypto.randomUUID(),
+                              part,
+                            })),
+                        });
                       }}
                     >
                       <Pencil className="size-3.5" />
@@ -1268,6 +1529,11 @@ export function AssistantConversation({
           empty && "mb-[min(20dvh,10rem)] before:hidden",
         )}
       >
+        <ScrollToBottomButton
+          visible={!followingOutput && displayMessages.length > 0}
+          onClick={() => setFollowingOutput(true)}
+          label={t("scrollToBottom")}
+        />
         <ComposerMenu
           menu={menu}
           className="left-3 sm:left-4"
@@ -1323,22 +1589,6 @@ export function AssistantConversation({
               <X className="size-3 shrink-0" aria-hidden="true" />
             </Button>
           ))}
-          {editMessageId && (
-            <div className="order-1 col-span-full flex items-center gap-2 px-4 pt-3 text-xs">
-              {common("edit")}
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setEditMessageId(undefined);
-                  setText("");
-                  setFiles([]);
-                }}
-              >
-                {common("cancel")}
-              </Button>
-            </div>
-          )}
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -1351,6 +1601,7 @@ export function AssistantConversation({
               aria-label={t("sendMessage")}
               value={text}
               placeholder={t("sendMessage")}
+              onPaste={handlePaste}
               onChange={(event) => {
                 setText(event.target.value);
                 menu.sync(

@@ -40,7 +40,7 @@ export function DashboardSidebar({
   const pluginsT = useTranslations("console.plugins");
   const router = useRouter();
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const { open, isMobile, setOpenMobile } = useAnimatedSidebar();
+  const { open, isMobile, setOpenMobile, toggleSidebar } = useAnimatedSidebar();
   const activePath = pathname.slice(`${base}/`.length);
   const activeSegment = activePath.split("/")[0];
   const activeId = activePath.startsWith("settings/account")
@@ -196,6 +196,9 @@ export function DashboardSidebar({
       <DashboardCommandPalette
         open={paletteOpen}
         pluginUpdateCount={updateCount}
+        workspaces={workspaces}
+        currentSlug={slug}
+        onToggleSidebar={toggleSidebar}
         onOpenChange={setPaletteOpen}
       />
     </div>

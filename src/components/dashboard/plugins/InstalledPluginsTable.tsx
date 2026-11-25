@@ -23,6 +23,7 @@ import {
   PopoverTrigger,
 } from "@/components/motion/popover";
 import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
+import { useSlashFocusSearch } from "@/components/dashboard/ConversationUxPrimitives";
 import {
   DashboardEmptyState,
   DashboardTable,
@@ -89,6 +90,8 @@ export function InstalledPluginsTable({
   const [issues, setIssues] = useState<BatchIssue[]>([]);
   const [refreshing, startRefresh] = useTransition();
   const submitting = useRef(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  useSlashFocusSearch(searchInputRef);
   const pending = operation !== null || refreshing;
 
   const byId = new Map(plugins.map((plugin) => [plugin.installId, plugin]));
@@ -281,11 +284,22 @@ export function InstalledPluginsTable({
           ))}
         </fieldset>
         <Input
+          ref={searchInputRef}
           value={query}
           onChange={setQuery}
           placeholder={t("searchPlaceholder")}
           aria-label={t("searchPlaceholder")}
           leftIcon={<Search className="size-4" />}
+          rightIcon={
+            !query ? (
+              <span
+                aria-hidden="true"
+                className="pointer-events-none mr-3 hidden h-5 items-center rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex"
+              >
+                /
+              </span>
+            ) : undefined
+          }
           className="w-full sm:w-72"
         />
       </div>
@@ -372,7 +386,7 @@ export function InstalledPluginsTable({
           <legend className="sr-only">{t("installed.title")}</legend>
           <DashboardTable
             ariaLabel={t("installed.title")}
-            minWidth="62rem"
+            minWidth="58rem"
             adjustableColumns={false}
             selectable={canManage}
             selectedRowIds={canManage ? selection : undefined}
@@ -453,20 +467,20 @@ export function InstalledPluginsTable({
             }
             headers={[
               { label: t("installed.plugin") },
-              { label: t("version"), width: "10rem" },
-              { label: t("contents"), width: "10.5rem" },
+              { label: t("version"), width: "9rem" },
+              { label: t("contents"), width: "9.5rem" },
               {
                 label: t("installed.agents"),
                 align: "right",
-                width: "5.5rem",
+                width: "4.75rem",
               },
-              { label: t("installed.addedAt"), width: "8.5rem" },
+              { label: t("installed.addedAt"), width: "7.75rem" },
               ...(canManage
                 ? [
                     {
                       label: t("installed.actions"),
                       align: "right" as const,
-                      width: "9rem",
+                      width: "8.5rem",
                     },
                   ]
                 : []),

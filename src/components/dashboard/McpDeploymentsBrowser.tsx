@@ -40,6 +40,7 @@ import {
 } from "@/lib/workspace/actions";
 import { cn } from "@/lib/utils";
 import { DashboardEmptyState, DashboardTable } from "./DashboardUI";
+import { useSlashFocusSearch } from "@/components/dashboard/ConversationUxPrimitives";
 import { AddMcpDialog } from "./AddMcpDialog";
 
 export type McpDeploymentListItem = {
@@ -395,8 +396,10 @@ export function McpDeploymentsBrowser({
   >(() => new Set());
   const [page, setPage] = useState(1);
   const tableAreaRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [tableHeight, setTableHeight] = useState(0);
   const hasDeployments = deployments.length > 0;
+  useSlashFocusSearch(searchInputRef, hasDeployments);
 
   useEffect(() => {
     const area = hasDeployments ? tableAreaRef.current : null;
@@ -535,6 +538,7 @@ export function McpDeploymentsBrowser({
         <div className="flex min-w-0 w-full flex-col gap-2.5 sm:w-auto sm:flex-1 sm:flex-row sm:flex-wrap sm:items-center">
           <div className="w-full sm:w-64 lg:w-72">
             <Input
+              ref={searchInputRef}
               value={query}
               onChange={(value) => {
                 setQuery(value);
@@ -557,7 +561,14 @@ export function McpDeploymentsBrowser({
                   >
                     <X className="size-4" />
                   </Button>
-                ) : undefined
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none mr-3 hidden h-5 items-center rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground sm:inline-flex"
+                  >
+                    /
+                  </span>
+                )
               }
             />
           </div>

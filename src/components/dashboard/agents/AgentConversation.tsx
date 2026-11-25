@@ -33,6 +33,11 @@ import {
 } from "@/components/dashboard/ConversationMessage";
 import { ConversationFilePreview } from "@/components/dashboard/ConversationComposer";
 import {
+  ComposerDropOverlay,
+  ScrollToBottomButton,
+  useComposerFileDrop,
+} from "@/components/dashboard/ConversationUxPrimitives";
+import {
   AgentMessageQueueView,
   useAgentMessageQueue,
   type QueueMode,
@@ -659,6 +664,13 @@ export function AgentConversation({
   const [belowEditorElement, setBelowEditorElement] =
     useState<HTMLDivElement | null>(null);
   const blocked = !ready || composerDisabled || busy || nativeRunning;
+  const { dragging, dropProps, handlePaste } = useComposerFileDrop({
+    enabled: attachmentsEnabled && !blocked,
+    onFiles: (incoming) => {
+      for (const file of Array.from(incoming))
+        void runAction(() => addAttachment(file));
+    },
+  });
   const runAction = async (action: () => void | Promise<void>) => {
     try {
       await action();
@@ -964,6 +976,13 @@ export function AgentConversation({
                         disabled={blocked}
                         aria-label={t("messageThisAgent")}
                         onValueChange={setEditText}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            setEditingId(null);
+                            setEditText("");
+                          }
+                        }}
                         onSubmit={() => void submitEdit(sourceMessage)}
                         leadingAction={
                           <Button
@@ -1115,6 +1134,11 @@ export function AgentConversation({
       <div
         className={`${conversationComposerDockClassName} ${!displayMessages.length ? "mb-auto" : ""}`}
       >
+        <ScrollToBottomButton
+          visible={!followingOutput && displayMessages.length > 0}
+          onClick={() => setFollowingOutput(true)}
+          label={work("scrollToBottom")}
+        />
         {typeof composerNotice === "function"
           ? composerNotice(
               setComposerText,
@@ -1157,30 +1181,11 @@ export function AgentConversation({
           onClear={() => void messageQueue.clear()}
           disabled={!ready || messageQueue.pending || messageQueue.forbidden}
         />
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: Non-focusable drop zone wraps the accessible composer; keyboard attachments use its upload control. */}
-        <div
-          data-ui="chat.composer"
-          className="relative"
-          onDragOver={(event) => {
-            if (
-              attachmentsEnabled &&
-              !blocked &&
-              event.dataTransfer.types.includes("Files")
-            )
-              event.preventDefault();
-          }}
-          onDrop={(event) => {
-            if (
-              !attachmentsEnabled ||
-              blocked ||
-              !event.dataTransfer.files.length
-            )
-              return;
-            event.preventDefault();
-            for (const file of event.dataTransfer.files)
-              void runAction(() => addAttachment(file));
-          }}
-        >
+        <div data-ui="chat.composer" {...dropProps} className="relative">
+          <ComposerDropOverlay
+            dragging={dragging}
+            label={work("dropFilesToAttach")}
+          />
           <PromptInput
             attachments={
               attachments.length ? (
@@ -1203,6 +1208,7 @@ export function AgentConversation({
             }
             value={composerText}
             onValueChange={setComposerText}
+            onPaste={handlePaste}
             onSubmit={() =>
               nativeRunning && !messageQueue.fallback
                 ? void submitQueuedDraft("steer")

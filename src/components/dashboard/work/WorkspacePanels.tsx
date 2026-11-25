@@ -1,8 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useTranslations } from "next-intl";
-import { Boxes, Folder, Monitor, TerminalSquare } from "lucide-react";
+import {
+  Boxes,
+  Folder,
+  Maximize2,
+  Minimize2,
+  Monitor,
+  TerminalSquare,
+  X,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/motion/button";
 import {
   CenterMorphModal,
@@ -170,8 +185,15 @@ export function WorkspacePanelToggles({
   readOnly: boolean;
 }) {
   const tSandboxes = useTranslations("console.sandboxes");
+  const activeButtonClass = (active: boolean) =>
+    cn(
+      "size-7 rounded-md transition-colors",
+      active
+        ? "bg-background text-foreground shadow-xs hover:bg-background"
+        : "text-muted-foreground hover:text-foreground",
+    );
   return (
-    <>
+    <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5">
       <Button
         type="button"
         onClick={() => panels.togglePanel("files")}
@@ -180,6 +202,7 @@ export function WorkspacePanelToggles({
         aria-pressed={panels.desktopPanel === "files"}
         variant="ghost"
         size="icon"
+        className={activeButtonClass(panels.desktopPanel === "files")}
       >
         <Folder className="size-4" />
       </Button>
@@ -192,6 +215,7 @@ export function WorkspacePanelToggles({
         aria-pressed={panels.desktopPanel === "terminal"}
         variant="ghost"
         size="icon"
+        className={activeButtonClass(panels.desktopPanel === "terminal")}
       >
         <TerminalSquare className="size-4" />
       </Button>
@@ -206,11 +230,14 @@ export function WorkspacePanelToggles({
           }
           variant="ghost"
           size="icon"
+          className={activeButtonClass(
+            panels.desktopPanel === "screen" || panels.mobilePanel === "screen",
+          )}
         >
           <Monitor className="size-4" />
         </Button>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -277,7 +304,25 @@ function PanelBody({
   );
 }
 
-/** The open panel: a side column on wide screens, a dialog otherwise. */
+const PANEL_WIDTH_STORAGE_KEY = "toolplane:work-panel-width";
+const DEFAULT_PANEL_WIDTH = 440;
+const EXPANDED_PANEL_WIDTH = 640;
+const MIN_PANEL_WIDTH = 340;
+const MAX_PANEL_WIDTH = 760;
+
+function clampPanelWidth(width: number): number {
+  return Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, width));
+}
+
+function savePanelWidth(width: number) {
+  try {
+    localStorage.setItem(PANEL_WIDTH_STORAGE_KEY, String(width));
+  } catch {
+    /* Ignore restricted browser storage. */
+  }
+}
+
+/** The open panel: a resizable side column on wide screens, a dialog otherwise. */
 export function WorkspacePanels({
   panels,
   workspace,
@@ -304,15 +349,201 @@ export function WorkspacePanels({
       : mobilePanel === "screen"
         ? tSandboxes("screen")
         : tSandboxes("terminal");
+  const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
+  const widthRef = useRef(DEFAULT_PANEL_WIDTH);
+  widthRef.current = panelWidth;
+
+  useEffect(() => {
+    try {
+      const saved = Number(localStorage.getItem(PANEL_WIDTH_STORAGE_KEY));
+      if (Number.isFinite(saved) && saved > 0) {
+        setPanelWidth(clampPanelWidth(saved));
+      }
+    } catch {
+      /* Ignore restricted browser storage. */
+    }
+  }, []);
+
+  const startResize = useCallback((event: ReactPointerEvent<HTMLHRElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = widthRef.current;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const nextWidth = clampPanelWidth(
+        startWidth + (startX - moveEvent.clientX),
+      );
+      setPanelWidth(nextWidth);
+    };
+    const stop = () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      savePanelWidth(widthRef.current);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  }, []);
+
+  const updateAndSaveWidth = useCallback((nextWidth: number) => {
+    const clamped = clampPanelWidth(nextWidth);
+    setPanelWidth(clamped);
+    savePanelWidth(clamped);
+  }, []);
+
+  const selectDesktopTab = (tab: WorkPanel) => {
+    if (desktopPanel !== tab) panels.togglePanel(tab);
+  };
+
   return (
     <>
       {desktopOpen ? (
-        <aside className="hidden w-96 shrink-0 min-h-0 overflow-hidden bg-background xl:block">
-          <PanelBody
-            panel={desktopPanel}
-            panels={panels}
-            workspace={workspace}
+        <aside
+          style={{ width: `${panelWidth}px` }}
+          className="relative hidden shrink-0 min-h-0 flex-col overflow-hidden border-l border-border bg-background xl:flex"
+        >
+          <hr
+            tabIndex={0}
+            aria-orientation="vertical"
+            aria-label={t("resizeInspector")}
+            aria-valuenow={panelWidth}
+            aria-valuemin={MIN_PANEL_WIDTH}
+            aria-valuemax={MAX_PANEL_WIDTH}
+            title={t("resizeInspector")}
+            onPointerDown={startResize}
+            onDoubleClick={() => updateAndSaveWidth(DEFAULT_PANEL_WIDTH)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                updateAndSaveWidth(panelWidth + 24);
+              } else if (event.key === "ArrowRight") {
+                event.preventDefault();
+                updateAndSaveWidth(panelWidth - 24);
+              } else if (event.key === "Home") {
+                event.preventDefault();
+                updateAndSaveWidth(DEFAULT_PANEL_WIDTH);
+              }
+            }}
+            className="absolute inset-y-0 left-0 z-20 m-0 h-full w-1.5 cursor-col-resize border-0 bg-transparent transition-colors hover:bg-primary/40 focus-visible:bg-primary/50 focus-visible:outline-none"
           />
+          <header className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/25 px-2.5">
+            <div
+              role="tablist"
+              aria-label={t("workspace")}
+              className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-background/80 p-0.5"
+            >
+              <Button
+                type="button"
+                role="tab"
+                aria-selected={desktopPanel === "files"}
+                variant="ghost"
+                size="sm"
+                onClick={() => selectDesktopTab("files")}
+                className={cn(
+                  "h-7 gap-1.5 rounded-md px-2 text-xs",
+                  desktopPanel === "files"
+                    ? "bg-muted font-medium text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Folder className="size-3.5" />
+                <span>{tSandboxes("files")}</span>
+              </Button>
+              <Button
+                type="button"
+                role="tab"
+                aria-selected={desktopPanel === "terminal"}
+                variant="ghost"
+                size="sm"
+                disabled={workspace.readOnly}
+                onClick={() => selectDesktopTab("terminal")}
+                className={cn(
+                  "h-7 gap-1.5 rounded-md px-2 text-xs",
+                  desktopPanel === "terminal"
+                    ? "bg-muted font-medium text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <TerminalSquare className="size-3.5" />
+                <span>{tSandboxes("terminal")}</span>
+              </Button>
+              {panels.hasScreen ? (
+                <Button
+                  type="button"
+                  role="tab"
+                  aria-selected={desktopPanel === "screen"}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => selectDesktopTab("screen")}
+                  className={cn(
+                    "h-7 gap-1.5 rounded-md px-2 text-xs",
+                    desktopPanel === "screen"
+                      ? "bg-muted font-medium text-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Monitor className="size-3.5" />
+                  <span>{tSandboxes("screen")}</span>
+                </Button>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 items-center gap-0.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={
+                  panelWidth >= 600
+                    ? t("compactInspector")
+                    : t("expandInspector")
+                }
+                title={
+                  panelWidth >= 600
+                    ? t("compactInspector")
+                    : t("expandInspector")
+                }
+                onClick={() =>
+                  updateAndSaveWidth(
+                    panelWidth >= 600
+                      ? DEFAULT_PANEL_WIDTH
+                      : EXPANDED_PANEL_WIDTH,
+                  )
+                }
+                className="size-7 rounded-md text-muted-foreground hover:text-foreground"
+              >
+                {panelWidth >= 600 ? (
+                  <Minimize2 className="size-3.5" />
+                ) : (
+                  <Maximize2 className="size-3.5" />
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={t("closeWorkspace")}
+                title={t("closeWorkspace")}
+                onClick={() => panels.togglePanel(desktopPanel)}
+                className="size-7 rounded-md text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-3.5" />
+              </Button>
+            </div>
+          </header>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <PanelBody
+              panel={desktopPanel}
+              panels={panels}
+              workspace={workspace}
+            />
+          </div>
         </aside>
       ) : null}
       {mobileOpen ? (

@@ -195,16 +195,21 @@ export default async function AdminFeedbackPage({
       ) : (
         <DashboardTable
           ariaLabel={t("tableLabel")}
-          minWidth="68rem"
+          minWidth="58rem"
+          selectable={false}
+          adjustableColumns={false}
           headers={[
-            { label: t("titleColumn"), width: "34%" },
-            { label: t("sourceColumn") },
-            { label: t("categoryColumn") },
-            { label: t("statusColumn") },
-            { label: t("occurrencesColumn"), align: "right" },
-            { label: t("workspaceColumn") },
-            { label: t("lastSeenColumn") },
-            { label: <span className="sr-only">{t("viewDetails")}</span> },
+            { label: t("titleColumn") },
+            { label: t("sourceColumn"), width: "4.5rem" },
+            { label: t("categoryColumn"), width: "4.5rem" },
+            { label: t("statusColumn"), width: "6.5rem" },
+            { label: t("occurrencesColumn"), align: "right", width: "5.5rem" },
+            { label: t("workspaceColumn"), width: "8rem" },
+            { label: t("lastSeenColumn"), width: "10.5rem" },
+            {
+              label: <span className="sr-only">{t("viewDetails")}</span>,
+              width: "3rem",
+            },
           ]}
           rows={items.map((item) => {
             const detailHref = adminHref(`/admin/feedback/${item.id}`, {

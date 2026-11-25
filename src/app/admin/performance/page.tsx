@@ -163,17 +163,18 @@ export default async function AdminPerformancePage({
       {rows.length ? (
         <DashboardTable
           ariaLabel={t("adminNavPerformance")}
-          minWidth="62rem"
+          minWidth="58rem"
           selectable={false}
+          adjustableColumns={false}
           headers={[
             { label: t(`performanceDimension_${dimension}`), width: "30%" },
-            { label: t("performanceCount"), align: "right" },
-            { label: t("logsErrorRate"), align: "right" },
-            { label: t("performanceP50"), align: "right" },
-            { label: t("performanceP95"), align: "right" },
-            { label: t("performanceP99"), align: "right" },
-            { label: t("performanceMax"), align: "right" },
-            { label: t("performanceLastSeen") },
+            { label: t("performanceCount"), align: "right", width: "4.5rem" },
+            { label: t("logsErrorRate"), align: "right", width: "5rem" },
+            { label: t("performanceP50"), align: "right", width: "5.5rem" },
+            { label: t("performanceP95"), align: "right", width: "5.5rem" },
+            { label: t("performanceP99"), align: "right", width: "5.5rem" },
+            { label: t("performanceMax"), align: "right", width: "5.5rem" },
+            { label: t("performanceLastSeen"), width: "9.5rem" },
           ]}
           rows={rows.map((row) => ({
             id: new URLSearchParams(row.logsQuery).toString(),

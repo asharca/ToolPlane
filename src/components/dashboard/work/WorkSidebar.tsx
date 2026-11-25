@@ -42,6 +42,7 @@ import {
   DialogCancel,
 } from "@/components/dashboard/dialog";
 import { SidebarGroupDialog } from "@/components/dashboard/SidebarGroupDialog";
+import { ConfirmActionDialog } from "@/components/dashboard/ConversationUxPrimitives";
 import { SidebarToolbar } from "@/components/dashboard/SidebarToolbar";
 import { sidebarHoverActionsClassName } from "@/components/dashboard/sidebarHoverActions";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
@@ -297,6 +298,10 @@ export function WorkSidebar({
     useState<ConversationExportTarget | null>(null);
   const [groupEditor, setGroupEditor] = useState<{
     id: string | null;
+    name: string;
+  } | null>(null);
+  const [deleteGroupTarget, setDeleteGroupTarget] = useState<{
+    id: string;
     name: string;
   } | null>(null);
   const visibleAgents = useMemo<WorkSidebarAgent[]>(
@@ -881,11 +886,14 @@ export function WorkSidebar({
 
   function deleteAgentGroup(groupId: string) {
     const group = groupPreferences.groups.find((item) => item.id === groupId);
-    if (
-      !group ||
-      !window.confirm(t("deleteGroupConfirm", { name: group.name }))
-    )
-      return;
+    if (!group) return;
+    setDeleteGroupTarget({ id: groupId, name: group.name });
+  }
+
+  function confirmDeleteAgentGroup() {
+    if (!deleteGroupTarget) return;
+    const groupId = deleteGroupTarget.id;
+    setDeleteGroupTarget(null);
     setGroupPreferences((current) => {
       const assignments = Object.fromEntries(
         Object.entries(current.assignments).filter(
@@ -1353,7 +1361,11 @@ export function WorkSidebar({
                   }}
                   renderMenu={(resource, controls) => {
                     const [kind, id] = resource.id.split(":", 2);
-                    const action = (label: string, run: () => void) => (
+                    const action = (
+                      label: string,
+                      run: () => void,
+                      destructive = false,
+                    ) => (
                       <button
                         type="button"
                         onClick={(event) => {
@@ -1361,7 +1373,12 @@ export function WorkSidebar({
                           controls.close();
                           run();
                         }}
-                        className="flex h-8 w-full items-center rounded-lg px-2.5 text-left text-xs text-foreground hover:bg-muted"
+                        className={cx(
+                          "flex h-8 w-full items-center rounded-lg px-2.5 text-left text-xs",
+                          destructive
+                            ? "text-destructive hover:bg-destructive/10"
+                            : "text-foreground hover:bg-muted",
+                        )}
                       >
                         {label}
                       </button>
@@ -1370,7 +1387,11 @@ export function WorkSidebar({
                       return (
                         <>
                           {action(t("renameGroup"), controls.rename)}
-                          {action(t("deleteGroup"), () => deleteAgentGroup(id))}
+                          {action(
+                            t("deleteGroup"),
+                            () => deleteAgentGroup(id),
+                            true,
+                          )}
                         </>
                       );
                     if (kind === "agent") {
@@ -1387,18 +1408,10 @@ export function WorkSidebar({
                               ),
                             ),
                           )}
-                          {itemAgent.supportsWork
-                            ? action(t("newWork"), () =>
-                                onNewWork(itemAgent.id),
-                              )
-                            : null}
-                          {action(tAgents("chat"), () =>
-                            router.push(
-                              `/app/${encodeURIComponent(slug)}/work?agent=${encodeURIComponent(itemAgent.id)}`,
-                            ),
-                          )}
-                          {action(tAgents("deleteAgent"), () =>
-                            setDeleteAgentTarget(itemAgent),
+                          {action(
+                            tAgents("deleteAgent"),
+                            () => setDeleteAgentTarget(itemAgent),
+                            true,
                           )}
                         </>
                       );
@@ -1422,15 +1435,18 @@ export function WorkSidebar({
                               )
                             : null}
                           {DELETABLE_STATUSES.has(item.status)
-                            ? action(t("deleteConversation"), () =>
-                                setDeleteConversationTarget({
-                                  id: item.conversationId,
-                                  agentId: item.agentId,
-                                  title: item.title,
-                                  source: null,
-                                  triggerId: null,
-                                  workSessionId: item.id,
-                                }),
+                            ? action(
+                                t("deleteConversation"),
+                                () =>
+                                  setDeleteConversationTarget({
+                                    id: item.conversationId,
+                                    agentId: item.agentId,
+                                    title: item.title,
+                                    source: null,
+                                    triggerId: null,
+                                    workSessionId: item.id,
+                                  }),
+                                true,
                               )
                             : null}
                         </>
@@ -1455,8 +1471,10 @@ export function WorkSidebar({
                               )
                             : null}
                           {!target.source && !target.title?.startsWith("msg:")
-                            ? action(tAgents("deleteConversation"), () =>
-                                setDeleteConversationTarget(target),
+                            ? action(
+                                tAgents("deleteConversation"),
+                                () => setDeleteConversationTarget(target),
+                                true,
                               )
                             : null}
                         </>
@@ -1487,6 +1505,21 @@ export function WorkSidebar({
         submitLabel={groupEditor?.id ? common("save") : common("create")}
         onClose={() => setGroupEditor(null)}
         onSubmit={saveAgentGroup}
+      />
+
+      <ConfirmActionDialog
+        open={Boolean(deleteGroupTarget)}
+        destructive
+        title={t("deleteGroup")}
+        description={
+          deleteGroupTarget
+            ? t("deleteGroupConfirm", { name: deleteGroupTarget.name })
+            : ""
+        }
+        confirmLabel={common("delete")}
+        cancelLabel={common("cancel")}
+        onClose={() => setDeleteGroupTarget(null)}
+        onConfirm={confirmDeleteAgentGroup}
       />
 
       <ConversationExportDialog
