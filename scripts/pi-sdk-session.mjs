@@ -1052,6 +1052,21 @@ const contentText = (content) =>
         .filter((p) => p.type === "text")
         .map((p) => p.text)
         .join("\n");
+// A response that ends with neither visible text nor a tool call (for example a
+// tool call the provider left inside reasoning) is not a reply. It must not
+// settle the turn as done: retry it like an empty stream, then fail.
+function emptyModelReply(message) {
+  return (
+    message?.role === "assistant" &&
+    message.stopReason !== "error" &&
+    message.stopReason !== "aborted" &&
+    !contentText(message.content).trim() &&
+    !(
+      Array.isArray(message.content) &&
+      message.content.some((part) => part.type === "toolCall")
+    )
+  );
+}
 // Tool input/output for the transcript and the workspace Agent tool log; bounded so one large
 // result (for example `cat` of a big file) cannot bloat the event stream.
 const TOOL_PAYLOAD_CHARS = 20_000;
@@ -1248,12 +1263,17 @@ function event(event, source, sourceModel) {
         `Pi 扩展 · ${message.customType}\n${contentText(message.content)}`,
       );
     if (message.role === "assistant") {
+      const empty = emptyModelReply(message);
       modelFailed =
-        message.stopReason === "error" || message.stopReason === "aborted";
+        message.stopReason === "error" ||
+        message.stopReason === "aborted" ||
+        empty;
       modelReason =
         message.stopReason === "error"
           ? modelFailureReason(message.errorMessage)
-          : undefined;
+          : empty
+            ? "EMPTY_RESPONSE"
+            : undefined;
       const text = contentText(message.content);
       failedTextIndex = modelFailed && text ? texts.length : undefined;
       if (text) texts.push(text);
@@ -1290,7 +1310,7 @@ function allowTransientStreamRetry(session) {
   // earlier tool calls and results stay in context and are not replayed.
   // Context overflow still goes through compaction.
   const fallbackIndexFor = (message) =>
-    message?.stopReason === "error" &&
+    (message?.stopReason === "error" || emptyModelReply(message)) &&
     active &&
     !aborted &&
     !isContextOverflow(message, session.model?.contextWindow ?? 0)
@@ -1300,6 +1320,7 @@ function allowTransientStreamRetry(session) {
     fallbackIndexFor(message) >= 0 ||
     piRetryable.call(session, message) ||
     transientModelFailure(message) ||
+    emptyModelReply(message) ||
     (message?.stopReason === "error" &&
       TRANSIENT_STREAM.test(String(message.errorMessage ?? "")));
   retryable.toolplane = true;

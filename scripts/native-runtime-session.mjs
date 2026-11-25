@@ -120,7 +120,7 @@ export const RESULT_FIELDS = {
 };
 const projectResult = object(RESULT_FIELDS);
 const failureReason =
-  /^(HTTP_[1-5]\d\d|UNREACHABLE|TIMEOUT|EMPTY_STREAM|STREAM_INCOMPLETE|CONTENT_FILTER|PROVIDER_ERROR|GATEWAY_ERROR)( RETRIED_\d{1,2})?$/;
+  /^(HTTP_[1-5]\d\d|UNREACHABLE|TIMEOUT|EMPTY_STREAM|EMPTY_RESPONSE|STREAM_INCOMPLETE|CONTENT_FILTER|PROVIDER_ERROR|GATEWAY_ERROR)( RETRIED_\d{1,2})?$/;
 
 function projectResponse(event) {
   const success = event.success === true;
