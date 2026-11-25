@@ -15,7 +15,6 @@ import {
 import { resolvePiSessionPackages } from "@/lib/agents/pi-session-packages";
 import { revokeDangerousMarketRelease } from "@/lib/pi-packages/revocation";
 import { marketReleaseChecksum } from "@/lib/pi-packages/artifact";
-import type * as SandboxRuntimeModule from "@/lib/agents/sandbox-runtime";
 import { addPlugin } from "@/lib/plugins/installs";
 import { getPlugin, listPluginCards, listPlugins } from "@/lib/plugins/catalog";
 import {
@@ -41,14 +40,10 @@ import {
 import { TRANSPORT_SETTINGS_KEY } from "@/lib/admin/transport-settings";
 import { parsePiPackageReleaseManifest } from "@/lib/pi-packages/manifest";
 import { testWorkspaceScope } from "../helpers/workspace-scope";
-import { publishFixtureAgentRevision } from "./agent-revision-fixture";
-
-vi.mock("@/lib/agents/sandbox-runtime", async (original) => ({
-  ...(await original<typeof SandboxRuntimeModule>()),
-  preflightPiSdkCapabilities: vi
-    .fn()
-    .mockResolvedValue({ commands: [], tools: [], skills: [], prompts: [] }),
-}));
+import {
+  isolateRevisionRuntime,
+  publishFixtureAgentRevision,
+} from "./agent-revision-fixture";
 
 const testHooks = vi.hoisted(() => ({
   allowLoopbackCustomAddress: false,
@@ -226,7 +221,8 @@ async function flushLogs() {
 }
 
 beforeAll(async () => {
-  process.env.AUTH_SECRET ||= randomUUID();
+  isolateRevisionRuntime();
+  vi.stubEnv("AUTH_SECRET", "official-plugin-env-test-secret");
 
   const [transportRow, privateHostsRow] = await Promise.all([
     db.systemSetting.findUnique({ where: { key: TRANSPORT_SETTINGS_KEY } }),
@@ -512,6 +508,8 @@ afterAll(async () => {
     where: { id: { in: [adminUserId, memberUserId] } },
   });
   await db.$disconnect();
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 it("enforces official preset rules, workspace isolation, strict no-fallback proxy routing, and fail-closed admission", async () => {
