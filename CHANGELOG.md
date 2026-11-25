@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.1](https://github.com/asharca/ToolPlane/compare/v0.46.0...v0.46.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* **ui:** 统一弹窗底色并收敛智能体与助手设置入口 ([#327](https://github.com/asharca/ToolPlane/issues/327)) ([646f199](https://github.com/asharca/ToolPlane/commit/646f199f040d7a6d0200c03a53603ea59c2ceadb))
+
 ## [0.46.0](https://github.com/asharca/ToolPlane/compare/v0.45.1...v0.46.0) (2026-11-25)
 
 
