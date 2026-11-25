@@ -64,13 +64,19 @@ jobs:
         run: pnpm vitest run tests/integration/sandbox-docker-timeout.live.test.ts tests/integration/deployment-config-volume.live.test.ts
 
   validate:
-    if: github.event_name != 'pull_request_target' && !inputs.full
+    # A release PR publishes main as is: its required check also waits for the
+    # full suite, so a release cannot ship with failing tests.
+    needs: full-validation
+    if: ${{ !cancelled() && github.event_name != 'pull_request_target' && !inputs.full }}
     runs-on: ubuntu-latest
 
     env:
       DATABASE_URL: postgresql://mcp:mcp@127.0.0.1:5432/toolplane_test
       NEXT_TELEMETRY_DISABLED: 1
     steps:
+      - name: Require the full suite on release PRs
+        if: needs.full-validation.result == 'failure' || needs.full-validation.result == 'cancelled'
+        run: exit 1
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
@@ -89,7 +95,10 @@ jobs:
       - run: pnpm check
 
   full-validation:
-    if: github.event_name == 'workflow_dispatch' && inputs.full
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.full) ||
+      (github.event_name == 'pull_request' &&
+      startsWith(github.head_ref, 'release-please--branches--'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -145,7 +154,6 @@ jobs:
 
 
       - name: Build Pi package capture sandbox
-        if: inputs.full
         run: |
           debug_image=$(node --input-type=module -e "import { PI_DEBUGPY_CAPTURE_IMAGE } from './src/lib/agents/pi-version.ts'; console.log(PI_DEBUGPY_CAPTURE_IMAGE)")
           docker build --target pi-package-capture -t toolplane-pi-package-capture:1.5.2 -t "$debug_image" .

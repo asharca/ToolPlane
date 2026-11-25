@@ -1,9 +1,26 @@
+import { vi } from "vitest";
+import * as piRuntime from "@/lib/agents/pi-runtime";
+import * as sandboxRuntime from "@/lib/agents/sandbox-runtime";
 import { db } from "@/lib/db";
 import { publishAgentRevision } from "@/lib/agents/revisions";
 import { OMP_VERSION } from "@/lib/agents/omp-config";
 import { PI_SDK_VERSION } from "@/lib/agents/pi-version";
 
-/** Publish real immutable fixtures without resolving images or starting native runtimes. */
+/** Exercise revision authorization and storage independently of Docker SDK preparation. */
+export function isolateRevisionRuntime() {
+  vi.spyOn(piRuntime, "preparePiRuntime").mockResolvedValue({
+    path: "/fixture/pi-sdk.archive",
+    sha256: "a".repeat(64),
+  });
+  vi.spyOn(sandboxRuntime, "preflightPiSdkCapabilities").mockResolvedValue({
+    commands: [],
+    tools: [],
+    skills: [],
+    prompts: [],
+  });
+}
+
+/** Publish an immutable revision with a fixed environment snapshot. */
 export async function publishFixtureAgentRevision(
   workspaceId: string,
   agentId: string,

@@ -3,6 +3,8 @@
   "bootstrap-sha": "a65237f38b79bddd85c9e964c5ae845039800367",
   "release-type": "node",
   "bump-minor-pre-major": true,
+  "draft": true,
+  "force-tag-creation": true,
   "include-component-in-tag": false,
   "include-v-in-tag": true,
   "include-v-in-release-name": true,

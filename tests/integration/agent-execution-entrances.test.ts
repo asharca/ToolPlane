@@ -715,20 +715,20 @@ describe.sequential("Agent execution entrance revision boundaries", () => {
         where: { id: claimed.id },
       });
       await settleAgentTriggerTask(settledTask);
-      await vi.waitFor(async () => {
-        expect(
-          await db.agentTrigger.findUniqueOrThrow({
-            where: { id: trigger.id },
-          }),
-        ).toMatchObject({
+      // While sending, lastDeliveryAt holds the lease time. Capture it from the pending row.
+      const queuedAt = await vi.waitFor(async () => {
+        const triggerState = await db.agentTrigger.findUniqueOrThrow({
+          where: { id: trigger.id },
+        });
+        expect(triggerState).toMatchObject({
           lastStatus: "failed",
           lastDeliveryStatus: "pending",
           lastDeliveryError: null,
           lastDeliveryText: 'Trigger "Webhook" failed (PI_SDK_MODEL_FAILED).',
+          lastDeliveryAt: expect.any(Date),
         });
+        return triggerState.lastDeliveryAt;
       });
-      const { lastDeliveryAt: queuedAt } =
-        await db.agentTrigger.findUniqueOrThrow({ where: { id: trigger.id } });
       // Advance only Date so a re-queue would stamp a distinctly later lastDeliveryAt.
       vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 60_000 });
       try {

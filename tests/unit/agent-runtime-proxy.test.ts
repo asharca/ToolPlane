@@ -61,6 +61,7 @@ const pin = {
     modelProviderIds: [],
     mcpGrants: [{ deploymentId: "deployment-1", allowedToolNames: ["read"] }],
     externalSandboxes: [],
+    packages: [],
     environment: { credentialReferences: [] },
   },
 };
@@ -77,10 +78,9 @@ const identity = {
 const nativeFetch = globalThis.fetch;
 
 describe("pinned Agent runtime proxy authorization", () => {
-  const originalSecret = process.env.AUTH_SECRET;
   beforeEach(() => {
     vi.resetAllMocks();
-    process.env.AUTH_SECRET = "runtime-proxy-test-secret";
+    vi.stubEnv("AUTH_SECRET", "runtime-proxy-test-secret");
     mocks.transaction.mockImplementation(async (callback) =>
       callback({
         agent: { findFirst: mocks.agent },
@@ -123,7 +123,7 @@ describe("pinned Agent runtime proxy authorization", () => {
     vi.stubGlobal("fetch", mocks.fetch);
   });
   afterEach(() => {
-    process.env.AUTH_SECRET = originalSecret;
+    vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
   async function request(
