@@ -8,10 +8,7 @@ import { mcpRpc } from "@/lib/process/mcp-client";
 import type { McpRpcOptions } from "@/lib/process/mcp-client";
 import { redactMcpToolCatalogResult } from "@/lib/process/mcp-tool-catalog";
 import type { McpToolDefinition } from "@/lib/process/mcp-tool-catalog";
-import {
-  mcpHeaderSecrets,
-  redactMcpResult,
-} from "@/lib/process/mcp-result-redaction";
+import { mcpHeaderSecrets } from "@/lib/process/mcp-header-secrets";
 import {
   assertAssistantRemoteDeployment,
   remoteMcpConnectionIdentity,
@@ -210,12 +207,10 @@ export async function callPinnedRemoteMcpTool(
         });
         if (spec.kind !== "remote")
           throw new Error("ASSISTANT_REMOTE_MCP_REQUIRED");
-        if (spec.oauth) {
+        if (spec.oauth)
           await startProcess(live.id, spec, {
             workspaceId: context.workspaceId,
           });
-          secrets.push(...mcpHeaderSecrets(spec.headers));
-        }
         if (
           liveMcpRuntimeSnapshot(live.id)?.remoteConnectionIdentity !==
           remoteMcpConnectionIdentity(spec)
@@ -224,7 +219,7 @@ export async function callPinnedRemoteMcpTool(
         await beforeCall?.();
         options.signal?.throwIfAborted();
         dispatched = true;
-        const value = await mcpRpc(
+        return await mcpRpc(
           live.id,
           "tools/call",
           { name, arguments: args },
@@ -237,7 +232,6 @@ export async function callPinnedRemoteMcpTool(
             },
           },
         );
-        return value ? redactMcpResult(value, secrets) : null;
       },
     );
   } catch (error) {

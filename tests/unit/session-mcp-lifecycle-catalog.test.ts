@@ -282,7 +282,7 @@ describe("session catalog without a Deployment row", () => {
   it("dispatches an approved second-page tool through the real RPC client", async () => {
     const bridge = sessionBridge((method, params) => {
       if (method === "tools/call")
-        return { content: [{ type: "text", text: "session-private-token" }] };
+        return { content: [{ type: "text", text: "ok" }] };
       return params.cursor === "second"
         ? { tools: [approved] }
         : { tools: [], nextCursor: "second" };
@@ -291,7 +291,7 @@ describe("session catalog without a Deployment row", () => {
     await expect(
       callSessionMcpTool(context, recipe.id, "approved", {}),
     ).resolves.toEqual({
-      content: [{ type: "text", text: "[REDACTED]" }],
+      content: [{ type: "text", text: "ok" }],
     });
     expect(bridge.business.mock.calls).toEqual([
       ["tools/list", {}],

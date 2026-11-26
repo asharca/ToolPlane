@@ -377,18 +377,6 @@ it("never falls back to plaintext recipe values when scoped credential resolutio
   expect(mocks.rpc).not.toHaveBeenCalled();
 });
 
-it("redacts owner-scoped resolved secrets even when they are absent from metadata env values", async () => {
-  mocks.resolve.mockResolvedValue({
-    spec: resolveSpawnSpec(recipe),
-    redactionValues: ["owner-only-secret"],
-  });
-  mocks.rpc.mockResolvedValue({
-    content: [{ type: "text", text: "owner-only-secret" }],
-  });
-  const result = await callSessionMcpTool(session, "recipe", "approved", {});
-  expect(JSON.stringify(result)).not.toContain("owner-only-secret");
-});
-
 it.each(["rotated", "removed-optional-key"])(
   "refuses a surviving stdio process with %s credentials",
   async (change) => {

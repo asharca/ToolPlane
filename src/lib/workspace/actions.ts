@@ -45,10 +45,7 @@ import { removeDeploymentConfigVolume } from "@/lib/process/deployment-config-vo
 import { removeDeploymentWorkspaceVolume } from "@/lib/process/deployment-workspace-volume";
 import { runMcpDeploymentOperation } from "@/lib/workspace/mcp-operation";
 import { isPackagedStdioCommand } from "@/lib/process/mcp-runtime-target";
-import {
-  mcpHeaderSecrets,
-  redactMcpResult,
-} from "@/lib/process/mcp-result-redaction";
+import { mcpHeaderSecrets } from "@/lib/process/mcp-header-secrets";
 import { newRequestId, withLogContext } from "@/lib/observability/context";
 import { MAX_TOOLKIT_BATCH_ITEMS } from "@/lib/toolkits/limits";
 import { syncDeploymentMcpGrants } from "@/lib/process/mcp-grant-sync";
@@ -654,26 +651,19 @@ export async function runMcpConsoleToolAction(input: {
         });
         result = null;
       }
-      const safeResult =
-        result &&
-        (secretValues.length ? redactMcpResult(result, secretValues) : result);
-      const safeRequest = redactMcpResult(
-        JSON.parse(requestBody),
-        secretValues,
-      );
       await logRequest({
         workspaceId: ctx.ws.id,
         deploymentId: deployment.id,
         method: "POST",
         path: `/mcp/${deployment.id}/rpc#tools/call:${toolName}`,
-        statusCode: safeResult ? 200 : 502,
+        statusCode: result ? 200 : 502,
         durationMs: Date.now() - startedAt,
-        requestBody: safeRequest ? JSON.stringify(safeRequest) : undefined,
-        responseBody: safeResult
-          ? JSON.stringify(safeResult).slice(0, 16_000)
+        requestBody,
+        responseBody: result
+          ? JSON.stringify(result).slice(0, 16_000)
           : undefined,
       });
-      return safeResult ? { result: safeResult } : { error: "toolCallFailed" };
+      return result ? { result } : { error: "toolCallFailed" };
     },
   );
 }

@@ -257,25 +257,6 @@ describe("sandbox-backed MCP Inspector actions", () => {
     );
   });
 
-  it("redacts connector credentials from tool results and request logs", async () => {
-    mocks.mcpRpcViaSandbox.mockResolvedValueOnce({
-      content: [{ type: "text", text: "Bearer secret / secret" }],
-    });
-
-    await expect(
-      runMcpInspectorToolAction({
-        ...input(),
-        toolName: "search",
-        arguments: {},
-      }),
-    ).resolves.toEqual({
-      result: { content: [{ type: "text", text: "[REDACTED] / [REDACTED]" }] },
-    });
-    expect(JSON.stringify(mocks.logRequest.mock.calls[0][0])).not.toContain(
-      "secret",
-    );
-  });
-
   it("does not run a tool through a sandbox that has not explicitly connected", async () => {
     mocks.deploymentFindFirst.mockResolvedValueOnce({
       id: "remote-dep",

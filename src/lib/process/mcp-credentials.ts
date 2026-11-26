@@ -6,7 +6,7 @@ import { mcpDefinitionChecksum } from "./mcp-definition";
 import { resolveSpawnSpec } from "./spawn-spec";
 import { missingDeploymentRequiredEnvironment } from "@/lib/workspace/server-recipe";
 import { resolveOAuthToken } from "@/lib/remote-mcp/oauth/store";
-import { mcpHeaderSecrets } from "./mcp-result-redaction";
+import { mcpHeaderSecrets } from "./mcp-header-secrets";
 
 function config(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)

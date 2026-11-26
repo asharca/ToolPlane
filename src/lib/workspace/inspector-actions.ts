@@ -18,14 +18,12 @@ import {
 } from "@/lib/process/sandbox-mcp-client";
 import { mcpRpc } from "@/lib/process/mcp-client";
 import { logRequest } from "@/lib/observability/log";
+import { withLogContext } from "@/lib/observability/context";
 import {
   redactMcpToolCatalogResult,
   type McpToolDefinition,
 } from "@/lib/process/mcp-tool-catalog";
-import {
-  mcpHeaderSecrets,
-  redactMcpResult,
-} from "@/lib/process/mcp-result-redaction";
+import { mcpHeaderSecrets } from "@/lib/process/mcp-header-secrets";
 import {
   readMcpInspectorConnection,
   withMcpInspectorConnection,
@@ -374,20 +372,22 @@ export async function runMcpInspectorToolAction(input: {
   } catch (error) {
     return { error: inspectorFailure(error, "toolCallFailed") };
   }
-  const safeResult =
-    result && redactMcpResult(result, headerSecrets(resolved.context.remote));
-  await logRequest({
-    workspaceId: resolved.context.workspaceId,
-    deploymentId: resolved.context.deploymentId,
-    method: "POST",
-    path: `/mcp/${resolved.context.deploymentId}/inspector/${input.sandboxId}#tools/call:${input.toolName}`,
-    statusCode: safeResult ? 200 : 502,
-    durationMs: Date.now() - startedAt,
-    requestBody,
-    responseBody: JSON.stringify(safeResult ?? { error: "unreachable" }).slice(
-      0,
-      16_000,
-    ),
-  });
-  return safeResult ? { result: safeResult } : { error: "toolCallFailed" };
+  const { context } = resolved;
+  // Logs keep connector credentials out; the caller sees the raw tool result.
+  await withLogContext({ secrets: headerSecrets(context.remote) }, () =>
+    logRequest({
+      workspaceId: context.workspaceId,
+      deploymentId: context.deploymentId,
+      method: "POST",
+      path: `/mcp/${context.deploymentId}/inspector/${input.sandboxId}#tools/call:${input.toolName}`,
+      statusCode: result ? 200 : 502,
+      durationMs: Date.now() - startedAt,
+      requestBody,
+      responseBody: JSON.stringify(result ?? { error: "unreachable" }).slice(
+        0,
+        16_000,
+      ),
+    }),
+  );
+  return result ? { result } : { error: "toolCallFailed" };
 }

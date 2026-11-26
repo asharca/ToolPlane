@@ -9,7 +9,6 @@ import {
   McpError,
   ResultSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { getLogContext } from "@/lib/observability/context";
 import { recordEvent } from "@/lib/observability/events";
 import {
   elicit,
@@ -17,7 +16,6 @@ import {
   sessionRoots,
   type McpCallbackContext,
 } from "./mcp-callbacks";
-import { redactMcpResult } from "./mcp-result-redaction";
 
 /** A tool invocation gets a private MCP client. Its callbacks never see another
  * run's token, working directory, response IDs or model selection. */
@@ -75,11 +73,7 @@ export async function callWithCallbacks(
   let sampling = 0;
   let callbacks = 0;
   let dispatched = false;
-  async function handle<T>(
-    method: string,
-    data: Record<string, unknown>,
-    fn: () => Promise<T>,
-  ): Promise<T> {
+  async function handle<T>(method: string, fn: () => Promise<T>): Promise<T> {
     let reason: string | undefined;
     try {
       active.throwIfAborted();
@@ -88,9 +82,6 @@ export async function callWithCallbacks(
       if (!dispatched && method !== "roots/list")
         throw new McpError(-32601, "MCP_DISCOVERY_CALLBACK_DENIED");
       if (++callbacks > 32) throw new McpError(-32000, "MCP_CALLBACK_LIMIT");
-      const safe = redactMcpResult(data, getLogContext()?.secrets ?? []);
-      if (!safe || JSON.stringify(safe) !== JSON.stringify(data))
-        throw new McpError(-32000, "MCP_RESULT_REDACTION_REQUIRED");
       return await fn();
     } catch (error) {
       // SDK McpError.message includes a numeric prefix. Do not forward arbitrary
@@ -118,17 +109,17 @@ export async function callWithCallbacks(
     }
   }
   client.setRequestHandler(ListRootsRequestSchema, ({ method }) =>
-    handle(method, {}, () => sessionRoots(context)),
+    handle(method, () => sessionRoots(context)),
   );
   client.setRequestHandler(ElicitRequestSchema, ({ method, params }, extra) =>
-    handle(method, params, () =>
+    handle(method, () =>
       elicit(context, params, AbortSignal.any([active, extra.signal])),
     ),
   );
   client.setRequestHandler(
     CreateMessageRequestSchema,
     ({ method, params }, extra) =>
-      handle(method, params, async () => {
+      handle(method, async () => {
         if (++sampling > 4) throw new McpError(-32000, "MCP_SAMPLING_LIMIT");
         return sample(context, params, AbortSignal.any([active, extra.signal]));
       }),

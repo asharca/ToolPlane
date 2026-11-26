@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   resolveRequestPrincipal: vi.fn(),
   deploymentFindFirst: vi.fn(),
   livePort: vi.fn(),
+  liveRedactionValues: vi.fn(),
   logRequest: vi.fn(),
   fetch: vi.fn(),
 }));
@@ -17,7 +18,7 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/process/supervisor", () => ({
   livePort: mocks.livePort,
-  liveRedactionValues: () => [],
+  liveRedactionValues: mocks.liveRedactionValues,
 }));
 vi.mock("@/lib/observability/events", () => ({
   recordEvent: mocks.logRequest,
@@ -60,6 +61,7 @@ describe("direct MCP gateway tool exposure", () => {
       mcpAllowedTools: ["read"],
     });
     mocks.livePort.mockReturnValue(4321);
+    mocks.liveRedactionValues.mockReturnValue([]);
     mocks.logRequest.mockResolvedValue(undefined);
     vi.stubGlobal("fetch", mocks.fetch);
   });
@@ -201,6 +203,30 @@ describe("direct MCP gateway tool exposure", () => {
     const stream = await res.text();
     expect(stream).toContain('"read"');
     expect(stream).not.toContain("unknown");
+  });
+
+  it("streams tool results that echo deployment configuration values unchanged", async () => {
+    const configLine = '"host": "192.0.2.10",';
+    mocks.liveRedactionValues.mockReturnValue([configLine]);
+    const text = `{\n  "devices": [\n    {\n      ${configLine}\n      "enabled": true\n    }\n  ]\n}`;
+    const reply = {
+      jsonrpc: "2.0",
+      id: 1,
+      result: { content: [{ type: "text", text }], isError: false },
+    };
+    mocks.fetch.mockResolvedValue(
+      new Response(`data: ${JSON.stringify(reply)}\n\n`, {
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+    const res = await POST(request("tools/call", { name: "read" }), {
+      params: Promise.resolve({ deploymentId: "dep1" }),
+    });
+    expect(res.status).toBe(200);
+    const stream = await res.text();
+    expect(JSON.parse(stream.slice(stream.indexOf("data: ") + 6))).toEqual(
+      reply,
+    );
   });
 
   it("rejects a batch at the modern protocol version even with a session id", async () => {
