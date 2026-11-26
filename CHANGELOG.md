@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.2](https://github.com/asharca/ToolPlane/compare/v0.46.1...v0.46.2) (2026-11-26)
+
+
+### Bug Fixes
+
+* **mcp:** 原样返回 MCP 工具结果，不再按部署凭据拒绝 ([#329](https://github.com/asharca/ToolPlane/issues/329)) ([3f9fc44](https://github.com/asharca/ToolPlane/commit/3f9fc44895e3ece2ddebe8a86d2393dbaff2285d))
+
 ## [0.46.1](https://github.com/asharca/ToolPlane/compare/v0.46.0...v0.46.1) (2026-11-25)
 
 
