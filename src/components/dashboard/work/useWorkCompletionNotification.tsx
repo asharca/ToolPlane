@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, BellOff } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/motion/button";
-import { Tooltip } from "@/components/motion/tooltip";
 import { notify } from "@/components/dashboard/Toaster";
 import { usePersistentBoolean } from "@/lib/use-persistent-boolean";
 
@@ -178,24 +177,18 @@ export function useWorkCompletionNotification(
   return {
     notifyCompletion,
     control: (
-      <Tooltip content={label}>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label={label}
-          aria-pressed={enabled}
-          aria-busy={pending}
-          disabled={pending || permission === "loading"}
-          onClick={() => void toggle()}
-        >
-          {enabled ? (
-            <Bell className="size-4" />
-          ) : (
-            <BellOff className="size-4" />
-          )}
-        </Button>
-      </Tooltip>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        aria-label={label}
+        aria-pressed={enabled}
+        aria-busy={pending}
+        disabled={pending || permission === "loading"}
+        onClick={() => void toggle()}
+      >
+        {enabled ? <Bell className="size-4" /> : <BellOff className="size-4" />}
+      </Button>
     ),
   };
 }

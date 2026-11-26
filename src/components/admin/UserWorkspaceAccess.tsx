@@ -15,7 +15,6 @@ import { useTranslations } from "next-intl";
 import {
   Check,
   ChevronRight,
-  Info,
   Loader2,
   Plus,
   RotateCcw,
@@ -35,7 +34,6 @@ import {
 } from "@/components/motion/center-morph-modal";
 import { Input } from "@/components/motion/input";
 import { Switch } from "@/components/motion/switch";
-import { Tooltip } from "@/components/motion/tooltip";
 import type { AdminActionState } from "@/lib/admin/user-actions";
 import type { AdminWorkspaceAccess } from "@/lib/admin/workspace-members";
 import {
@@ -703,12 +701,10 @@ function WorkspaceAccessRow({
         </Link>
 
         <div className="flex items-center gap-2.5 sm:shrink-0">
-          <Tooltip content={t("ownerAllPermissions")} side="top">
-            <span className="inline-flex cursor-default items-center gap-1.5 text-xs text-muted-foreground">
-              <ShieldCheck className="size-3.5" aria-hidden="true" />
-              {t("allPermissions")}
-            </span>
-          </Tooltip>
+          <span className="inline-flex cursor-default items-center gap-1.5 text-xs text-muted-foreground">
+            <ShieldCheck className="size-3.5" aria-hidden="true" />
+            {t("allPermissions")}
+          </span>
           <AdminBadge tone="info">{t("roles.owner")}</AdminBadge>
         </div>
       </li>
@@ -793,7 +789,6 @@ function WorkspaceAccessRow({
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {optimistic.permissions.map((perm) => {
           const label = t(`permissions.${perm.permission}.label`);
-          const description = t(`permissions.${perm.permission}.description`);
           const isBusy = pendingRole || pendingReset;
 
           return (
@@ -812,17 +807,6 @@ function WorkspaceAccessRow({
                 <span className="truncate text-sm font-medium text-foreground">
                   {label}
                 </span>
-                <Tooltip content={description} side="top">
-                  <button
-                    type="button"
-                    aria-label={t("permissionInfoAriaLabel", {
-                      permission: label,
-                    })}
-                    className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <Info className="size-3.5" aria-hidden="true" />
-                  </button>
-                </Tooltip>
                 {perm.adjustment ? (
                   <AdminBadge
                     tone={perm.adjustment === "granted" ? "success" : "warning"}

@@ -565,7 +565,7 @@ function ResourceRow({
               </MorphPopoverTrigger>
               <MorphPopoverContent
                 side="bottom"
-                align="end"
+                align="start"
                 sideOffset={8}
                 radius={12}
                 className="w-40 p-1.5"

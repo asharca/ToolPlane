@@ -191,14 +191,12 @@ export function WorkspaceSidebar({
               <span className="min-w-0 flex-1 truncate px-2 text-base font-semibold">
                 {title}
               </span>
-              <Tooltip content={closeLabel}>
-                <AnimatedSidebarClose
-                  aria-label={closeLabel}
-                  className="size-9 shrink-0"
-                >
-                  <X aria-hidden="true" className="size-4" />
-                </AnimatedSidebarClose>
-              </Tooltip>
+              <AnimatedSidebarClose
+                aria-label={closeLabel}
+                className="size-9 shrink-0"
+              >
+                <X aria-hidden="true" className="size-4" />
+              </AnimatedSidebarClose>
             </>
           ) : (
             <>
@@ -222,6 +220,7 @@ export function WorkspaceSidebar({
               </div>
               <Tooltip
                 content={compact ? expandLabel : collapseLabel}
+                open={compact ? undefined : false}
                 side="right"
                 wrapperClassName="absolute right-0 z-10"
               >
@@ -238,12 +237,12 @@ export function WorkspaceSidebar({
         </motion.div>
       </AnimatedSidebarHeader>
       <AnimatedSidebarContent className="gap-0.5 px-3.5 py-2 [scrollbar-width:none]">
-        {groups.map((group, groupIndex) => (
+        {groups.map((group) => (
           <AnimatedSidebarGroup
             key={group.id}
             role="group"
             aria-label={group.title}
-            className={cn("px-0 py-0", groupIndex > 0 && "mt-3")}
+            className="px-0 py-0"
           >
             <AnimatedSidebarMenu className="gap-0.5">
               {group.items.map((item) => (

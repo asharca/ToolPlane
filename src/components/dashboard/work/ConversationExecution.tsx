@@ -20,6 +20,10 @@ import {
 import { Button } from "@/components/motion/button";
 import { notify } from "@/components/dashboard/Toaster";
 import { useRuntimeErrorText } from "@/components/dashboard/useRuntimeErrorText";
+import {
+  buildErrorFeedbackHref,
+  captureAndStoreErrorFeedback,
+} from "@/lib/feedback/error-capture";
 import type { ToolApprovalDataPart } from "@/lib/agents/execution/live-output-types";
 import type { ToolApprovalDecision } from "./ToolApprovalRequest";
 
@@ -450,20 +454,14 @@ export function ConversationExecution({
             : code,
       );
       const reportHref = feedbackContext
-        ? (() => {
-            const params = new URLSearchParams({ category: "failure" });
-            if (code) params.set("failureCode", code);
-            if (feedbackContext.workSessionId) {
-              params.set("workSessionId", feedbackContext.workSessionId);
-            }
-            if (feedbackContext.conversationId) {
-              params.set("conversationId", feedbackContext.conversationId);
-            }
-            if (feedbackContext.agentId) {
-              params.set("agentId", feedbackContext.agentId);
-            }
-            return `/app/${encodeURIComponent(feedbackContext.workspaceSlug)}/feedback?${params.toString()}`;
-          })()
+        ? buildErrorFeedbackHref({
+            workspaceSlug: feedbackContext.workspaceSlug,
+            failureCode: code || undefined,
+            workSessionId: feedbackContext.workSessionId,
+            conversationId: feedbackContext.conversationId,
+            agentId: feedbackContext.agentId,
+            captured: true,
+          })
         : null;
       return (
         <Alert variant="destructive">
@@ -486,9 +484,16 @@ export function ConversationExecution({
                   {tAgents("configureAgent")}
                 </Link>
               ) : null}
-              {reportHref ? (
+              {reportHref && feedbackContext ? (
                 <Link
                   href={reportHref}
+                  onClick={() =>
+                    captureAndStoreErrorFeedback({
+                      workspaceSlug: feedbackContext.workspaceSlug,
+                      errorText: runtimeError?.text ?? t("executionFailed"),
+                      failureCode: code || undefined,
+                    })
+                  }
                   className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 >
                   {t("reportThisIssue")}

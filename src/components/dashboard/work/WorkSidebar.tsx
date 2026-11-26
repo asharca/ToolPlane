@@ -35,7 +35,6 @@ import {
   CenterMorphModal,
   CenterMorphModalContent,
 } from "@/components/motion/center-morph-modal";
-import { Tooltip } from "@/components/motion/tooltip";
 import {
   DialogHeader,
   DialogBody,
@@ -801,32 +800,6 @@ export function WorkSidebar({
     }
   }
 
-  function agentStatusTooltip(status: ReturnType<typeof agentSidebarStatus>) {
-    return (
-      <div className="max-w-64 space-y-1 text-left">
-        {status.issues.length ? (
-          <>
-            <p className="font-medium">
-              {t("agentIssuesTitle", { count: status.issues.length })}
-            </p>
-            <ul className="space-y-0.5">
-              {status.issues.map((issue) => (
-                <li
-                  key={`${issue.kind}:${"sessionId" in issue ? issue.sessionId : "name" in issue ? issue.name : ""}`}
-                >
-                  · {agentIssueLabel(issue)}
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : null}
-        {status.running ? (
-          <p>{t("agentRunningCount", { count: status.running })}</p>
-        ) : null}
-      </div>
-    );
-  }
-
   function setAllAgentSections(collapsed: boolean) {
     if (sidebarSearch.trim()) {
       setSearchExpandedResources({
@@ -1188,40 +1161,23 @@ export function WorkSidebar({
                     const status = agentSidebarStatus(itemAgent, items);
                     const firstIssue = status.issues[0];
                     const resolveButton = firstIssue ? (
-                      <Tooltip
-                        content={
-                          <div className="space-y-1">
-                            {agentStatusTooltip(status)}
-                            <p className="text-muted-foreground">
-                              {t("agentResolveIssue", {
-                                issue: agentIssueLabel(firstIssue),
-                              })}
-                            </p>
-                          </div>
-                        }
-                        side="right"
+                      <button
+                        type="button"
+                        draggable={false}
+                        aria-label={`${t("agentIssuesTitle", { count: status.issues.length })}: ${agentIssueLabel(firstIssue)}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          resolveAgentIssue(itemAgent, firstIssue);
+                        }}
+                        className={cx(
+                          "grid size-7 shrink-0 place-items-center rounded-lg outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring",
+                          status.tone === "error"
+                            ? "text-destructive"
+                            : "text-warning",
+                        )}
                       >
-                        <button
-                          type="button"
-                          draggable={false}
-                          aria-label={`${t("agentIssuesTitle", { count: status.issues.length })}: ${agentIssueLabel(firstIssue)}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            resolveAgentIssue(itemAgent, firstIssue);
-                          }}
-                          className={cx(
-                            "grid size-7 shrink-0 place-items-center rounded-lg outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring",
-                            status.tone === "error"
-                              ? "text-destructive"
-                              : "text-warning",
-                          )}
-                        >
-                          <CircleAlert
-                            aria-hidden="true"
-                            className="size-3.5"
-                          />
-                        </button>
-                      </Tooltip>
+                        <CircleAlert aria-hidden="true" className="size-3.5" />
+                      </button>
                     ) : null;
                     if (!itemAgent.supportsWork)
                       return (
@@ -1264,37 +1220,28 @@ export function WorkSidebar({
                         context?.state ?? "TASK_STATE_UNSPECIFIED",
                       );
                       return (
-                        <Tooltip
-                          content={
-                            taskStates.has(`states.${state}`)
-                              ? taskStates(`states.${state}`)
-                              : state
-                          }
-                          side="right"
-                        >
-                          <Circle
-                            data-sidebar-dot=""
-                            className={cx(
-                              "size-2 fill-current",
-                              ["failed", "rejected", "canceled"].includes(state)
-                                ? "text-destructive"
-                                : ["input-required", "auth-required"].includes(
-                                      state,
-                                    )
-                                  ? "text-warning"
-                                  : state === "completed"
-                                    ? "text-emerald-500"
-                                    : "text-primary",
-                            )}
-                          />
-                        </Tooltip>
+                        <Circle
+                          data-sidebar-dot=""
+                          className={cx(
+                            "size-2 fill-current",
+                            ["failed", "rejected", "canceled"].includes(state)
+                              ? "text-destructive"
+                              : ["input-required", "auth-required"].includes(
+                                    state,
+                                  )
+                                ? "text-warning"
+                                : state === "completed"
+                                  ? "text-emerald-500"
+                                  : "text-primary",
+                          )}
+                        />
                       );
                     }
                     if (kind === "agent") {
                       const itemAgent = agents.find((item) => item.id === id);
                       const status = agentSidebarStatus(itemAgent, items);
                       const { tone } = status;
-                      const avatar = (
+                      return (
                         <span className="relative grid size-5 place-items-center rounded-md bg-muted text-[10px] font-semibold text-foreground ring-1 ring-border">
                           {itemAgent?.name.slice(0, 1).toLocaleUpperCase() || (
                             <Bot className="size-3.5" />
@@ -1325,44 +1272,29 @@ export function WorkSidebar({
                           ) : null}
                         </span>
                       );
-                      return tone ? (
-                        <Tooltip
-                          content={agentStatusTooltip(status)}
-                          side="right"
-                        >
-                          {avatar}
-                        </Tooltip>
-                      ) : (
-                        avatar
-                      );
                     }
                     if (kind === "session") {
                       const item = items.find((session) => session.id === id);
                       const status = item?.status ?? "";
                       const tone = sidebarIssueTone(status);
                       return tone ? (
-                        <Tooltip
-                          content={sessionStatusLabel(status)}
-                          side="right"
-                        >
-                          <span className="inline-flex items-center">
-                            <Circle
-                              data-sidebar-dot=""
-                              aria-hidden="true"
-                              className={cx(
-                                "size-2 fill-current",
-                                tone === "error"
-                                  ? "text-destructive"
-                                  : tone === "warning"
-                                    ? "text-warning"
-                                    : "text-primary",
-                              )}
-                            />
-                            <span className="sr-only">
-                              {sessionStatusLabel(status)}
-                            </span>
+                        <span className="inline-flex items-center">
+                          <Circle
+                            data-sidebar-dot=""
+                            aria-hidden="true"
+                            className={cx(
+                              "size-2 fill-current",
+                              tone === "error"
+                                ? "text-destructive"
+                                : tone === "warning"
+                                  ? "text-warning"
+                                  : "text-primary",
+                            )}
+                          />
+                          <span className="sr-only">
+                            {sessionStatusLabel(status)}
                           </span>
-                        </Tooltip>
+                        </span>
                       ) : (
                         false
                       );
@@ -1416,6 +1348,15 @@ export function WorkSidebar({
                       if (!itemAgent) return null;
                       return (
                         <>
+                          {action(tAgents("configureAgent"), () =>
+                            router.push(
+                              agentSettingsHref(
+                                slug,
+                                itemAgent.id,
+                                workReturnTo,
+                              ),
+                            ),
+                          )}
                           {action(
                             tAgents("deleteAgent"),
                             () => setDeleteAgentTarget(itemAgent),

@@ -68,6 +68,28 @@ describe("feedback schemas", () => {
     expect(parsed.success).toBe(true);
   });
 
+  it("validates user feedback input with captured error screenshot and diagnostic logs", () => {
+    const parsed = SubmitUserFeedbackInputSchema.safeParse({
+      category: "failure",
+      title: "Execution failure (PI_EXECUTION_FAILED)",
+      body: "Error details: Sandbox exited unexpectedly.",
+      workSessionId: "ws_123",
+      failureCode: "PI_EXECUTION_FAILED",
+      screenshotDataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
+      includeDiagnosticLogs: true,
+      clientErrorText: "Sandbox exited unexpectedly.",
+    });
+    expect(parsed.success).toBe(true);
+
+    const rejected = SubmitUserFeedbackInputSchema.safeParse({
+      category: "failure",
+      title: "Invalid screenshot",
+      body: "Test",
+      screenshotDataUrl: "https://example.com/not-inline.png",
+    });
+    expect(rejected.success).toBe(false);
+  });
+
   it("validates model feedback tool input", () => {
     const parsed = ModelFeedbackToolInputSchema.safeParse({
       category: "failure",

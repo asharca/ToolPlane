@@ -35,7 +35,6 @@ import {
   SelectValue,
 } from "@/components/motion/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
-import { Tooltip } from "@/components/motion/tooltip";
 import { FormSelect } from "@/components/ui/FormSelect";
 import {
   CenterMorphModal,
@@ -126,7 +125,6 @@ export function ProviderDialog({
   onOpenChange,
   trigger,
   title,
-  labelledTrigger = false,
   maxWidth = "max-w-xl",
   children,
 }: {
@@ -134,7 +132,7 @@ export function ProviderDialog({
   onOpenChange: (open: boolean) => void;
   trigger: ReactElement;
   title: string;
-  /** Render the trigger without a tooltip. */
+  /** Kept for caller compatibility; triggers render without tooltips. */
   labelledTrigger?: boolean;
   maxWidth?: "max-w-xl" | "max-w-2xl" | "max-w-3xl";
   children: ReactNode;
@@ -160,11 +158,7 @@ export function ProviderDialog({
 
   return (
     <CenterMorphModal open={open} onOpenChange={onOpenChange}>
-      {labelledTrigger ? (
-        triggerElement
-      ) : (
-        <Tooltip content={title}>{triggerElement}</Tooltip>
-      )}
+      {triggerElement}
       {rendered ? (
         <CenterMorphModalContent
           ariaLabel={title}

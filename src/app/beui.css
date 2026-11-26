@@ -301,9 +301,27 @@
     scrollbar-color: transparent transparent;
   }
 
+  .sidebar-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .sidebar-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .sidebar-scroll::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background-color: transparent;
+  }
+
   .sidebar-scroll[data-scrolling="true"] {
     scrollbar-color: color-mix(in srgb, var(--foreground) 25%, transparent)
       transparent;
+  }
+
+  .sidebar-scroll[data-scrolling="true"]::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--foreground) 25%, transparent);
   }
 
   .mask-radial-fade {

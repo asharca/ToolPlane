@@ -25,6 +25,7 @@ import { Input } from "@/components/motion/input";
 import { FormCheckbox } from "@/components/ui/FormCheckbox";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { AISidebar } from "@/components/agents/ai-sidebar";
+import { useSidebarScroll } from "@/components/dashboard/useSidebarScroll";
 import {
   AnimatedSidebarHeader,
   AnimatedSidebarContent,
@@ -496,6 +497,7 @@ export function WorkspaceKnowledge({
     }
   }
 
+  const onSidebarScroll = useSidebarScroll();
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-[var(--workspace-surface,var(--background))] lg:grid-cols-[16rem_minmax(0,1fr)] lg:grid-rows-1">
       <aside
@@ -517,7 +519,10 @@ export function WorkspaceKnowledge({
             <Plus className="size-4" />
           </Button>
         </AnimatedSidebarHeader>
-        <AnimatedSidebarContent>
+        <AnimatedSidebarContent
+          onScroll={onSidebarScroll}
+          className="sidebar-scroll"
+        >
           {bases.length ? (
             <AISidebar
               ariaLabel={t("title")}

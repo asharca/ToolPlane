@@ -14,14 +14,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   Bot,
-  Boxes,
   Check,
   ChevronDown,
   FileOutput,
   PanelLeft,
   Plus,
-  Settings2,
-  SquarePen,
 } from "lucide-react";
 import {
   MorphPopover,
@@ -101,6 +98,10 @@ import {
   type SidebarGroupPreferences,
 } from "@/lib/sidebar-groups";
 import { apiRequest } from "@/lib/client/api";
+import {
+  buildErrorFeedbackHref,
+  captureAndStoreErrorFeedback,
+} from "@/lib/feedback/error-capture";
 import { WorkTranscript } from "./WorkTranscript";
 import { WorkSidebar, useWorkSidebarPreferences } from "./WorkSidebar";
 import {
@@ -638,7 +639,6 @@ export function WorkspaceWork({
   }
 
   const [agentSwitcherOpen, setAgentSwitcherOpen] = useState(false);
-  const [sandboxSwitcherOpen, setSandboxSwitcherOpen] = useState(false);
   const sortedWorkAgents = useMemo(
     () =>
       sortSidebarItems(
@@ -808,23 +808,6 @@ export function WorkspaceWork({
                   >
                     <PanelLeft className="size-4" />
                   </ChatAppSidebarTrigger>
-                  {switcherAgent || sortedWorkAgents.length > 0 ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() =>
-                        startNewWork(
-                          switcherAgent?.id ?? sortedWorkAgents[0]?.id,
-                        )
-                      }
-                      aria-label={t("newWork")}
-                      title={t("shortcutNewWork")}
-                      className="size-8 shrink-0 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
-                    >
-                      <SquarePen className="size-4" />
-                    </Button>
-                  ) : null}
                   {sortedWorkAgents.length > 0 && switcherAgent ? (
                     <MorphPopover
                       open={agentSwitcherOpen}
@@ -940,27 +923,6 @@ export function WorkspaceWork({
                       {switcherAgent.name}
                     </span>
                   ) : null}
-                  {switcherAgent ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() =>
-                        router.push(
-                          agentSettingsHref(
-                            slug,
-                            switcherAgent.id,
-                            workReturnTo,
-                          ),
-                        )
-                      }
-                      aria-label={`${t("agentSettings")}: ${switcherAgent.name}`}
-                      title={t("agentSettings")}
-                      className="size-8 shrink-0 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
-                    >
-                      <Settings2 className="size-4" />
-                    </Button>
-                  ) : null}
                   {viewingA2A || selected || conversation ? (
                     <div className="flex min-w-0 items-center gap-2">
                       <span
@@ -993,27 +955,6 @@ export function WorkspaceWork({
                   ) : null}
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  {(controlSandbox ?? activeSandbox) ? (
-                    <span
-                      data-ui="work-header-sandbox"
-                      className="hidden max-w-40 items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground md:inline-flex"
-                      title={(controlSandbox ?? activeSandbox)?.name}
-                    >
-                      <Boxes aria-hidden="true" className="size-3.5 shrink-0" />
-                      <span
-                        aria-hidden="true"
-                        className={cn(
-                          "size-1.5 shrink-0 rounded-full",
-                          (controlSandbox ?? activeSandbox)?.running
-                            ? "bg-emerald-500"
-                            : "bg-muted-foreground/50",
-                        )}
-                      />
-                      <span className="truncate">
-                        {(controlSandbox ?? activeSandbox)?.name}
-                      </span>
-                    </span>
-                  ) : null}
                   {completionNotificationControl}
                   {controlSandbox || conversationWorkspace ? (
                     <WorkspacePanelToggles
@@ -1113,6 +1054,7 @@ export function WorkspaceWork({
                 controlAgent ? (
                 <AgentConversation
                   key={conversation.id}
+                  workspaceSlug={slug}
                   activeConversationId={conversation.id}
                   agentId={controlAgent.id}
                   agentName={controlAgent.name}
@@ -1290,81 +1232,6 @@ export function WorkspaceWork({
                         {agent?.mcpToolsUpdated ? (
                           <McpToolsUpdatedNote {...agent.mcpToolsUpdated} />
                         ) : null}
-                        {agent ? (
-                          <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
-                            {sandboxOptions.length > 1 ? (
-                              <MorphPopover
-                                open={sandboxSwitcherOpen}
-                                onOpenChange={setSandboxSwitcherOpen}
-                              >
-                                <MorphPopoverTrigger>
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-7 gap-1.5 rounded-full px-3 text-xs font-normal"
-                                  >
-                                    <Boxes className="size-3.5 text-muted-foreground" />
-                                    <span>
-                                      {activeSandbox?.name ?? t("sandbox")}
-                                    </span>
-                                    <ChevronDown className="size-3 text-muted-foreground" />
-                                  </Button>
-                                </MorphPopoverTrigger>
-                                <MorphPopoverContent
-                                  side="bottom"
-                                  align="start"
-                                  sideOffset={4}
-                                  className="z-50 w-60 p-1"
-                                >
-                                  {sandboxOptions.map((sb) => (
-                                    <button
-                                      key={sb.id}
-                                      type="button"
-                                      onClick={() => {
-                                        setSandboxId(sb.id);
-                                        setSandboxSwitcherOpen(false);
-                                      }}
-                                      className={cn(
-                                        "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs hover:bg-muted/70",
-                                        sb.id === activeSandboxId &&
-                                          "bg-muted font-medium",
-                                      )}
-                                    >
-                                      <span
-                                        aria-hidden="true"
-                                        className={cn(
-                                          "size-1.5 shrink-0 rounded-full",
-                                          sb.running
-                                            ? "bg-emerald-500"
-                                            : "bg-muted-foreground/50",
-                                        )}
-                                      />
-                                      <span className="sr-only">
-                                        {t(
-                                          sb.running
-                                            ? "statusRunning"
-                                            : "statusWaiting",
-                                        )}
-                                      </span>
-                                      <span className="min-w-0 flex-1 truncate text-foreground">
-                                        {sb.name}
-                                      </span>
-                                      {sb.id === activeSandboxId ? (
-                                        <Check className="size-3.5 shrink-0 text-primary" />
-                                      ) : null}
-                                    </button>
-                                  ))}
-                                </MorphPopoverContent>
-                              </MorphPopover>
-                            ) : activeSandbox ? (
-                              <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-3 py-1">
-                                <Boxes className="size-3.5" />
-                                <span>{activeSandbox.name}</span>
-                              </span>
-                            ) : null}
-                          </div>
-                        ) : null}
                       </div>
                     </div>
                   )}
@@ -1421,24 +1288,28 @@ export function WorkspaceWork({
                           size="sm"
                           className="rounded-full"
                           onClick={() => {
-                            const params = new URLSearchParams({
-                              category: "failure",
+                            captureAndStoreErrorFeedback({
+                              workspaceSlug: slug,
+                              errorText: runtimeError
+                                ? runtimeError.text
+                                : (visibleError ?? ""),
+                              failureCode: runtimeError?.code,
+                              agentName: controlAgent?.name ?? agent?.name,
+                              sessionTitle:
+                                conversation?.title ||
+                                selected?.title ||
+                                selected?.task ||
+                                undefined,
                             });
-                            if (runtimeError?.code) {
-                              params.set("failureCode", runtimeError.code);
-                            }
-                            if (selected?.id) {
-                              params.set("workSessionId", selected.id);
-                            }
-                            if (conversation?.id) {
-                              params.set("conversationId", conversation.id);
-                            }
-                            const targetAgentId = controlAgent?.id ?? agent?.id;
-                            if (targetAgentId) {
-                              params.set("agentId", targetAgentId);
-                            }
                             router.push(
-                              `/app/${encodeURIComponent(slug)}/feedback?${params.toString()}`,
+                              buildErrorFeedbackHref({
+                                workspaceSlug: slug,
+                                failureCode: runtimeError?.code,
+                                workSessionId: selected?.id,
+                                conversationId: conversation?.id,
+                                agentId: controlAgent?.id ?? agent?.id,
+                                captured: true,
+                              }),
                             );
                           }}
                         >

@@ -43,7 +43,6 @@ import {
 } from "@/components/dashboard/DashboardUI";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton";
-import { Tooltip } from "@/components/motion/tooltip";
 import { formatInTimeZone, resolveUserTimeZone } from "@/lib/timezone";
 
 export const dynamic = "force-dynamic";
@@ -301,27 +300,14 @@ export default async function SandboxesPage({
                       <form action={startSandboxAction}>
                         <input type="hidden" name="workspace" value={slug} />
                         <input type="hidden" name="sandboxId" value={s.id} />
-                        {s.kind === "connector" ? (
-                          <Tooltip content={t("openSandboxToGenerateCommand")}>
-                            <SubmitButton
-                              flash={false}
-                              pendingLabel={t("starting")}
-                              variant="secondary"
-                              size="sm"
-                            >
-                              {t("start")}
-                            </SubmitButton>
-                          </Tooltip>
-                        ) : (
-                          <SubmitButton
-                            flash={false}
-                            pendingLabel={t("starting")}
-                            variant="secondary"
-                            size="sm"
-                          >
-                            {t("start")}
-                          </SubmitButton>
-                        )}
+                        <SubmitButton
+                          flash={false}
+                          pendingLabel={t("starting")}
+                          variant="secondary"
+                          size="sm"
+                        >
+                          {t("start")}
+                        </SubmitButton>
                       </form>
                     )}
                     {agent ? (

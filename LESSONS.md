@@ -601,9 +601,10 @@
 - **证据（2026-11-16，用户纠正）**：智能体设置原有 19 个平铺页签，首次整改只在左侧加了 5 个组名，可见行数反而从 19 增至 24；同一改动把全站输入框描边提高到 3:1，表单页的描边比文字还醒目。用户反馈“太繁琐，看花眼”。改为左侧 5 项加顶部子标签（任意时刻可见导航文字不超过 10 个），删除 11 个页签顶部重复的标题、徽标和说明段，描边在用户确认后改为浅底色加约 1.6:1 的细边。
 - **复发（2026-11-17，用户纠正）**：左侧 5 项＋顶部子标签仍是两级 19 个入口，用户反馈“不太简易方便”；「内置工具」按 read／edit／memory_retain 等 24 个工具名逐个勾选，用户指出“展示给用户的应该是功能”。按用户选定方案改为单级 5 项、无子标签的分段页面；内置工具合并为 10 个功能开关（工具名只留在数据和运行时），能力页只列已添加的 MCP／技能／插件／子智能体，「添加」再弹出选择。层级拆分不等于精简：用户要逐个点开子标签才能看完一组，仍算繁琐；面向用户的开关以“能做什么”为单位，不以实现单位（工具、进程、接口）为单位。
 - **同日补充（用户纠正）**：弹窗本身不宽，模型、思考强度、审批模式、最大轮次等短值控件却都占满整行，侧栏又被分隔线切成三块，用户反馈“整体观感不好”“不要分成这么多块”。短值控件改为 `DialogField layout="row"`：标签在左，控件按内容宽度放在右侧（模型选择 `w-72`、下拉 `w-40`、数字 `w-24`），只有名称、描述、指令保持整行；控制台侧栏合为一列连续菜单。弹窗内只有自由文本才占整行，分组靠留白，不加边框或分隔线。
-- **同日图标补充（用户纠正）**：用户反馈分项侧栏“很丑很空”后，整改把弹窗缩到 `max-w-5xl`、按留白分组、为空列表加空状态，同时给 19 个侧栏项各加了一个 lucide 图标；用户随即要求“把 icon 去掉”。逐项图标同样是同屏新增元素，与文字标签重复，不能用来解决“空”。保留缩小弹窗、留白分组和空状态，侧栏只留文字。下次处理“空”或“丑”时，先缩小容器、补齐真实内容的空状态，不加装饰性图标；整改前后同样数一次同屏元素。
-- **下次怎么验证**：整改前后各数一次同屏可见的导航项、标题和说明段数量，以及看完一组配置需要的点击次数，两者都没有下降就不算精简；逐页检查是否存在与页签同名的标题，以及是否向用户暴露工具名、内部 ID 等实现单位；令牌改动在深浅主题的表单密集页（设置、部署弹窗）截图给用户确认。依据：[设置外壳](src/components/dashboard/agents/AgentSettings.tsx)、[字段令牌](src/app/globals.css)、[功能映射](src/lib/agents/runtime-kind.ts)。
-- **确认日期**：2026-11-16（用户纠正）；2026-11-17（用户纠正）。
+- **同日图标补充（用户纠正）**：用户反馈分项侧栏“很丑很空”后，整改把弹窗缩到 `max-w-5xl`、按留白分组、为空列表加空状态，同时给 19 个侧栏项各加了一个 lucide 图标；用户随即要求“把 icon 去掉”。逐项图标同样是同屏新增元素，与文字标签重复，不能用来解决“空”。保留缩小弹窗、空状态，侧栏只留文字。下次处理“空”或“丑”时，先缩小容器、补齐真实内容的空状态，不加装饰性图标；整改前后同样数一次同屏元素。
+- **侧栏间距、滚动条与动态加载补充（2026-11-26，用户反馈）**：① 主侧栏 `WorkspaceSidebar` 的分组带 `mt-3`、设置侧栏 `DialogNav` 的分组带 `pt-2`，在无组标题时让智能体／知识库下方以及设置侧栏项之间出现明显断层，统一移除分组额外间距，保持连续等距；② `.sidebar-scroll` 仅配置了标准 `scrollbar-color: transparent transparent`，在 Chromium/WebKit 下一旦配合 `::-webkit-scrollbar` 或默认滚动样式会常驻显示滚动条，且 `DialogNav`、知识库与模型供应商侧栏未接入 `useSidebarScroll`；统一补齐 `.sidebar-scroll::-webkit-scrollbar-thumb` 默认透明、仅 `data-scrolling="true"` 时显色，并将所有侧栏滚动容器接入 `useSidebarScroll`；③ `AgentSettings` 对 `AgentMessagingPanel`、`AgentA2APanel`、`RevisionChangelog` 使用无 `loading` 占位的 `next/dynamic`，首次点击对应设置侧栏项时 Suspense 向上冒泡到工作区 `loading.tsx`，导致居中加载条出现且整个设置弹窗被卸载消失（`AgentA2APanel` 的 `?settings=subAgents` 原生锚点跳转也会触发整页导航加载）；同时 `@modal` 并行路由槽缺少自己的 `loading.tsx`，打开或关闭拦截弹窗回到 Work／智能体界面时，Next.js 会用工作区级 `WorkspaceLoading`（`min-h-[50dvh] flex-1`）包裹 `{modal}` 槽，在 `<main>` 底部渲染半屏加载块并把整个智能体界面往上推。设置弹窗内的分栏面板统一改为静态导入，内部页签切换直接调用状态回调，并为 `@modal` 增加返回 `null` 的 `loading.tsx` 避免并行槽占位挤压主视图。
+- **下次怎么验证**：整改前后各数一次同屏可见的导航项、标题和说明段数量，以及看完一组配置需要的点击次数，两者都没有下降就不算精简；逐页检查是否存在与页签同名的标题，以及是否向用户暴露工具名、内部 ID 等实现单位；检查主侧栏与设置侧栏相邻项间距一致、静止时滚动条拇指透明且滚动后自动隐藏、点击智能体设置侧栏所有分区均在弹窗内即时切换且开关弹窗回到主界面时 `<main>` 底部不出现 `@modal` 槽的加载占位；令牌改动在深浅主题的表单密集页（设置、部署弹窗）截图给用户确认。依据：[设置外壳](src/components/dashboard/agents/AgentSettings.tsx)、[并行弹窗加载边界](src/app/app/[workspace]/@modal/loading.tsx)、[主侧栏](src/components/workspace/workspace-sidebar.tsx)、[弹窗导航](src/components/dashboard/dialog/DialogParts.tsx)、[滚动条样式](src/app/beui.css)、[字段令牌](src/app/globals.css)、[功能映射](src/lib/agents/runtime-kind.ts)。
+- **确认日期**：2026-11-16（用户纠正）；2026-11-17（用户纠正）；2026-11-26（用户反馈）。
 
 ### TP-L054：汇总耗时不能贴在某个条目旁边
 
@@ -689,11 +690,12 @@
 - **约束层（结构）**：`emptyModelReply` 接入重试判定和回合失败判定，见 [`pi-sdk-session.mjs`](scripts/pi-sdk-session.mjs)；原因码在 [`runtime-failure.ts`](src/lib/agents/runtime-failure.ts) 和 [`native-runtime-session.mjs`](scripts/native-runtime-session.mjs) 登记；回归见 [`pi-sdk-host.test.ts`](tests/integration/pi-sdk-host.test.ts)。
 - **确认日期**：2026-11-25（用户反馈）。
 
-### TP-L065：弹窗只有一种底色，同一对象的设置只有一个常驻入口
+### TP-L065：弹窗只有一种底色，同一对象的设置入口克制保留
 
-**规则**：弹窗内的导航、正文和底栏不再各自铺底色；`bg-background`／`bg-card` 在模态层内等于弹窗表面。同一对象（智能体、助手）的设置在页头名称旁只保留一个常驻按钮；切换器、空状态和侧栏行菜单不再重复放置，只有报错或待处理提示里的“去修复”链接可以直达对应设置分区。
+**规则**：弹窗内的导航、正文和底栏不再各自铺底色；`bg-background`／`bg-card` 在模态层内等于弹窗表面。同一对象（智能体、助手）的设置与新建对话统一放在侧栏行操作（悬停 `+` 按钮与 `...` 菜单的“设置”），页头、切换器与空状态不再重复放置新建笔按钮和设置按钮；侧栏行操作菜单（`ai-sidebar.tsx`）与侧栏顶部“列表选项”菜单（`SidebarToolbar.tsx`）统一使用 `align="start"` 向右侧展开，不向左遮挡侧栏名称。报错或待处理提示里的“去修复”链接仍可直达对应设置分区。
 
 - **错误与原因（2026-11-25，用户反馈“弹窗一边灰一边黑”“进入设置的按钮很多”）**：`CenterMorphModal` 面板为 `bg-popover`（深色 `#232323`），而智能体设置分栏、`DialogFooter` 和新建智能体表单铺 `bg-background`（`#151515`），新建智能体表单还被 `DashboardPage` 的 `sm:px-6 py-6` 内缩成一块嵌套黑框（`p-0` 被纯拼接的 `cx` 吞掉）。Work 页同一智能体的设置入口有切换器菜单、空状态按钮和侧栏行菜单三处，助手页则是页头图标加侧栏“编辑”，两页形态不一致。
-- **下次怎么验证**：打开新建智能体、新建助手和智能体设置弹窗，在深浅主题下读取弹窗内宽度超过 300px 的元素的计算背景色，除输入框的 `--field` 外应只有弹窗表面一种颜色；数一次同一设置的常驻入口，只能有页头一个。
-- **约束层（结构）**：[`globals.css`](src/app/globals.css) 中 `[role="dialog"][aria-modal="true"]:not([data-mobile])` 把 `--background`、`--card` 指向 `--popover`；入口在 [`WorkspaceWork.tsx`](src/components/dashboard/work/WorkspaceWork.tsx) 与 [`WorkspaceAssistantChat.tsx`](src/components/dashboard/chat/WorkspaceAssistantChat.tsx) 的页头。
-- **确认日期**：2026-11-25（用户反馈）。
+- **侧栏菜单与页头补充（2026-11-26，用户要求）**：用户明确要求智能体与助手三个点菜单均保留“设置”、将行菜单与顶部“列表选项”菜单都从右侧显示（`align="start"`），删除页头名称两侧的“新建（笔）”与“设置”图标按钮以及页头右上角和空状态中的沙箱胶囊徽标，保留侧栏切换按钮、对象名称切换器与右上角完成通知铃铛。
+- **下次怎么验证**：打开新建智能体、新建助手和智能体设置弹窗，在深浅主题下读取弹窗内宽度超过 300px 的元素的计算背景色，除输入框的 `--field` 外应只有弹窗表面一种颜色；页头、切换器与空状态不放置新建笔按钮、设置按钮与沙箱胶囊徽标，保留右上角完成通知铃铛；智能体与助手侧栏 `...` 菜单均含“设置”，且行菜单与“列表选项”菜单均向右侧展开不遮挡侧栏名称。
+- **约束层（结构）**：[`globals.css`](src/app/globals.css) 中 `[role="dialog"][aria-modal="true"]:not([data-mobile])` 把 `--background`、`--card` 指向 `--popover`；侧栏行菜单入口在 [`WorkSidebar.tsx`](src/components/dashboard/work/WorkSidebar.tsx) 与 [`WorkspaceAssistantChat.tsx`](src/components/dashboard/chat/WorkspaceAssistantChat.tsx)，展开方向在 [`ai-sidebar.tsx`](src/components/agents/ai-sidebar.tsx) 与 [`SidebarToolbar.tsx`](src/components/dashboard/SidebarToolbar.tsx)。
+- **确认日期**：2026-11-25（用户反馈）；2026-11-26（用户纠正）。

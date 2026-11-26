@@ -8,7 +8,6 @@ import {
   type ButtonVariant,
 } from "@/components/motion/button/base";
 import { StatefulButton } from "@/components/motion/button/stateful";
-import { Tooltip } from "@/components/motion/tooltip";
 
 export type ConfirmSubmitButtonProps = {
   triggerLabel: ReactNode;
@@ -38,7 +37,6 @@ export type ConfirmSubmitButtonProps = {
 export function ConfirmSubmitButton({
   triggerLabel,
   triggerAriaLabel,
-  triggerTitle,
   confirmLabel,
   cancelLabel,
   prompt,
@@ -56,7 +54,6 @@ export function ConfirmSubmitButton({
   triggerSize = "md",
   confirmSize = "sm",
   cancelSize = "sm",
-  triggerTooltip = true,
 }: ConfirmSubmitButtonProps) {
   const [confirming, setConfirming] = useState(false);
   const { pending } = useFormStatus();
@@ -147,10 +144,6 @@ export function ConfirmSubmitButton({
             {confirmLabel}
           </StatefulButton>
         </>
-      ) : triggerSize === "icon" && triggerTooltip ? (
-        <Tooltip content={triggerTitle ?? triggerAriaLabel ?? triggerLabel}>
-          {triggerButton}
-        </Tooltip>
       ) : (
         triggerButton
       )}

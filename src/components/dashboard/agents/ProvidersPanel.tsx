@@ -1,6 +1,7 @@
 "use client";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { DashboardEmptyState } from "@/components/dashboard/DashboardUI";
+import { useSidebarScroll } from "@/components/dashboard/useSidebarScroll";
 import { Input } from "@/components/motion/input";
 import { useTranslations } from "next-intl";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -115,6 +116,7 @@ export function ProvidersPanel({
     providers.find((provider) => provider.id === selectedProviderId) ??
     providers[0] ??
     null;
+  const onSidebarScroll = useSidebarScroll();
   return (
     <>
       <DashboardHeader title={t("modelProviders")} />
@@ -142,7 +144,8 @@ export function ProvidersPanel({
             </div>
             <nav
               aria-label={t("modelProviders")}
-              className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2"
+              onScroll={onSidebarScroll}
+              className="sidebar-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-2"
             >
               {visibleProviders.length > 0 ? (
                 visibleProviders.map((provider) => {

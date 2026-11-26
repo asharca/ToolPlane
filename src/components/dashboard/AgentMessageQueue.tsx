@@ -5,7 +5,6 @@ import { useTranslations } from "next-intl";
 import { ListPlus, MessageSquarePlus, Trash2 } from "lucide-react";
 import { Button } from "@/components/motion/button";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
-import { Tooltip } from "@/components/motion/tooltip";
 import { notify } from "@/components/dashboard/Toaster";
 import { apiRequest } from "@/lib/client/api";
 import type {
@@ -186,18 +185,16 @@ export function AgentMessageQueueView({
           {t("pending", { count: queue.pendingMessageCount })}
         </span>
         {onClear ? (
-          <Tooltip content={t("clearHint")}>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              disabled={disabled}
-              aria-label={t("clear")}
-              onClick={onClear}
-            >
-              <Trash2 className="size-4" />
-            </Button>
-          </Tooltip>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            disabled={disabled}
+            aria-label={t("clear")}
+            onClick={onClear}
+          >
+            <Trash2 className="size-4" />
+          </Button>
         ) : null}
       </div>
       <ol className="max-h-40 space-y-2 overflow-y-auto">
@@ -226,7 +223,6 @@ export function AgentMessageQueueView({
 
 export function AgentQueueActions({
   disabled,
-  attachmentsBlocked = false,
   onSend,
 }: {
   disabled: boolean;
@@ -236,42 +232,38 @@ export function AgentQueueActions({
   const t = useTranslations("console.messageQueue");
   return (
     <>
-      <Tooltip content={attachmentsBlocked ? t("textOnly") : t("steerHint")}>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={disabled}
-          aria-label={t("steer")}
-          aria-keyshortcuts="Enter"
-          className="h-7 gap-1.5 rounded-full px-2.5 text-xs"
-          onClick={() => onSend("steer")}
-        >
-          <MessageSquarePlus className="size-3.5 shrink-0" />
-          <span className="hidden sm:inline">{t("steer")}</span>
-          <kbd className="hidden font-mono text-[10px] text-muted-foreground md:inline">
-            ↵
-          </kbd>
-        </Button>
-      </Tooltip>
-      <Tooltip content={attachmentsBlocked ? t("textOnly") : t("followUpHint")}>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={disabled}
-          aria-label={t("follow_up")}
-          aria-keyshortcuts="Alt+Enter"
-          className="h-7 gap-1.5 rounded-full px-2.5 text-xs"
-          onClick={() => onSend("follow_up")}
-        >
-          <ListPlus className="size-3.5 shrink-0" />
-          <span className="hidden sm:inline">{t("follow_up")}</span>
-          <kbd className="hidden font-mono text-[10px] text-muted-foreground md:inline">
-            ⌥↵
-          </kbd>
-        </Button>
-      </Tooltip>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        disabled={disabled}
+        aria-label={t("steer")}
+        aria-keyshortcuts="Enter"
+        className="h-7 gap-1.5 rounded-full px-2.5 text-xs"
+        onClick={() => onSend("steer")}
+      >
+        <MessageSquarePlus className="size-3.5 shrink-0" />
+        <span className="hidden sm:inline">{t("steer")}</span>
+        <kbd className="hidden font-mono text-[10px] text-muted-foreground md:inline">
+          ↵
+        </kbd>
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        disabled={disabled}
+        aria-label={t("follow_up")}
+        aria-keyshortcuts="Alt+Enter"
+        className="h-7 gap-1.5 rounded-full px-2.5 text-xs"
+        onClick={() => onSend("follow_up")}
+      >
+        <ListPlus className="size-3.5 shrink-0" />
+        <span className="hidden sm:inline">{t("follow_up")}</span>
+        <kbd className="hidden font-mono text-[10px] text-muted-foreground md:inline">
+          ⌥↵
+        </kbd>
+      </Button>
     </>
   );
 }

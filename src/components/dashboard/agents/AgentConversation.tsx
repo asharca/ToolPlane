@@ -59,6 +59,10 @@ import {
   AGENT_TURN_TIMELINE_PART,
   parseAgentTurnTimeline,
 } from "@/lib/agents/turn-timeline";
+import {
+  buildErrorFeedbackHref,
+  captureAndStoreErrorFeedback,
+} from "@/lib/feedback/error-capture";
 import { apiRequest } from "@/lib/client/api";
 import {
   DisplayError,
@@ -123,6 +127,7 @@ function mergeDraftText(current: string, restored: string) {
 }
 
 export function AgentConversation({
+  workspaceSlug,
   activeConversationId,
   agentId,
   agentName,
@@ -216,6 +221,7 @@ export function AgentConversation({
   serverManaged?: boolean;
   webSearchAvailable?: boolean;
   workSessionId?: string;
+  workspaceSlug?: string;
 }) {
   const router = useRouter();
   const t = useTranslations("console.agents");
@@ -1157,43 +1163,71 @@ export function AgentConversation({
                 renderedActivityIds,
               )
             : composerNotice}
-          {submitError || chat.error ? (
-            <Alert variant="destructive" className="mb-3">
-              <AlertIcon />
-              <AlertContent>
-                <AlertDescription>
-                  {configurationError
-                    ? work("configureAgent")
-                    : submitError === STORAGE_QUOTA_EXCEEDED
-                      ? t("attachmentStorageQuotaExceeded")
-                      : runtimeError
-                        ? runtimeError.text
-                        : (submitError ??
-                          displayErrorText(chat.error, work("processFailed")))}
-                </AlertDescription>
-              </AlertContent>
-              {((configurationError ||
-                runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE") &&
-                settingsHref) ||
-              submitError === STORAGE_QUOTA_EXCEEDED ? (
-                <AlertAction>
-                  {(configurationError ||
+          {submitError || chat.error
+            ? (() => {
+                const displayedError = configurationError
+                  ? work("configureAgent")
+                  : submitError === STORAGE_QUOTA_EXCEEDED
+                    ? t("attachmentStorageQuotaExceeded")
+                    : runtimeError
+                      ? runtimeError.text
+                      : (submitError ??
+                        displayErrorText(chat.error, work("processFailed")));
+                const showConfigure =
+                  (configurationError ||
                     runtimeError?.code === "PI_MCP_TOOLS_UNAVAILABLE") &&
-                  settingsHref ? (
-                    <Link
-                      href={settingsHref}
-                      className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-                    >
-                      {t("configureAgent")}
-                    </Link>
-                  ) : null}
-                  {submitError === STORAGE_QUOTA_EXCEEDED ? (
-                    <ManageFilesButton />
-                  ) : null}
-                </AlertAction>
-              ) : null}
-            </Alert>
-          ) : null}
+                  Boolean(settingsHref);
+                const showQuotaManage = submitError === STORAGE_QUOTA_EXCEEDED;
+                const reportHref =
+                  workspaceSlug && !configurationError && !showQuotaManage
+                    ? buildErrorFeedbackHref({
+                        workspaceSlug,
+                        failureCode: runtimeError?.code,
+                        workSessionId,
+                        conversationId: activeConversationId ?? undefined,
+                        agentId,
+                        captured: true,
+                      })
+                    : null;
+                return (
+                  <Alert variant="destructive" className="mb-3">
+                    <AlertIcon />
+                    <AlertContent>
+                      <AlertDescription>{displayedError}</AlertDescription>
+                    </AlertContent>
+                    {showConfigure || showQuotaManage || reportHref ? (
+                      <AlertAction>
+                        {showConfigure && settingsHref ? (
+                          <Link
+                            href={settingsHref}
+                            className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                          >
+                            {t("configureAgent")}
+                          </Link>
+                        ) : null}
+                        {showQuotaManage ? <ManageFilesButton /> : null}
+                        {reportHref && workspaceSlug ? (
+                          <Link
+                            href={reportHref}
+                            onClick={() =>
+                              captureAndStoreErrorFeedback({
+                                workspaceSlug,
+                                errorText: displayedError,
+                                failureCode: runtimeError?.code,
+                                agentName,
+                              })
+                            }
+                            className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          >
+                            {work("reportThisIssue")}
+                          </Link>
+                        ) : null}
+                      </AlertAction>
+                    ) : null}
+                  </Alert>
+                );
+              })()
+            : null}
           <AgentMessageQueueView
             queue={messageQueue.queue}
             onClear={() => void messageQueue.clear()}

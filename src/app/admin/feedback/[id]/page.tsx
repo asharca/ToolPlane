@@ -136,6 +136,72 @@ export default async function AdminFeedbackDetailPage({
             </AdminPanel>
           ) : null}
 
+          {item.screenshotDataUrl ? (
+            <AdminPanel
+              title={t("screenshotPanelTitle")}
+              description={t("screenshotPanelDescription")}
+            >
+              {/* biome-ignore lint/performance/noImgElement: Inline base64 data URL screenshot cannot use next/image optimizer. */}
+              <img
+                src={item.screenshotDataUrl}
+                alt={t("screenshotAlt")}
+                className="max-h-96 w-auto rounded-lg border border-border object-contain"
+              />
+            </AdminPanel>
+          ) : null}
+
+          {item.diagnosticLogs && item.diagnosticLogs.length > 0 ? (
+            <AdminPanel
+              title={t("diagnosticLogsPanelTitle")}
+              description={t("diagnosticLogsPanelDescription")}
+            >
+              <ul className="space-y-2.5 text-xs">
+                {item.diagnosticLogs.map((entry, index) => (
+                  <li
+                    // biome-ignore lint/suspicious/noArrayIndexKey: Diagnostic logs are an immutable ordered list.
+                    key={index}
+                    className="rounded-xl border border-border/80 bg-muted/30 p-3"
+                  >
+                    <div className="mb-1 flex flex-wrap items-center gap-2 text-muted-foreground">
+                      <AdminBadge
+                        tone={
+                          entry.level === "error"
+                            ? "danger"
+                            : entry.level === "warn"
+                              ? "warning"
+                              : "neutral"
+                        }
+                      >
+                        {entry.level.toUpperCase()}
+                      </AdminBadge>
+                      <span className="font-mono font-medium text-foreground">
+                        {entry.source}
+                      </span>
+                      {entry.code ? (
+                        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+                          {entry.code}
+                        </span>
+                      ) : null}
+                      {entry.stage ? (
+                        <span className="font-mono text-[11px]">
+                          {t("executionStageLabel", { stage: entry.stage })}
+                        </span>
+                      ) : null}
+                      {entry.occurredAt ? (
+                        <span className="ml-auto">
+                          {formatDate(entry.occurredAt)}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="whitespace-pre-wrap break-words font-mono text-foreground">
+                      {entry.message}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </AdminPanel>
+          ) : null}
+
           <AdminPanel title={t("metadataPanelTitle")}>
             <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
               {metadataRows.map((row) => (
