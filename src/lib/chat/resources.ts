@@ -10,7 +10,7 @@ import { liveStatus } from "@/lib/process/supervisor";
 import { mcpDefinitionChecksum } from "@/lib/process/mcp-definition";
 import { persistDeploymentMcpToolCatalog } from "@/lib/process/mcp-tool-catalog-store";
 import { resolveMcpConnectionSpawnSpec } from "@/lib/process/mcp-credentials";
-import { mcpHeaderSecrets } from "@/lib/process/mcp-result-redaction";
+import { mcpHeaderSecrets } from "@/lib/process/mcp-header-secrets";
 import {
   filterMcpToolsForAi,
   loadMcpToolPolicies,

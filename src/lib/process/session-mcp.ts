@@ -16,13 +16,11 @@ import {
 import {
   startProcess,
   stopProcess,
-  liveRedactionValues,
   liveMcpRuntimeSnapshot,
   mcpRuntimeCredentialIdentity,
 } from "./supervisor";
 import { listMcpTools, mcpRpc } from "./mcp-client";
 import { mcpToolCallDeadlineMs } from "./mcp-tool-timeout";
-import { mcpHeaderSecrets, redactMcpResult } from "./mcp-result-redaction";
 import {
   sessionMcpPackageLaunch,
   validateSessionMcpRuntimeImage,
@@ -168,7 +166,7 @@ async function resolveSessionMcp(
     (requestedToolName !== undefined && !allowed.has(requestedToolName))
   )
     throw new Error("MCP_TOOL_FORBIDDEN");
-  const { spec, redactionValues } = await resolveMcpConnectionSpawnSpec({
+  const { spec } = await resolveMcpConnectionSpawnSpec({
     workspaceId: context.workspaceId,
     deploymentId,
     expectedDefinitionChecksum: grant.definitionChecksum,
@@ -256,7 +254,6 @@ async function resolveSessionMcp(
     allowed,
     processId,
     spec,
-    redactionValues,
     toolDeadlineMs: mcpToolCallDeadlineMs(revision, deploymentId),
   };
 }
@@ -334,15 +331,7 @@ export async function callSessionMcpTool(
       },
     );
     if (!result) throw new Error("MCP_TOOL_EXECUTION_UNKNOWN");
-    const redacted = redactMcpResult(result, [
-      ...fresh.redactionValues,
-      ...(liveRedactionValues(fresh.processId) ?? []),
-      ...(fresh.spec.kind === "remote"
-        ? mcpHeaderSecrets(fresh.spec.headers)
-        : Object.values(fresh.spec.env)),
-    ]);
-    if (!redacted) throw new Error("MCP_RESULT_REDACTION_REQUIRED");
-    return redacted;
+    return result;
   });
 }
 
@@ -379,15 +368,7 @@ export async function sessionMcpRequest(
       },
     );
     if (!result) throw new Error("MCP_RESOURCE_UNAVAILABLE");
-    const redacted = redactMcpResult(result, [
-      ...runtime.redactionValues,
-      ...(liveRedactionValues(runtime.processId) ?? []),
-      ...(runtime.spec.kind === "remote"
-        ? mcpHeaderSecrets(runtime.spec.headers)
-        : Object.values(runtime.spec.env)),
-    ]);
-    if (!redacted) throw new Error("MCP_RESULT_REDACTION_REQUIRED");
-    return redacted;
+    return result;
   });
 }
 

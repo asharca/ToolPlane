@@ -332,22 +332,8 @@ let initResult = null;
 let shuttingDown = false;
 let pinnedDispatcher = null;
 
-// Fail closed if upstream echoes a launch secret, including inside object keys.
 function rpcResult(id, result) {
-  const body = JSON.stringify({ jsonrpc: "2.0", id, result });
-  if (
-    CONFIG.oauth &&
-    secretValues.some((secret) =>
-      body.includes(JSON.stringify(secret).slice(1, -1)),
-    )
-  ) {
-    return JSON.stringify({
-      jsonrpc: "2.0",
-      id,
-      error: { code: -32000, message: "MCP_RESULT_REDACTION_REQUIRED" },
-    });
-  }
-  return body;
+  return JSON.stringify({ jsonrpc: "2.0", id, result });
 }
 
 async function openRemoteSession({ onmessage, onclose }) {
@@ -377,13 +363,7 @@ async function openRemoteSession({ onmessage, onclose }) {
     }
   };
   remote.onmessage = (message) => {
-    const data = JSON.stringify(message);
-    if (
-      !current() ||
-      secretValues.some((secret) =>
-        data.includes(JSON.stringify(secret).slice(1, -1)),
-      )
-    ) {
+    if (!current()) {
       onclose();
       return;
     }

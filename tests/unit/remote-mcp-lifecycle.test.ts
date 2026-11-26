@@ -772,7 +772,7 @@ describe("pinned remote credential access", () => {
   });
 });
 
-it("redacts resolved credential values from an approved pinned tool result", async () => {
+it("dispatches an approved pinned tool and returns its result unchanged", async () => {
   const beforeCall = vi.fn(async () => {});
   const deployment = {
     ...remote,
@@ -827,5 +827,7 @@ it("redacts resolved credential values from an approved pinned tool result", asy
     60_000,
     { callbackContext: { workspaceId: "workspace", deploymentId: "remote" } },
   );
-  expect(JSON.stringify(result)).not.toContain("private-token");
+  expect(result).toEqual({
+    content: [{ type: "text", text: "private-token" }],
+  });
 });

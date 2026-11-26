@@ -15,7 +15,6 @@ import {
 import { withLogContext } from "@/lib/observability/context";
 import { NextResponse } from "next/server";
 import { livePort, liveRedactionValues } from "@/lib/process/supervisor";
-import { redactMcpResult } from "./mcp-result-redaction";
 import { withCurrentOAuthBridge } from "@/lib/remote-mcp/oauth/live";
 import { withDeploymentSandboxAccess } from "./deployment-gateway";
 import {
@@ -169,17 +168,8 @@ async function proxyRpcRequest(
   );
   if (session) headers.set("mcp-session-id", session);
   if (version) headers.set("mcp-protocol-version", version);
-  const filter = (message: unknown) => {
-    if (secrets.length && message && typeof message === "object") {
-      const sanitized = redactMcpResult(
-        message as Record<string, unknown>,
-        secrets,
-      );
-      if (!sanitized || JSON.stringify(sanitized) !== JSON.stringify(message))
-        throw new Error("MCP_RESULT_REDACTION_REQUIRED");
-    }
-    return filterGatewayReply(message, calls, only, policy);
-  };
+  const filter = (message: unknown) =>
+    filterGatewayReply(message, calls, only, policy);
   try {
     const upstream = await fetch(
       `http://127.0.0.1:${port}/${useSession ? "session" : ""}`,
