@@ -32,7 +32,6 @@ import {
 import { Input } from "@/components/motion/input";
 import { Loader } from "@/components/motion/loader";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
-import { Tooltip } from "@/components/motion/tooltip";
 import {
   AnimatedBytes,
   StorageUsage,
@@ -410,47 +409,41 @@ export function WorkspaceFilesManager({
         ) : (
           <>
             {previewable(file) ? (
-              <Tooltip side="left" content={t("preview")}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t("previewFile", { name: file.name })}
-                  onClick={() => {
-                    setPreviewFile(file);
-                    setPreviewOpen(true);
-                  }}
-                >
-                  <Eye className="size-4" aria-hidden="true" />
-                </Button>
-              </Tooltip>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={t("previewFile", { name: file.name })}
+                onClick={() => {
+                  setPreviewFile(file);
+                  setPreviewOpen(true);
+                }}
+              >
+                <Eye className="size-4" aria-hidden="true" />
+              </Button>
             ) : null}
             {file.downloadUrl ? (
-              <Tooltip side="left" content={t("download")}>
-                <ButtonLink
-                  href={file.downloadUrl}
-                  download={file.name}
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t("downloadFile", { name: file.name })}
-                >
-                  <Download className="size-4" aria-hidden="true" />
-                </ButtonLink>
-              </Tooltip>
+              <ButtonLink
+                href={file.downloadUrl}
+                download={file.name}
+                variant="ghost"
+                size="icon"
+                aria-label={t("downloadFile", { name: file.name })}
+              >
+                <Download className="size-4" aria-hidden="true" />
+              </ButtonLink>
             ) : null}
             {file.canDelete ? (
-              <Tooltip side="left" content={common("delete")}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  disabled={deleting}
-                  aria-label={t("deleteFile", { name: file.name })}
-                  onClick={(event) => openConfirm([file], event.currentTarget)}
-                >
-                  <Trash2 className="size-4" aria-hidden="true" />
-                </Button>
-              </Tooltip>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={deleting}
+                aria-label={t("deleteFile", { name: file.name })}
+                onClick={(event) => openConfirm([file], event.currentTarget)}
+              >
+                <Trash2 className="size-4" aria-hidden="true" />
+              </Button>
             ) : file.deleteBlockedReason === "in_use" ? (
               <span className="px-1 text-xs text-muted-foreground">
                 {t("inUse")}

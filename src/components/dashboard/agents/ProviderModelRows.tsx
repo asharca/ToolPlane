@@ -3,7 +3,6 @@
 import { useActionState } from "react";
 import { useTranslations } from "next-intl";
 import { FlaskConical } from "lucide-react";
-import { Tooltip } from "@/components/motion/tooltip";
 import { SubmitButton } from "@/components/dashboard/SubmitButton";
 import { testProviderModelAction } from "@/lib/agents/provider-actions";
 import type { ActionState } from "@/lib/agents/action-state";
@@ -20,54 +19,6 @@ import type { ProviderModelRow } from "./ProvidersPanel";
 // Below xl the numeric columns fold into a single line under the name.
 export const MODEL_ROW_GRID =
   "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 xl:grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_5rem_5rem_6.5rem]";
-
-function ModelPriceDetails({
-  cost,
-  numbers,
-  prices,
-}: {
-  cost: NonNullable<ProviderModelRow["cost"]>;
-  numbers: Intl.NumberFormat;
-  prices: Intl.NumberFormat;
-}) {
-  const t = useTranslations("console.agents");
-  const rows = [
-    { label: t("catalogBasePrice"), rates: cost },
-    ...(cost.tiers ?? []).map((tier) => ({
-      label: t("catalogTierAbove", {
-        tokens: numbers.format(tier.inputTokensAbove),
-      }),
-      rates: tier,
-    })),
-  ];
-  return (
-    <span className="block space-y-2 text-left text-xs">
-      <span className="block text-muted-foreground">
-        {t("catalogPriceUnit")}
-      </span>
-      {rows.map(({ label, rates }) => (
-        <span key={label} className="block">
-          {rows.length > 1 ? (
-            <span className="block font-medium">{label}</span>
-          ) : null}
-          {(
-            [
-              ["catalogInputPrice", rates.input],
-              ["catalogOutputPrice", rates.output],
-              ["catalogCacheReadPrice", rates.cacheRead],
-              ["catalogCacheWritePrice", rates.cacheWrite],
-            ] as const
-          ).map(([field, price]) => (
-            <span key={field} className="flex justify-between gap-4">
-              <span className="text-muted-foreground">{t(field)}</span>
-              <span className="tabular-nums">{prices.format(price)}</span>
-            </span>
-          ))}
-        </span>
-      ))}
-    </span>
-  );
-}
 
 export function ModelTestRow({
   slug,
@@ -128,9 +79,6 @@ export function ModelTestRow({
       </span>
     </>
   );
-  const hasPriceDetails = Boolean(
-    cost && (cost.cacheRead || cost.cacheWrite || cost.tiers?.length),
-  );
 
   return (
     <article
@@ -138,17 +86,13 @@ export function ModelTestRow({
       className={`${MODEL_ROW_GRID} px-6 py-2.5 transition-colors hover:bg-muted/40`}
     >
       <div className="flex min-w-0 items-center gap-3">
-        <Tooltip content={typeLabel}>
-          <span
-            role="img"
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: This labeled model icon is a keyboard-focusable tooltip trigger, not an action.
-            tabIndex={0}
-            aria-label={typeLabel}
-            className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/50 text-muted-foreground"
-          >
-            <ModelTypeIcon type={model.primaryType} />
-          </span>
-        </Tooltip>
+        <span
+          role="img"
+          aria-label={typeLabel}
+          className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/50 text-muted-foreground"
+        >
+          <ModelTypeIcon type={model.primaryType} />
+        </span>
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
             <span className="min-w-0 max-w-full truncate text-sm font-medium text-foreground">
@@ -202,45 +146,26 @@ export function ModelTestRow({
           ? "—"
           : compactTokens.format(model.maxOutputTokens)}
       </span>
-      {hasPriceDetails && cost ? (
-        <Tooltip
-          content={
-            <ModelPriceDetails cost={cost} numbers={numbers} prices={prices} />
-          }
-          wrapperClassName="hidden xl:col-span-2 xl:grid"
-        >
-          <span
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: The price cells are a keyboard-focusable trigger for the full price table.
-            tabIndex={0}
-            className="grid cursor-help grid-cols-2 gap-x-3 text-xs tabular-nums text-foreground underline decoration-border decoration-dotted underline-offset-4"
-          >
-            {priceCells}
-          </span>
-        </Tooltip>
-      ) : (
-        <span className="hidden grid-cols-2 gap-x-3 text-xs tabular-nums text-foreground xl:col-span-2 xl:grid">
-          {priceCells}
-        </span>
-      )}
+      <span className="hidden grid-cols-2 gap-x-3 text-xs tabular-nums text-foreground xl:col-span-2 xl:grid">
+        {priceCells}
+      </span>
       <div className="flex shrink-0 items-center justify-end gap-0.5">
         {model.primaryType === "text" ? (
           <form action={testAction}>
             <input type="hidden" name="workspace" value={slug} />
             <input type="hidden" name="providerId" value={providerId} />
             <input type="hidden" name="model" value={model.modelId} />
-            <Tooltip content={t("testModel")}>
-              <SubmitButton
-                error={state.error}
-                pendingLabel=""
-                savedLabel=""
-                ariaLabel={t("testModel")}
-                variant="ghost"
-                size="icon"
-                icon={<FlaskConical className="size-3.5" />}
-              >
-                {null}
-              </SubmitButton>
-            </Tooltip>
+            <SubmitButton
+              error={state.error}
+              pendingLabel=""
+              savedLabel=""
+              ariaLabel={t("testModel")}
+              variant="ghost"
+              size="icon"
+              icon={<FlaskConical className="size-3.5" />}
+            >
+              {null}
+            </SubmitButton>
           </form>
         ) : null}
         <EditModelDialog

@@ -16,7 +16,6 @@ import { ConfirmSubmitButton } from "@/components/dashboard/ConfirmSubmitButton"
 import { Button } from "@/components/motion/button/base";
 import { Input } from "@/components/motion/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/motion/tabs";
-import { Tooltip } from "@/components/motion/tooltip";
 import { deleteProviderAction } from "@/lib/agents/provider-actions";
 import type { ActionState } from "@/lib/agents/action-state";
 import {
@@ -307,37 +306,29 @@ export function ProviderDetail({
         )}
         <div className="ml-auto flex w-full min-w-0 items-center gap-2 sm:w-auto">
           {showGroupHeaders && modelGroups.length > 1 && !searching ? (
-            <Tooltip
-              content={
+            <Button
+              type="button"
+              onClick={() =>
+                setCollapsedGroups(
+                  allGroupsExpanded
+                    ? new Set(modelGroups.map(([group]) => group))
+                    : new Set(),
+                )
+              }
+              aria-label={
                 allGroupsExpanded
                   ? t("collapseAllGroups")
                   : t("expandAllGroups")
               }
+              variant="ghost"
+              size="icon"
             >
-              <Button
-                type="button"
-                onClick={() =>
-                  setCollapsedGroups(
-                    allGroupsExpanded
-                      ? new Set(modelGroups.map(([group]) => group))
-                      : new Set(),
-                  )
-                }
-                aria-label={
-                  allGroupsExpanded
-                    ? t("collapseAllGroups")
-                    : t("expandAllGroups")
-                }
-                variant="ghost"
-                size="icon"
-              >
-                {allGroupsExpanded ? (
-                  <ChevronsDownUp className="size-4" />
-                ) : (
-                  <ChevronsUpDown className="size-4" />
-                )}
-              </Button>
-            </Tooltip>
+              {allGroupsExpanded ? (
+                <ChevronsDownUp className="size-4" />
+              ) : (
+                <ChevronsUpDown className="size-4" />
+              )}
+            </Button>
           ) : null}
           <div className="min-w-0 flex-1 sm:w-56 sm:flex-none">
             <Input

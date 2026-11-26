@@ -38,11 +38,13 @@ export function AgentA2APanel({
   agentId,
   runtimeKind,
   initialTaskId,
+  onConfigureTargets,
 }: {
   slug: string;
   agentId: string;
   runtimeKind: string;
   initialTaskId?: string;
+  onConfigureTargets?: () => void;
 }) {
   const t = useTranslations("console.agents.a2a");
   const common = useTranslations("common");
@@ -242,12 +244,22 @@ export function AgentA2APanel({
               ]}
             />
             {executable ? (
-              <a
-                className="text-sm underline underline-offset-4"
-                href="?settings=subAgents"
-              >
-                {t("configureTargets")}
-              </a>
+              onConfigureTargets ? (
+                <button
+                  type="button"
+                  onClick={onConfigureTargets}
+                  className="text-left text-sm underline underline-offset-4"
+                >
+                  {t("configureTargets")}
+                </button>
+              ) : (
+                <a
+                  className="text-sm underline underline-offset-4"
+                  href="?settings=subAgents"
+                >
+                  {t("configureTargets")}
+                </a>
+              )
             ) : null}
           </section>
           {view.endpoint ? (

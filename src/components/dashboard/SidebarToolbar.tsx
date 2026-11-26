@@ -18,7 +18,6 @@ import {
   MorphPopoverContent,
   MorphPopoverTrigger,
 } from "@/components/motion/popover-morph";
-import { Tooltip } from "@/components/motion/tooltip";
 import { SPRING_SWAP } from "@/lib/ease";
 
 type SidebarToolbarProps = {
@@ -121,51 +120,45 @@ export function SidebarToolbar(props: SidebarToolbarProps) {
               {props.title}
             </span>
             <div className="flex shrink-0 items-center gap-0.5">
-              <Tooltip content={props.searchLabel}>
-                <Button
-                  ref={searchButton}
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className={iconButtonClassName}
-                  aria-label={props.searchLabel}
-                  onClick={() => setSearchOpen(true)}
-                >
-                  <Search aria-hidden="true" className="size-4" />
-                </Button>
-              </Tooltip>
-              <Tooltip content={props.addLabel}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className={iconButtonClassName}
-                  aria-label={props.addLabel}
-                  onClick={props.onAdd}
-                >
-                  <Plus aria-hidden="true" className="size-4" />
-                </Button>
-              </Tooltip>
+              <Button
+                ref={searchButton}
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={iconButtonClassName}
+                aria-label={props.searchLabel}
+                onClick={() => setSearchOpen(true)}
+              >
+                <Search aria-hidden="true" className="size-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={iconButtonClassName}
+                aria-label={props.addLabel}
+                onClick={props.onAdd}
+              >
+                <Plus aria-hidden="true" className="size-4" />
+              </Button>
               <MorphPopover
                 open={props.moreOpen}
                 onOpenChange={props.onMoreOpenChange}
               >
-                <Tooltip content={props.moreLabel}>
-                  <MorphPopoverTrigger>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className={iconButtonClassName}
-                      aria-label={props.moreLabel}
-                    >
-                      <MoreHorizontal aria-hidden="true" className="size-4" />
-                    </Button>
-                  </MorphPopoverTrigger>
-                </Tooltip>
+                <MorphPopoverTrigger>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className={iconButtonClassName}
+                    aria-label={props.moreLabel}
+                  >
+                    <MoreHorizontal aria-hidden="true" className="size-4" />
+                  </Button>
+                </MorphPopoverTrigger>
                 <MorphPopoverContent
                   side="bottom"
-                  align="end"
+                  align="start"
                   sideOffset={4}
                   className="z-50 w-52 p-1.5"
                 >

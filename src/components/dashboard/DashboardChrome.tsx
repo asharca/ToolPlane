@@ -21,7 +21,6 @@ import {
   ConfirmActionDialog,
   hasOpenDialog,
 } from "@/components/dashboard/ConversationUxPrimitives";
-import { Tooltip } from "@/components/motion/tooltip";
 import { WorkspaceShell } from "@/components/workspace/workspace-shell";
 
 type Workspace = { id: string; slug: string; name: string };
@@ -246,11 +245,9 @@ export function DashboardChrome({
         }
         mobileHeader={
           <>
-            <Tooltip content={t("openMenu")}>
-              <AnimatedSidebarTrigger aria-label={t("openMenu")}>
-                <Menu aria-hidden="true" className="size-5" />
-              </AnimatedSidebarTrigger>
-            </Tooltip>
+            <AnimatedSidebarTrigger aria-label={t("openMenu")}>
+              <Menu aria-hidden="true" className="size-5" />
+            </AnimatedSidebarTrigger>
             <DashboardLogo />
             <span aria-hidden="true" className="text-border">
               /

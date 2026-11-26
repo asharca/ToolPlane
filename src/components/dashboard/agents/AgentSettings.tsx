@@ -9,7 +9,6 @@ import {
 } from "@/components/motion/alert";
 import { Button } from "@/components/motion/button";
 
-import dynamic from "next/dynamic";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import type { AgentResourceOption } from "@/components/dashboard/agents/AgentResourceSelect";
@@ -36,24 +35,9 @@ import { AgentUsagePanel } from "../AgentUsagePanel";
 import { AgentClonePanel } from "./AgentClonePanel";
 import { AgentEvolutionPanel } from "./AgentEvolutionPanel";
 import { AgentMemoriesPanel } from "./AgentMemoriesPanel";
-
-const AgentMessagingPanel = dynamic(() =>
-  import("@/components/dashboard/agents/AgentMessagingPanel").then(
-    (module) => module.AgentMessagingPanel,
-  ),
-);
-
-const AgentA2APanel = dynamic(() =>
-  import("@/components/dashboard/agents/AgentA2APanel").then(
-    (module) => module.AgentA2APanel,
-  ),
-);
-
-const RevisionChangelog = dynamic(() =>
-  import("@/components/dashboard/RevisionChangelog").then(
-    (module) => module.RevisionChangelog,
-  ),
-);
+import { AgentMessagingPanel } from "./AgentMessagingPanel";
+import { AgentA2APanel } from "./AgentA2APanel";
+import { RevisionChangelog } from "../RevisionChangelog";
 
 type SettingsData = {
   workspaceId?: string;
@@ -234,7 +218,7 @@ export function AgentSettings({
           <DialogNav
             label={t("configurationNavigation")}
             items={navigationItems}
-            className="md:w-52 [&_nav]:space-y-0.5 [&_nav_button]:h-8"
+            className="md:w-52 [&_nav_button]:h-8"
             active={settingsTab}
             onSelect={(id) => setSettingsTab(id as SettingsTab)}
           />
@@ -373,6 +357,7 @@ export function AgentSettings({
                   agentId={agentId}
                   runtimeKind={settings.runtimeKind}
                   initialTaskId={initialA2ATaskId}
+                  onConfigureTargets={() => setSettingsTab("subAgents")}
                 />
               </div>
             ) : settingsTab === "clone" ? (

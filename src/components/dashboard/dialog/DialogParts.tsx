@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { Button, type ButtonProps } from "@/components/motion/button/base";
 import { CenterMorphModalClose } from "@/components/motion/center-morph-modal";
+import { useSidebarScroll } from "@/components/dashboard/useSidebarScroll";
 import { FormSelect } from "@/components/ui/FormSelect";
 import { cn } from "@/lib/utils";
 
@@ -124,10 +125,12 @@ export function DialogNav({
 }) {
   const t = useTranslations("common");
   const navLabel = label ?? t("edit");
+  const onSidebarScroll = useSidebarScroll();
   return (
     <aside
+      onScroll={onSidebarScroll}
       className={cn(
-        "shrink-0 border-b border-border p-3 md:flex md:w-56 md:flex-col md:overflow-y-auto md:overscroll-contain md:border-r md:border-b-0",
+        "sidebar-scroll shrink-0 border-b border-border p-3 md:flex md:w-56 md:flex-col md:overflow-y-auto md:overscroll-contain md:border-r md:border-b-0",
         className,
       )}
     >
@@ -142,9 +145,9 @@ export function DialogNav({
           disabled: item.disabled,
         }))}
       />
-      <nav aria-label={navLabel} className="hidden flex-1 space-y-1 md:block">
+      <nav aria-label={navLabel} className="hidden flex-1 space-y-0.5 md:block">
         {items.map((item) => (
-          <div key={item.id} className={item.separated ? "pt-2" : undefined}>
+          <div key={item.id}>
             <Button
               disabled={item.disabled}
               type="button"

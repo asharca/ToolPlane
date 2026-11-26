@@ -32,6 +32,28 @@ export type ConversationSnippetItem = z.infer<
   typeof ConversationSnippetItemSchema
 >;
 
+export const FeedbackDiagnosticLogItemSchema = z
+  .object({
+    occurredAt: z.string().optional(),
+    level: z.enum(["info", "warn", "error"]).default("error"),
+    source: z.string().max(120),
+    code: z.string().max(120).optional().nullable(),
+    stage: z.string().max(120).optional().nullable(),
+    message: z.string().max(2000),
+  })
+  .strict();
+export type FeedbackDiagnosticLogItem = z.infer<
+  typeof FeedbackDiagnosticLogItemSchema
+>;
+
+export const FeedbackScreenshotDataUrlSchema = z
+  .string()
+  .max(600_000)
+  .regex(
+    /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/,
+    "Invalid screenshot data URL",
+  );
+
 export const SubmitUserFeedbackInputSchema = z
   .object({
     category: z.enum(FEEDBACK_CATEGORIES),
@@ -45,6 +67,9 @@ export const SubmitUserFeedbackInputSchema = z
     failureCode: z.string().trim().min(1).max(128).optional(),
     includeConversationSnippet: z.boolean().optional(),
     snippetMessageCount: z.number().int().min(1).max(10).optional(),
+    screenshotDataUrl: FeedbackScreenshotDataUrlSchema.optional(),
+    includeDiagnosticLogs: z.boolean().optional(),
+    clientErrorText: z.string().trim().max(2000).optional(),
   })
   .strict();
 export type SubmitUserFeedbackInput = z.infer<
@@ -99,8 +124,23 @@ export type FeedbackSummaryItem = {
   approvedByEmail: string | null;
   adminNote: string | null;
   resolvedAt: string | null;
+  screenshotDataUrl: string | null;
+  diagnosticLogs: FeedbackDiagnosticLogItem[] | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type FeedbackDiagnosticContext = {
+  failureCode: string | null;
+  failureReason: string | null;
+  executionStage: string | null;
+  agentId: string | null;
+  agentName: string | null;
+  conversationId: string | null;
+  workSessionId: string | null;
+  taskId: string | null;
+  diagnosticLogs: FeedbackDiagnosticLogItem[];
+  conversationSnippet: ConversationSnippetItem[];
 };
 
 export type FeedbackOccurrenceItem = {

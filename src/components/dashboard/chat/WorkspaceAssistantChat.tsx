@@ -41,7 +41,6 @@ import {
   PanelLeft,
   Plus,
   Settings2,
-  SquarePen,
   Trash2,
 } from "lucide-react";
 import {
@@ -1327,6 +1326,19 @@ export function WorkspaceAssistantChat({
             type="button"
             onClick={() => {
               close();
+              setEditing(assistant);
+            }}
+            variant="ghost"
+            size="sm"
+            className="flex w-full justify-start gap-2"
+          >
+            <Settings2 className="size-3.5" />
+            {agentsT("configureAgent")}
+          </Button>
+          <Button
+            type="button"
+            onClick={() => {
+              close();
               deleteAssistant(assistant.id);
             }}
             variant="ghost"
@@ -1604,17 +1616,6 @@ export function WorkspaceAssistantChat({
                   </ChatAppSidebarTrigger>
                   {activeAssistant ? (
                     <>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => startNewChat(activeAssistant.id)}
-                        aria-label={t("newChat")}
-                        title={t("shortcutNewChat")}
-                        className="size-8 shrink-0 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
-                      >
-                        <SquarePen className="size-4" />
-                      </Button>
                       <MorphPopover
                         open={switcherOpen}
                         onOpenChange={setSwitcherOpen}
@@ -1711,17 +1712,6 @@ export function WorkspaceAssistantChat({
                           </Button>
                         </MorphPopoverContent>
                       </MorphPopover>
-                      <Button
-                        type="button"
-                        onClick={() => setEditing(activeAssistant)}
-                        aria-label={`${t("settings")}: ${activeAssistant.name}`}
-                        title={t("settings")}
-                        variant="ghost"
-                        size="icon"
-                        className="size-8 shrink-0 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
-                      >
-                        <Settings2 className="size-4" />
-                      </Button>
                       {activeThread ? (
                         <>
                           <span
